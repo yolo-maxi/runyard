@@ -205,7 +205,7 @@ export const seedCapabilities = [
         deploy: { type: "object" }
       }
     },
-    requiredRunnerTags: ["smithers", "vps"],
+    requiredRunnerTags: ["smithers", "repo-box"],
     requiredSkills: ["spec-writing", "implementation"],
     requiredAgents: ["spec-writer", "implementation-agent"],
     approvalPolicy: {

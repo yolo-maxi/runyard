@@ -306,7 +306,7 @@ describe("Idea to Product capability", () => {
     assert.equal(cap.workflow.engine, "smithers");
     assert.equal(cap.workflow.entry, ".smithers/workflows/idea-to-product.tsx");
     assert.ok(cap.inputSchema.required.includes("idea"));
-    assert.deepEqual(cap.requiredRunnerTags, ["smithers", "vps"]);
+    assert.deepEqual(cap.requiredRunnerTags, ["smithers", "repo-box"]);
     assert.equal(cap.approvalPolicy.required, true);
   });
 
