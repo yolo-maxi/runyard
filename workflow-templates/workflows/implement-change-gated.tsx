@@ -12,6 +12,10 @@ const PROD_HOST = process.env.GATED_PROD_HOST || "fran@204.168.190.248";
 const PROD_DIR = process.env.GATED_PROD_DIR || "/home/fran/smithers-hub";
 const DEPLOY_KEY = process.env.GATED_DEPLOY_KEY || "/home/xiko/.ssh/id_ed25519";
 const HEALTH_BASE = process.env.GATED_HEALTH_URL || "https://hub.repo.box";
+const GIT = process.env.GATED_GIT_BIN || "/usr/bin/git";
+const PNPM = process.env.GATED_PNPM_BIN || "/home/fran/.local/bin/pnpm";
+const SSH = process.env.GATED_SSH_BIN || "/usr/bin/ssh";
+const CURL = process.env.GATED_CURL_BIN || "/usr/bin/curl";
 const TOOL_PATH = [
   process.env.PATH || "",
   "/home/fran/.bun/bin",
@@ -73,7 +77,7 @@ export default smithers((ctx) => {
         <Task id="baseline" output={outputs.baseline} retries={0}>
           {async () => {
             const { execFileSync } = await import("node:child_process");
-            const startHead = execFileSync("git", ["rev-parse", "HEAD"], { cwd: REPO, encoding: "utf8", env: TOOL_ENV }).trim();
+            const startHead = execFileSync(GIT, ["rev-parse", "HEAD"], { cwd: REPO, encoding: "utf8", env: TOOL_ENV }).trim();
             return { startHead };
           }}
         </Task>
@@ -95,7 +99,7 @@ export default smithers((ctx) => {
               let out = "";
               let passed = false;
               try {
-                out = execFileSync("pnpm", ["test"], { cwd: REPO, encoding: "utf8", env: TOOL_ENV, maxBuffer: 1024 * 1024 * 64 });
+                out = execFileSync(PNPM, ["test"], { cwd: REPO, encoding: "utf8", env: TOOL_ENV, maxBuffer: 1024 * 1024 * 64 });
                 passed = true;
               } catch (e) {
                 out = `${e.stdout || ""}${e.stderr || ""}${e.message || ""}`;
@@ -113,7 +117,7 @@ export default smithers((ctx) => {
           <Task id="commit" output={outputs.commit} retries={0}>
             {async () => {
               const { execFileSync } = await import("node:child_process");
-              const run = (args) => execFileSync("git", args, { cwd: REPO, encoding: "utf8", env: TOOL_ENV });
+              const run = (args) => execFileSync(GIT, args, { cwd: REPO, encoding: "utf8", env: TOOL_ENV });
               run(["add", "-A"]);
               const staged = run(["diff", "--cached", "--name-only"]).split("\n").map((s) => s.trim()).filter(Boolean);
               const stat = run(["diff", "--cached", "--stat"]).trim();
@@ -144,7 +148,7 @@ export default smithers((ctx) => {
               // origin resolves via ~/.ssh/config (github -> id_ed25519_github); no GIT_SSH_COMMAND override here.
               let detail = "";
               try {
-                detail = execFileSync("git", ["push", "origin", `HEAD:${branch}`], { cwd: REPO, encoding: "utf8", env: TOOL_ENV, stdio: ["ignore", "pipe", "pipe"] });
+                detail = execFileSync(GIT, ["push", "origin", `HEAD:${branch}`], { cwd: REPO, encoding: "utf8", env: TOOL_ENV, stdio: ["ignore", "pipe", "pipe"] });
               } catch (e) {
                 detail = `${e.stdout || ""}${e.stderr || ""}`;
                 throw new Error(`GATE FAILED: git push origin failed.\n${detail.slice(0, 800)}`);
@@ -163,17 +167,17 @@ export default smithers((ctx) => {
               if (!ctx.input.deploy) {
                 return { deployed: false, wouldDeploy: true, target, verify: `deploy=false — would push ${commit.commit} to ${target}, reset main, and restart the hub.` };
               }
-              const env = { ...TOOL_ENV, GIT_SSH_COMMAND: `ssh -i ${DEPLOY_KEY} -o BatchMode=yes -o StrictHostKeyChecking=accept-new` };
-              execFileSync("git", ["push", PROD_REMOTE, `${commit.commit}:refs/heads/sync-tmp`], { cwd: REPO, encoding: "utf8", env });
+              const env = { ...TOOL_ENV, GIT_SSH_COMMAND: `${SSH} -i ${DEPLOY_KEY} -o BatchMode=yes -o StrictHostKeyChecking=accept-new` };
+              execFileSync(GIT, ["push", PROD_REMOTE, `${commit.commit}:refs/heads/sync-tmp`], { cwd: REPO, encoding: "utf8", env });
               const remoteCmd = `cd ${PROD_DIR} && git checkout -q main && git reset --hard sync-tmp && git branch -D sync-tmp; rm -f data/cli.tgz && systemctl --user restart smithers-hub.service && sleep 2 && git log --oneline -1`;
               const remoteOut = execFileSync(
-                "ssh",
+                SSH,
                 ["-i", DEPLOY_KEY, "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", PROD_HOST, remoteCmd],
                 { encoding: "utf8", env: TOOL_ENV }
               );
               let verify = "";
               for (const p of ["/healthz", "/", "/docs", "/app"]) {
-                const code = execFileSync("curl", ["-s", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "15", `${HEALTH_BASE}${p}`], { encoding: "utf8", env: TOOL_ENV });
+                const code = execFileSync(CURL, ["-s", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "15", `${HEALTH_BASE}${p}`], { encoding: "utf8", env: TOOL_ENV });
                 verify += `${p}:${code} `;
               }
               return { deployed: true, wouldDeploy: false, target, verify: `remote HEAD: ${remoteOut.trim().split("\n").pop()} | routes: ${verify.trim()}` };
