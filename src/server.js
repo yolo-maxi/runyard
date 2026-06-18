@@ -10,6 +10,7 @@ import {
   createRun,
   dashboardStats,
   getArtifact,
+  getApproval,
   getCapability,
   countRuns,
   getRun,
@@ -69,14 +70,73 @@ const deepLinks = {
   runLogs: (id) => `/app#runs/${encodeURIComponent(id)}/logs`,
   runArtifacts: (id) => `/app#runs/${encodeURIComponent(id)}/artifacts`,
   workflow: (slug) => `/app#workflows/${encodeURIComponent(slug)}`,
+  workflowRuns: (slug) => `/app#workflows/${encodeURIComponent(slug)}/runs`,
+  workflowEdit: (slug) => `/app#workflows/${encodeURIComponent(slug)}/edit`,
+  workflowRun: (slug) => `/app#workflows/${encodeURIComponent(slug)}/run`,
+  agent: (slug) => `/app#agents/agents/${encodeURIComponent(slug)}`,
   artifact: (id) => `/app#artifacts/${encodeURIComponent(id)}`,
   approval: (id) => `/app#approvals/${encodeURIComponent(id)}`
 };
+
+// --- Run summary derivation --------------------------------------------------
+// Runs don't carry an explicit title/description; we derive readable defaults
+// from input, capability, and timing so cards and detail pages have substance
+// even on workflows that don't set them. Backward-compatible: all originals
+// stay; we add `title`, `description`, `project`, `branch`, `durationMs`.
+const PROJECT_INPUT_KEYS = ["project", "repo", "repository", "target", "targetPath", "path", "subdomain", "preferredSubdomain"];
+const BRANCH_INPUT_KEYS = ["branch", "targetBranch", "ref", "gitBranch"];
+const TITLE_INPUT_KEYS = ["title", "name", "goal", "task", "prompt", "topic", "idea", "workPrompt", "question"];
+const DESCRIPTION_INPUT_KEYS = ["description", "summary", "notes", "scope", "constraints", "reason", "rationale", "context"];
+
+function firstString(input, keys) {
+  if (!input || typeof input !== "object") return "";
+  for (const key of keys) {
+    const value = input[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+}
+
+function truncate(text, max) {
+  const value = String(text || "").trim();
+  if (value.length <= max) return value;
+  return value.slice(0, max - 1).replace(/\s+\S*$/, "") + "…";
+}
+
+function deriveRunTitle(run) {
+  const fromInput = firstString(run.input, TITLE_INPUT_KEYS);
+  if (fromInput) return truncate(fromInput, 90);
+  return run.capabilityName || run.capabilitySlug || "Run";
+}
+
+function deriveRunDescription(run) {
+  const fromInput = firstString(run.input, DESCRIPTION_INPUT_KEYS);
+  if (fromInput) return truncate(fromInput, 240);
+  const titleField = firstString(run.input, TITLE_INPUT_KEYS);
+  if (titleField && titleField.length > 90) return truncate(titleField, 240);
+  const parts = [];
+  if (run.capabilityName) parts.push(run.capabilityName);
+  if (run.currentStep) parts.push(run.currentStep);
+  return truncate(parts.join(" — "), 240);
+}
+
+function runDurationMs(run) {
+  if (!run?.createdAt) return null;
+  const start = Date.parse(run.startedAt || run.createdAt);
+  const end = Date.parse(run.completedAt || new Date().toISOString());
+  if (Number.isNaN(start) || Number.isNaN(end)) return null;
+  return Math.max(0, end - start);
+}
 
 function withRunLinks(run) {
   if (!run || typeof run !== "object") return run;
   return {
     ...run,
+    title: deriveRunTitle(run),
+    description: deriveRunDescription(run),
+    project: firstString(run.input, PROJECT_INPUT_KEYS),
+    branch: firstString(run.input, BRANCH_INPUT_KEYS),
+    durationMs: runDurationMs(run),
     deepLink: deepLinks.run(run.id),
     deepLinkLogs: deepLinks.runLogs(run.id),
     deepLinkArtifacts: deepLinks.runArtifacts(run.id),
@@ -86,7 +146,18 @@ function withRunLinks(run) {
 
 function withCapabilityLinks(cap) {
   if (!cap || typeof cap !== "object") return cap;
-  return { ...cap, deepLink: deepLinks.workflow(cap.slug) };
+  return {
+    ...cap,
+    deepLink: deepLinks.workflow(cap.slug),
+    deepLinkRuns: deepLinks.workflowRuns(cap.slug),
+    deepLinkEdit: deepLinks.workflowEdit(cap.slug),
+    deepLinkRun: deepLinks.workflowRun(cap.slug)
+  };
+}
+
+function withAgentLinks(agent) {
+  if (!agent || typeof agent !== "object") return agent;
+  return { ...agent, deepLink: deepLinks.agent(agent.slug) };
 }
 
 function withArtifactLinks(artifact) {
@@ -94,12 +165,101 @@ function withArtifactLinks(artifact) {
   return { ...artifact, deepLink: deepLinks.artifact(artifact.id) };
 }
 
+function absoluteDeepLink(link) {
+  try {
+    return new URL(link, env.baseUrl).toString();
+  } catch {
+    return `${String(env.baseUrl || "").replace(/\/$/, "")}${link}`;
+  }
+}
+
+function hasOwn(object, key) {
+  return Object.prototype.hasOwnProperty.call(object || {}, key);
+}
+
+const SECRET_FIELD_RE = /(token|secret|password|passwd|credential|authorization|cookie|api[_-]?key|private[_-]?key)/i;
+
+function sanitizeForDisplay(value, depth = 0) {
+  if (value == null || typeof value === "boolean" || typeof value === "number") return value;
+  if (typeof value === "string") return truncate(value, 500);
+  if (depth >= 3) return "[nested value]";
+  if (Array.isArray(value)) {
+    const items = value.slice(0, 12).map((item) => sanitizeForDisplay(item, depth + 1));
+    return value.length > items.length ? [...items, `... ${value.length - items.length} more`] : items;
+  }
+  if (typeof value === "object") {
+    const entries = Object.entries(value).slice(0, 24);
+    const output = {};
+    for (const [key, item] of entries) {
+      output[key] = SECRET_FIELD_RE.test(key) ? "[redacted]" : sanitizeForDisplay(item, depth + 1);
+    }
+    if (Object.keys(value).length > entries.length) output._truncated = `${Object.keys(value).length - entries.length} more fields`;
+    return output;
+  }
+  return String(value);
+}
+
+function approvalInput(approval, run = null) {
+  const payloadInput = approval?.payload?.input;
+  if (payloadInput && typeof payloadInput === "object" && !Array.isArray(payloadInput)) return payloadInput;
+  return run?.input && typeof run.input === "object" ? run.input : {};
+}
+
+function approvalPayloadSummary(approval) {
+  const payload = approval?.payload || {};
+  const summary = {};
+  if (payload.capability) summary.capability = payload.capability;
+  if (payload.input) summary.input = sanitizeForDisplay(payload.input);
+  for (const [key, value] of Object.entries(payload)) {
+    if (key === "capability" || key === "input") continue;
+    summary[key] = SECRET_FIELD_RE.test(key) ? "[redacted]" : sanitizeForDisplay(value);
+  }
+  return summary;
+}
+
+function approvalContext(approval) {
+  const run = approval?.runId ? getRun(approval.runId) : null;
+  const input = approvalInput(approval, run);
+  const capabilitySlug = approval?.payload?.capability || run?.capabilitySlug || "";
+  const capability = capabilitySlug ? getCapability(capabilitySlug) : null;
+  const workflowName = run?.capabilityName || capability?.name || capabilitySlug || "";
+  const deployPresent = hasOwn(input, "deploy");
+  return {
+    workflow: workflowName
+      ? {
+          slug: capabilitySlug,
+          name: workflowName,
+          version: run?.workflowVersion || capability?.version || null,
+          deepLink: capabilitySlug ? deepLinks.workflow(capabilitySlug) : ""
+        }
+      : null,
+    deploy: deployPresent ? Boolean(input.deploy) : null,
+    run: run
+      ? {
+          id: run.id,
+          status: run.status,
+          title: deriveRunTitle(run),
+          description: deriveRunDescription(run),
+          currentStep: run.currentStep,
+          deepLink: deepLinks.run(run.id)
+        }
+      : null,
+    inputTitle: firstString(input, TITLE_INPUT_KEYS),
+    whatHappensIfApproved: run
+      ? "The run will move from waiting_approval to queued, then a matching runner can execute it."
+      : "This approval will be marked approved.",
+    whatHappensIfRejected: run ? "The run will be cancelled and will not execute." : "This approval will be marked rejected."
+  };
+}
+
 function withApprovalLinks(approval) {
   if (!approval || typeof approval !== "object") return approval;
   return {
     ...approval,
     deepLink: deepLinks.approval(approval.id),
-    ...(approval.runId ? { deepLinkRun: deepLinks.run(approval.runId) } : {})
+    ...(approval.runId ? { deepLinkRun: deepLinks.run(approval.runId) } : {}),
+    context: approvalContext(approval),
+    payloadSummary: approvalPayloadSummary(approval)
   };
 }
 
@@ -177,40 +337,101 @@ function requireRunOwnerOrAdmin(req, res, next) {
   return res.status(403).json({ error: "run not owned by this runner" });
 }
 
-async function notifyTelegram(approval) {
-  if (!env.telegramBotToken || !env.telegramChatId) return;
-  const text = [
-    `Smithers Hub approval requested`,
-    ``,
-    `*${approval.title}*`,
-    approval.description || "",
-    ``,
-    `Approval ID: \`${approval.id}\``,
-    approval.runId ? `Run: \`${approval.runId}\`` : ""
+function telegramApprovalTarget() {
+  if (env.telegramApprovalChatId) return { chatId: env.telegramApprovalChatId, private: true };
+  if (env.telegramChatId) {
+    const threadId = Number(env.telegramThreadId);
+    return {
+      chatId: env.telegramChatId,
+      private: false,
+      ...(env.telegramThreadId && Number.isFinite(threadId) ? { threadId } : {})
+    };
+  }
+  return null;
+}
+
+function telegramApprovalText(approval) {
+  const context = approvalContext(approval);
+  const approvalUrl = absoluteDeepLink(deepLinks.approval(approval.id));
+  const runUrl = approval.runId ? absoluteDeepLink(deepLinks.run(approval.runId)) : "";
+  const workflow = context.workflow?.name
+    ? `${context.workflow.name}${context.workflow.slug ? ` (${context.workflow.slug})` : ""}`
+    : "Unknown workflow";
+  return [
+    `${env.instanceName} approval requested`,
+    "",
+    `Title: ${approval.title}`,
+    `Description: ${approval.description || "No description provided."}`,
+    `Workflow: ${workflow}`,
+    context.deploy == null ? "" : `Deploy: ${context.deploy ? "yes" : "no"}`,
+    approval.runId ? `Run: ${approval.runId}${context.run?.status ? ` (${context.run.status})` : ""}` : "",
+    runUrl ? `Run link: ${runUrl}` : "",
+    `Approval link: ${approvalUrl}`,
+    "",
+    `If approved: ${context.whatHappensIfApproved}`,
+    `If rejected: ${context.whatHappensIfRejected}`
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+async function notifyTelegram(approval) {
+  const target = telegramApprovalTarget();
+  if (!env.telegramBotToken || !target) return;
+  const approvalUrl = absoluteDeepLink(deepLinks.approval(approval.id));
   try {
-    await fetch(`https://api.telegram.org/bot${env.telegramBotToken}/sendMessage`, {
+    const response = await fetch(`https://api.telegram.org/bot${env.telegramBotToken}/sendMessage`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        chat_id: env.telegramChatId,
-        ...(env.telegramThreadId ? { message_thread_id: Number(env.telegramThreadId) } : {}),
-        text,
-        parse_mode: "Markdown",
+        chat_id: target.chatId,
+        ...(target.threadId ? { message_thread_id: target.threadId } : {}),
+        text: telegramApprovalText(approval),
         reply_markup: {
           inline_keyboard: [
+            [{ text: "Open approval", url: approvalUrl }],
             [
-              { text: "Approve", callback_data: `approve:${approval.id}` },
-              { text: "Reject", callback_data: `reject:${approval.id}` }
+              { text: "Approve", callback_data: `approval:approve:${approval.id}` },
+              { text: "Reject", callback_data: `approval:reject:${approval.id}` }
             ]
           ]
         }
       })
     });
+    if (!response.ok) console.error("Telegram notification failed:", response.status);
   } catch (error) {
     console.error("Telegram notification failed:", error.message);
+  }
+}
+
+function parseTelegramApprovalCallback(data) {
+  if (typeof data !== "string" || !data.trim()) return { ok: false, code: 400, error: "missing callback data" };
+  const parts = data.split(":");
+  let action = "";
+  let approvalId = "";
+  if (parts.length === 2) {
+    [action, approvalId] = parts;
+  } else if (parts.length === 3 && parts[0] === "approval") {
+    [, action, approvalId] = parts;
+  } else {
+    return { ok: false, code: 400, error: "invalid callback data format" };
+  }
+  if (action !== "approve" && action !== "reject") return { ok: false, code: 400, error: "invalid approval decision" };
+  if (!/^appr_[a-f0-9]{20}$/.test(approvalId)) return { ok: false, code: 400, error: "invalid approval id" };
+  return { ok: true, approvalId, decision: action === "approve" ? "approved" : "rejected" };
+}
+
+async function answerTelegramCallbackQuery(callbackQueryId, text) {
+  if (!callbackQueryId || !env.telegramBotToken) return;
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${env.telegramBotToken}/answerCallbackQuery`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ callback_query_id: callbackQueryId, text: truncate(text, 180), show_alert: false })
+    });
+    if (!response.ok) console.error("Telegram callback acknowledgement failed:", response.status);
+  } catch (error) {
+    console.error("Telegram callback acknowledgement failed:", error.message);
   }
 }
 
@@ -379,11 +600,14 @@ app.get("/openapi.json", (req, res) => {
 });
 
 app.get("/api/setup", (_req, res) => {
+  const telegramTarget = telegramApprovalTarget();
   res.json({
     instanceName: env.instanceName,
     baseUrl: env.baseUrl,
     auth: "access-token",
-    telegramConfigured: Boolean(env.telegramBotToken && env.telegramChatId),
+    telegramConfigured: Boolean(env.telegramBotToken && telegramTarget),
+    telegramApprovalPrivateConfigured: Boolean(env.telegramApprovalChatId),
+    telegramApprovalTarget: telegramTarget ? (telegramTarget.private ? "private" : "fallback-chat") : "none",
     telegramWebhookSecured: Boolean(env.telegramWebhookSecret),
     dataDir: env.dataDir
   });
@@ -485,7 +709,7 @@ app.post("/api/capabilities/:id/run", requireAuth, requireScopes("api", "mcp"), 
   });
 });
 
-app.get("/api/agents", requireAuth, (req, res) => res.json({ agents: listAgents(req.query.q || "") }));
+app.get("/api/agents", requireAuth, (req, res) => res.json({ agents: listAgents(req.query.q || "").map(withAgentLinks) }));
 app.post("/api/agents", requireAuth, requireScopes("admin"), (req, res) => res.json({ agent: upsertAgent({ ...req.body, slug: requireBodySlug(req.body, "agent") }) }));
 app.patch("/api/agents/:slug", requireAuth, requireScopes("admin"), (req, res) => res.json({ agent: upsertAgent({ ...req.body, slug: req.params.slug }) }));
 
@@ -503,7 +727,18 @@ app.get("/api/runs", requireAuth, (req, res) => {
   reapStuckRuns(env.runDeadlineMs);
   const status = req.query.status || "";
   const limit = Math.min(Number(req.query.limit || 100), 500);
-  res.json({ runs: listRuns({ status, limit }).map(withRunLinks), total: countRuns({ status }), limit });
+  // Optional capability filter — used by the workflow detail page to list
+  // recent runs for a single workflow. We filter in memory (run volumes are
+  // already capped by the DB layer) to keep the SQL surface small.
+  const capability = req.query.capability || req.query.capabilitySlug || "";
+  let rows = listRuns({ status, limit: capability ? Math.max(limit, 200) : limit });
+  if (capability) rows = rows.filter((r) => r.capabilitySlug === capability).slice(0, limit);
+  res.json({
+    runs: rows.map(withRunLinks),
+    total: capability ? rows.length : countRuns({ status }),
+    limit,
+    ...(capability ? { capability } : {})
+  });
 });
 app.get("/api/runs/:id", requireAuth, (req, res) => {
   const run = getRun(req.params.id);
@@ -587,12 +822,19 @@ app.get("/api/artifacts/:id/download", requireAuth, (req, res) => {
 });
 
 app.get("/api/approvals", requireAuth, (req, res) => res.json({ approvals: listApprovals(req.query.status || "").map(withApprovalLinks) }));
-app.post("/api/approvals/:id/approve", requireAuth, requireScopes("api", "mcp"), (req, res) =>
-  res.json({ approval: resolveApproval(req.params.id, "approved", req.token.name, req.body.comment || "") })
-);
-app.post("/api/approvals/:id/reject", requireAuth, requireScopes("api", "mcp"), (req, res) =>
-  res.json({ approval: resolveApproval(req.params.id, "rejected", req.token.name, req.body.comment || "") })
-);
+app.get("/api/approvals/:id", requireAuth, (req, res) => {
+  const approval = getApproval(req.params.id);
+  if (!approval) return res.status(404).json({ error: "approval not found" });
+  res.json({ approval: withApprovalLinks(approval) });
+});
+function resolveApprovalHttp(req, res, decision) {
+  const approval = getApproval(req.params.id);
+  if (!approval) return res.status(404).json({ error: "approval not found" });
+  if (approval.status !== "pending") return res.status(409).json({ error: "approval is not pending", approval: withApprovalLinks(approval) });
+  res.json({ approval: withApprovalLinks(resolveApproval(req.params.id, decision, req.token.name, req.body.comment || "")) });
+}
+app.post("/api/approvals/:id/approve", requireAuth, requireScopes("api", "mcp"), (req, res) => resolveApprovalHttp(req, res, "approved"));
+app.post("/api/approvals/:id/reject", requireAuth, requireScopes("api", "mcp"), (req, res) => resolveApprovalHttp(req, res, "rejected"));
 
 app.post("/api/runners/register", requireAuth, requireScopes("runner"), (req, res) => {
   const runner = registerRunner(req.body, req.token.id);
@@ -605,7 +847,7 @@ app.get("/api/runners/:id/next-run", requireAuth, requireScopes("runner"), async
   res.json(claimNextRun(req.params.id) || {});
 });
 
-app.post("/api/telegram/webhook", (req, res) => {
+app.post("/api/telegram/webhook", async (req, res) => {
   // Telegram authenticates webhooks via a secret token header configured on setWebhook.
   // Without a configured secret we refuse to act, so the endpoint can't be used to forge approvals.
   if (!env.telegramWebhookSecret) return res.status(503).json({ ok: false, error: "telegram webhook not configured" });
@@ -613,17 +855,33 @@ app.post("/api/telegram/webhook", (req, res) => {
   if (!timingSafeEqualStr(provided, env.telegramWebhookSecret)) return res.status(401).json({ ok: false });
   const callback = req.body.callback_query;
   if (callback?.data) {
-    // Only honor callbacks originating from the configured chat.
-    const chatId = String(callback.message?.chat?.id ?? "");
-    if (env.telegramChatId && chatId && chatId !== String(env.telegramChatId)) {
-      return res.status(403).json({ ok: false });
+    const parsed = parseTelegramApprovalCallback(callback.data);
+    if (!parsed.ok) {
+      await answerTelegramCallbackQuery(callback.id, parsed.error);
+      return res.status(parsed.code).json({ ok: false, error: parsed.error });
     }
-    const [decision, approvalId] = callback.data.split(":");
+    // Only honor callbacks originating from the approval notification target.
+    const target = telegramApprovalTarget();
+    const chatId = String(callback.message?.chat?.id ?? "");
+    if (target?.chatId && chatId && chatId !== String(target.chatId)) {
+      await answerTelegramCallbackQuery(callback.id, "Approval button came from the wrong chat.");
+      return res.status(403).json({ ok: false, error: "telegram callback chat mismatch" });
+    }
+    const approval = getApproval(parsed.approvalId);
+    if (!approval) {
+      await answerTelegramCallbackQuery(callback.id, "Approval was not found.");
+      return res.status(404).json({ ok: false, error: "approval not found" });
+    }
+    if (approval.status !== "pending") {
+      await answerTelegramCallbackQuery(callback.id, `Approval is already ${approval.status}.`);
+      return res.status(409).json({ ok: false, error: "approval is not pending", approval: withApprovalLinks(approval) });
+    }
     const who = `telegram:${callback.from?.username || callback.from?.id || "user"}`;
-    if (decision === "approve") resolveApproval(approvalId, "approved", who, "");
-    if (decision === "reject") resolveApproval(approvalId, "rejected", who, "");
+    const resolved = resolveApproval(parsed.approvalId, parsed.decision, who, "Resolved from Telegram");
+    await answerTelegramCallbackQuery(callback.id, parsed.decision === "approved" ? "Approved." : "Rejected.");
+    return res.json({ ok: true, approval: withApprovalLinks(resolved) });
   }
-  res.json({ ok: true });
+  res.json({ ok: true, ignored: "no callback query data" });
 });
 
 app.use((error, _req, res, _next) => {
@@ -650,4 +908,4 @@ if (process.argv[1]?.endsWith("server.js")) {
   reaper.unref?.();
 }
 
-export { app };
+export { app, parseTelegramApprovalCallback, telegramApprovalTarget };

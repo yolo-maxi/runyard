@@ -113,7 +113,8 @@ Required for production:
 Optional:
 
 - `TELEGRAM_BOT_TOKEN`
-- `TELEGRAM_CHAT_ID`
+- `TELEGRAM_APPROVAL_CHAT_ID` or `SMITHERS_TELEGRAM_APPROVAL_CHAT_ID` for private approval DMs (preferred)
+- `TELEGRAM_CHAT_ID` and `TELEGRAM_THREAD_ID` remain a backward-compatible fallback when a private approval chat is not configured
 
 ## Verification
 

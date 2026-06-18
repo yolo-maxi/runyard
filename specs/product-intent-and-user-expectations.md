@@ -136,7 +136,7 @@ Telegram is an approval channel, not a separate workflow system.
 
 Expected behavior:
 
-- Approval requests can be pushed to the configured chat/topic.
+- Approval requests can be pushed to a configured private operator chat, with chat/topic routing only as a legacy fallback.
 - Approve/reject decisions are recorded back in the Hub.
 - Web/API/CLI/MCP approval paths remain valid even when Telegram is not configured.
 
@@ -158,4 +158,3 @@ The product is behaving correctly when:
 - Approvals can be resolved through shared Hub channels.
 - Skills, agents, and knowledge are centrally editable.
 - Run history remains visible after execution is complete.
-

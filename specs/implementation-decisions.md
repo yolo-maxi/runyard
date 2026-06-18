@@ -212,13 +212,14 @@ Reasoning:
 - Implementation may modify repositories or run commands.
 - The user described permissive/yolo execution as useful, but deferring the safety model means dangerous capabilities should visibly request approval.
 
-### Decision: Telegram is optional but configured for repo.box
+### Decision: Telegram approvals prefer private DMs
 
-The Hub supports Telegram approval notifications and callback resolution. The repo.box deployment is configured with the existing Smithers approval bot and topic.
+The Hub supports Telegram approval notifications and callback resolution. Approval notifications prefer a private operator chat via `TELEGRAM_APPROVAL_CHAT_ID`; the older group/topic `TELEGRAM_CHAT_ID` and `TELEGRAM_THREAD_ID` configuration remains a fallback when a private approval chat is not configured.
 
 Reasoning:
 
 - The user said there was already a Smithers approval bot and a prototype miniapp.
+- Approvals may contain operational context and should not be broadcast to the group by default.
 - The Hub's approval model remains channel-agnostic, so Telegram does not become the approval source of truth.
 
 ## Agent Interfaces
@@ -335,4 +336,3 @@ These were intentionally left as future decisions:
 - Whether to enforce strict token scopes.
 - Whether to add GitHub comment writeback for PR review.
 - Whether to integrate the older Telegram miniapp as the main approval detail view.
-

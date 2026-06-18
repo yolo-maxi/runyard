@@ -12,10 +12,46 @@ process.env.SMITHERS_HUB_SESSION_SECRET = "test-secret";
 process.env.SMITHERS_HUB_BOOTSTRAP_TOKEN = "shub_test_token";
 
 const { app } = await import("../src/server.js");
+const { env } = await import("../src/env.js");
 
 let server;
 let baseUrl;
 const token = "shub_test_token";
+const telegramEnvKeys = [
+  "telegramBotToken",
+  "telegramApprovalChatId",
+  "telegramChatId",
+  "telegramThreadId",
+  "telegramWebhookSecret",
+  "baseUrl"
+];
+
+function withTelegramEnv(overrides) {
+  const previous = Object.fromEntries(telegramEnvKeys.map((key) => [key, env[key]]));
+  Object.assign(env, overrides);
+  return () => Object.assign(env, previous);
+}
+
+function captureTelegramFetch(calls) {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    const href = String(url);
+    if (href.startsWith("https://api.telegram.org/")) {
+      calls.push({
+        url: href.replace(/bot[^/]+/, "bot<redacted>"),
+        body: options.body ? JSON.parse(options.body) : null
+      });
+      return new Response(JSON.stringify({ ok: true, result: {} }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    }
+    return previousFetch(url, options);
+  };
+  return () => {
+    globalThis.fetch = previousFetch;
+  };
+}
 
 function api(pathname, options = {}) {
   return fetch(`${baseUrl}${pathname}`, {
@@ -206,6 +242,159 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
     // No TELEGRAM_WEBHOOK_SECRET configured in the test env -> endpoint disabled.
     const res = await raw("/api/telegram/webhook", { method: "POST", body: { callback_query: { data: "approve:appr_x" } } }, null);
     assert.equal(res.status, 503);
+  });
+
+  it("sends approval notifications to the private Telegram approval chat without a topic thread", async () => {
+    const calls = [];
+    const restoreFetch = captureTelegramFetch(calls);
+    const restoreEnv = withTelegramEnv({
+      telegramBotToken: "test-bot-token",
+      telegramApprovalChatId: "12345",
+      telegramChatId: "-100999",
+      telegramThreadId: "77",
+      baseUrl: "https://hub.example"
+    });
+    try {
+      const created = await api("/api/capabilities/implement-change-gated/run", {
+        method: "POST",
+        body: { input: { workPrompt: "Private approval notification", deploy: true } }
+      });
+      assert.equal(created.run.status, "waiting_approval");
+      const send = calls.find((call) => call.url.endsWith("/sendMessage"));
+      assert.ok(send);
+      assert.equal(send.body.chat_id, "12345");
+      assert.equal(Object.hasOwn(send.body, "message_thread_id"), false);
+      assert.match(send.body.text, /Title: Approve Implement Change \(gated\)/);
+      assert.match(send.body.text, /Workflow: Implement Change \(gated\) \(implement-change-gated\)/);
+      assert.match(send.body.text, /Deploy: yes/);
+      assert.match(send.body.text, /Run link: https:\/\/hub\.example\/app#runs\//);
+      assert.match(send.body.text, /Approval link: https:\/\/hub\.example\/app#approvals\//);
+      const buttons = send.body.reply_markup.inline_keyboard.flat();
+      assert.ok(buttons.find((button) => button.text === "Open approval" && button.url.includes("/app#approvals/")));
+      assert.ok(buttons.find((button) => button.text === "Approve" && /^approval:approve:appr_[a-f0-9]{20}$/.test(button.callback_data)));
+    } finally {
+      restoreEnv();
+      restoreFetch();
+    }
+  });
+
+  it("resolves Telegram webhook callback approve and reject decisions", async () => {
+    const calls = [];
+    const restoreFetch = captureTelegramFetch(calls);
+    const restoreEnv = withTelegramEnv({
+      telegramBotToken: "test-bot-token",
+      telegramApprovalChatId: "12345",
+      telegramChatId: "",
+      telegramThreadId: "",
+      telegramWebhookSecret: "telegram-test-secret",
+      baseUrl: "https://hub.example"
+    });
+    try {
+      const approveRun = await api("/api/capabilities/implement-change-gated/run", {
+        method: "POST",
+        body: { input: { workPrompt: "Approve from Telegram", deploy: false } }
+      });
+      const approveApproval = (await api("/api/approvals?status=pending")).approvals.find((item) => item.runId === approveRun.run.id);
+      assert.ok(approveApproval);
+      const approved = await raw(
+        "/api/telegram/webhook",
+        {
+          method: "POST",
+          headers: { "x-telegram-bot-api-secret-token": "telegram-test-secret" },
+          body: {
+            callback_query: {
+              id: "cb-approve",
+              data: `approval:approve:${approveApproval.id}`,
+              from: { id: 42, username: "fran" },
+              message: { chat: { id: 12345 } }
+            }
+          }
+        },
+        null
+      );
+      assert.equal(approved.status, 200);
+      assert.equal(approved.data.approval.status, "approved");
+      assert.equal((await api(`/api/runs/${approveRun.run.id}`)).run.status, "queued");
+
+      const rejectRun = await api("/api/capabilities/implement-change-gated/run", {
+        method: "POST",
+        body: { input: { workPrompt: "Reject from Telegram", deploy: false } }
+      });
+      const rejectApproval = (await api("/api/approvals?status=pending")).approvals.find((item) => item.runId === rejectRun.run.id);
+      assert.ok(rejectApproval);
+      const rejected = await raw(
+        "/api/telegram/webhook",
+        {
+          method: "POST",
+          headers: { "x-telegram-bot-api-secret-token": "telegram-test-secret" },
+          body: {
+            callback_query: {
+              id: "cb-reject",
+              data: `reject:${rejectApproval.id}`,
+              from: { id: 42, username: "fran" },
+              message: { chat: { id: 12345 } }
+            }
+          }
+        },
+        null
+      );
+      assert.equal(rejected.status, 200);
+      assert.equal(rejected.data.approval.status, "rejected");
+      assert.equal((await api(`/api/runs/${rejectRun.run.id}`)).run.status, "cancelled");
+      const ackCalls = calls.filter((call) => call.url.endsWith("/answerCallbackQuery"));
+      assert.ok(ackCalls.find((call) => call.body.callback_query_id === "cb-approve"));
+      assert.ok(ackCalls.find((call) => call.body.callback_query_id === "cb-reject"));
+    } finally {
+      restoreEnv();
+      restoreFetch();
+    }
+  });
+
+  it("rejects invalid Telegram callback data with a useful error", async () => {
+    const calls = [];
+    const restoreFetch = captureTelegramFetch(calls);
+    const restoreEnv = withTelegramEnv({
+      telegramBotToken: "test-bot-token",
+      telegramApprovalChatId: "12345",
+      telegramWebhookSecret: "telegram-test-secret"
+    });
+    try {
+      const res = await raw(
+        "/api/telegram/webhook",
+        {
+          method: "POST",
+          headers: { "x-telegram-bot-api-secret-token": "telegram-test-secret" },
+          body: { callback_query: { id: "cb-invalid", data: "approval:maybe:appr_bad", message: { chat: { id: 12345 } } } }
+        },
+        null
+      );
+      assert.equal(res.status, 400);
+      assert.equal(res.data.error, "invalid approval decision");
+      assert.ok(calls.find((call) => call.url.endsWith("/answerCallbackQuery") && call.body.callback_query_id === "cb-invalid"));
+    } finally {
+      restoreEnv();
+      restoreFetch();
+    }
+  });
+
+  it("keeps approval API and detail deep links available", async () => {
+    const created = await api("/api/capabilities/idea-to-product/run", {
+      method: "POST",
+      body: { input: { idea: "Deep link approval test", deploy: false } }
+    });
+    const approval = (await api("/api/approvals?status=pending")).approvals.find((item) => item.runId === created.run.id);
+    assert.ok(approval);
+    assert.equal(approval.deepLink, `/app#approvals/${approval.id}`);
+    assert.equal(approval.deepLinkRun, `/app#runs/${created.run.id}`);
+    assert.equal(approval.context.run.id, created.run.id);
+    assert.equal(approval.context.deploy, false);
+    assert.ok(approval.payloadSummary.input);
+
+    const detail = await api(`/api/approvals/${approval.id}`);
+    assert.equal(detail.approval.deepLink, `/app#approvals/${approval.id}`);
+    assert.equal(detail.approval.context.workflow.slug, "idea-to-product");
+    const appPage = await fetch(`${baseUrl}/app#approvals/${approval.id}`);
+    assert.equal(appPage.status, 200);
   });
 
   it("has a readiness probe and run pagination metadata", async () => {

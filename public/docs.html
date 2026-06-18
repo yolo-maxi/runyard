@@ -40,13 +40,18 @@ SMITHERS_RUNNER_TAGS=linux,node,git,shell,web,smithers \
 smithers-hub-runner</pre>
         <h2>Agent Discovery</h2>
         <p><a href="/llms.txt">/llms.txt</a> and <a href="/openapi.json">/openapi.json</a> describe the agent-facing surface.</p>
+        <h2>Telegram approvals</h2>
+        <p>Approval notifications are meant for a private operator DM. Configure <code>TELEGRAM_BOT_TOKEN</code> plus <code>TELEGRAM_APPROVAL_CHAT_ID</code> or <code>SMITHERS_TELEGRAM_APPROVAL_CHAT_ID</code>. Legacy <code>TELEGRAM_CHAT_ID</code>/<code>TELEGRAM_THREAD_ID</code> remains a fallback when no private approval chat is set.</p>
         <h2 id="deep-links">Deep links</h2>
         <p>Every console page, run, workflow, agent, skill, knowledge entry, artifact, and approval has a stable URL — paste it into chat or docs and it survives reload. Each card and detail view shows a 🔗 button to copy that link to your clipboard. Examples:</p>
         <pre class="json">/app#runs                                 # all runs (home)
 /app#runs/&lt;id&gt;                            # one run's detail
 /app#runs/&lt;id&gt;/logs                       # jump to the log timeline
 /app#runs/&lt;id&gt;/artifacts                  # jump to artifacts
-/app#workflows/&lt;slug&gt;                     # a workflow with its Run form
+/app#workflows/&lt;slug&gt;                     # workflow detail (description, agents, runs)
+/app#workflows/&lt;slug&gt;/run                 # workflow detail with the Run form open
+/app#workflows/&lt;slug&gt;/runs                # latest runs for this workflow
+/app#workflows/&lt;slug&gt;/edit                # workflow detail with the Edit modal open
 /app#agents/agents/&lt;slug&gt;                 # a specific agent
 /app#agents/skills/&lt;slug&gt;                 # a specific skill
 /app#agents/knowledge/&lt;slug&gt;              # a knowledge entry

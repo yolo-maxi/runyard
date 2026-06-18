@@ -837,10 +837,399 @@ details.advanced[open] summary {
   gap: 2px;
 }
 
+/* ---- Pills (skills/agents/tools) + chips (project/branch/version) ---- */
+.pills {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.pills .pill {
+  background: #e5fbf6;
+  border: 1px solid #b7e7df;
+  color: var(--brand);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.pills .pill a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.pills .pill a:hover {
+  text-decoration: underline;
+}
+
+.pills .pill.tag {
+  background: var(--soft);
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+.pill-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 0;
+  flex-wrap: wrap;
+}
+
+.pill-label {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+  min-width: 70px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: var(--soft);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chip-project {
+  background: #ecfeff;
+  border-color: #bae6fd;
+  color: #0369a1;
+}
+
+.chip-branch {
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+  color: #166534;
+}
+
+.chip-version {
+  background: #f5f3ff;
+  border-color: #ddd6fe;
+  color: #5b21b6;
+}
+
+.chip-runner {
+  background: #fef3c7;
+  border-color: #fde68a;
+  color: #92400e;
+}
+
+.run-card-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 2px 0 0;
+}
+
+.run-card-title a {
+  text-decoration: none;
+}
+
+.run-card-title a:hover {
+  color: var(--brand);
+  text-decoration: underline;
+}
+
+.run-desc {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  /* 2-line clamp keeps each card compact while giving substance. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.run-meta {
+  margin: 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.run-meta .run-step {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.run-meta .run-timing {
+  flex: 0 0 auto;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.run-cap-link {
+  font-size: 12px;
+  color: var(--brand);
+  text-decoration: none;
+  background: #e5fbf6;
+  border: 1px solid #b7e7df;
+  border-radius: 6px;
+  padding: 1px 6px;
+}
+
+.run-cap-link:hover {
+  text-decoration: underline;
+}
+
+/* ---- Run detail header sub-row ---- */
+.run-detail-sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: -8px 0 8px;
+  font-size: 13px;
+}
+
+.run-detail-desc {
+  margin: 0 0 10px;
+  font-size: 15px;
+  line-height: 1.5;
+  /* 2-line clamp for the descriptive paragraph. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.run-detail-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 10px;
+}
+
+.run-id-mono {
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  background: var(--soft);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 1px 6px;
+  color: var(--muted);
+}
+
+/* ---- Workflow card (list) + detail page ---- */
+.workflow-card .workflow-desc {
+  margin: 0 0 6px;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.workflow-card .workflow-meta {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.workflow-detail-desc {
+  font-size: 15px;
+  line-height: 1.5;
+  margin: -8px 0 6px;
+}
+
+.workflow-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 12px;
+  font-size: 13px;
+  align-items: center;
+}
+
+.wf-run-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.wf-run-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.wf-run-row .wf-run-title {
+  flex: 1 1 60%;
+  text-decoration: none;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.wf-run-row .wf-run-title:hover {
+  color: var(--brand);
+  text-decoration: underline;
+}
+
+.wf-run-row .wf-run-when {
+  font-size: 12px;
+}
+
+/* ---- Agent cards ---- */
+.agent-card .agent-desc {
+  margin: 0 0 6px;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ---- Approval inbox + detail ---- */
+.approval-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.approval-card {
+  display: grid;
+  gap: 8px;
+}
+
+.approval-card h3 {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.approval-card h3 a {
+  text-decoration: none;
+}
+
+.approval-card h3 a:hover {
+  color: var(--brand);
+  text-decoration: underline;
+}
+
+.approval-card-head,
+.approval-detail-sub {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.approval-card-desc {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.approval-card-meta,
+.approval-detail-sub {
+  margin: 0;
+  font-size: 13px;
+}
+
+.approval-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 420px;
+  gap: 16px;
+  align-items: start;
+}
+
+.approval-description {
+  margin: 0 0 12px;
+  line-height: 1.55;
+}
+
+.approval-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.approval-facts p {
+  margin: 0;
+  background: var(--soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  overflow-wrap: anywhere;
+}
+
+.approval-run-id {
+  display: inline-block;
+  margin-left: 6px;
+  overflow-wrap: anywhere;
+}
+
+.approval-decision {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.approval-decision label {
+  display: grid;
+  gap: 5px;
+  color: #334155;
+  font-size: 14px;
+}
+
+.approval-side .json {
+  max-height: 520px;
+}
+
+/* ---- Mobile tweaks for the new dense layouts ---- */
+@media (max-width: 640px) {
+  .pill-label {
+    min-width: 56px;
+  }
+
+  .run-meta {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .wf-run-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .wf-run-row .wf-run-title {
+    white-space: normal;
+  }
+}
+
 /* ---- Tablet / phone: stack the console, turn the sidebar into a compact scroll nav ---- */
 @media (max-width: 850px) {
   .shell,
-  .split {
+  .split,
+  .approval-detail-grid {
     grid-template-columns: 1fr;
   }
 

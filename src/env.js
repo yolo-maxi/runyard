@@ -63,6 +63,12 @@ export const env = {
   sessionSecret: resolveSessionSecret(),
   bootstrapToken: process.env.SMITHERS_HUB_BOOTSTRAP_TOKEN || "",
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || process.env.SMITHERS_TELEGRAM_BOT_TOKEN || "",
+  telegramApprovalChatId:
+    process.env.TELEGRAM_APPROVAL_CHAT_ID ||
+    process.env.SMITHERS_TELEGRAM_APPROVAL_CHAT_ID ||
+    process.env.TELEGRAM_APPROVAL_USER_ID ||
+    process.env.SMITHERS_TELEGRAM_APPROVAL_USER_ID ||
+    "",
   telegramChatId: process.env.TELEGRAM_CHAT_ID || process.env.SMITHERS_TELEGRAM_CHAT_ID || "",
   telegramThreadId: process.env.TELEGRAM_THREAD_ID || process.env.SMITHERS_TELEGRAM_THREAD_ID || "",
   telegramWebhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET || "",
