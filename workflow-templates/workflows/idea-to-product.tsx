@@ -5,14 +5,17 @@
 import { createHash, randomBytes } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { createSmithers, Sequence, ClaudeCodeAgent } from "smithers-orchestrator";
 import { z } from "zod/v4";
 
-const PRODUCTS_ROOT = process.env.IDEA_PRODUCTS_ROOT || "/home/fran/idea-products";
+const PRODUCTS_ROOT = process.env.IDEA_PRODUCTS_ROOT || path.join(os.homedir(), "idea-products");
 const STATIC_ROOT = process.env.REPOBOX_STATIC_ROOT || "/var/www/repo.box/subdomains";
 const CADDYFILE = process.env.REPOBOX_CADDYFILE || "/etc/caddy/Caddyfile";
 const PUBLIC_SUFFIX = process.env.REPOBOX_PUBLIC_SUFFIX || "repo.box";
+const REPOBOX_HOST = process.env.REPOBOX_HOST || "fran@204.168.190.248";
+const REPOBOX_SSH_KEY = process.env.REPOBOX_SSH_KEY || path.join(os.homedir(), ".ssh/id_ed25519");
 
 const ideaSchema = z.object({
   idea: z.string().describe("Raw product idea."),
@@ -108,6 +111,69 @@ function packageScript(pkgPath: string, name: string) {
   if (!existsSync(pkgPath)) return false;
   const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
   return Boolean(pkg.scripts?.[name]);
+}
+
+function remoteQuote(value: string) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+function caddyBlock(subdomain: string, target: string, publicAccess: boolean, cookie: string, token: string) {
+  return publicAccess ? `
+${subdomain}.${PUBLIC_SUFFIX} {
+  root * ${target}
+  try_files {path} /index.html
+  file_server
+}
+` : `
+${subdomain}.${PUBLIC_SUFFIX} {
+  @token query token ${token}
+  handle @token {
+    header Set-Cookie "${cookie}=${token}; Path=/; Max-Age=2592000; Secure; HttpOnly; SameSite=Lax"
+    redir / 302
+  }
+
+  @authed header Cookie *${cookie}=${token}*
+  handle @authed {
+    root * ${target}
+    try_files {path} /index.html
+    file_server
+  }
+
+  respond "Unauthorized" 401
+}
+`;
+}
+
+function installCaddyBlock(block: string, subdomain: string, target: string) {
+  const routePattern = `^${subdomain.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")}\\.${PUBLIC_SUFFIX.replace(/\./g, "\\.")} {`;
+  if (existsSync(CADDYFILE)) {
+    mkdirSync(target, { recursive: true });
+    const escapedBlock = JSON.stringify(block);
+    shell(
+      `if ! grep -q '${routePattern}' ${JSON.stringify(CADDYFILE)}; then ` +
+        `printf %s ${escapedBlock} | sudo tee -a ${JSON.stringify(CADDYFILE)} >/dev/null; fi; ` +
+        `sudo caddy validate --config ${JSON.stringify(CADDYFILE)} >/dev/null; sudo systemctl reload caddy`
+    );
+    return;
+  }
+  const remoteTarget = target;
+  const remoteCmd =
+    `mkdir -p ${remoteQuote(remoteTarget)}; ` +
+    `if ! grep -q '${routePattern}' ${remoteQuote(CADDYFILE)}; then cat <<'CADDY_BLOCK' | sudo tee -a ${remoteQuote(CADDYFILE)} >/dev/null\n${block}\nCADDY_BLOCK\nfi; ` +
+    `sudo caddy validate --config ${remoteQuote(CADDYFILE)} >/dev/null; sudo systemctl reload caddy`;
+  shell(`ssh -i ${JSON.stringify(REPOBOX_SSH_KEY)} -o BatchMode=yes -o StrictHostKeyChecking=accept-new ${JSON.stringify(REPOBOX_HOST)} ${JSON.stringify(remoteCmd)}`);
+}
+
+function copyDist(dist: string, target: string) {
+  if (existsSync(CADDYFILE)) {
+    mkdirSync(target, { recursive: true });
+    shell(`rsync -a --delete ${JSON.stringify(dist + "/")} ${JSON.stringify(target + "/")}`);
+    return;
+  }
+  shell(
+    `ssh -i ${JSON.stringify(REPOBOX_SSH_KEY)} -o BatchMode=yes -o StrictHostKeyChecking=accept-new ${JSON.stringify(REPOBOX_HOST)} ${JSON.stringify(`mkdir -p ${remoteQuote(target)}`)}; ` +
+      `rsync -a --delete -e ${JSON.stringify(`ssh -i ${REPOBOX_SSH_KEY} -o BatchMode=yes -o StrictHostKeyChecking=accept-new`)} ${JSON.stringify(dist + "/")} ${JSON.stringify(`${REPOBOX_HOST}:${target}/`)}`
+  );
 }
 
 export default smithers((ctx) => {
@@ -211,40 +277,10 @@ export default smithers((ctx) => {
                   verify: "deploy=false"
                 };
               }
-              mkdirSync(target, { recursive: true });
-              shell(`rsync -a --delete ${JSON.stringify(dist + "/")} ${JSON.stringify(target + "/")}`);
+              copyDist(dist, target);
               rmSync(path.join(target, ".git"), { recursive: true, force: true });
               rmSync(path.join(target, "node_modules"), { recursive: true, force: true });
-              const block = ctx.input.publicAccess ? `
-${subdomain}.${PUBLIC_SUFFIX} {
-  root * ${target}
-  try_files {path} /index.html
-  file_server
-}
-` : `
-${subdomain}.${PUBLIC_SUFFIX} {
-  @token query token ${token}
-  handle @token {
-    header Set-Cookie "${cookie}=${token}; Path=/; Max-Age=2592000; Secure; HttpOnly; SameSite=Lax"
-    redir / 302
-  }
-
-  @authed header Cookie *${cookie}=${token}*
-  handle @authed {
-    root * ${target}
-    try_files {path} /index.html
-    file_server
-  }
-
-  respond "Unauthorized" 401
-}
-`;
-              const escapedBlock = JSON.stringify(block);
-              shell(
-                `if ! grep -q '^${subdomain.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")}\\.${PUBLIC_SUFFIX.replace(/\./g, "\\.")} {' ${JSON.stringify(CADDYFILE)}; then ` +
-                  `printf %s ${escapedBlock} | sudo tee -a ${JSON.stringify(CADDYFILE)} >/dev/null; fi; ` +
-                  `sudo caddy validate --config ${JSON.stringify(CADDYFILE)} >/dev/null; sudo systemctl reload caddy`
-              );
+              installCaddyBlock(caddyBlock(subdomain, target, Boolean(ctx.input.publicAccess), cookie, token), subdomain, target);
               const url = `https://${subdomain}.${PUBLIC_SUFFIX}`;
               const unauth = shell(`curl -s -o /dev/null -w "%{http_code}" --max-time 15 ${JSON.stringify(url)}`).trim();
               const auth = ctx.input.publicAccess
