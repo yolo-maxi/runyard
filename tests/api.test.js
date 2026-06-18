@@ -297,3 +297,35 @@ describe("Gated implement-change capability", () => {
     assert.match(src, /ClaudeCodeAgent/);
   });
 });
+
+describe("Idea to Product capability", () => {
+  it("is seeded as an approval-gated Smithers workflow", async () => {
+    const { capabilities } = await api("/api/capabilities");
+    const cap = capabilities.find((c) => c.slug === "idea-to-product");
+    assert.ok(cap, "idea-to-product capability should be in the catalog");
+    assert.equal(cap.workflow.engine, "smithers");
+    assert.equal(cap.workflow.entry, ".smithers/workflows/idea-to-product.tsx");
+    assert.ok(cap.inputSchema.required.includes("idea"));
+    assert.deepEqual(cap.requiredRunnerTags, ["smithers", "vps"]);
+    assert.equal(cap.approvalPolicy.required, true);
+  });
+
+  it("requires approval before it can run", async () => {
+    const created = await api("/api/capabilities/idea-to-product/run", {
+      method: "POST",
+      body: { input: { idea: "A tiny dashboard for tracking launch chores", deploy: false } }
+    });
+    assert.equal(created.run.status, "waiting_approval");
+    assert.equal(created.run.capabilitySlug, "idea-to-product");
+  });
+
+  it("ships the idea-to-product workflow template in the runner bundle", () => {
+    const tpl = path.join(process.cwd(), "workflow-templates", "workflows", "idea-to-product.tsx");
+    assert.ok(existsSync(tpl));
+    const src = readFileSync(tpl, "utf8");
+    assert.match(src, /repo\.box/);
+    assert.match(src, /Set-Cookie/);
+    assert.match(src, /pnpm build/);
+    assert.match(src, /ClaudeCodeAgent/);
+  });
+});

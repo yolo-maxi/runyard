@@ -177,5 +177,41 @@ export const seedCapabilities = [
     requiredAgents: ["implementation-agent"],
     approvalPolicy: { required: true, reason: "Runs a coding agent that commits, pushes to origin, and can deploy to production." },
     workflow: { engine: "smithers", entry: ".smithers/workflows/implement-change-gated.tsx" }
+  },
+  {
+    slug: "idea-to-product",
+    name: "Idea to Product",
+    description:
+      "Turns a raw product idea into a scoped MVP spec, builds it with an implementation agent, verifies the basics, deploys it to a private repo.box subdomain, and returns the magic-link URL.",
+    category: "Product",
+    keywords: ["idea", "product", "mvp", "build", "test", "deploy", "repo.box", "smithers"],
+    inputSchema: {
+      type: "object",
+      required: ["idea"],
+      properties: {
+        idea: { type: "string", description: "The raw product idea." },
+        preferredSubdomain: { type: "string", description: "Optional preferred repo.box subdomain prefix." },
+        constraints: { type: "string", description: "Optional product, design, stack, or business constraints." },
+        deploy: { type: "boolean", description: "Deploy after gates pass (default true)." }
+      }
+    },
+    outputSchema: {
+      type: "object",
+      properties: {
+        expand: { type: "object" },
+        narrow: { type: "object" },
+        build: { type: "object" },
+        verify: { type: "object" },
+        deploy: { type: "object" }
+      }
+    },
+    requiredRunnerTags: ["smithers", "vps"],
+    requiredSkills: ["spec-writing", "implementation"],
+    requiredAgents: ["spec-writer", "implementation-agent"],
+    approvalPolicy: {
+      required: true,
+      reason: "Runs coding agents and can deploy a new token-protected repo.box subdomain."
+    },
+    workflow: { engine: "smithers", entry: ".smithers/workflows/idea-to-product.tsx" }
   }
 ];
