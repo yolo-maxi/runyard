@@ -16,6 +16,13 @@ const CADDYFILE = process.env.REPOBOX_CADDYFILE || "/etc/caddy/Caddyfile";
 const PUBLIC_SUFFIX = process.env.REPOBOX_PUBLIC_SUFFIX || "repo.box";
 const REPOBOX_HOST = process.env.REPOBOX_HOST || "fran@204.168.190.248";
 const REPOBOX_SSH_KEY = process.env.REPOBOX_SSH_KEY || path.join(os.homedir(), ".ssh/id_ed25519");
+const AGENT_PATH_PREFIX = [
+  path.join(os.homedir(), ".npm-global/bin"),
+  path.join(os.homedir(), ".bun/bin"),
+  path.join(os.homedir(), ".local/bin")
+].join(":");
+
+process.env.PATH = `${AGENT_PATH_PREFIX}:${process.env.PATH || ""}`;
 
 const ideaSchema = z.object({
   idea: z.string().describe("Raw product idea."),
