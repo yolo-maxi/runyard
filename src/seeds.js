@@ -125,5 +125,30 @@ export const seedCapabilities = [
     requiredAgents: ["implementation-agent"],
     approvalPolicy: { required: true, reason: "Runs a coding agent that can modify files and run commands on the runner." },
     workflow: { engine: "smithers", entry: ".smithers/workflows/implement.tsx" }
+  },
+  {
+    slug: "smart-contract-audit",
+    name: "Smart Contract Audit",
+    description:
+      "Sandboxed Solidity audit: sanitizes the target into /tmp, builds local auditor bundles, runs read-only Smithers audit agents over them, and consolidates findings into a Markdown report. Artifacts only — never writes the target.",
+    category: "Security",
+    keywords: ["audit", "solidity", "security", "smart contract", "smithers"],
+    inputSchema: {
+      type: "object",
+      required: ["target"],
+      properties: {
+        target: { type: "string", description: "Path to a repo or contracts directory to audit (on the runner)." },
+        scope: { type: "string", description: "Optional scope/notes for the auditors." },
+        maxAgents: { type: "number", description: "How many specialist audit agents to run (1-12)." }
+      }
+    },
+    outputSchema: {
+      type: "object",
+      properties: { report: { type: "string" }, criticalHigh: { type: "number" }, requiredFixes: { type: "array" } }
+    },
+    requiredRunnerTags: ["smithers"],
+    requiredSkills: ["code-review"],
+    approvalPolicy: { required: false },
+    workflow: { engine: "smithers", entry: ".smithers/workflows/smart-contract-audit.tsx" }
   }
 ];

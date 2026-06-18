@@ -1,6 +1,6 @@
 import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -236,5 +236,35 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
     // A different token (admin) tries to register using my runner id -> must NOT overwrite mine.
     const other = await api("/api/runners/register", { method: "POST", body: { id: myId, name: "hijack", tags: ["smithers", "node"] } });
     assert.notEqual(other.runner.id, myId);
+  });
+});
+
+describe("Smart Contract Audit capability", () => {
+  it("is seeded as a real Smithers workflow capability", async () => {
+    const { capabilities } = await api("/api/capabilities");
+    const cap = capabilities.find((c) => c.slug === "smart-contract-audit");
+    assert.ok(cap, "smart-contract-audit capability should be in the catalog");
+    assert.equal(cap.workflow.engine, "smithers");
+    assert.equal(cap.workflow.entry, ".smithers/workflows/smart-contract-audit.tsx");
+    assert.ok(cap.inputSchema.required.includes("target"));
+    assert.equal(cap.enabled, true);
+  });
+
+  it("is runnable through the API (creates a queued run)", async () => {
+    const created = await api("/api/capabilities/smart-contract-audit/run", {
+      method: "POST",
+      body: { input: { target: "/tmp/does-not-matter-for-queue", maxAgents: 2 } }
+    });
+    assert.equal(created.run.status, "queued");
+    assert.equal(created.run.capabilitySlug, "smart-contract-audit");
+  });
+
+  it("ships the workflow template in the runner bundle directory", () => {
+    const tpl = path.join(process.cwd(), "workflow-templates", "workflows", "smart-contract-audit.tsx");
+    assert.ok(existsSync(tpl), "bundled workflow template should exist");
+    const src = readFileSync(tpl, "utf8");
+    assert.match(src, /prepare-sandbox\.sh/);
+    assert.match(src, /build-bundles\.sh/);
+    assert.match(src, /ClaudeCodeAgent/);
   });
 });
