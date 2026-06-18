@@ -206,6 +206,7 @@ function buildCliTarball() {
   if (cliTarballPath && existsSync(cliTarballPath)) return cliTarballPath;
   const out = path.join(env.dataDir, "cli.tgz");
   const paths = ["bin", "src", "package.json"];
+  if (existsSync(path.join(env.root, "workflow-templates"))) paths.push("workflow-templates");
   // -h dereferences symlinks so pnpm's symlinked node_modules/commander is archived as real files.
   if (existsSync(path.join(env.root, "node_modules", "commander"))) paths.push("node_modules/commander");
   execFileSync("tar", ["czhf", out, "-C", env.root, ...paths]);
@@ -399,7 +400,9 @@ app.get("/api/dashboard", requireAuth, (_req, res) => {
 });
 
 app.get("/api/capabilities", requireAuth, (req, res) => {
-  res.json({ capabilities: listCapabilities({ q: req.query.q || "" }) });
+  // Catalog shows enabled capabilities; admins can include disabled with ?all=1.
+  const includeDisabled = req.query.all === "1" && (req.token.scopes || []).includes("admin");
+  res.json({ capabilities: listCapabilities({ q: req.query.q || "", includeDisabled }) });
 });
 
 app.post("/api/capabilities", requireAuth, requireScopes("admin"), (req, res) => {

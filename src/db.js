@@ -323,16 +323,13 @@ export function normalizeCapability(row) {
   };
 }
 
-export function listCapabilities({ q = "" } = {}) {
+export function listCapabilities({ q = "", includeDisabled = false } = {}) {
   const like = `%${q}%`;
-  const rows = q
-    ? all(
-        `SELECT * FROM capabilities
-         WHERE name LIKE ? OR slug LIKE ? OR description LIKE ? OR keywords LIKE ?
-         ORDER BY category, name`,
-        [like, like, like, like]
-      )
-    : all("SELECT * FROM capabilities ORDER BY category, name");
+  const enabledClause = includeDisabled ? "" : "enabled = 1";
+  const searchClause = q ? "(name LIKE ? OR slug LIKE ? OR description LIKE ? OR keywords LIKE ?)" : "";
+  const where = [enabledClause, searchClause].filter(Boolean).join(" AND ");
+  const sql = `SELECT * FROM capabilities ${where ? `WHERE ${where}` : ""} ORDER BY category, name`;
+  const rows = q ? all(sql, [like, like, like, like]) : all(sql);
   return rows.map(normalizeCapability);
 }
 

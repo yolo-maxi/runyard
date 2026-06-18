@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { spawn } from "node:child_process";
+import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
@@ -230,6 +230,45 @@ runnerCommand
       tags: opts.tags.split(",").map((tag) => tag.trim()).filter(Boolean)
     });
     print(data, program.opts().json);
+  });
+
+function commandExists(cmd) {
+  return spawnSync("/usr/bin/env", ["sh", "-c", `command -v ${cmd} >/dev/null 2>&1`]).status === 0;
+}
+
+runnerCommand
+  .command("setup")
+  .description("Scaffold a Smithers workspace so this machine can execute workflows")
+  .option("--workspace <dir>", "workspace directory", process.cwd())
+  .option("--location <loc>", "intended runner location label: vps | local", "local")
+  .action((opts) => {
+    const ws = path.resolve(opts.workspace);
+    const checks = ["node", "bun", "smithers", "claude", "codex"];
+    console.log("Prerequisites:", checks.map((c) => `${c}:${commandExists(c) ? "ok" : "—"}`).join("  "));
+    if (!commandExists("bun") || !commandExists("smithers")) {
+      console.error("\nInstall the Smithers engine first, then re-run:");
+      console.error("  curl -fsSL https://bun.sh/install | bash   # if bun is missing");
+      console.error("  bun add -g smithers-orchestrator");
+      process.exit(1);
+    }
+    if (!commandExists("claude") && !commandExists("codex")) {
+      console.warn("\nWarning: no 'claude' or 'codex' CLI on PATH. Workflows need at least one authed agent CLI.");
+    }
+    mkdirSync(ws, { recursive: true });
+    console.log(`\nScaffolding Smithers workspace in ${ws} ...`);
+    const init = spawnSync("smithers", ["init"], { cwd: ws, stdio: "inherit" });
+    if (init.status !== 0) {
+      console.error("`smithers init` failed.");
+      process.exit(1);
+    }
+    // Overlay the Hub's bundled workflow templates (hello + imported examples) into the workspace.
+    const tpl = fileURLToPath(new URL("../workflow-templates", import.meta.url));
+    if (existsSync(tpl)) {
+      cpSync(path.join(tpl, "workflows"), path.join(ws, ".smithers", "workflows"), { recursive: true });
+      cpSync(path.join(tpl, "examples"), path.join(ws, ".smithers", "examples"), { recursive: true });
+      console.log("Added Hub workflow templates (hello, fan-out-fan-in).");
+    }
+    console.log(`\n✓ Workspace ready. Start the runner:\n  smithers-hub runner start --workspace ${ws} --location ${opts.location}`);
   });
 
 runnerCommand
