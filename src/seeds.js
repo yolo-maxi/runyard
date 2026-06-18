@@ -150,5 +150,32 @@ export const seedCapabilities = [
     requiredSkills: ["code-review"],
     approvalPolicy: { required: false },
     workflow: { engine: "smithers", entry: ".smithers/workflows/smart-contract-audit.tsx" }
+  },
+  {
+    slug: "implement-change-gated",
+    name: "Implement Change (gated)",
+    description:
+      "Runs an implementation agent for a change request, then gates it (pnpm test, staged diff, a sane commit, push to origin) before optionally deploying to the repo.box prod target. deploy=false stops after push and reports what would deploy.",
+    category: "Engineering",
+    keywords: ["implement", "build", "test", "git", "deploy", "gate", "smithers"],
+    inputSchema: {
+      type: "object",
+      required: ["workPrompt"],
+      properties: {
+        workPrompt: { type: "string", description: "The change request / implementation prompt." },
+        deploy: { type: "boolean", description: "Deploy to prod after gates pass (default false)." },
+        targetBranch: { type: "string", description: "Branch to push (default main)." },
+        commitMessage: { type: "string", description: "Optional commit message." }
+      }
+    },
+    outputSchema: {
+      type: "object",
+      properties: { commit: { type: "string" }, push: { type: "object" }, deploy: { type: "object" } }
+    },
+    requiredRunnerTags: ["smithers"],
+    requiredSkills: ["implementation"],
+    requiredAgents: ["implementation-agent"],
+    approvalPolicy: { required: true, reason: "Runs a coding agent that commits, pushes to origin, and can deploy to production." },
+    workflow: { engine: "smithers", entry: ".smithers/workflows/implement-change-gated.tsx" }
   }
 ];

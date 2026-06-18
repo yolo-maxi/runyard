@@ -268,3 +268,32 @@ describe("Smart Contract Audit capability", () => {
     assert.match(src, /ClaudeCodeAgent/);
   });
 });
+
+describe("Gated implement-change capability", () => {
+  it("is seeded as an approval-gated Smithers workflow", async () => {
+    const { capabilities } = await api("/api/capabilities");
+    const cap = capabilities.find((c) => c.slug === "implement-change-gated");
+    assert.ok(cap, "implement-change-gated capability should be in the catalog");
+    assert.equal(cap.workflow.engine, "smithers");
+    assert.equal(cap.workflow.entry, ".smithers/workflows/implement-change-gated.tsx");
+    assert.ok(cap.inputSchema.required.includes("workPrompt"));
+    assert.equal(cap.approvalPolicy.required, true);
+  });
+
+  it("requires approval before it can run", async () => {
+    const created = await api("/api/capabilities/implement-change-gated/run", {
+      method: "POST",
+      body: { input: { workPrompt: "noop", deploy: false } }
+    });
+    assert.equal(created.run.status, "waiting_approval");
+  });
+
+  it("ships the gated workflow template in the runner bundle", () => {
+    const tpl = path.join(process.cwd(), "workflow-templates", "workflows", "implement-change-gated.tsx");
+    assert.ok(existsSync(tpl));
+    const src = readFileSync(tpl, "utf8");
+    assert.match(src, /pnpm/);
+    assert.match(src, /git.*push.*origin|push", "origin"/);
+    assert.match(src, /ClaudeCodeAgent/);
+  });
+});
