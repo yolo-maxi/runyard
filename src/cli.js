@@ -309,31 +309,37 @@ function jsonWriter(getFile, key = "mcpServers", entry = (s) => ({ command: s.co
   };
 }
 
-// Registry of supported AI clients: how to detect them and where/how to write their MCP config.
+// Registry of supported AI clients: detection, where/how to write config, and how to activate it.
 const CLIENTS = {
   "claude-code": {
     detect: () => existsSync(path.join(HOME, ".claude.json")) || existsSync(path.join(HOME, ".claude")),
-    apply: jsonWriter((opts) => (opts.global ? path.join(HOME, ".claude.json") : path.join(process.cwd(), ".mcp.json")))
+    apply: jsonWriter((opts) => (opts.global ? path.join(HOME, ".claude.json") : path.join(process.cwd(), ".mcp.json"))),
+    activate: "type /mcp in a Claude Code session (or reopen Claude Code in this folder) and approve it"
   },
   "claude-desktop": {
     detect: () => existsSync(path.dirname(claudeDesktopConfigPath())),
-    apply: jsonWriter(() => claudeDesktopConfigPath())
+    apply: jsonWriter(() => claudeDesktopConfigPath()),
+    activate: "fully quit Claude Desktop (Cmd/Ctrl+Q — not just close the window) and reopen it"
   },
   cursor: {
     detect: () => existsSync(path.join(HOME, ".cursor")),
-    apply: jsonWriter(() => path.join(HOME, ".cursor", "mcp.json"))
+    apply: jsonWriter(() => path.join(HOME, ".cursor", "mcp.json")),
+    activate: "Cursor → Settings → MCP → enable 'smithers-hub' (or reload the window)"
   },
   windsurf: {
     detect: () => existsSync(path.join(HOME, ".codeium")),
-    apply: jsonWriter(() => path.join(HOME, ".codeium", "windsurf", "mcp_config.json"))
+    apply: jsonWriter(() => path.join(HOME, ".codeium", "windsurf", "mcp_config.json")),
+    activate: "Windsurf → open Cascade → MCP settings → Refresh (or restart Windsurf)"
   },
   gemini: {
     detect: () => existsSync(path.join(HOME, ".gemini")),
-    apply: jsonWriter(() => path.join(HOME, ".gemini", "settings.json"))
+    apply: jsonWriter(() => path.join(HOME, ".gemini", "settings.json")),
+    activate: "start a new Gemini CLI session (run `gemini` again)"
   },
   vscode: {
     detect: () => existsSync(path.join(process.cwd(), ".vscode")) || existsSync(path.join(HOME, ".vscode")),
-    apply: jsonWriter(() => path.join(process.cwd(), ".vscode", "mcp.json"), "servers", (s) => ({ type: "stdio", command: s.command, args: s.args }))
+    apply: jsonWriter(() => path.join(process.cwd(), ".vscode", "mcp.json"), "servers", (s) => ({ type: "stdio", command: s.command, args: s.args })),
+    activate: "VS Code → Command Palette → 'MCP: List Servers' → Start (or reload the window)"
   },
   codex: {
     detect: () => existsSync(path.join(HOME, ".codex")),
@@ -341,7 +347,8 @@ const CLIENTS = {
       const file = path.join(HOME, ".codex", "config.toml");
       upsertToml(file, name, server);
       return file;
-    }
+    },
+    activate: "start a new Codex session (it loads MCP servers on launch)"
   }
 };
 
@@ -367,9 +374,10 @@ function installMcp(opts) {
       continue;
     }
     const file = c.apply(serverName, server, opts);
-    console.log(`✓ ${id}: ${serverName} -> ${file}`);
+    console.log(`✓ ${id}: wrote "${serverName}" -> ${file}`);
+    console.log(`    to load it: ${c.activate}`);
   }
-  console.log(`\nThe server reads its token from ~/.smithers-hub (remote "${remote}"). Restart the client to load it.`);
+  console.log(`\nToken is read from ~/.smithers-hub (remote "${remote}") — none is stored in the configs above.`);
 }
 
 function printMcpConfig() {
