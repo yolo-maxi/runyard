@@ -1,2 +1,2 @@
 #!/usr/bin/env node
-import "../src/runner.js";
+import "../src/smithers-runner.js";

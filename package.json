@@ -11,7 +11,7 @@
   },
   "scripts": {
     "start": "node --experimental-sqlite src/server.js",
-    "runner": "node --experimental-sqlite src/runner.js",
+    "runner": "node src/smithers-runner.js",
     "mcp": "node src/mcp.js",
     "cli": "node src/cli.js",
     "test": "node --experimental-sqlite --test tests/*.test.js"

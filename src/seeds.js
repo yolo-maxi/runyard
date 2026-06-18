@@ -70,121 +70,60 @@ export const seedKnowledge = [
   }
 ];
 
+// Capabilities ARE Smithers workflows. `workflow.entry` is the workflow file (relative to a
+// runner's .smithers workspace); the runner executes `smithers up <entry>` so the local
+// Claude Code / Codex CLI does the real work and the Hub records events, traces, and outputs.
 export const seedCapabilities = [
   {
-    slug: "review-pr",
-    name: "Review Pull Request",
-    description: "Review a GitHub pull request or local repo diff and produce structured findings.",
-    category: "Engineering",
-    keywords: ["github", "review", "pull request", "code"],
-    inputSchema: {
-      type: "object",
-      required: ["repo"],
-      properties: {
-        repo: { type: "string", description: "Repository URL or local path visible to the selected runner." },
-        pr: { type: "string", description: "PR URL/number, or omit to review current diff." },
-        focus: { type: "string", description: "Review focus such as security, tests, or regressions." }
-      }
-    },
-    outputSchema: {
-      type: "object",
-      properties: {
-        markdownReview: { type: "string" },
-        findings: { type: "array" },
-        artifacts: { type: "array" }
-      }
-    },
-    requiredRunnerTags: ["git"],
-    requiredSkills: ["code-review"],
-    requiredAgents: ["pr-reviewer"],
-    approvalPolicy: { required: false },
-    workflow: { type: "builtin", name: "review-pr" }
-  },
-  {
-    slug: "research-topic",
-    name: "Research Topic",
-    description: "Research a topic and produce a cited brief with open questions and next actions.",
-    category: "Research",
-    keywords: ["research", "brief", "sources", "analysis"],
+    slug: "hello",
+    name: "Hello (Smithers proof)",
+    description: "Minimal Smithers workflow: spawns the local Claude Code CLI and returns a structured answer. Proves real on-runner execution.",
+    category: "Examples",
+    keywords: ["smithers", "hello", "claude", "proof"],
     inputSchema: {
       type: "object",
       required: ["topic"],
-      properties: {
-        topic: { type: "string" },
-        depth: { type: "string", enum: ["quick", "standard", "deep"] },
-        sourcePreference: { type: "string" }
-      }
+      properties: { topic: { type: "string", description: "What to write a vivid sentence about." } }
     },
-    outputSchema: { type: "object", properties: { brief: { type: "string" }, sources: { type: "array" } } },
-    requiredRunnerTags: ["web"],
+    outputSchema: { type: "object", properties: { answer: { type: "string" }, wordCount: { type: "number" } } },
+    requiredRunnerTags: ["smithers"],
+    approvalPolicy: { required: false },
+    workflow: { engine: "smithers", entry: ".smithers/workflows/hello.tsx" }
+  },
+  {
+    slug: "research",
+    name: "Research",
+    description: "Smithers research workflow — the local Claude/Codex agent gathers context and returns a summary with key findings.",
+    category: "Research",
+    keywords: ["research", "smithers", "brief", "analysis"],
+    inputSchema: {
+      type: "object",
+      required: ["prompt"],
+      properties: { prompt: { type: "string", description: "The research question or topic." } }
+    },
+    outputSchema: { type: "object", properties: { summary: { type: "string" }, keyFindings: { type: "array" } } },
+    requiredRunnerTags: ["smithers"],
     requiredSkills: ["research-method"],
     requiredAgents: ["researcher"],
     approvalPolicy: { required: false },
-    workflow: { type: "builtin", name: "research-topic" }
-  },
-  {
-    slug: "prepare-spec",
-    name: "Prepare Spec",
-    description: "Turn a goal or brief into an implementation-ready product and technical spec.",
-    category: "Planning",
-    keywords: ["spec", "plan", "requirements", "acceptance criteria"],
-    inputSchema: {
-      type: "object",
-      required: ["goal"],
-      properties: {
-        goal: { type: "string" },
-        context: { type: "string" },
-        constraints: { type: "string" }
-      }
-    },
-    outputSchema: { type: "object", properties: { spec: { type: "string" }, openQuestions: { type: "array" } } },
-    requiredRunnerTags: ["node"],
-    requiredSkills: ["spec-writing"],
-    requiredAgents: ["spec-writer"],
-    approvalPolicy: { required: false },
-    workflow: { type: "builtin", name: "prepare-spec" }
+    workflow: { engine: "smithers", entry: ".smithers/workflows/research.tsx" }
   },
   {
     slug: "implement",
     name: "Implement",
-    description: "Implement a requested change in a repository, run tests, and return a patch summary.",
+    description: "Smithers implement workflow — the local coding agent makes the change, validates, and self-reviews in a loop.",
     category: "Engineering",
-    keywords: ["implement", "code", "tests", "patch"],
+    keywords: ["implement", "code", "smithers", "agent"],
     inputSchema: {
       type: "object",
-      required: ["repo", "task"],
-      properties: {
-        repo: { type: "string", description: "Local path on the runner." },
-        task: { type: "string" },
-        testCommand: { type: "string" }
-      }
+      required: ["prompt"],
+      properties: { prompt: { type: "string", description: "What to implement." } }
     },
-    outputSchema: { type: "object", properties: { summary: { type: "string" }, changedFiles: { type: "array" }, tests: { type: "string" } } },
-    requiredRunnerTags: ["git", "shell"],
-    requiredSkills: ["implementation"],
-    requiredAgents: ["implementation-agent"],
-    approvalPolicy: { required: true, reason: "Implementation may modify local repositories or run commands." },
-    workflow: { type: "builtin", name: "implement" }
-  },
-  {
-    slug: "run-smithers-workflow",
-    name: "Run Smithers Workflow",
-    description: "Run an existing Smithers workflow by ID or path and archive its logs and artifacts in the Hub.",
-    category: "Smithers",
-    keywords: ["smithers", "workflow", "orchestration", "runner"],
-    inputSchema: {
-      type: "object",
-      required: ["workflow"],
-      properties: {
-        workflow: { type: "string", description: "Smithers workflow name, path, or package reference." },
-        payload: { type: "object" }
-      }
-    },
-    outputSchema: { type: "object", properties: { result: { type: "object" }, artifacts: { type: "array" } } },
+    outputSchema: { type: "object", properties: { implement: { type: "object" }, validate: { type: "object" } } },
     requiredRunnerTags: ["smithers"],
     requiredSkills: ["implementation"],
     requiredAgents: ["implementation-agent"],
-    approvalPolicy: { required: false },
-    workflow: { type: "builtin", name: "run-smithers-workflow" }
+    approvalPolicy: { required: true, reason: "Runs a coding agent that can modify files and run commands on the runner." },
+    workflow: { engine: "smithers", entry: ".smithers/workflows/implement.tsx" }
   }
 ];

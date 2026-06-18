@@ -232,16 +232,23 @@ runnerCommand
     print(data, program.opts().json);
   });
 
-runnerCommand.command("start").description("Start a foreground runner using the current remote").action(() => {
-  const remote = resolveRemote(program.opts().remote);
-  const env = {
-    ...process.env,
-    SMITHERS_HUB_URL: program.opts().url || process.env.SMITHERS_HUB_URL || remote.url,
-    SMITHERS_HUB_TOKEN: program.opts().token || process.env.SMITHERS_HUB_TOKEN || remote.token
-  };
-  const child = spawn(process.execPath, [fileURLToPath(new URL("./runner.js", import.meta.url))], { stdio: "inherit", env });
-  child.on("exit", (code) => process.exit(code ?? 0));
-});
+runnerCommand
+  .command("start")
+  .description("Start a Smithers runner that executes workflows for the current remote")
+  .option("--workspace <dir>", "directory containing a .smithers workspace", process.cwd())
+  .option("--location <loc>", "runner location label: vps | local", "local")
+  .action((opts) => {
+    const remote = resolveRemote(program.opts().remote);
+    const env = {
+      ...process.env,
+      SMITHERS_HUB_URL: program.opts().url || process.env.SMITHERS_HUB_URL || remote.url,
+      SMITHERS_HUB_TOKEN: program.opts().token || process.env.SMITHERS_HUB_TOKEN || remote.token,
+      SMITHERS_WORKSPACE: opts.workspace,
+      SMITHERS_RUNNER_LOCATION: opts.location
+    };
+    const child = spawn(process.execPath, [fileURLToPath(new URL("./smithers-runner.js", import.meta.url))], { stdio: "inherit", env });
+    child.on("exit", (code) => process.exit(code ?? 0));
+  });
 
 program.command("mcp-config").description("Print MCP server config snippet").action(() => printMcpConfig());
 
