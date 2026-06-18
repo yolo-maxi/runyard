@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { Command } from "commander";
@@ -130,6 +131,33 @@ program.command("token-create <name>").description("Create a new access token").
   print(await client(program.opts()).post("/api/tokens", { name, scopes: ["api", "mcp", "runner"] }), true);
 });
 
+const runnerCommand = program.command("runner").description("Runner commands");
+runnerCommand
+  .command("register")
+  .description("Register this machine as a runner")
+  .option("--name <name>", os.hostname())
+  .option("--tags <tags>", "linux,macos,node,git,shell,web,smithers")
+  .action(async (opts) => {
+    const data = await client(program.opts()).post("/api/runners/register", {
+      name: opts.name,
+      hostname: os.hostname(),
+      platform: `${os.platform()} ${os.release()}`,
+      tags: opts.tags.split(",").map((tag) => tag.trim()).filter(Boolean)
+    });
+    print(data, program.opts().json);
+  });
+
+runnerCommand.command("start").description("Start a foreground runner using the current CLI config").action(() => {
+  const config = readConfig();
+  const env = {
+    ...process.env,
+    SMITHERS_HUB_URL: program.opts().url || process.env.SMITHERS_HUB_URL || config.url,
+    SMITHERS_HUB_TOKEN: program.opts().token || process.env.SMITHERS_HUB_TOKEN || config.token
+  };
+  const child = spawn(process.execPath, [new URL("./runner.js", import.meta.url).pathname], { stdio: "inherit", env });
+  child.on("exit", (code) => process.exit(code ?? 0));
+});
+
 program
   .command("runner-register")
   .description("Register this machine as a runner")
@@ -146,6 +174,15 @@ program
   });
 
 program.command("mcp-config").description("Print Claude/Codex MCP server config snippet").action(() => {
+  printMcpConfig();
+});
+
+const mcpCommand = program.command("mcp").description("MCP commands");
+mcpCommand.command("install").description("Print MCP install/config snippet").action(() => {
+  printMcpConfig();
+});
+
+function printMcpConfig() {
   const config = readConfig();
   const url = program.opts().url || config.url || "https://hub.repo.box";
   const token = program.opts().token || config.token || "<SMITHERS_HUB_TOKEN>";
@@ -153,7 +190,7 @@ program.command("mcp-config").description("Print Claude/Codex MCP server config 
     command: "smithers-hub-mcp",
     env: { SMITHERS_HUB_URL: url, SMITHERS_HUB_TOKEN: token }
   }, null, 2));
-});
+}
 
 program.parseAsync(process.argv).catch((error) => {
   console.error(error.message);

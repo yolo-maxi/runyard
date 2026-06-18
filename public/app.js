@@ -91,6 +91,7 @@ async function render() {
   if (view === "skills") return renderEditableList("skills", "Skills");
   if (view === "knowledge") return renderEditableList("knowledge", "Knowledge");
   if (view === "tokens") return renderTokens();
+  if (view === "settings") return renderSettings();
   return renderDashboard();
 }
 
@@ -314,6 +315,22 @@ async function renderTokens() {
     const data = await api("/api/tokens", { method: "POST", body: { name: $("#token-name").value, scopes: ["api", "mcp", "runner"] } });
     $("#created-token").innerHTML = `<h3>Token</h3><p class="muted">This value is shown once.</p>${json(data.token)}`;
   });
+}
+
+async function renderSettings() {
+  const setup = await api("/api/setup");
+  content.innerHTML = `${toolbar("Settings")}
+    <section class="split">
+      <div class="panel">
+        <h2>Deployment</h2>
+        ${json(setup)}
+      </div>
+      <div class="panel">
+        <h2>Telegram Approvals</h2>
+        <p>${status(setup.telegramConfigured ? "online" : "pending")}</p>
+        <p class="muted">Set <code>TELEGRAM_BOT_TOKEN</code> and <code>TELEGRAM_CHAT_ID</code> in the service environment to send approval requests to Telegram. Web, API, CLI, and MCP approvals work without Telegram.</p>
+      </div>
+    </section>`;
 }
 
 window.addEventListener("hashchange", () => {
