@@ -772,13 +772,16 @@ export function claimNextRun(runnerId) {
   if (!runner || !runner.online) return null;
   const queued = listRuns({ status: "queued", limit: 200 });
   for (const candidate of queued) {
+    // Targeting: a run pre-assigned to a specific runner (e.g. "run on my laptop" vs "run on the VPS")
+    // is only claimable by that runner. Untargeted runs are claimable by any matching runner.
+    if (candidate.runnerId && candidate.runnerId !== runnerId) continue;
     const capability = getCapability(candidate.capabilitySlug);
     if (!runnerMatches(capability, runner)) continue;
-    // Atomic claim: only succeeds if the run is still queued, so two runners can never both win it.
+    // Atomic claim: only succeeds if still queued and not targeted away, so two runners never both win it.
     const timestamp = now();
     const result = run(
-      "UPDATE runs SET runner_id=?, status='assigned', current_step='assigned to runner', assigned_at=?, updated_at=? WHERE id=? AND status='queued'",
-      [runnerId, timestamp, timestamp, candidate.id]
+      "UPDATE runs SET runner_id=?, status='assigned', current_step='assigned to runner', assigned_at=?, updated_at=? WHERE id=? AND status='queued' AND (runner_id IS NULL OR runner_id=?)",
+      [runnerId, timestamp, timestamp, candidate.id, runnerId]
     );
     if (!result.changes) continue;
     addRunEvent(candidate.id, "run.assigned", `Assigned to ${runner.name}`, { runnerId });
