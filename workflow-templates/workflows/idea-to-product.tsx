@@ -1,6 +1,6 @@
 // smithers-source: authored
 // smithers-display-name: Idea to Product
-// smithers-description: Turns a raw idea into a scoped product spec, builds it, tests it, deploys it to a private repo.box subdomain, and returns the magic-link URL.
+// smithers-description: Turns a raw idea into a scoped product spec, builds it, tests it, deploys it to repo.box, and returns the URL. Private-by-default, with an explicit publicAccess escape hatch.
 /** @jsxImportSource smithers-orchestrator */
 import { createHash, randomBytes } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -18,7 +18,8 @@ const ideaSchema = z.object({
   idea: z.string().describe("Raw product idea."),
   preferredSubdomain: z.string().default("").describe("Optional repo.box subdomain prefix."),
   constraints: z.string().default("").describe("Optional product, design, stack, or business constraints."),
-  deploy: z.boolean().default(true).describe("Deploy to repo.box after gates pass.")
+  deploy: z.boolean().default(true).describe("Deploy to repo.box after gates pass."),
+  publicAccess: z.boolean().default(false).describe("If true, deploy without auth. Default false.")
 });
 
 const expansionSchema = z.looseObject({
@@ -56,6 +57,7 @@ const deploySchema = z.looseObject({
   deployed: z.boolean(),
   url: z.string(),
   magicLink: z.string(),
+  publicAccess: z.boolean().default(false),
   subdomain: z.string(),
   target: z.string(),
   verify: z.string()
@@ -145,7 +147,8 @@ export default smithers((ctx) => {
               `- Include package.json scripts for build and at least one verification command (test or lint) when practical.\n` +
               `- Production output must be dist/, build/, or out/.\n` +
               `- Do not include credentials, .env files, source maps, databases, or node_modules in build output.\n` +
-              `- Do not deploy or edit anything outside the product directory.\n\n` +
+              `- Do not deploy or edit anything outside the product directory.\n` +
+              `- Access mode for this run: ${ctx.input.publicAccess ? "PUBLIC/no-auth, explicitly requested" : "private magic-link auth"}.\n\n` +
               `Return JSON {"summary","filesChanged":[...],"notes"}.`}
           </Task>
         )}
@@ -201,7 +204,8 @@ export default smithers((ctx) => {
                 return {
                   deployed: false,
                   url: `https://${subdomain}.${PUBLIC_SUFFIX}`,
-                  magicLink: `https://${subdomain}.${PUBLIC_SUFFIX}/?token=${token}`,
+                  magicLink: ctx.input.publicAccess ? "" : `https://${subdomain}.${PUBLIC_SUFFIX}/?token=${token}`,
+                  publicAccess: Boolean(ctx.input.publicAccess),
                   subdomain,
                   target,
                   verify: "deploy=false"
@@ -211,7 +215,13 @@ export default smithers((ctx) => {
               shell(`rsync -a --delete ${JSON.stringify(dist + "/")} ${JSON.stringify(target + "/")}`);
               rmSync(path.join(target, ".git"), { recursive: true, force: true });
               rmSync(path.join(target, "node_modules"), { recursive: true, force: true });
-              const block = `
+              const block = ctx.input.publicAccess ? `
+${subdomain}.${PUBLIC_SUFFIX} {
+  root * ${target}
+  try_files {path} /index.html
+  file_server
+}
+` : `
 ${subdomain}.${PUBLIC_SUFFIX} {
   @token query token ${token}
   handle @token {
@@ -237,16 +247,23 @@ ${subdomain}.${PUBLIC_SUFFIX} {
               );
               const url = `https://${subdomain}.${PUBLIC_SUFFIX}`;
               const unauth = shell(`curl -s -o /dev/null -w "%{http_code}" --max-time 15 ${JSON.stringify(url)}`).trim();
-              const auth = shell(`curl -L -s -o /dev/null -w "%{http_code}" --max-time 20 ${JSON.stringify(`${url}/?token=${token}`)}`).trim();
-              if (unauth !== "401") throw new Error(`Expected unauthenticated ${url} to return 401, got ${unauth}`);
-              if (auth !== "200") throw new Error(`Expected magic link ${url} to return 200, got ${auth}`);
+              const auth = ctx.input.publicAccess
+                ? unauth
+                : shell(`curl -L -s -o /dev/null -w "%{http_code}" --max-time 20 ${JSON.stringify(`${url}/?token=${token}`)}`).trim();
+              if (ctx.input.publicAccess) {
+                if (unauth !== "200") throw new Error(`Expected public ${url} to return 200, got ${unauth}`);
+              } else {
+                if (unauth !== "401") throw new Error(`Expected unauthenticated ${url} to return 401, got ${unauth}`);
+                if (auth !== "200") throw new Error(`Expected magic link ${url} to return 200, got ${auth}`);
+              }
               return {
                 deployed: true,
                 url,
-                magicLink: `${url}/?token=${token}`,
+                magicLink: ctx.input.publicAccess ? "" : `${url}/?token=${token}`,
+                publicAccess: Boolean(ctx.input.publicAccess),
                 subdomain,
                 target,
-                verify: `unauth:${unauth} magic:${auth}`
+                verify: ctx.input.publicAccess ? `public:${unauth}` : `unauth:${unauth} magic:${auth}`
               };
             }}
           </Task>

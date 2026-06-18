@@ -182,7 +182,7 @@ export const seedCapabilities = [
     slug: "idea-to-product",
     name: "Idea to Product",
     description:
-      "Turns a raw product idea into a scoped MVP spec, builds it with an implementation agent, verifies the basics, deploys it to a private repo.box subdomain, and returns the magic-link URL.",
+      "Turns a raw product idea into a scoped MVP spec, builds it with an implementation agent, verifies the basics, deploys it to repo.box, and returns the URL. Private by default; public access is explicit.",
     category: "Product",
     keywords: ["idea", "product", "mvp", "build", "test", "deploy", "repo.box", "smithers"],
     inputSchema: {
@@ -192,7 +192,8 @@ export const seedCapabilities = [
         idea: { type: "string", description: "The raw product idea." },
         preferredSubdomain: { type: "string", description: "Optional preferred repo.box subdomain prefix." },
         constraints: { type: "string", description: "Optional product, design, stack, or business constraints." },
-        deploy: { type: "boolean", description: "Deploy after gates pass (default true)." }
+        deploy: { type: "boolean", description: "Deploy after gates pass (default true)." },
+        publicAccess: { type: "boolean", description: "Deploy without auth if true. Default false." }
       }
     },
     outputSchema: {
@@ -210,7 +211,7 @@ export const seedCapabilities = [
     requiredAgents: ["spec-writer", "implementation-agent"],
     approvalPolicy: {
       required: true,
-      reason: "Runs coding agents and can deploy a new token-protected repo.box subdomain."
+      reason: "Runs coding agents and can deploy a new repo.box subdomain."
     },
     workflow: { engine: "smithers", entry: ".smithers/workflows/idea-to-product.tsx" }
   }

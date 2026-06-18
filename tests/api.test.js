@@ -306,6 +306,7 @@ describe("Idea to Product capability", () => {
     assert.equal(cap.workflow.engine, "smithers");
     assert.equal(cap.workflow.entry, ".smithers/workflows/idea-to-product.tsx");
     assert.ok(cap.inputSchema.required.includes("idea"));
+    assert.equal(cap.inputSchema.properties.publicAccess.type, "boolean");
     assert.deepEqual(cap.requiredRunnerTags, ["smithers", "repo-box"]);
     assert.equal(cap.approvalPolicy.required, true);
   });
@@ -324,6 +325,7 @@ describe("Idea to Product capability", () => {
     assert.ok(existsSync(tpl));
     const src = readFileSync(tpl, "utf8");
     assert.match(src, /repo\.box/);
+    assert.match(src, /publicAccess/);
     assert.match(src, /Set-Cookie/);
     assert.match(src, /pnpm build/);
     assert.match(src, /ClaudeCodeAgent/);
