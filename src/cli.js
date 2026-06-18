@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { HubClient } from "./apiClient.js";
 
@@ -203,18 +204,84 @@ program.command("mcp-config").description("Print Claude/Codex MCP server config 
 });
 
 const mcpCommand = program.command("mcp").description("MCP commands");
-mcpCommand.command("install").description("Print MCP install/config snippet").action(() => {
-  printMcpConfig();
-});
+mcpCommand
+  .command("install")
+  .description("Configure an AI client (Claude Code/Desktop, Codex) to use this Hub")
+  .option("--client <client>", "claude-code | claude-desktop | codex", "claude-code")
+  .option("--global", "Claude Code: write user-level config instead of a project .mcp.json")
+  .action((opts) => installMcp(opts));
+mcpCommand.command("config").description("Print the MCP server config snippet").action(() => printMcpConfig());
+
+function mcpServerSpec() {
+  const config = readConfig();
+  const url = program.opts().url || process.env.SMITHERS_HUB_URL || config.url || "https://hub.repo.box";
+  const token = program.opts().token || process.env.SMITHERS_HUB_TOKEN || config.token || "<SMITHERS_HUB_TOKEN>";
+  // Reference mcp.js by absolute path via this CLI's own location, so it works regardless of PATH.
+  const mcpJs = fileURLToPath(new URL("./mcp.js", import.meta.url));
+  return { command: process.execPath, args: [mcpJs], env: { SMITHERS_HUB_URL: url, SMITHERS_HUB_TOKEN: token } };
+}
+
+function mergeJsonConfig(file, mutate) {
+  let data = {};
+  if (existsSync(file)) {
+    try {
+      data = JSON.parse(readFileSync(file, "utf8"));
+    } catch {
+      data = {};
+    }
+  }
+  mutate(data);
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`);
+}
+
+function claudeDesktopConfigPath() {
+  const home = os.homedir();
+  if (process.platform === "darwin") return path.join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json");
+  if (process.platform === "win32") return path.join(process.env.APPDATA || home, "Claude", "claude_desktop_config.json");
+  return path.join(home, ".config", "Claude", "claude_desktop_config.json");
+}
+
+function installMcp(opts) {
+  const server = mcpServerSpec();
+  const client = opts.client || "claude-code";
+  if (client === "claude-code") {
+    const file = opts.global ? path.join(os.homedir(), ".claude.json") : path.join(process.cwd(), ".mcp.json");
+    mergeJsonConfig(file, (d) => {
+      d.mcpServers = d.mcpServers || {};
+      d.mcpServers["smithers-hub"] = server;
+    });
+    console.log(`Configured Claude Code MCP server -> ${file}`);
+    console.log(opts.global ? "Restart Claude Code; 'smithers-hub' tools are now available." : "Open Claude Code in this folder; it will load the 'smithers-hub' tools.");
+    return;
+  }
+  if (client === "claude-desktop") {
+    const file = claudeDesktopConfigPath();
+    mergeJsonConfig(file, (d) => {
+      d.mcpServers = d.mcpServers || {};
+      d.mcpServers["smithers-hub"] = server;
+    });
+    console.log(`Configured Claude Desktop MCP server -> ${file}\nRestart Claude Desktop to load 'smithers-hub'.`);
+    return;
+  }
+  if (client === "codex") {
+    console.log(`Add this to ~/.codex/config.toml:\n
+[mcp_servers.smithers-hub]
+command = ${JSON.stringify(server.command)}
+args = ${JSON.stringify(server.args)}
+
+[mcp_servers.smithers-hub.env]
+SMITHERS_HUB_URL = ${JSON.stringify(server.env.SMITHERS_HUB_URL)}
+SMITHERS_HUB_TOKEN = ${JSON.stringify(server.env.SMITHERS_HUB_TOKEN)}`);
+    return;
+  }
+  console.error(`Unknown client '${client}'. Use: claude-code, claude-desktop, or codex.`);
+  process.exit(1);
+}
 
 function printMcpConfig() {
-  const config = readConfig();
-  const url = program.opts().url || config.url || "https://hub.repo.box";
-  const token = program.opts().token || config.token || "<SMITHERS_HUB_TOKEN>";
-  console.log(JSON.stringify({
-    command: "smithers-hub-mcp",
-    env: { SMITHERS_HUB_URL: url, SMITHERS_HUB_TOKEN: token }
-  }, null, 2));
+  const server = mcpServerSpec();
+  console.log(JSON.stringify({ mcpServers: { "smithers-hub": server } }, null, 2));
 }
 
 program.parseAsync(process.argv).catch((error) => {

@@ -1,4 +1,5 @@
-import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import express from "express";
 import {
@@ -197,6 +198,67 @@ app.get("/readyz", (_req, res) => {
   }
 });
 app.get("/api/version", (_req, res) => res.json({ name: "smithers-hub", version: env.version, instanceName: env.instanceName }));
+
+// --- Zero-friction client install -------------------------------------------
+// Tarball of the CLI/MCP client (commander is dependency-free, so we vendor it -> no npm needed).
+let cliTarballPath = null;
+function buildCliTarball() {
+  if (cliTarballPath && existsSync(cliTarballPath)) return cliTarballPath;
+  const out = path.join(env.dataDir, "cli.tgz");
+  const paths = ["bin", "src", "package.json"];
+  // -h dereferences symlinks so pnpm's symlinked node_modules/commander is archived as real files.
+  if (existsSync(path.join(env.root, "node_modules", "commander"))) paths.push("node_modules/commander");
+  execFileSync("tar", ["czhf", out, "-C", env.root, ...paths]);
+  cliTarballPath = out;
+  return out;
+}
+
+app.get("/cli.tgz", (_req, res) => {
+  try {
+    res.type("application/gzip").sendFile(buildCliTarball());
+  } catch (error) {
+    res.status(500).json({ error: "could not build client bundle" });
+  }
+});
+
+// One-line installer: `curl -fsSL <hub>/install.sh | bash` (prefix with SMITHERS_HUB_TOKEN=... to auto-login).
+app.get("/install.sh", (req, res) => {
+  const hub = publicUrl(req);
+  res.type("text/plain").send(`#!/usr/bin/env bash
+set -euo pipefail
+HUB_URL="\${SMITHERS_HUB_URL:-${hub}}"
+APP="$HOME/.smithers-hub/app"
+BIN="$HOME/.local/bin"
+echo "Installing Smithers Hub client from $HUB_URL ..."
+command -v node >/dev/null 2>&1 || { echo "Error: Node.js 18+ is required (https://nodejs.org)."; exit 1; }
+command -v curl >/dev/null 2>&1 || { echo "Error: curl is required."; exit 1; }
+mkdir -p "$APP" "$BIN"
+tmp="$(mktemp)"
+curl -fsSL "$HUB_URL/cli.tgz" -o "$tmp"
+tar xzf "$tmp" -C "$APP"
+rm -f "$tmp"
+cat > "$BIN/smithers-hub" <<WRAP
+#!/usr/bin/env bash
+exec node "$APP/src/cli.js" "\\$@"
+WRAP
+cat > "$BIN/smithers-hub-mcp" <<WRAP
+#!/usr/bin/env bash
+exec node "$APP/src/mcp.js" "\\$@"
+WRAP
+chmod +x "$BIN/smithers-hub" "$BIN/smithers-hub-mcp"
+if [ -n "\${SMITHERS_HUB_TOKEN:-}" ]; then
+  node "$APP/src/cli.js" login --url "$HUB_URL" --token "$SMITHERS_HUB_TOKEN" >/dev/null && echo "Logged in to $HUB_URL"
+fi
+case ":$PATH:" in
+  *":$BIN:"*) ;;
+  *) echo "Add this to your shell profile:  export PATH=\\"$BIN:\\$PATH\\"" ;;
+esac
+echo ""
+echo "Installed. Next:"
+echo "  smithers-hub capabilities      # see what you can run"
+echo "  smithers-hub mcp install       # connect your AI agent (Claude/Codex)"
+`);
+});
 
 app.get("/", (_req, res) => res.sendFile(path.join(env.root, "public", "landing.html")));
 app.get("/app", (_req, res) => res.sendFile(path.join(env.root, "public", "index.html")));

@@ -188,6 +188,20 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
     assert.equal(claimed.length, 1);
   });
 
+  it("serves a one-line installer and a client bundle", async () => {
+    const r1 = await fetch(`${baseUrl}/install.sh`);
+    assert.equal(r1.status, 200);
+    const body = await r1.text();
+    assert.match(body, /Installing Smithers Hub client/);
+    assert.match(body, /\/cli\.tgz/);
+    assert.match(body, /smithers-hub mcp install/);
+    const r2 = await fetch(`${baseUrl}/cli.tgz`);
+    assert.equal(r2.status, 200);
+    const buf = Buffer.from(await r2.arrayBuffer());
+    assert.equal(buf[0], 0x1f); // gzip magic
+    assert.equal(buf[1], 0x8b);
+  });
+
   it("rejects unconfigured / unauthenticated Telegram webhook calls", async () => {
     // No TELEGRAM_WEBHOOK_SECRET configured in the test env -> endpoint disabled.
     const res = await raw("/api/telegram/webhook", { method: "POST", body: { callback_query: { data: "approve:appr_x" } } }, null);

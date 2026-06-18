@@ -177,6 +177,7 @@ async function render() {
   document.querySelectorAll(".sidebar button").forEach((button) => button.classList.toggle("active", button.dataset.view === view));
   if (state.view.startsWith("runs/")) return renderRunDetail(state.view.split("/")[1]);
   if (view === "dashboard") return renderDashboard();
+  if (view === "connect") return renderConnect();
   if (view === "capabilities") return renderCapabilities();
   if (view === "runs") return renderRuns();
   if (view === "approvals") return renderApprovals();
@@ -539,6 +540,71 @@ function bindRevoke() {
       await refreshTokenTable();
     })
   );
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast("Copied", "ok");
+  } catch {
+    toast("Copy failed — select the text and press Ctrl/Cmd+C", "info");
+  }
+}
+
+function bindCopy() {
+  document.querySelectorAll("[data-copy]").forEach((b) => b.addEventListener("click", () => copyText(b.dataset.copy)));
+  document.querySelectorAll("[data-copy-el]").forEach((b) =>
+    b.addEventListener("click", () => copyText(document.getElementById(b.dataset.copyEl).value))
+  );
+}
+
+async function renderConnect() {
+  const origin = location.origin;
+  const installCmd = `bash <(curl -fsSL ${origin}/install.sh)`;
+  content.innerHTML = `${toolbar("Connect an Agent or Teammate")}
+    <section class="split">
+      <div class="panel">
+        <h2>1 · Install the client</h2>
+        <p class="muted">One command — installs the <code>smithers-hub</code> CLI and MCP server. Requires Node.js 18+.</p>
+        <div class="copy-row"><input readonly value="${esc(installCmd)}"><button data-copy="${esc(installCmd)}">Copy</button></div>
+        <h3>2 · Connect your AI agent</h3>
+        <p class="muted">After installing + logging in, one command wires up Claude/Codex:</p>
+        <div class="copy-row"><input readonly value="smithers-hub mcp install"><button data-copy="smithers-hub mcp install">Copy</button></div>
+        <p class="muted">Defaults to Claude Code. Use <code>--client claude-desktop</code> or <code>--client codex</code> for others.</p>
+      </div>
+      <div class="panel">
+        <h2>Onboard a teammate</h2>
+        <p class="muted">Generate a single command that installs the client <em>and</em> logs them in automatically. Nothing else to explain.</p>
+        <form id="invite-form" class="form-grid">
+          <label>Scopes
+            <div class="toolbar-actions">
+              ${["api", "mcp", "runner", "admin"].map((s) => `<label class="muted"><input type="checkbox" class="invite-scope" value="${s}" ${s === "api" || s === "mcp" ? "checked" : ""}> ${s}</label>`).join("")}
+            </div>
+          </label>
+          <label>Label<input id="invite-name" value="teammate"></label>
+          <button class="primary" type="submit">Generate invite command</button>
+        </form>
+        <div id="invite-out"></div>
+      </div>
+    </section>`;
+  bindCopy();
+  $("#invite-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const scopes = Array.from(document.querySelectorAll(".invite-scope:checked")).map((el) => el.value);
+    if (!scopes.length) return toast("Pick at least one scope", "error");
+    try {
+      const data = await api("/api/tokens", { method: "POST", body: { name: $("#invite-name").value || "teammate", scopes } });
+      const cmd = `SMITHERS_HUB_TOKEN=${data.token.token} bash <(curl -fsSL ${origin}/install.sh)`;
+      $("#invite-out").innerHTML = `<h3>Send this to your teammate</h3>
+        <p class="muted">Installs the client and logs them in. The token is shown once.</p>
+        <div class="copy-row"><input id="invite-cmd" readonly value="${esc(cmd)}"><button data-copy-el="invite-cmd">Copy</button></div>
+        <p class="muted">They then run <code>smithers-hub mcp install</code> to connect their agent. Revoke anytime under Tokens.</p>`;
+      bindCopy();
+      toast("Invite command generated", "ok");
+    } catch (error) {
+      toast(error.message, "error");
+    }
+  });
 }
 
 async function renderAudit() {

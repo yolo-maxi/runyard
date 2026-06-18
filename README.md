@@ -2,6 +2,24 @@
 
 Smithers Hub is a self-hosted capability operating system for company agents. It runs on a private domain, exposes a capability catalog through MCP/CLI/API/Web, dispatches work to local or remote runners, and stores logs, events, artifacts, approvals, skills, agents, and knowledge centrally.
 
+## Connect in one line
+
+Install the CLI + MCP client and log in (needs Node.js 18+):
+
+```bash
+SMITHERS_HUB_TOKEN=shub_... bash <(curl -fsSL https://hub.repo.box/install.sh)
+```
+
+Then connect your AI agent — this writes the MCP config for you, no JSON editing:
+
+```bash
+smithers-hub mcp install                          # Claude Code (this folder)
+smithers-hub mcp install --client claude-desktop
+smithers-hub mcp install --client codex
+```
+
+To onboard a teammate, open the **Connect** tab in the Web Hub and click *Generate invite command* — it produces the exact one-liner (token included) to send them.
+
 ## Run locally
 
 ```bash
