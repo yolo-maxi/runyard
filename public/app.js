@@ -1,6 +1,6 @@
 const state = {
   me: null,
-  view: "dashboard"
+  view: "home"
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -132,9 +132,36 @@ function toolbar(title, actions = "") {
   return `<div class="toolbar"><h1>${esc(title)}</h1><div class="toolbar-actions">${actions}</div></div>`;
 }
 
+// --- Routing: which sidebar item highlights for a given view ---------------
+// home is the new app-home (Runs). Workflows = capabilities. Agents folds in
+// the old Skills + Knowledge sections as sub-tabs. Other views live in the
+// top-right Admin menu and don't claim a sidebar slot.
+const PRIMARY_VIEWS = new Map([
+  ["home", "home"],
+  ["runs", "home"],
+  ["dashboard", "home"],
+  ["workflows", "workflows"],
+  ["capabilities", "workflows"],
+  ["agents", "agents"],
+  ["skills", "agents"],
+  ["knowledge", "agents"]
+]);
+
+function highlightSidebar(view) {
+  const primary = PRIMARY_VIEWS.get(view) || "";
+  document.querySelectorAll(".sidebar button").forEach((button) =>
+    button.classList.toggle("active", button.dataset.view === primary)
+  );
+}
+
+function closeAdminMenu() {
+  const menu = document.getElementById("admin-menu");
+  if (menu) menu.open = false;
+}
+
 function setView(view) {
   state.view = view;
-  document.querySelectorAll(".sidebar button").forEach((button) => button.classList.toggle("active", button.dataset.view === view));
+  closeAdminMenu();
   location.hash = view;
   render().catch(showError);
 }
@@ -149,8 +176,16 @@ async function boot() {
     state.me = data.token;
     $("#login").classList.add("hidden");
     $("#app").classList.remove("hidden");
-    state.view = location.hash.slice(1) || "dashboard";
-    document.querySelectorAll(".sidebar button").forEach((button) => button.addEventListener("click", () => setView(button.dataset.view)));
+    state.view = location.hash.slice(1) || "home";
+    // Bind every nav button (sidebar + admin dropdown) that declares a view.
+    document.querySelectorAll("[data-view]").forEach((button) =>
+      button.addEventListener("click", () => setView(button.dataset.view))
+    );
+    // Close the admin dropdown when the user clicks outside of it.
+    document.addEventListener("click", (event) => {
+      const menu = document.getElementById("admin-menu");
+      if (menu && menu.open && !menu.contains(event.target)) menu.open = false;
+    });
     $("#logout").addEventListener("click", async () => {
       await api("/api/auth/logout", { method: "POST", body: {} });
       location.reload();
@@ -173,64 +208,189 @@ $("#login-form").addEventListener("submit", async (event) => {
 });
 
 async function render() {
-  const view = state.view.split("/")[0];
-  document.querySelectorAll(".sidebar button").forEach((button) => button.classList.toggle("active", button.dataset.view === view));
-  if (state.view.startsWith("runs/")) return renderRunDetail(state.view.split("/")[1]);
-  if (view === "dashboard") return renderDashboard();
+  const raw = state.view || "home";
+  const view = raw.split("/")[0];
+  highlightSidebar(view);
+  if (raw.startsWith("runs/")) return renderRunDetail(raw.split("/")[1]);
+  if (view === "home" || view === "runs" || view === "dashboard") return renderHome();
+  if (view === "workflows" || view === "capabilities") {
+    const slug = raw.split("/")[1];
+    await renderCapabilities();
+    if (slug) await showRunForm(slug);
+    return;
+  }
+  if (view === "agents" || view === "skills" || view === "knowledge") {
+    // Allow #agents/<tab>, plus legacy #skills / #knowledge hashes.
+    const tab = raw.startsWith("agents/") ? raw.split("/")[1] : (view === "agents" ? "agents" : view);
+    return renderAgents(tab);
+  }
   if (view === "connect") return renderConnect();
-  if (view === "capabilities") return renderCapabilities();
-  if (view === "runs") return renderRuns();
   if (view === "approvals") return renderApprovals();
   if (view === "artifacts") return renderArtifacts();
   if (view === "runners") return renderRunners();
-  if (view === "agents") return renderEditableList("agents", "Agents");
-  if (view === "skills") return renderEditableList("skills", "Skills");
-  if (view === "knowledge") return renderEditableList("knowledge", "Knowledge");
   if (view === "tokens") return renderTokens();
   if (view === "audit") return renderAudit();
   if (view === "settings") return renderSettings();
-  return renderDashboard();
+  return renderHome();
 }
 
-async function renderDashboard() {
-  const data = await api("/api/dashboard");
-  const stats = data.stats;
-  const gettingStarted = (stats.runs || 0) === 0;
-  content.innerHTML = `${toolbar("Operations Dashboard", `<button id="dash-run-cap">Run Capability</button>`)}
-    ${gettingStarted ? empty("Welcome to Smithers Hub.", "Pick a capability and run it, start a runner to execute work, or create scoped tokens for your agents. Start by opening the Capabilities tab.") : ""}
-    <section class="stats">
+// --- Virtual artifact/log grouping ------------------------------------------
+// Display-layer only: we build a human-readable identity folder
+// (e.g. "Fran--software-audit--05-mar-26") from the run's metadata and use
+// it as the visual grouping label for that run's artifacts and logs. The
+// physical artifact storage (run_id + name on disk) is unchanged, so old
+// runs and existing API consumers continue to work as-is.
+function runUsername(run) {
+  const input = run?.input || {};
+  return input.user || input.owner || input.username || input.requester || input.requestedBy || "hub";
+}
+
+function runDateLabel(iso) {
+  if (!iso) return "unknown";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "unknown";
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  const mon = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"][d.getUTCMonth()];
+  const yy = String(d.getUTCFullYear()).slice(-2);
+  return `${dd}-${mon}-${yy}`;
+}
+
+function runFolderLabel(run) {
+  const user = runUsername(run);
+  const slug = run.capabilitySlug || "workflow";
+  return `${user}--${slug}--${runDateLabel(run.createdAt)}`;
+}
+
+const MIME_EXT = {
+  "text/markdown": ".md",
+  "text/plain": ".txt",
+  "application/json": ".json",
+  "text/html": ".html",
+  "application/pdf": ".pdf",
+  "image/png": ".png",
+  "image/jpeg": ".jpg",
+  "image/gif": ".gif",
+  "image/svg+xml": ".svg",
+  "text/csv": ".csv",
+  "application/zip": ".zip",
+  "application/x-yaml": ".yaml",
+  "text/x-log": ".log"
+};
+
+// Best-effort display name; underlying artifact.name on disk is unchanged.
+function artifactDisplayName(artifact) {
+  let name = (artifact?.name || "artifact").trim() || "artifact";
+  const generic = /^(artifact|blob|result|output|file|data)$/i.test(name);
+  const hasDot = name.includes(".");
+  if ((generic || !hasDot) && artifact?.mimeType && MIME_EXT[artifact.mimeType]) {
+    const ext = MIME_EXT[artifact.mimeType];
+    if (!name.toLowerCase().endsWith(ext)) name = `${name}${ext}`;
+  }
+  if (artifact?.kind && !name.toLowerCase().startsWith(`${artifact.kind.toLowerCase()}/`)) {
+    return `${artifact.kind}/${name}`;
+  }
+  return name;
+}
+
+function formatBytes(b) {
+  if (b == null) return "";
+  if (b < 1024) return `${b} B`;
+  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} kB`;
+  return `${(b / 1024 / 1024).toFixed(1)} MB`;
+}
+
+const ACTIVE_STATUSES = new Set(["queued", "assigned", "running", "waiting_approval", "pending"]);
+
+function isActiveRun(run) {
+  return ACTIVE_STATUSES.has(run.status);
+}
+
+function runCard(run, artifacts = []) {
+  const active = isActiveRun(run);
+  const folder = runFolderLabel(run);
+  const slug = esc(run.capabilitySlug || "");
+  const artifactPreview = !active && artifacts.length
+    ? `<ul class="artifact-list">
+        ${artifacts.slice(0, 3).map((a) => `<li><a href="/api/artifacts/${esc(a.id)}/download" target="_blank">${esc(artifactDisplayName(a))}</a> <span class="muted">${esc(formatBytes(a.sizeBytes))}</span></li>`).join("")}
+        ${artifacts.length > 3 ? `<li class="muted">+${artifacts.length - 3} more</li>` : ""}
+      </ul>`
+    : "";
+  return `<article class="run-card ${active ? "active" : "done"} ${esc(run.status)}">
+    <header class="run-card-head">
+      ${active ? '<span class="run-pulse" aria-hidden="true"></span>' : '<span class="run-folder-icon" aria-hidden="true">📁</span>'}
+      ${status(run.status)}
+      <span class="run-folder" title="Display-only grouping">${esc(folder)}</span>
+    </header>
+    <h3 class="run-card-title"><a href="#runs/${esc(run.id)}">${esc(run.capabilityName)}</a></h3>
+    <p class="muted run-step">${esc(run.currentStep || (active ? "starting…" : run.createdAt))}</p>
+    ${artifactPreview}
+    <footer class="run-card-foot">
+      <a class="button" href="#workflows${slug ? `/${slug}` : ""}">Workflow</a>
+      <a class="button" href="#runs/${esc(run.id)}">Run log</a>
+    </footer>
+  </article>`;
+}
+
+// --- Home: active runs up top, completed below ------------------------------
+async function renderHome() {
+  const [runsData, dash] = await Promise.all([
+    api("/api/runs?limit=100"),
+    api("/api/dashboard").catch(() => ({ stats: {}, pendingApprovals: [] }))
+  ]);
+  const runs = runsData.runs || [];
+  const active = runs.filter(isActiveRun);
+  const completed = runs.filter((r) => !isActiveRun(r));
+  // Best-effort artifact bucket — if the call fails we just skip the preview.
+  const artifactsByRun = new Map();
+  try {
+    const arts = await api("/api/artifacts");
+    for (const a of arts.artifacts || []) {
+      if (!artifactsByRun.has(a.runId)) artifactsByRun.set(a.runId, []);
+      artifactsByRun.get(a.runId).push(a);
+    }
+  } catch {
+    // non-fatal
+  }
+  const stats = dash.stats || {};
+  const pending = dash.pendingApprovals || [];
+  const gettingStarted = (runs.length === 0) && !active.length;
+  content.innerHTML = `${toolbar("Runs", `<button id="home-new-run">Run a workflow</button>`)}
+    ${gettingStarted ? empty("No runs yet.", "Pick a workflow and run it, or start a runner to execute work. Head to Workflows to begin.") : ""}
+    <section class="stats home-stats">
       ${Object.entries({
-        Capabilities: stats.capabilities,
-        Runs: stats.runs,
-        "Active Runs": stats.runningRuns,
-        Artifacts: stats.artifacts,
-        Runners: stats.runners,
-        "Pending Approvals": stats.pendingApprovals
-      }).map(([label, value]) => `<div class="stat"><strong>${value}</strong><span class="muted">${label}</span></div>`).join("")}
+        "Active runs": active.length,
+        Workflows: stats.capabilities ?? 0,
+        "Total runs": stats.runs ?? runs.length,
+        Artifacts: stats.artifacts ?? 0,
+        "Pending approvals": pending.length
+      }).map(([label, value]) => `<div class="stat"><strong>${esc(String(value))}</strong><span class="muted">${esc(label)}</span></div>`).join("")}
     </section>
-    <section class="split">
-      <div class="panel">
-        <h2>Recent Runs</h2>
-        ${runsTable(data.recentRuns)}
-      </div>
-      <div class="panel">
-        <h2>Pending Approvals</h2>
-        ${approvalList(data.pendingApprovals)}
-      </div>
-    </section>`;
-  $("#dash-run-cap").addEventListener("click", () => setView("capabilities"));
+    <h2 class="section-heading">Active <span class="muted">${active.length} live</span></h2>
+    ${active.length
+      ? `<section class="run-grid live">${active.map((run) => runCard(run, artifactsByRun.get(run.id) || [])).join("")}</section>`
+      : `<p class="muted run-empty">No active runs right now. Start one from <a href="#workflows">Workflows</a>.</p>`}
+    <h2 class="section-heading">Recent &amp; completed</h2>
+    ${completed.length
+      ? `<section class="run-grid">${completed.slice(0, 30).map((run) => runCard(run, artifactsByRun.get(run.id) || [])).join("")}</section>`
+      : `<p class="muted">Completed runs and their artifacts will appear here.</p>`}
+    ${pending.length ? `<h2 class="section-heading">Pending approvals</h2>
+      <section class="panel">${approvalList(pending)}</section>` : ""}`;
+  $("#home-new-run").addEventListener("click", () => setView("workflows"));
+  document.querySelectorAll("[data-approve]").forEach((button) => button.addEventListener("click", () => resolveApproval(button.dataset.approve, "approve").then(() => render().catch(showError))));
+  document.querySelectorAll("[data-reject]").forEach((button) => button.addEventListener("click", () => resolveApproval(button.dataset.reject, "reject").then(() => render().catch(showError))));
 }
 
 function runsTable(runs) {
   if (!runs.length) return `<p class="muted">No runs yet.</p>`;
-  return `<table class="table"><thead><tr><th>Run</th><th>Capability</th><th>Status</th><th>Step</th><th>Created</th></tr></thead><tbody>
-    ${runs.map((run) => `<tr><td data-label="Run"><a href="#runs/${run.id}" data-run="${run.id}">${esc(run.id)}</a></td><td data-label="Capability">${esc(run.capabilityName)}</td><td data-label="Status">${status(run.status)}</td><td data-label="Step">${esc(run.currentStep)}</td><td data-label="Created">${esc(run.createdAt)}</td></tr>`).join("")}
+  return `<table class="table"><thead><tr><th>Run</th><th>Workflow</th><th>Status</th><th>Step</th><th>Created</th></tr></thead><tbody>
+    ${runs.map((run) => `<tr><td data-label="Run"><a href="#runs/${run.id}" data-run="${run.id}">${esc(run.id)}</a></td><td data-label="Workflow">${esc(run.capabilityName)}</td><td data-label="Status">${status(run.status)}</td><td data-label="Step">${esc(run.currentStep)}</td><td data-label="Created">${esc(run.createdAt)}</td></tr>`).join("")}
   </tbody></table>`;
 }
 
 async function renderCapabilities() {
   const data = await api("/api/capabilities");
-  content.innerHTML = `${toolbar("Capability Catalog", `<button id="new-cap">New Capability</button>`)}
+  content.innerHTML = `${toolbar("Workflows", `<button id="new-cap">New Workflow</button>`)}
+    <p class="muted">A workflow is a capability your agents can invoke. They appear as MCP tools and as launchable buttons here.</p>
     ${data.capabilities.length ? `<div class="grid">
       ${data.capabilities.map((cap) => `<article class="item">
         <h3>${esc(cap.name)}</h3>
@@ -241,7 +401,7 @@ async function renderCapabilities() {
           <button data-edit-cap="${esc(cap.slug)}">Edit</button>
         </div>
       </article>`).join("")}
-    </div>` : empty("No capabilities yet.", "Click New Capability to define the first action agents can run.")}
+    </div>` : empty("No workflows yet.", "Click New Workflow to define the first action agents can run.")}
     <section id="editor" class="panel hidden"></section>`;
   document.querySelectorAll("[data-run]").forEach((button) => button.addEventListener("click", () => showRunForm(button.dataset.run)));
   document.querySelectorAll("[data-edit-cap]").forEach((button) => button.addEventListener("click", () => editCapability(button.dataset.editCap)));
@@ -260,13 +420,13 @@ async function showRunForm(slug) {
   editor.scrollIntoView({ behavior: "smooth", block: "nearest" });
   editor.innerHTML = `<h2>Run ${esc(cap.name)}</h2>
     <p class="muted">${esc(cap.description || "")}</p>
-    ${approval ? `<p class="notice">This capability requires approval before it runs.${cap.approvalPolicy?.reason ? ` ${esc(cap.approvalPolicy.reason)}` : ""}</p>` : ""}
+    ${approval ? `<p class="notice">This workflow requires approval before it runs.${cap.approvalPolicy?.reason ? ` ${esc(cap.approvalPolicy.reason)}` : ""}</p>` : ""}
     <form id="run-form" class="form-grid">
-      ${hasFields ? schemaForm(schema) : `<label>Input JSON<textarea data-field="__raw" data-ftype="json" placeholder="{}">{}</textarea><span class="field-hint">This capability has no declared input schema. Provide raw JSON.</span><span class="field-error" data-error-for="__raw"></span></label>`}
+      ${hasFields ? schemaForm(schema) : `<label>Input JSON<textarea data-field="__raw" data-ftype="json" placeholder="{}">{}</textarea><span class="field-hint">This workflow has no declared input schema. Provide raw JSON.</span><span class="field-error" data-error-for="__raw"></span></label>`}
       ${hasFields ? `<details class="advanced"><summary>Edit as raw JSON instead</summary><label><textarea id="run-raw" data-ftype="json" placeholder="{}">${esc(JSON.stringify(sample, null, 2))}</textarea></label></details>` : ""}
       <button class="primary" type="submit">Create Run</button>
     </form>
-    <details class="advanced"><summary>Capability contract</summary>${json(cap)}</details>`;
+    <details class="advanced"><summary>Workflow contract</summary>${json(cap)}</details>`;
   const form = $("#run-form");
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -306,7 +466,7 @@ async function editCapability(slug = "") {
   const editor = $("#editor");
   editor.classList.remove("hidden");
   editor.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  editor.innerHTML = `<h2>${slug ? "Edit" : "New"} Capability</h2>
+  editor.innerHTML = `<h2>${slug ? "Edit" : "New"} Workflow</h2>
     <form id="cap-form" class="form-grid">
       <label>Name <span class="req">*</span><input id="cap-name" value="${esc(cap.name)}" required></label>
       <label>Slug${slug ? "" : ' <span class="field-hint">Leave blank to derive from the name.</span>'}<input id="cap-slug" value="${esc(cap.slug)}" ${slug ? "disabled" : ""}></label>
@@ -320,7 +480,7 @@ async function editCapability(slug = "") {
       <details class="advanced"><summary>Advanced: input/output schema &amp; workflow (JSON)</summary>
         <label><textarea id="cap-json">${esc(JSON.stringify({ inputSchema: cap.inputSchema || {}, outputSchema: cap.outputSchema || {}, workflow: cap.workflow || {}, requiredSkills: cap.requiredSkills || [], requiredAgents: cap.requiredAgents || [] }, null, 2))}</textarea></label>
       </details>
-      <button class="primary" type="submit">Save Capability</button>
+      <button class="primary" type="submit">Save Workflow</button>
     </form>`;
   $("#cap-form").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -347,7 +507,7 @@ async function editCapability(slug = "") {
     try {
       if (slug) await api(`/api/capabilities/${slug}`, { method: "PATCH", body: payload });
       else await api("/api/capabilities", { method: "POST", body: payload });
-      toast("Capability saved", "ok");
+      toast("Workflow saved", "ok");
       await renderCapabilities();
     } catch (error) {
       toast(error.message, "error");
@@ -355,15 +515,13 @@ async function editCapability(slug = "") {
   });
 }
 
-async function renderRuns() {
-  const data = await api("/api/runs");
-  content.innerHTML = `${toolbar("Runs")}<section class="panel">${runsTable(data.runs)}</section>`;
-}
-
 async function renderRunDetail(runId) {
   const data = await api(`/api/runs/${runId}`);
   const run = data.run;
-  content.innerHTML = `${toolbar(run.id, `<button id="cancel-run" class="danger">Cancel</button>`)}
+  const folder = runFolderLabel(run);
+  const slug = esc(run.capabilitySlug || "");
+  content.innerHTML = `${toolbar(run.id, `<a class="button" href="#workflows${slug ? `/${slug}` : ""}">Workflow</a><button id="cancel-run" class="danger">Cancel</button>`)}
+    <p class="run-folder-banner"><span class="run-folder">📁 ${esc(folder)}</span> <span class="muted">— display-only grouping for this run's artifacts &amp; logs</span></p>
     <section class="split">
       <div class="panel">
         <h2>${esc(run.capabilityName)} ${status(run.status)}</h2>
@@ -386,7 +544,7 @@ async function renderRunDetail(runId) {
 
 function artifactList(artifacts) {
   if (!artifacts.length) return `<p class="muted">No artifacts.</p>`;
-  return `<ul>${artifacts.map((artifact) => `<li><a href="/api/artifacts/${artifact.id}/download" target="_blank">${esc(artifact.name)}</a> <span class="muted">${artifact.sizeBytes} bytes</span></li>`).join("")}</ul>`;
+  return `<ul class="artifact-list">${artifacts.map((artifact) => `<li><a href="/api/artifacts/${artifact.id}/download" target="_blank">${esc(artifactDisplayName(artifact))}</a> <span class="muted">${esc(formatBytes(artifact.sizeBytes))}${artifact.mimeType ? ` · ${esc(artifact.mimeType)}` : ""}</span></li>`).join("")}</ul>`;
 }
 
 function approvalList(approvals) {
@@ -428,19 +586,31 @@ async function renderRunners() {
   </section>`;
 }
 
-async function renderEditableList(kind, title) {
-  const data = await api(`/api/${kind}`);
-  const key = kind === "knowledge" ? "knowledge" : kind;
-  const items = data[key];
-  content.innerHTML = `${toolbar(title, `<button id="new-item">New</button>`)}
-    <div class="grid">${items.map((item) => `<article class="item">
+// --- Agents area folds Agents + Skills + Knowledge into one tabbed view ----
+const AGENT_TABS = [
+  { key: "agents", label: "Agents", endpoint: "agents", blurb: "Personas that combine skills + knowledge to handle workflows." },
+  { key: "skills", label: "Skills", endpoint: "skills", blurb: "Reusable capabilities your agents can call on." },
+  { key: "knowledge", label: "Knowledge", endpoint: "knowledge", blurb: "Documents and references agents draw from." }
+];
+
+async function renderAgents(tab = "agents") {
+  const meta = AGENT_TABS.find((t) => t.key === tab) || AGENT_TABS[0];
+  const data = await api(`/api/${meta.endpoint}`);
+  const items = data[meta.endpoint === "knowledge" ? "knowledge" : meta.endpoint] || [];
+  const tabsHtml = AGENT_TABS.map((t) => `<button type="button" class="tab ${t.key === meta.key ? "active" : ""}" data-tab="${esc(t.key)}">${esc(t.label)}</button>`).join("");
+  const singular = meta.label.replace(/s$/, "");
+  content.innerHTML = `${toolbar("Agents", `<button id="new-item">New ${esc(singular === "Knowledge" ? "entry" : singular)}</button>`)}
+    <nav class="tabs">${tabsHtml}</nav>
+    <p class="muted agents-blurb">${esc(meta.blurb)}</p>
+    ${items.length ? `<div class="grid">${items.map((item) => `<article class="item">
       <h3>${esc(item.name || item.title)}</h3>
       <p class="muted">${esc(item.description || item.body || "")}</p>
       <button data-edit="${esc(item.slug)}">Edit</button>
-    </article>`).join("")}</div>
+    </article>`).join("")}</div>` : empty(`No ${meta.label.toLowerCase()} yet.`)}
     <section id="editor" class="panel hidden"></section>`;
-  $("#new-item").addEventListener("click", () => editItem(kind));
-  document.querySelectorAll("[data-edit]").forEach((button) => button.addEventListener("click", () => editItem(kind, button.dataset.edit)));
+  document.querySelectorAll(".tabs [data-tab]").forEach((button) => button.addEventListener("click", () => setView(`agents/${button.dataset.tab}`)));
+  $("#new-item").addEventListener("click", () => editItem(meta.endpoint));
+  document.querySelectorAll("[data-edit]").forEach((button) => button.addEventListener("click", () => editItem(meta.endpoint, button.dataset.edit)));
 }
 
 async function editItem(kind, slug = "") {
@@ -448,6 +618,7 @@ async function editItem(kind, slug = "") {
   const item = slug ? collection.find((entry) => entry.slug === slug) : { slug: "", name: "", title: "", description: "", body: "", instructions: "" };
   const editor = $("#editor");
   editor.classList.remove("hidden");
+  editor.scrollIntoView({ behavior: "smooth", block: "nearest" });
   editor.innerHTML = `<h2>${slug ? "Edit" : "New"}</h2>
     <form id="item-form" class="form-grid">
       <label>JSON<textarea id="item-json">${esc(JSON.stringify(item, null, 2))}</textarea></label>
@@ -455,9 +626,19 @@ async function editItem(kind, slug = "") {
     </form>`;
   $("#item-form").addEventListener("submit", async (event) => {
     event.preventDefault();
-    const payload = JSON.parse($("#item-json").value);
-    await api(slug ? `/api/${kind}/${slug}` : `/api/${kind}`, { method: slug ? "PATCH" : "POST", body: payload });
-    await renderEditableList(kind, kind[0].toUpperCase() + kind.slice(1));
+    let payload;
+    try {
+      payload = JSON.parse($("#item-json").value);
+    } catch {
+      return toast("JSON is invalid", "error");
+    }
+    try {
+      await api(slug ? `/api/${kind}/${slug}` : `/api/${kind}`, { method: slug ? "PATCH" : "POST", body: payload });
+      toast("Saved", "ok");
+      await renderAgents(kind);
+    } catch (error) {
+      toast(error.message, "error");
+    }
   });
 }
 
@@ -643,7 +824,7 @@ async function renderSettings() {
 }
 
 window.addEventListener("hashchange", () => {
-  state.view = location.hash.slice(1) || "dashboard";
+  state.view = location.hash.slice(1) || "home";
   render().catch(showError);
 });
 

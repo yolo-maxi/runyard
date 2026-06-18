@@ -12,6 +12,18 @@
       <nav class="nav">
         <a class="button" href="/docs">Docs</a>
         <a class="button" href="/llms.txt">llms.txt</a>
+        <details class="admin-menu" id="admin-menu">
+          <summary class="button" aria-haspopup="true">Admin <span aria-hidden="true">▾</span></summary>
+          <div class="admin-menu-list" role="menu">
+            <button data-view="connect" type="button">Connect</button>
+            <button data-view="approvals" type="button">Approvals</button>
+            <button data-view="artifacts" type="button">Artifacts</button>
+            <button data-view="tokens" type="button">Tokens</button>
+            <button data-view="runners" type="button">Runners</button>
+            <button data-view="audit" type="button">Audit</button>
+            <button data-view="settings" type="button">Settings</button>
+          </div>
+        </details>
         <button id="logout">Logout</button>
       </nav>
     </header>
@@ -27,19 +39,9 @@
     </main>
     <main id="app" class="shell hidden">
       <aside class="sidebar">
-        <button data-view="dashboard" class="active">Dashboard</button>
-        <button data-view="connect">Connect</button>
-        <button data-view="capabilities">Capabilities</button>
-        <button data-view="runs">Runs</button>
-        <button data-view="approvals">Approvals</button>
-        <button data-view="artifacts">Artifacts</button>
-        <button data-view="runners">Runners</button>
+        <button data-view="home" class="active">Runs</button>
+        <button data-view="workflows">Workflows</button>
         <button data-view="agents">Agents</button>
-        <button data-view="skills">Skills</button>
-        <button data-view="knowledge">Knowledge</button>
-        <button data-view="tokens">Tokens</button>
-        <button data-view="audit">Audit</button>
-        <button data-view="settings">Settings</button>
       </aside>
       <section id="content" class="content"></section>
     </main>
