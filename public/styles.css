@@ -516,6 +516,57 @@ details.advanced[open] summary {
   min-width: 0;
 }
 
+/* ---- Inline "copy share link" button (🔗) used across views ---- */
+.share-link {
+  border: 1px solid var(--line);
+  background: var(--soft);
+  color: var(--muted);
+  border-radius: 999px;
+  min-height: 24px;
+  padding: 0 7px;
+  font-size: 13px;
+  line-height: 1;
+  margin-left: 6px;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.share-link:hover {
+  color: var(--brand);
+  border-color: var(--brand);
+  background: #e5fbf6;
+}
+
+.deep-link-hint {
+  margin: -6px 0 12px;
+  font-size: 13px;
+}
+
+/* Briefly highlight an item that was opened via deep link. */
+.link-focus {
+  outline: 2px solid var(--brand-2);
+  outline-offset: 2px;
+  transition: outline-color 0.3s ease;
+  border-radius: 8px;
+}
+
+/* Mono pill for showing the absolute share URL inline. */
+.kbd {
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  background: var(--soft);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 2px 6px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.artifact-dl {
+  font-size: 11px;
+  text-decoration: underline;
+}
+
 /* ---- Top-right Admin dropdown menu ---- */
 .admin-menu {
   position: relative;

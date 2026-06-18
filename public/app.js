@@ -33,6 +33,61 @@ function json(value) {
   return `<pre class="json">${esc(JSON.stringify(value, null, 2))}</pre>`;
 }
 
+// --- Deep links --------------------------------------------------------------
+// Stable hash-routed deep links for every primary view. All helpers return the
+// hash (e.g. `#runs/abc`) so anchor tags can drop them straight into `href`.
+// `abs()` lifts a hash to a copy-pasteable absolute URL — used by share
+// buttons. `parse()` decodes a hash into {segments, params} so routing can
+// branch on sub-paths (`#runs/<id>/logs`) and query params alike.
+const deepLinks = {
+  base: () => `${location.origin}/app`,
+  abs(hash) {
+    if (!hash) return this.base();
+    return `${this.base()}${hash.startsWith("#") ? hash : `#${hash}`}`;
+  },
+  parse(raw = location.hash || "") {
+    const pathAndQuery = raw.replace(/^#/, "");
+    const [pathPart, queryPart = ""] = pathAndQuery.split("?");
+    const segments = pathPart.split("/").filter(Boolean).map(decodeURIComponent);
+    const params = new URLSearchParams(queryPart);
+    return { raw: pathPart, segments, params, view: segments[0] || "home" };
+  },
+  home: () => "#runs",
+  runs: () => "#runs",
+  run: (id) => `#runs/${encodeURIComponent(id)}`,
+  runLogs: (id) => `#runs/${encodeURIComponent(id)}/logs`,
+  runArtifacts: (id) => `#runs/${encodeURIComponent(id)}/artifacts`,
+  workflows: () => "#workflows",
+  workflow: (slug) => `#workflows/${encodeURIComponent(slug)}`,
+  agents: () => "#agents/agents",
+  skills: () => "#agents/skills",
+  knowledge: () => "#agents/knowledge",
+  agent: (slug) => `#agents/agents/${encodeURIComponent(slug)}`,
+  skill: (slug) => `#agents/skills/${encodeURIComponent(slug)}`,
+  knowledgeItem: (slug) => `#agents/knowledge/${encodeURIComponent(slug)}`,
+  artifacts: () => "#artifacts",
+  artifact: (id) => `#artifacts/${encodeURIComponent(id)}`,
+  tokens: () => "#tokens",
+  runners: () => "#runners",
+  audit: () => "#audit",
+  connect: () => "#connect",
+  approvals: () => "#approvals",
+  approval: (id) => `#approvals/${encodeURIComponent(id)}`,
+  settings: () => "#settings"
+};
+
+// Expose so devtools, tests, and the server-served JS check can confirm the
+// deep-link helpers actually shipped.
+if (typeof window !== "undefined") {
+  window.smithersDeepLinks = deepLinks;
+}
+
+// Inline "copy share link" button — emits an absolute URL for the given hash.
+function shareButton(hash, label = "Copy link") {
+  const url = deepLinks.abs(hash);
+  return `<button type="button" class="share-link" data-copy="${esc(url)}" title="Copy shareable link" aria-label="${esc(label)}">🔗</button>`;
+}
+
 // --- Transient notifications -------------------------------------------------
 function toast(message, kind = "info") {
   let host = document.querySelector(".toasts");
@@ -128,8 +183,9 @@ function showFieldErrors(scope, errors) {
   });
 }
 
-function toolbar(title, actions = "") {
-  return `<div class="toolbar"><h1>${esc(title)}</h1><div class="toolbar-actions">${actions}</div></div>`;
+function toolbar(title, actions = "", hashForShare = "") {
+  const share = hashForShare ? shareButton(hashForShare, "Copy link to this page") : "";
+  return `<div class="toolbar"><h1>${esc(title)}${share}</h1><div class="toolbar-actions">${actions}</div></div>`;
 }
 
 // --- Routing: which sidebar item highlights for a given view ---------------
@@ -208,25 +264,39 @@ $("#login-form").addEventListener("submit", async (event) => {
 });
 
 async function render() {
-  const raw = state.view || "home";
-  const view = raw.split("/")[0];
+  const route = deepLinks.parse("#" + (state.view || "home"));
+  const { segments } = route;
+  const view = route.view;
   highlightSidebar(view);
-  if (raw.startsWith("runs/")) return renderRunDetail(raw.split("/")[1]);
+  if (view === "runs" && segments[1]) {
+    const focus = segments[2] || ""; // "logs" | "artifacts" | ""
+    return renderRunDetail(segments[1], { focus });
+  }
   if (view === "home" || view === "runs" || view === "dashboard") return renderHome();
   if (view === "workflows" || view === "capabilities") {
-    const slug = raw.split("/")[1];
+    const slug = segments[1];
     await renderCapabilities();
     if (slug) await showRunForm(slug);
     return;
   }
   if (view === "agents" || view === "skills" || view === "knowledge") {
-    // Allow #agents/<tab>, plus legacy #skills / #knowledge hashes.
-    const tab = raw.startsWith("agents/") ? raw.split("/")[1] : (view === "agents" ? "agents" : view);
-    return renderAgents(tab);
+    // Allow #agents/<tab>[/<slug>], plus legacy #skills / #knowledge hashes.
+    let tab;
+    let slug;
+    if (view === "agents") {
+      tab = segments[1] || "agents";
+      slug = segments[2];
+    } else {
+      tab = view;
+      slug = segments[1];
+    }
+    await renderAgents(tab);
+    if (slug) await editItem(AGENT_TABS.find((t) => t.key === tab)?.endpoint || tab, slug);
+    return;
   }
   if (view === "connect") return renderConnect();
-  if (view === "approvals") return renderApprovals();
-  if (view === "artifacts") return renderArtifacts();
+  if (view === "approvals") return renderApprovals(segments[1] || "");
+  if (view === "artifacts") return renderArtifacts(segments[1] || "");
   if (view === "runners") return renderRunners();
   if (view === "tokens") return renderTokens();
   if (view === "audit") return renderAudit();
@@ -308,25 +378,27 @@ function isActiveRun(run) {
 function runCard(run, artifacts = []) {
   const active = isActiveRun(run);
   const folder = runFolderLabel(run);
-  const slug = esc(run.capabilitySlug || "");
+  const slug = run.capabilitySlug || "";
   const artifactPreview = !active && artifacts.length
     ? `<ul class="artifact-list">
-        ${artifacts.slice(0, 3).map((a) => `<li><a href="/api/artifacts/${esc(a.id)}/download" target="_blank">${esc(artifactDisplayName(a))}</a> <span class="muted">${esc(formatBytes(a.sizeBytes))}</span></li>`).join("")}
-        ${artifacts.length > 3 ? `<li class="muted">+${artifacts.length - 3} more</li>` : ""}
+        ${artifacts.slice(0, 3).map((a) => `<li><a href="${esc(deepLinks.artifact(a.id))}">${esc(artifactDisplayName(a))}</a> <a class="muted artifact-dl" href="/api/artifacts/${esc(a.id)}/download" target="_blank">download</a> <span class="muted">${esc(formatBytes(a.sizeBytes))}</span></li>`).join("")}
+        ${artifacts.length > 3 ? `<li class="muted"><a href="${esc(deepLinks.runArtifacts(run.id))}">+${artifacts.length - 3} more</a></li>` : ""}
       </ul>`
     : "";
-  return `<article class="run-card ${active ? "active" : "done"} ${esc(run.status)}">
+  return `<article class="run-card ${active ? "active" : "done"} ${esc(run.status)}" id="run-${esc(run.id)}">
     <header class="run-card-head">
       ${active ? '<span class="run-pulse" aria-hidden="true"></span>' : '<span class="run-folder-icon" aria-hidden="true">📁</span>'}
       ${status(run.status)}
       <span class="run-folder" title="Display-only grouping">${esc(folder)}</span>
+      ${shareButton(deepLinks.run(run.id), "Copy share link to this run")}
     </header>
-    <h3 class="run-card-title"><a href="#runs/${esc(run.id)}">${esc(run.capabilityName)}</a></h3>
+    <h3 class="run-card-title"><a href="${esc(deepLinks.run(run.id))}">${esc(run.capabilityName)}</a></h3>
     <p class="muted run-step">${esc(run.currentStep || (active ? "starting…" : run.createdAt))}</p>
     ${artifactPreview}
     <footer class="run-card-foot">
-      <a class="button" href="#workflows${slug ? `/${slug}` : ""}">Workflow</a>
-      <a class="button" href="#runs/${esc(run.id)}">Run log</a>
+      <a class="button" href="${esc(slug ? deepLinks.workflow(slug) : deepLinks.workflows())}">Workflow</a>
+      <a class="button" href="${esc(deepLinks.runLogs(run.id))}">Run log</a>
+      <a class="button" href="${esc(deepLinks.runArtifacts(run.id))}">Artifacts</a>
     </footer>
   </article>`;
 }
@@ -354,7 +426,8 @@ async function renderHome() {
   const stats = dash.stats || {};
   const pending = dash.pendingApprovals || [];
   const gettingStarted = (runs.length === 0) && !active.length;
-  content.innerHTML = `${toolbar("Runs", `<button id="home-new-run">Run a workflow</button>`)}
+  content.innerHTML = `${toolbar("Runs", `<button id="home-new-run">Run a workflow</button>`, deepLinks.home())}
+    <p class="muted deep-link-hint">Every page, run, workflow, and artifact has a stable URL — click 🔗 to copy a shareable link.</p>
     ${gettingStarted ? empty("No runs yet.", "Pick a workflow and run it, or start a runner to execute work. Head to Workflows to begin.") : ""}
     <section class="stats home-stats">
       ${Object.entries({
@@ -368,7 +441,7 @@ async function renderHome() {
     <h2 class="section-heading">Active <span class="muted">${active.length} live</span></h2>
     ${active.length
       ? `<section class="run-grid live">${active.map((run) => runCard(run, artifactsByRun.get(run.id) || [])).join("")}</section>`
-      : `<p class="muted run-empty">No active runs right now. Start one from <a href="#workflows">Workflows</a>.</p>`}
+      : `<p class="muted run-empty">No active runs right now. Start one from <a href="${esc(deepLinks.workflows())}">Workflows</a>.</p>`}
     <h2 class="section-heading">Recent &amp; completed</h2>
     ${completed.length
       ? `<section class="run-grid">${completed.slice(0, 30).map((run) => runCard(run, artifactsByRun.get(run.id) || [])).join("")}</section>`
@@ -378,22 +451,23 @@ async function renderHome() {
   $("#home-new-run").addEventListener("click", () => setView("workflows"));
   document.querySelectorAll("[data-approve]").forEach((button) => button.addEventListener("click", () => resolveApproval(button.dataset.approve, "approve").then(() => render().catch(showError))));
   document.querySelectorAll("[data-reject]").forEach((button) => button.addEventListener("click", () => resolveApproval(button.dataset.reject, "reject").then(() => render().catch(showError))));
+  bindCopy();
 }
 
 function runsTable(runs) {
   if (!runs.length) return `<p class="muted">No runs yet.</p>`;
   return `<table class="table"><thead><tr><th>Run</th><th>Workflow</th><th>Status</th><th>Step</th><th>Created</th></tr></thead><tbody>
-    ${runs.map((run) => `<tr><td data-label="Run"><a href="#runs/${run.id}" data-run="${run.id}">${esc(run.id)}</a></td><td data-label="Workflow">${esc(run.capabilityName)}</td><td data-label="Status">${status(run.status)}</td><td data-label="Step">${esc(run.currentStep)}</td><td data-label="Created">${esc(run.createdAt)}</td></tr>`).join("")}
+    ${runs.map((run) => `<tr><td data-label="Run"><a href="${esc(deepLinks.run(run.id))}" data-run="${esc(run.id)}">${esc(run.id)}</a></td><td data-label="Workflow">${esc(run.capabilityName)}</td><td data-label="Status">${status(run.status)}</td><td data-label="Step">${esc(run.currentStep)}</td><td data-label="Created">${esc(run.createdAt)}</td></tr>`).join("")}
   </tbody></table>`;
 }
 
 async function renderCapabilities() {
   const data = await api("/api/capabilities");
-  content.innerHTML = `${toolbar("Workflows", `<button id="new-cap">New Workflow</button>`)}
-    <p class="muted">A workflow is a capability your agents can invoke. They appear as MCP tools and as launchable buttons here.</p>
+  content.innerHTML = `${toolbar("Workflows", `<button id="new-cap">New Workflow</button>`, deepLinks.workflows())}
+    <p class="muted">A workflow is a capability your agents can invoke. They appear as MCP tools and as launchable buttons here. Each workflow has a shareable link — open 🔗 to copy.</p>
     ${data.capabilities.length ? `<div class="grid">
-      ${data.capabilities.map((cap) => `<article class="item">
-        <h3>${esc(cap.name)}</h3>
+      ${data.capabilities.map((cap) => `<article class="item" id="workflow-${esc(cap.slug)}">
+        <h3><a href="${esc(deepLinks.workflow(cap.slug))}">${esc(cap.name)}</a> ${shareButton(deepLinks.workflow(cap.slug), `Copy share link to ${cap.name}`)}</h3>
         <p class="muted">${esc(cap.description)}</p>
         <p>${esc(cap.category)} · v${cap.version} · ${cap.enabled ? "enabled" : "disabled"}${cap.approvalPolicy?.required ? " · needs approval" : ""}</p>
         <div class="toolbar-actions">
@@ -403,9 +477,10 @@ async function renderCapabilities() {
       </article>`).join("")}
     </div>` : empty("No workflows yet.", "Click New Workflow to define the first action agents can run.")}
     <section id="editor" class="panel hidden"></section>`;
-  document.querySelectorAll("[data-run]").forEach((button) => button.addEventListener("click", () => showRunForm(button.dataset.run)));
+  document.querySelectorAll("[data-run]").forEach((button) => button.addEventListener("click", () => setView(`workflows/${button.dataset.run}`)));
   document.querySelectorAll("[data-edit-cap]").forEach((button) => button.addEventListener("click", () => editCapability(button.dataset.editCap)));
   $("#new-cap").addEventListener("click", () => editCapability());
+  bindCopy();
 }
 
 async function showRunForm(slug) {
@@ -418,8 +493,9 @@ async function showRunForm(slug) {
   const editor = $("#editor");
   editor.classList.remove("hidden");
   editor.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  editor.innerHTML = `<h2>Run ${esc(cap.name)}</h2>
+  editor.innerHTML = `<h2>Run ${esc(cap.name)} ${shareButton(deepLinks.workflow(slug), `Copy share link to ${cap.name}`)}</h2>
     <p class="muted">${esc(cap.description || "")}</p>
+    <p class="muted"><span class="kbd">${esc(deepLinks.abs(deepLinks.workflow(slug)))}</span></p>
     ${approval ? `<p class="notice">This workflow requires approval before it runs.${cap.approvalPolicy?.reason ? ` ${esc(cap.approvalPolicy.reason)}` : ""}</p>` : ""}
     <form id="run-form" class="form-grid">
       ${hasFields ? schemaForm(schema) : `<label>Input JSON<textarea data-field="__raw" data-ftype="json" placeholder="{}">{}</textarea><span class="field-hint">This workflow has no declared input schema. Provide raw JSON.</span><span class="field-error" data-error-for="__raw"></span></label>`}
@@ -427,6 +503,7 @@ async function showRunForm(slug) {
       <button class="primary" type="submit">Create Run</button>
     </form>
     <details class="advanced"><summary>Workflow contract</summary>${json(cap)}</details>`;
+  bindCopy();
   const form = $("#run-form");
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -450,7 +527,7 @@ async function showRunForm(slug) {
     try {
       const result = await api(`/api/capabilities/${slug}/run`, { method: "POST", body: { input } });
       toast(`Run created${approval ? " — pending approval" : ""}`, "ok");
-      location.hash = `runs/${result.run.id}`;
+      location.hash = deepLinks.run(result.run.id).slice(1);
       state.view = `runs/${result.run.id}`;
       await render();
     } catch (error) {
@@ -515,42 +592,55 @@ async function editCapability(slug = "") {
   });
 }
 
-async function renderRunDetail(runId) {
+async function renderRunDetail(runId, { focus = "" } = {}) {
   const data = await api(`/api/runs/${runId}`);
   const run = data.run;
   const folder = runFolderLabel(run);
-  const slug = esc(run.capabilitySlug || "");
-  content.innerHTML = `${toolbar(run.id, `<a class="button" href="#workflows${slug ? `/${slug}` : ""}">Workflow</a><button id="cancel-run" class="danger">Cancel</button>`)}
+  const slug = run.capabilitySlug || "";
+  const focusHint = focus === "logs"
+    ? `<p class="muted">Linked directly to this run's log.</p>`
+    : focus === "artifacts"
+      ? `<p class="muted">Linked directly to this run's artifacts.</p>`
+      : "";
+  content.innerHTML = `${toolbar(run.id, `<a class="button" href="${esc(slug ? deepLinks.workflow(slug) : deepLinks.workflows())}">Workflow</a>
+      <a class="button" href="${esc(deepLinks.runLogs(run.id))}">Run log</a>
+      <a class="button" href="${esc(deepLinks.runArtifacts(run.id))}">Artifacts</a>
+      <button id="cancel-run" class="danger">Cancel</button>`, deepLinks.run(run.id))}
     <p class="run-folder-banner"><span class="run-folder">📁 ${esc(folder)}</span> <span class="muted">— display-only grouping for this run's artifacts &amp; logs</span></p>
+    ${focusHint}
     <section class="split">
-      <div class="panel">
-        <h2>${esc(run.capabilityName)} ${status(run.status)}</h2>
+      <div class="panel" id="panel-logs">
+        <h2>${esc(run.capabilityName)} ${status(run.status)} ${shareButton(deepLinks.runLogs(run.id), "Copy share link to this run's log")}</h2>
         <p class="muted">${esc(run.currentStep)}</p>
         <h3>Timeline</h3>
         <div class="timeline">${data.events.map((event) => `<div class="event"><time>${esc(event.createdAt)}</time><strong>${esc(event.type)}</strong><br>${esc(event.message)}</div>`).join("")}</div>
       </div>
-      <div class="panel">
+      <div class="panel" id="panel-artifacts">
         <h3>Input</h3>${json(run.input)}
         <h3>Output</h3>${json(run.output)}
-        <h3>Artifacts</h3>
+        <h3>Artifacts ${shareButton(deepLinks.runArtifacts(run.id), "Copy share link to this run's artifacts")}</h3>
         ${artifactList(data.artifacts)}
       </div>
     </section>`;
   $("#cancel-run").addEventListener("click", async () => {
     await api(`/api/runs/${run.id}/cancel`, { method: "POST", body: { reason: "Cancelled from Web Hub" } });
-    await renderRunDetail(run.id);
+    await renderRunDetail(run.id, { focus });
   });
+  bindCopy();
+  // Honor the sub-route by bringing the relevant panel into view.
+  if (focus === "logs") $("#panel-logs")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  if (focus === "artifacts") $("#panel-artifacts")?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function artifactList(artifacts) {
   if (!artifacts.length) return `<p class="muted">No artifacts.</p>`;
-  return `<ul class="artifact-list">${artifacts.map((artifact) => `<li><a href="/api/artifacts/${artifact.id}/download" target="_blank">${esc(artifactDisplayName(artifact))}</a> <span class="muted">${esc(formatBytes(artifact.sizeBytes))}${artifact.mimeType ? ` · ${esc(artifact.mimeType)}` : ""}</span></li>`).join("")}</ul>`;
+  return `<ul class="artifact-list">${artifacts.map((artifact) => `<li id="artifact-${esc(artifact.id)}"><a href="/api/artifacts/${esc(artifact.id)}/download" target="_blank">${esc(artifactDisplayName(artifact))}</a> ${shareButton(deepLinks.artifact(artifact.id), "Copy share link to this artifact")} <span class="muted">${esc(formatBytes(artifact.sizeBytes))}${artifact.mimeType ? ` · ${esc(artifact.mimeType)}` : ""}</span></li>`).join("")}</ul>`;
 }
 
 function approvalList(approvals) {
   if (!approvals.length) return `<p class="muted">No pending approvals.</p>`;
-  return `<div class="timeline">${approvals.map((approval) => `<div class="event">
-    <strong>${esc(approval.title)}</strong><br>
+  return `<div class="timeline">${approvals.map((approval) => `<div class="event" id="approval-${esc(approval.id)}">
+    <strong>${esc(approval.title)}</strong> ${shareButton(deepLinks.approval(approval.id), "Copy share link to this approval")}<br>
     <span class="muted">${esc(approval.description)}</span><br>
     ${status(approval.status)}
     <div class="toolbar-actions">
@@ -560,11 +650,13 @@ function approvalList(approvals) {
   </div>`).join("")}</div>`;
 }
 
-async function renderApprovals() {
+async function renderApprovals(focusId = "") {
   const data = await api("/api/approvals");
-  content.innerHTML = `${toolbar("Approvals")}<section class="panel">${approvalList(data.approvals)}</section>`;
+  content.innerHTML = `${toolbar("Approvals", "", deepLinks.approvals())}<section class="panel">${approvalList(data.approvals)}</section>`;
   document.querySelectorAll("[data-approve]").forEach((button) => button.addEventListener("click", () => resolveApproval(button.dataset.approve, "approve")));
   document.querySelectorAll("[data-reject]").forEach((button) => button.addEventListener("click", () => resolveApproval(button.dataset.reject, "reject")));
+  bindCopy();
+  if (focusId) focusElement(`approval-${focusId}`);
 }
 
 async function resolveApproval(id, decision) {
@@ -572,25 +664,38 @@ async function resolveApproval(id, decision) {
   await renderApprovals();
 }
 
-async function renderArtifacts() {
+async function renderArtifacts(focusId = "") {
   const data = await api("/api/artifacts");
-  content.innerHTML = `${toolbar("Artifacts")}<section class="panel">${artifactList(data.artifacts)}</section>`;
+  content.innerHTML = `${toolbar("Artifacts", "", deepLinks.artifacts())}<section class="panel">${artifactList(data.artifacts)}</section>`;
+  bindCopy();
+  if (focusId) focusElement(`artifact-${focusId}`);
+}
+
+// Scroll a deep-linked item into view and briefly highlight it so the user
+// sees what they landed on.
+function focusElement(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.scrollIntoView({ behavior: "smooth", block: "center" });
+  el.classList.add("link-focus");
+  setTimeout(() => el.classList.remove("link-focus"), 2200);
 }
 
 async function renderRunners() {
   const data = await api("/api/runners");
-  content.innerHTML = `${toolbar("Runners")}<section class="panel">
+  content.innerHTML = `${toolbar("Runners", "", deepLinks.runners())}<section class="panel">
     ${data.runners.length ? `<table class="table"><thead><tr><th>Name</th><th>Status</th><th>Tags</th><th>Last heartbeat</th></tr></thead><tbody>
       ${data.runners.map((runner) => `<tr><td data-label="Name">${esc(runner.name)}<br><span class="muted">${esc(runner.id)}</span></td><td data-label="Status">${status(runner.online ? "online" : "offline")}</td><td data-label="Tags">${esc((runner.tags || []).join(", "))}</td><td data-label="Last heartbeat">${esc(runner.lastHeartbeatAt || "never")}</td></tr>`).join("")}
     </tbody></table>` : empty("No runners connected.", "Start one with <code>smithers-hub-runner</code> using a token that has the runner scope.")}
   </section>`;
+  bindCopy();
 }
 
 // --- Agents area folds Agents + Skills + Knowledge into one tabbed view ----
 const AGENT_TABS = [
-  { key: "agents", label: "Agents", endpoint: "agents", blurb: "Personas that combine skills + knowledge to handle workflows." },
-  { key: "skills", label: "Skills", endpoint: "skills", blurb: "Reusable capabilities your agents can call on." },
-  { key: "knowledge", label: "Knowledge", endpoint: "knowledge", blurb: "Documents and references agents draw from." }
+  { key: "agents", label: "Agents", endpoint: "agents", blurb: "Personas that combine skills + knowledge to handle workflows.", link: (slug) => deepLinks.agent(slug) },
+  { key: "skills", label: "Skills", endpoint: "skills", blurb: "Reusable capabilities your agents can call on.", link: (slug) => deepLinks.skill(slug) },
+  { key: "knowledge", label: "Knowledge", endpoint: "knowledge", blurb: "Documents and references agents draw from.", link: (slug) => deepLinks.knowledgeItem(slug) }
 ];
 
 async function renderAgents(tab = "agents") {
@@ -599,11 +704,12 @@ async function renderAgents(tab = "agents") {
   const items = data[meta.endpoint === "knowledge" ? "knowledge" : meta.endpoint] || [];
   const tabsHtml = AGENT_TABS.map((t) => `<button type="button" class="tab ${t.key === meta.key ? "active" : ""}" data-tab="${esc(t.key)}">${esc(t.label)}</button>`).join("");
   const singular = meta.label.replace(/s$/, "");
-  content.innerHTML = `${toolbar("Agents", `<button id="new-item">New ${esc(singular === "Knowledge" ? "entry" : singular)}</button>`)}
+  const sectionHash = `#agents/${meta.key}`;
+  content.innerHTML = `${toolbar("Agents", `<button id="new-item">New ${esc(singular === "Knowledge" ? "entry" : singular)}</button>`, sectionHash)}
     <nav class="tabs">${tabsHtml}</nav>
     <p class="muted agents-blurb">${esc(meta.blurb)}</p>
-    ${items.length ? `<div class="grid">${items.map((item) => `<article class="item">
-      <h3>${esc(item.name || item.title)}</h3>
+    ${items.length ? `<div class="grid">${items.map((item) => `<article class="item" id="${esc(meta.key)}-${esc(item.slug)}">
+      <h3>${esc(item.name || item.title)} ${shareButton(meta.link(item.slug), `Copy share link to ${item.name || item.title}`)}</h3>
       <p class="muted">${esc(item.description || item.body || "")}</p>
       <button data-edit="${esc(item.slug)}">Edit</button>
     </article>`).join("")}</div>` : empty(`No ${meta.label.toLowerCase()} yet.`)}
@@ -611,19 +717,24 @@ async function renderAgents(tab = "agents") {
   document.querySelectorAll(".tabs [data-tab]").forEach((button) => button.addEventListener("click", () => setView(`agents/${button.dataset.tab}`)));
   $("#new-item").addEventListener("click", () => editItem(meta.endpoint));
   document.querySelectorAll("[data-edit]").forEach((button) => button.addEventListener("click", () => editItem(meta.endpoint, button.dataset.edit)));
+  bindCopy();
 }
 
 async function editItem(kind, slug = "") {
   const collection = (await api(`/api/${kind}`))[kind === "knowledge" ? "knowledge" : kind];
   const item = slug ? collection.find((entry) => entry.slug === slug) : { slug: "", name: "", title: "", description: "", body: "", instructions: "" };
+  if (!item) return; // deep-linked slug that no longer exists
   const editor = $("#editor");
   editor.classList.remove("hidden");
   editor.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  editor.innerHTML = `<h2>${slug ? "Edit" : "New"}</h2>
+  const tabKey = kind === "knowledge" ? "knowledge" : kind === "skills" ? "skills" : "agents";
+  const itemHash = `#agents/${tabKey}/${encodeURIComponent(slug || item.slug || "")}`;
+  editor.innerHTML = `<h2>${slug ? "Edit" : "New"} ${slug ? shareButton(itemHash, "Copy share link to this item") : ""}</h2>
     <form id="item-form" class="form-grid">
       <label>JSON<textarea id="item-json">${esc(JSON.stringify(item, null, 2))}</textarea></label>
       <button class="primary" type="submit">Save</button>
     </form>`;
+  bindCopy();
   $("#item-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     let payload;
@@ -635,7 +746,7 @@ async function editItem(kind, slug = "") {
     try {
       await api(slug ? `/api/${kind}/${slug}` : `/api/${kind}`, { method: slug ? "PATCH" : "POST", body: payload });
       toast("Saved", "ok");
-      await renderAgents(kind);
+      await renderAgents(kind === "knowledge" ? "knowledge" : kind === "skills" ? "skills" : "agents");
     } catch (error) {
       toast(error.message, "error");
     }
@@ -646,7 +757,7 @@ const TOKEN_SCOPES = ["api", "mcp", "runner", "admin"];
 
 async function renderTokens() {
   const data = await api("/api/tokens");
-  content.innerHTML = `${toolbar("Access Tokens")}
+  content.innerHTML = `${toolbar("Access Tokens", "", deepLinks.tokens())}
     <section class="split">
       <div class="panel">
         <h2>Create Token</h2>
@@ -688,6 +799,7 @@ async function renderTokens() {
     await refreshTokenTable();
   });
   bindRevoke();
+  bindCopy();
 }
 
 function tokenTable(tokens) {
@@ -733,16 +845,25 @@ async function copyText(text) {
 }
 
 function bindCopy() {
-  document.querySelectorAll("[data-copy]").forEach((b) => b.addEventListener("click", () => copyText(b.dataset.copy)));
-  document.querySelectorAll("[data-copy-el]").forEach((b) =>
-    b.addEventListener("click", () => copyText(document.getElementById(b.dataset.copyEl).value))
-  );
+  document.querySelectorAll("[data-copy]").forEach((b) => {
+    if (b.dataset.copyBound === "1") return;
+    b.dataset.copyBound = "1";
+    b.addEventListener("click", (event) => {
+      event.preventDefault();
+      copyText(b.dataset.copy);
+    });
+  });
+  document.querySelectorAll("[data-copy-el]").forEach((b) => {
+    if (b.dataset.copyBound === "1") return;
+    b.dataset.copyBound = "1";
+    b.addEventListener("click", () => copyText(document.getElementById(b.dataset.copyEl).value));
+  });
 }
 
 async function renderConnect() {
   const origin = location.origin;
   const installCmd = `bash <(curl -fsSL ${origin}/install.sh)`;
-  content.innerHTML = `${toolbar("Connect an Agent or Teammate")}
+  content.innerHTML = `${toolbar("Connect an Agent or Teammate", "", deepLinks.connect())}
     <section class="split">
       <div class="panel">
         <h2>1 · Install the client</h2>
@@ -768,6 +889,8 @@ async function renderConnect() {
           <button class="primary" type="submit">Generate token</button>
         </form>
         <div id="invite-out"></div>
+        <h3>Shareable deep links</h3>
+        <p class="muted">Every page, run, workflow, and artifact has a stable URL. Click any 🔗 in the console to copy one — paste into chat or docs.</p>
       </div>
     </section>`;
   bindCopy();
@@ -796,20 +919,21 @@ async function renderAudit() {
   try {
     data = await api("/api/audit");
   } catch (error) {
-    content.innerHTML = `${toolbar("Audit Log")}<section class="panel"><p class="muted">${esc(error.message)} (admin scope required)</p></section>`;
+    content.innerHTML = `${toolbar("Audit Log", "", deepLinks.audit())}<section class="panel"><p class="muted">${esc(error.message)} (admin scope required)</p></section>`;
     return;
   }
   const rows = data.audit;
-  content.innerHTML = `${toolbar("Audit Log")}<section class="panel">
+  content.innerHTML = `${toolbar("Audit Log", "", deepLinks.audit())}<section class="panel">
     ${rows.length ? `<table class="table"><thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Target</th></tr></thead><tbody>
       ${rows.map((entry) => `<tr><td data-label="Time">${esc(entry.createdAt)}</td><td data-label="Actor">${esc(entry.actor)}</td><td data-label="Action">${esc(entry.action)}</td><td data-label="Target"><span class="muted">${esc(entry.target || "")}</span></td></tr>`).join("")}
     </tbody></table>` : `<p class="muted">No audit entries yet.</p>`}
   </section>`;
+  bindCopy();
 }
 
 async function renderSettings() {
   const setup = await api("/api/setup");
-  content.innerHTML = `${toolbar("Settings")}
+  content.innerHTML = `${toolbar("Settings", "", deepLinks.settings())}
     <section class="split">
       <div class="panel">
         <h2>Deployment</h2>
@@ -821,8 +945,11 @@ async function renderSettings() {
         <p class="muted">Set <code>TELEGRAM_BOT_TOKEN</code> and <code>TELEGRAM_CHAT_ID</code> in the service environment to send approval requests to Telegram. Web, API, CLI, and MCP approvals work without Telegram.</p>
       </div>
     </section>`;
+  bindCopy();
 }
 
+// React to back/forward and to plain anchor clicks (`<a href="#runs/abc">`),
+// so deep-linked URLs survive reload and update on every navigation.
 window.addEventListener("hashchange", () => {
   state.view = location.hash.slice(1) || "home";
   render().catch(showError);

@@ -40,6 +40,20 @@ SMITHERS_RUNNER_TAGS=linux,node,git,shell,web,smithers \
 smithers-hub-runner</pre>
         <h2>Agent Discovery</h2>
         <p><a href="/llms.txt">/llms.txt</a> and <a href="/openapi.json">/openapi.json</a> describe the agent-facing surface.</p>
+        <h2 id="deep-links">Deep links</h2>
+        <p>Every console page, run, workflow, agent, skill, knowledge entry, artifact, and approval has a stable URL — paste it into chat or docs and it survives reload. Each card and detail view shows a 🔗 button to copy that link to your clipboard. Examples:</p>
+        <pre class="json">/app#runs                                 # all runs (home)
+/app#runs/&lt;id&gt;                            # one run's detail
+/app#runs/&lt;id&gt;/logs                       # jump to the log timeline
+/app#runs/&lt;id&gt;/artifacts                  # jump to artifacts
+/app#workflows/&lt;slug&gt;                     # a workflow with its Run form
+/app#agents/agents/&lt;slug&gt;                 # a specific agent
+/app#agents/skills/&lt;slug&gt;                 # a specific skill
+/app#agents/knowledge/&lt;slug&gt;              # a knowledge entry
+/app#artifacts/&lt;id&gt;                       # a single artifact in the list
+/app#approvals/&lt;id&gt;                       # an approval
+/app#tokens | #runners | #audit | #connect | #settings</pre>
+        <p>The same URLs come back as <code>deepLink</code> fields on most API responses (runs, capabilities, artifacts, approvals) so MCP/CLI clients can hand operators a clickable link with zero extra work.</p>
       </div>
     </main>
   </body>

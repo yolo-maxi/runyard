@@ -60,6 +60,49 @@ function publicUrl(req) {
   return `${req.protocol}://${req.get("host")}`;
 }
 
+// --- Deep-link helpers -------------------------------------------------------
+// Stable hash routes consumed by the web app (and by anyone who pastes the
+// link into chat). These are added to API responses as a non-breaking
+// `deepLink` field so clients don't have to know the URL scheme.
+const deepLinks = {
+  run: (id) => `/app#runs/${encodeURIComponent(id)}`,
+  runLogs: (id) => `/app#runs/${encodeURIComponent(id)}/logs`,
+  runArtifacts: (id) => `/app#runs/${encodeURIComponent(id)}/artifacts`,
+  workflow: (slug) => `/app#workflows/${encodeURIComponent(slug)}`,
+  artifact: (id) => `/app#artifacts/${encodeURIComponent(id)}`,
+  approval: (id) => `/app#approvals/${encodeURIComponent(id)}`
+};
+
+function withRunLinks(run) {
+  if (!run || typeof run !== "object") return run;
+  return {
+    ...run,
+    deepLink: deepLinks.run(run.id),
+    deepLinkLogs: deepLinks.runLogs(run.id),
+    deepLinkArtifacts: deepLinks.runArtifacts(run.id),
+    ...(run.capabilitySlug ? { deepLinkWorkflow: deepLinks.workflow(run.capabilitySlug) } : {})
+  };
+}
+
+function withCapabilityLinks(cap) {
+  if (!cap || typeof cap !== "object") return cap;
+  return { ...cap, deepLink: deepLinks.workflow(cap.slug) };
+}
+
+function withArtifactLinks(artifact) {
+  if (!artifact || typeof artifact !== "object") return artifact;
+  return { ...artifact, deepLink: deepLinks.artifact(artifact.id) };
+}
+
+function withApprovalLinks(approval) {
+  if (!approval || typeof approval !== "object") return approval;
+  return {
+    ...approval,
+    deepLink: deepLinks.approval(approval.id),
+    ...(approval.runId ? { deepLinkRun: deepLinks.run(approval.runId) } : {})
+  };
+}
+
 function authFromRequest(req) {
   const header = req.headers.authorization || "";
   const bearer = header.toLowerCase().startsWith("bearer ") ? header.slice(7) : "";
@@ -396,13 +439,17 @@ app.delete("/api/tokens/:id", requireAuth, requireScopes("admin"), (req, res) =>
 });
 
 app.get("/api/dashboard", requireAuth, (_req, res) => {
-  res.json({ stats: dashboardStats(), recentRuns: listRuns({ limit: 8 }), pendingApprovals: listApprovals("pending") });
+  res.json({
+    stats: dashboardStats(),
+    recentRuns: listRuns({ limit: 8 }).map(withRunLinks),
+    pendingApprovals: listApprovals("pending").map(withApprovalLinks)
+  });
 });
 
 app.get("/api/capabilities", requireAuth, (req, res) => {
   // Catalog shows enabled capabilities; admins can include disabled with ?all=1.
   const includeDisabled = req.query.all === "1" && (req.token.scopes || []).includes("admin");
-  res.json({ capabilities: listCapabilities({ q: req.query.q || "", includeDisabled }) });
+  res.json({ capabilities: listCapabilities({ q: req.query.q || "", includeDisabled }).map(withCapabilityLinks) });
 });
 
 app.post("/api/capabilities", requireAuth, requireScopes("admin"), (req, res) => {
@@ -413,7 +460,7 @@ app.post("/api/capabilities", requireAuth, requireScopes("admin"), (req, res) =>
 app.get("/api/capabilities/:id", requireAuth, (req, res) => {
   const capability = getCapability(req.params.id);
   if (!capability) return res.status(404).json({ error: "capability not found" });
-  res.json({ capability });
+  res.json({ capability: withCapabilityLinks(capability) });
 });
 
 app.patch("/api/capabilities/:id", requireAuth, requireScopes("admin"), (req, res) => {
@@ -428,7 +475,14 @@ app.post("/api/capabilities/:id/run", requireAuth, requireScopes("api", "mcp"), 
   const run = createRun(capability, req.body.input || req.body || {}, { runnerId: req.body.runnerId });
   const pending = listApprovals("pending").find((approval) => approval.runId === run.id);
   if (pending) await notifyTelegram(pending);
-  res.status(202).json({ run, statusUrl: `/api/runs/${run.id}`, webUrl: `/app#runs/${run.id}` });
+  res.status(202).json({
+    run: withRunLinks(run),
+    statusUrl: `/api/runs/${run.id}`,
+    webUrl: `/app#runs/${run.id}`,
+    deepLink: deepLinks.run(run.id),
+    deepLinkLogs: deepLinks.runLogs(run.id),
+    deepLinkArtifacts: deepLinks.runArtifacts(run.id)
+  });
 });
 
 app.get("/api/agents", requireAuth, (req, res) => res.json({ agents: listAgents(req.query.q || "") }));
@@ -449,12 +503,16 @@ app.get("/api/runs", requireAuth, (req, res) => {
   reapStuckRuns(env.runDeadlineMs);
   const status = req.query.status || "";
   const limit = Math.min(Number(req.query.limit || 100), 500);
-  res.json({ runs: listRuns({ status, limit }), total: countRuns({ status }), limit });
+  res.json({ runs: listRuns({ status, limit }).map(withRunLinks), total: countRuns({ status }), limit });
 });
 app.get("/api/runs/:id", requireAuth, (req, res) => {
   const run = getRun(req.params.id);
   if (!run) return res.status(404).json({ error: "run not found" });
-  res.json({ run, events: listRunEvents(run.id), artifacts: listArtifacts({ runId: run.id }) });
+  res.json({
+    run: withRunLinks(run),
+    events: listRunEvents(run.id),
+    artifacts: listArtifacts({ runId: run.id }).map(withArtifactLinks)
+  });
 });
 app.get("/api/runs/:id/events", requireAuth, (req, res) => res.json({ events: listRunEvents(req.params.id) }));
 app.get("/api/runs/:id/logs", requireAuth, (req, res) => {
@@ -493,7 +551,7 @@ app.post("/api/runs/:id/cancel", requireAuth, requireScopes("api", "mcp", "runne
   res.json({ run: result.run });
 });
 
-app.get("/api/runs/:id/artifacts", requireAuth, (req, res) => res.json({ artifacts: listArtifacts({ runId: req.params.id }) }));
+app.get("/api/runs/:id/artifacts", requireAuth, (req, res) => res.json({ artifacts: listArtifacts({ runId: req.params.id }).map(withArtifactLinks) }));
 app.post("/api/runs/:id/artifacts", requireAuth, requireScopes("runner"), requireRunOwnerOrAdmin, (req, res) => {
   const runDir = path.join(env.artifactDir, "runs", req.params.id);
   mkdirSync(runDir, { recursive: true });
@@ -513,7 +571,7 @@ app.post("/api/runs/:id/artifacts", requireAuth, requireScopes("runner"), requir
   res.json({ artifact });
 });
 
-app.get("/api/artifacts", requireAuth, (req, res) => res.json({ artifacts: listArtifacts({ q: req.query.q || "" }) }));
+app.get("/api/artifacts", requireAuth, (req, res) => res.json({ artifacts: listArtifacts({ q: req.query.q || "" }).map(withArtifactLinks) }));
 app.get("/api/artifacts/:id/download", requireAuth, (req, res) => {
   const artifact = getArtifact(req.params.id);
   if (!artifact) return res.status(404).json({ error: "artifact not found" });
@@ -528,7 +586,7 @@ app.get("/api/artifacts/:id/download", requireAuth, (req, res) => {
   res.send(readFileSync(resolved));
 });
 
-app.get("/api/approvals", requireAuth, (req, res) => res.json({ approvals: listApprovals(req.query.status || "") }));
+app.get("/api/approvals", requireAuth, (req, res) => res.json({ approvals: listApprovals(req.query.status || "").map(withApprovalLinks) }));
 app.post("/api/approvals/:id/approve", requireAuth, requireScopes("api", "mcp"), (req, res) =>
   res.json({ approval: resolveApproval(req.params.id, "approved", req.token.name, req.body.comment || "") })
 );
