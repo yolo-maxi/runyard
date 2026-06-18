@@ -565,16 +565,18 @@ async function renderConnect() {
     <section class="split">
       <div class="panel">
         <h2>1 · Install the client</h2>
-        <p class="muted">One command — installs the <code>smithers-hub</code> CLI and MCP server. Requires Node.js 18+.</p>
+        <p class="muted">One command — installs the <code>smithers-hub</code> CLI + MCP server and asks you to paste a token. Requires Node.js 18+.</p>
         <div class="copy-row"><input readonly value="${esc(installCmd)}"><button data-copy="${esc(installCmd)}">Copy</button></div>
-        <h3>2 · Connect your AI agent</h3>
-        <p class="muted">After installing + logging in, one command wires up Claude/Codex:</p>
-        <div class="copy-row"><input readonly value="smithers-hub mcp install"><button data-copy="smithers-hub mcp install">Copy</button></div>
-        <p class="muted">Defaults to Claude Code. Use <code>--client claude-desktop</code> or <code>--client codex</code> for others.</p>
+        <h3>2 · Connect every AI agent</h3>
+        <p class="muted">Auto-detects and configures the AI clients on your machine — no JSON editing:</p>
+        <div class="copy-row"><input readonly value="smithers-hub mcp install --all"><button data-copy="smithers-hub mcp install --all">Copy</button></div>
+        <p class="muted">Supports Claude Code/Desktop, Codex, Cursor, Windsurf, Gemini, VS Code. Target one with <code>--client &lt;name&gt;</code>.</p>
+        <h3>Multiple orgs?</h3>
+        <p class="muted">Each org is its own hub. On the same machine: <code>smithers-hub login --remote &lt;org&gt;</code> (against that org's URL), then <code>smithers-hub mcp install --all --remote &lt;org&gt;</code> — its tools install alongside, namespaced <code>smithers-hub-&lt;org&gt;</code>.</p>
       </div>
       <div class="panel">
         <h2>Onboard a teammate</h2>
-        <p class="muted">Generate a single command that installs the client <em>and</em> logs them in automatically. Nothing else to explain.</p>
+        <p class="muted">Generate a token to hand them. They run the install command above and paste this when asked — no secret baked into any command.</p>
         <form id="invite-form" class="form-grid">
           <label>Scopes
             <div class="toolbar-actions">
@@ -582,7 +584,7 @@ async function renderConnect() {
             </div>
           </label>
           <label>Label<input id="invite-name" value="teammate"></label>
-          <button class="primary" type="submit">Generate invite command</button>
+          <button class="primary" type="submit">Generate token</button>
         </form>
         <div id="invite-out"></div>
       </div>
@@ -594,13 +596,14 @@ async function renderConnect() {
     if (!scopes.length) return toast("Pick at least one scope", "error");
     try {
       const data = await api("/api/tokens", { method: "POST", body: { name: $("#invite-name").value || "teammate", scopes } });
-      const cmd = `SMITHERS_HUB_TOKEN=${data.token.token} bash <(curl -fsSL ${origin}/install.sh)`;
-      $("#invite-out").innerHTML = `<h3>Send this to your teammate</h3>
-        <p class="muted">Installs the client and logs them in. The token is shown once.</p>
-        <div class="copy-row"><input id="invite-cmd" readonly value="${esc(cmd)}"><button data-copy-el="invite-cmd">Copy</button></div>
-        <p class="muted">They then run <code>smithers-hub mcp install</code> to connect their agent. Revoke anytime under Tokens.</p>`;
+      $("#invite-out").innerHTML = `<h3>Send these to your teammate</h3>
+        <p class="muted">Token (shown once) — they paste it when the installer asks:</p>
+        <div class="copy-row"><input id="invite-token" readonly value="${esc(data.token.token)}"><button data-copy-el="invite-token">Copy</button></div>
+        <p class="muted">Install command:</p>
+        <div class="copy-row"><input id="invite-cmd" readonly value="${esc(installCmd)}"><button data-copy-el="invite-cmd">Copy</button></div>
+        <p class="muted">Then they run <code>smithers-hub mcp install --all</code>. Revoke anytime under Tokens.</p>`;
       bindCopy();
-      toast("Invite command generated", "ok");
+      toast("Token generated", "ok");
     } catch (error) {
       toast(error.message, "error");
     }

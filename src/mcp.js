@@ -1,9 +1,14 @@
 #!/usr/bin/env node
 import { HubClient } from "./apiClient.js";
+import { resolveRemote } from "./config.js";
 
+// Resolve target hub from (in order): env, --remote <name> in argv, the current saved remote.
+const remoteArgIndex = process.argv.indexOf("--remote");
+const remoteName = remoteArgIndex >= 0 ? process.argv[remoteArgIndex + 1] : null;
+const remote = resolveRemote(remoteName);
 const client = new HubClient({
-  baseUrl: process.env.SMITHERS_HUB_URL || process.env.HUB_URL || "http://127.0.0.1:43117",
-  token: process.env.SMITHERS_HUB_TOKEN || process.env.HUB_TOKEN
+  baseUrl: process.env.SMITHERS_HUB_URL || process.env.HUB_URL || remote.url || "http://127.0.0.1:43117",
+  token: process.env.SMITHERS_HUB_TOKEN || process.env.HUB_TOKEN || remote.token
 });
 
 const tools = [

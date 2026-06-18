@@ -246,8 +246,17 @@ cat > "$BIN/smithers-hub-mcp" <<WRAP
 exec node "$APP/src/mcp.js" "\\$@"
 WRAP
 chmod +x "$BIN/smithers-hub" "$BIN/smithers-hub-mcp"
-if [ -n "\${SMITHERS_HUB_TOKEN:-}" ]; then
-  node "$APP/src/cli.js" login --url "$HUB_URL" --token "$SMITHERS_HUB_TOKEN" >/dev/null && echo "Logged in to $HUB_URL"
+TOKEN="\${SMITHERS_HUB_TOKEN:-}"
+REMOTE="\${SMITHERS_HUB_REMOTE:-default}"
+# Ask for the token on first run (no secret needs to be baked into the install command).
+if [ -z "$TOKEN" ] && [ -r /dev/tty ]; then
+  printf "Paste your Smithers Hub access token (Web Hub -> Connect): " > /dev/tty
+  read -r TOKEN < /dev/tty
+fi
+if [ -n "$TOKEN" ]; then
+  node "$APP/src/cli.js" login --remote "$REMOTE" --url "$HUB_URL" --token "$TOKEN" >/dev/null && echo "Logged in to $HUB_URL (remote: $REMOTE)"
+else
+  echo "No token entered. Log in later with:  smithers-hub login --url $HUB_URL"
 fi
 case ":$PATH:" in
   *":$BIN:"*) ;;
@@ -256,7 +265,7 @@ esac
 echo ""
 echo "Installed. Next:"
 echo "  smithers-hub capabilities      # see what you can run"
-echo "  smithers-hub mcp install       # connect your AI agent (Claude/Codex)"
+echo "  smithers-hub mcp install --all # connect every AI agent on this machine"
 `);
 });
 

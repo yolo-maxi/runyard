@@ -3,28 +3,18 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
+import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { HubClient } from "./apiClient.js";
-
-const configDir = path.join(os.homedir(), ".smithers-hub");
-const configFile = path.join(configDir, "config.json");
-
-function readConfig() {
-  if (!existsSync(configFile)) return {};
-  return JSON.parse(readFileSync(configFile, "utf8"));
-}
-
-function writeConfig(config) {
-  mkdirSync(configDir, { recursive: true });
-  writeFileSync(configFile, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
-}
+import { readConfig, writeConfig, setRemote, resolveRemote } from "./config.js";
 
 function client(options = {}) {
-  const config = readConfig();
-  const baseUrl = options.url || process.env.SMITHERS_HUB_URL || config.url || "http://127.0.0.1:43117";
-  const token = options.token || process.env.SMITHERS_HUB_TOKEN || config.token;
-  if (!token) throw new Error("No token configured. Run smithers-hub login --url <url> --token <token>.");
+  const remoteName = options.remote || program.opts().remote;
+  const remote = resolveRemote(remoteName);
+  const baseUrl = options.url || program.opts().url || process.env.SMITHERS_HUB_URL || remote.url || "http://127.0.0.1:43117";
+  const token = options.token || program.opts().token || process.env.SMITHERS_HUB_TOKEN || remote.token;
+  if (!token) throw new Error("No token configured. Run: smithers-hub login");
   return new HubClient({ baseUrl, token });
 }
 
@@ -40,33 +30,102 @@ function print(data, json) {
   }
 }
 
+function ask(query, { hidden = false } = {}) {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+    if (hidden) rl._writeToOutput = (s) => rl.output.write(s === query ? s : "");
+    rl.question(query, (answer) => {
+      rl.close();
+      if (hidden) process.stdout.write("\n");
+      resolve(answer.trim());
+    });
+  });
+}
+
 const program = new Command();
 program.name("smithers-hub").description("CLI for Smithers Hub").version("0.1.0");
-program.option("--url <url>", "Hub URL").option("--token <token>", "Hub access token").option("--json", "JSON output");
+program
+  .option("--url <url>", "Hub URL")
+  .option("--token <token>", "Hub access token")
+  .option("--remote <name>", "Org remote to target")
+  .option("--json", "JSON output");
 
 program
   .command("login")
+  .description("Authenticate to a Hub and save it as a remote (org)")
+  .option("--remote <name>", "remote/org name", "default")
   .option("--url <url>", "Hub URL")
   .option("--token <token>", "Hub access token")
-  .description("Store a long-lived Hub token")
   .action(async (opts) => {
-    // Accept the flags whether they come before the subcommand (global) or after it (command-level).
-    const url = opts.url || program.opts().url;
-    const token = opts.token || program.opts().token;
+    let url = opts.url || program.opts().url;
+    let token = opts.token || program.opts().token;
+    if (!url) url = await ask("Hub URL: ");
+    if (!token) token = await ask("Access token: ", { hidden: true });
     if (!url || !token) {
-      console.error("login requires --url and --token");
+      console.error("login needs a Hub URL and an access token");
       process.exit(1);
     }
-    const hub = new HubClient({ baseUrl: url, token });
-    await hub.get("/api/me");
-    writeConfig({ url: url.replace(/\/$/, ""), token });
-    console.log(`Logged in to ${url}`);
+    await new HubClient({ baseUrl: url, token }).get("/api/me");
+    setRemote(opts.remote, url, token);
+    console.log(`Logged in to ${url} as remote "${opts.remote}".`);
   });
 
-program.command("logout").description("Remove local CLI config").action(() => {
-  writeConfig({});
-  console.log("Logged out");
-});
+program
+  .command("logout")
+  .description("Remove a saved remote")
+  .option("--all", "remove every remote")
+  .action((opts) => {
+    if (opts.all) {
+      writeConfig({ version: 2, current: "default", remotes: {} });
+      console.log("Removed all remotes.");
+      return;
+    }
+    const config = readConfig();
+    const name = program.opts().remote || config.current;
+    delete config.remotes[name];
+    if (config.current === name) config.current = Object.keys(config.remotes)[0] || "default";
+    writeConfig(config);
+    console.log(`Logged out of "${name}".`);
+  });
+
+function listRemotes() {
+  const config = readConfig();
+  const names = Object.keys(config.remotes);
+  if (!names.length) return console.log("No remotes configured. Run: smithers-hub login");
+  for (const name of names) console.log(`${name === config.current ? "* " : "  "}${name}\t${config.remotes[name].url}`);
+}
+
+program.command("remotes").description("List configured org remotes").action(listRemotes);
+const remoteCmd = program.command("remote").description("Manage org remotes");
+remoteCmd.command("list").alias("ls").description("List remotes").action(listRemotes);
+remoteCmd
+  .command("use <name>")
+  .description("Switch the current remote")
+  .action((name) => {
+    const config = readConfig();
+    if (!config.remotes[name]) {
+      console.error(`No remote "${name}". Run: smithers-hub login --remote ${name}`);
+      process.exit(1);
+    }
+    config.current = name;
+    writeConfig(config);
+    console.log(`Now using "${name}".`);
+  });
+remoteCmd
+  .command("remove <name>")
+  .alias("rm")
+  .description("Remove a remote")
+  .action((name) => {
+    const config = readConfig();
+    if (!config.remotes[name]) {
+      console.error(`No remote "${name}".`);
+      process.exit(1);
+    }
+    delete config.remotes[name];
+    if (config.current === name) config.current = Object.keys(config.remotes)[0] || "default";
+    writeConfig(config);
+    console.log(`Removed "${name}".`);
+  });
 
 program.command("status").description("Show current Hub identity").action(async () => {
   print(await client(program.opts()).get("/api/me"), program.opts().json);
@@ -106,8 +165,8 @@ program.command("logs <id>").description("Print run logs").action(async (id) => 
 });
 
 program.command("artifacts [runId]").description("List artifacts").action(async (runId) => {
-  const path = runId ? `/api/runs/${runId}/artifacts` : "/api/artifacts";
-  const data = await client(program.opts()).get(path);
+  const apiPath = runId ? `/api/runs/${runId}/artifacts` : "/api/artifacts";
+  const data = await client(program.opts()).get(apiPath);
   print(data.artifacts, program.opts().json);
 });
 
@@ -173,55 +232,39 @@ runnerCommand
     print(data, program.opts().json);
   });
 
-runnerCommand.command("start").description("Start a foreground runner using the current CLI config").action(() => {
-  const config = readConfig();
+runnerCommand.command("start").description("Start a foreground runner using the current remote").action(() => {
+  const remote = resolveRemote(program.opts().remote);
   const env = {
     ...process.env,
-    SMITHERS_HUB_URL: program.opts().url || process.env.SMITHERS_HUB_URL || config.url,
-    SMITHERS_HUB_TOKEN: program.opts().token || process.env.SMITHERS_HUB_TOKEN || config.token
+    SMITHERS_HUB_URL: program.opts().url || process.env.SMITHERS_HUB_URL || remote.url,
+    SMITHERS_HUB_TOKEN: program.opts().token || process.env.SMITHERS_HUB_TOKEN || remote.token
   };
-  const child = spawn(process.execPath, [new URL("./runner.js", import.meta.url).pathname], { stdio: "inherit", env });
+  const child = spawn(process.execPath, [fileURLToPath(new URL("./runner.js", import.meta.url))], { stdio: "inherit", env });
   child.on("exit", (code) => process.exit(code ?? 0));
 });
 
-program
-  .command("runner-register")
-  .description("Register this machine as a runner")
-  .option("--name <name>", os.hostname())
-  .option("--tags <tags>", "linux,macos,node,git,shell,web,smithers")
-  .action(async (opts) => {
-    const data = await client(program.opts()).post("/api/runners/register", {
-      name: opts.name,
-      hostname: os.hostname(),
-      platform: `${os.platform()} ${os.release()}`,
-      tags: opts.tags.split(",").map((tag) => tag.trim()).filter(Boolean)
-    });
-    print(data, program.opts().json);
-  });
-
-program.command("mcp-config").description("Print Claude/Codex MCP server config snippet").action(() => {
-  printMcpConfig();
-});
+program.command("mcp-config").description("Print MCP server config snippet").action(() => printMcpConfig());
 
 const mcpCommand = program.command("mcp").description("MCP commands");
 mcpCommand
   .command("install")
-  .description("Configure an AI client (Claude Code/Desktop, Codex) to use this Hub")
-  .option("--client <client>", "claude-code | claude-desktop | codex", "claude-code")
+  .description("Configure AI client(s) to use this Hub over MCP")
+  .option("--client <client>", `one of: ${"claude-code, claude-desktop, codex, cursor, windsurf, gemini, vscode"}`, "claude-code")
+  .option("--all", "auto-detect and configure every AI client found on this machine")
+  .option("--remote <name>", "bind to a specific org remote (default: current)")
   .option("--global", "Claude Code: write user-level config instead of a project .mcp.json")
   .action((opts) => installMcp(opts));
 mcpCommand.command("config").description("Print the MCP server config snippet").action(() => printMcpConfig());
 
-function mcpServerSpec() {
-  const config = readConfig();
-  const url = program.opts().url || process.env.SMITHERS_HUB_URL || config.url || "https://hub.repo.box";
-  const token = program.opts().token || process.env.SMITHERS_HUB_TOKEN || config.token || "<SMITHERS_HUB_TOKEN>";
-  // Reference mcp.js by absolute path via this CLI's own location, so it works regardless of PATH.
+// MCP server spec — references this CLI's sibling mcp.js by absolute path and a remote name.
+// No token is written here: mcp.js reads it from ~/.smithers-hub for the named remote.
+function mcpServerSpec(remoteName) {
+  const remote = resolveRemote(remoteName).name;
   const mcpJs = fileURLToPath(new URL("./mcp.js", import.meta.url));
-  return { command: process.execPath, args: [mcpJs], env: { SMITHERS_HUB_URL: url, SMITHERS_HUB_TOKEN: token } };
+  return { command: process.execPath, args: [mcpJs, "--remote", remote] };
 }
 
-function mergeJsonConfig(file, mutate) {
+function mergeJson(file, mutate) {
   let data = {};
   if (existsSync(file)) {
     try {
@@ -235,6 +278,18 @@ function mergeJsonConfig(file, mutate) {
   writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`);
 }
 
+function upsertToml(file, name, server) {
+  const content = existsSync(file) ? readFileSync(file, "utf8") : "";
+  const block = `[mcp_servers.${name}]\ncommand = ${JSON.stringify(server.command)}\nargs = ${JSON.stringify(server.args)}\n`;
+  const esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`(^|\\n)\\[mcp_servers\\.${esc}\\][\\s\\S]*?(?=\\n\\[|$)`);
+  let next;
+  if (re.test(content)) next = content.replace(re, (m, p1) => `${p1 || ""}${block.trimEnd()}`);
+  else next = `${content.replace(/\s*$/, "")}${content.trim() ? "\n\n" : ""}${block}`;
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, next.endsWith("\n") ? next : `${next}\n`);
+}
+
 function claudeDesktopConfigPath() {
   const home = os.homedir();
   if (process.platform === "darwin") return path.join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json");
@@ -242,46 +297,85 @@ function claudeDesktopConfigPath() {
   return path.join(home, ".config", "Claude", "claude_desktop_config.json");
 }
 
-function installMcp(opts) {
-  const server = mcpServerSpec();
-  const client = opts.client || "claude-code";
-  if (client === "claude-code") {
-    const file = opts.global ? path.join(os.homedir(), ".claude.json") : path.join(process.cwd(), ".mcp.json");
-    mergeJsonConfig(file, (d) => {
-      d.mcpServers = d.mcpServers || {};
-      d.mcpServers["smithers-hub"] = server;
+const HOME = os.homedir();
+function jsonWriter(getFile, key = "mcpServers", entry = (s) => ({ command: s.command, args: s.args })) {
+  return (name, server, opts) => {
+    const file = getFile(opts);
+    mergeJson(file, (d) => {
+      d[key] = d[key] || {};
+      d[key][name] = entry(server);
     });
-    console.log(`Configured Claude Code MCP server -> ${file}`);
-    console.log(opts.global ? "Restart Claude Code; 'smithers-hub' tools are now available." : "Open Claude Code in this folder; it will load the 'smithers-hub' tools.");
-    return;
-  }
-  if (client === "claude-desktop") {
-    const file = claudeDesktopConfigPath();
-    mergeJsonConfig(file, (d) => {
-      d.mcpServers = d.mcpServers || {};
-      d.mcpServers["smithers-hub"] = server;
-    });
-    console.log(`Configured Claude Desktop MCP server -> ${file}\nRestart Claude Desktop to load 'smithers-hub'.`);
-    return;
-  }
-  if (client === "codex") {
-    console.log(`Add this to ~/.codex/config.toml:\n
-[mcp_servers.smithers-hub]
-command = ${JSON.stringify(server.command)}
-args = ${JSON.stringify(server.args)}
+    return file;
+  };
+}
 
-[mcp_servers.smithers-hub.env]
-SMITHERS_HUB_URL = ${JSON.stringify(server.env.SMITHERS_HUB_URL)}
-SMITHERS_HUB_TOKEN = ${JSON.stringify(server.env.SMITHERS_HUB_TOKEN)}`);
-    return;
+// Registry of supported AI clients: how to detect them and where/how to write their MCP config.
+const CLIENTS = {
+  "claude-code": {
+    detect: () => existsSync(path.join(HOME, ".claude.json")) || existsSync(path.join(HOME, ".claude")),
+    apply: jsonWriter((opts) => (opts.global ? path.join(HOME, ".claude.json") : path.join(process.cwd(), ".mcp.json")))
+  },
+  "claude-desktop": {
+    detect: () => existsSync(path.dirname(claudeDesktopConfigPath())),
+    apply: jsonWriter(() => claudeDesktopConfigPath())
+  },
+  cursor: {
+    detect: () => existsSync(path.join(HOME, ".cursor")),
+    apply: jsonWriter(() => path.join(HOME, ".cursor", "mcp.json"))
+  },
+  windsurf: {
+    detect: () => existsSync(path.join(HOME, ".codeium")),
+    apply: jsonWriter(() => path.join(HOME, ".codeium", "windsurf", "mcp_config.json"))
+  },
+  gemini: {
+    detect: () => existsSync(path.join(HOME, ".gemini")),
+    apply: jsonWriter(() => path.join(HOME, ".gemini", "settings.json"))
+  },
+  vscode: {
+    detect: () => existsSync(path.join(process.cwd(), ".vscode")) || existsSync(path.join(HOME, ".vscode")),
+    apply: jsonWriter(() => path.join(process.cwd(), ".vscode", "mcp.json"), "servers", (s) => ({ type: "stdio", command: s.command, args: s.args }))
+  },
+  codex: {
+    detect: () => existsSync(path.join(HOME, ".codex")),
+    apply: (name, server) => {
+      const file = path.join(HOME, ".codex", "config.toml");
+      upsertToml(file, name, server);
+      return file;
+    }
   }
-  console.error(`Unknown client '${client}'. Use: claude-code, claude-desktop, or codex.`);
-  process.exit(1);
+};
+
+function installMcp(opts) {
+  const remote = resolveRemote(opts.remote || program.opts().remote).name;
+  const serverName = remote === "default" ? "smithers-hub" : `smithers-hub-${remote}`;
+  const server = mcpServerSpec(remote);
+  let ids;
+  if (opts.all) {
+    ids = Object.keys(CLIENTS).filter((id) => CLIENTS[id].detect());
+    if (!ids.length) {
+      console.log("No known AI clients detected on this machine. Use --client <name>.");
+      return;
+    }
+  } else {
+    ids = [opts.client || "claude-code"];
+  }
+  for (const id of ids) {
+    const c = CLIENTS[id];
+    if (!c) {
+      console.error(`Unknown client "${id}". Known: ${Object.keys(CLIENTS).join(", ")}`);
+      process.exitCode = 1;
+      continue;
+    }
+    const file = c.apply(serverName, server, opts);
+    console.log(`✓ ${id}: ${serverName} -> ${file}`);
+  }
+  console.log(`\nThe server reads its token from ~/.smithers-hub (remote "${remote}"). Restart the client to load it.`);
 }
 
 function printMcpConfig() {
-  const server = mcpServerSpec();
-  console.log(JSON.stringify({ mcpServers: { "smithers-hub": server } }, null, 2));
+  const remote = resolveRemote(program.opts().remote).name;
+  const name = remote === "default" ? "smithers-hub" : `smithers-hub-${remote}`;
+  console.log(JSON.stringify({ mcpServers: { [name]: mcpServerSpec(remote) } }, null, 2));
 }
 
 program.parseAsync(process.argv).catch((error) => {

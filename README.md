@@ -4,21 +4,31 @@ Smithers Hub is a self-hosted capability operating system for company agents. It
 
 ## Connect in one line
 
-Install the CLI + MCP client and log in (needs Node.js 18+):
+Install the CLI + MCP client (needs Node.js 18+). It asks you to paste an access token:
 
 ```bash
-SMITHERS_HUB_TOKEN=shub_... bash <(curl -fsSL https://hub.repo.box/install.sh)
+bash <(curl -fsSL https://hub.repo.box/install.sh)
 ```
 
-Then connect your AI agent — this writes the MCP config for you, no JSON editing:
+Then connect every AI agent on the machine — writes the config for you, no JSON editing:
 
 ```bash
-smithers-hub mcp install                          # Claude Code (this folder)
-smithers-hub mcp install --client claude-desktop
-smithers-hub mcp install --client codex
+smithers-hub mcp install --all     # auto-detects Claude Code/Desktop, Codex, Cursor, Windsurf, Gemini, VS Code
+smithers-hub mcp install --client codex   # or target one
 ```
 
-To onboard a teammate, open the **Connect** tab in the Web Hub and click *Generate invite command* — it produces the exact one-liner (token included) to send them.
+### Multiple orgs (remotes)
+
+Each org is its own hub, like a git remote. Add more on the same machine:
+
+```bash
+smithers-hub login --remote acme --url https://acme-hub.example   # prompts for that org's token
+smithers-hub mcp install --all --remote acme                      # installs as `smithers-hub-acme`
+smithers-hub remote use acme                                      # switch the default target
+smithers-hub remotes                                              # list them
+```
+
+To onboard a teammate, open the **Connect** tab in the Web Hub, generate a token, and send them the install command + token — they paste it when prompted.
 
 ## Run locally
 
