@@ -1,0 +1,17 @@
+[Unit]
+Description=Smithers Hub VPS Runner
+After=network.target smithers-hub.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/fran/smithers-hub
+EnvironmentFile=/home/fran/smithers-hub/.env
+Environment=SMITHERS_HUB_URL=http://127.0.0.1:43117
+Environment="SMITHERS_RUNNER_NAME=repo.box VPS runner"
+Environment=SMITHERS_RUNNER_TAGS=linux,node,git,shell,web,smithers
+ExecStart=/home/fran/.local/node-v22.16.0-linux-x64/bin/node /home/fran/smithers-hub/src/runner.js
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

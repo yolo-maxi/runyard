@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Smithers Hub Console</title>
+    <link rel="stylesheet" href="/public/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark"></span> Smithers Hub</div>
+      <nav class="nav">
+        <a class="button" href="/docs">Docs</a>
+        <a class="button" href="/llms.txt">llms.txt</a>
+        <button id="logout">Logout</button>
+      </nav>
+    </header>
+    <main id="login" class="login hidden">
+      <section class="panel">
+        <h1>Access Token</h1>
+        <p class="muted">Use a Hub token issued by this machine. The first token is written to <code>data/bootstrap-token.txt</code> on server start.</p>
+        <form id="login-form" class="form-grid">
+          <label>Token <input id="token" autocomplete="current-password" type="password" /></label>
+          <button class="primary" type="submit">Login</button>
+        </form>
+      </section>
+    </main>
+    <main id="app" class="shell hidden">
+      <aside class="sidebar">
+        <button data-view="dashboard" class="active">Dashboard</button>
+        <button data-view="capabilities">Capabilities</button>
+        <button data-view="runs">Runs</button>
+        <button data-view="approvals">Approvals</button>
+        <button data-view="artifacts">Artifacts</button>
+        <button data-view="runners">Runners</button>
+        <button data-view="agents">Agents</button>
+        <button data-view="skills">Skills</button>
+        <button data-view="knowledge">Knowledge</button>
+        <button data-view="tokens">Tokens</button>
+      </aside>
+      <section id="content" class="content"></section>
+    </main>
+    <script type="module" src="/public/app.js"></script>
+  </body>
+</html>

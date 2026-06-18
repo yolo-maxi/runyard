@@ -1,0 +1,28 @@
+{
+  "name": "smithers-hub",
+  "version": "0.1.0",
+  "description": "Self-hosted capability hub, runner, CLI, and MCP server for Smithers-powered agents.",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "smithers-hub": "./bin/smithers-hub.js",
+    "smithers-hub-mcp": "./bin/smithers-hub-mcp.js",
+    "smithers-hub-runner": "./bin/smithers-hub-runner.js"
+  },
+  "scripts": {
+    "start": "node --experimental-sqlite src/server.js",
+    "runner": "node --experimental-sqlite src/runner.js",
+    "mcp": "node src/mcp.js",
+    "cli": "node src/cli.js",
+    "test": "node --experimental-sqlite --test tests/*.test.js"
+  },
+  "dependencies": {
+    "commander": "^14.0.2",
+    "express": "^4.19.2"
+  },
+  "devDependencies": {},
+  "engines": {
+    "node": ">=22.5"
+  },
+  "packageManager": "pnpm@10.33.0"
+}
