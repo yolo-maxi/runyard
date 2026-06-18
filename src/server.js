@@ -247,12 +247,17 @@ exec node "$APP/src/mcp.js" "\\$@"
 WRAP
 chmod +x "$BIN/smithers-hub" "$BIN/smithers-hub-mcp"
 TOKEN="\${SMITHERS_HUB_TOKEN:-}"
-REMOTE="\${SMITHERS_HUB_REMOTE:-default}"
-# Ask for the token on first run (no secret needs to be baked into the install command).
+REMOTE="\${SMITHERS_HUB_REMOTE:-}"
+# Ask for the token + a name for this connection (org) on first run.
 if [ -z "$TOKEN" ] && [ -r /dev/tty ]; then
   printf "Paste your Smithers Hub access token (Web Hub -> Connect): " > /dev/tty
   read -r TOKEN < /dev/tty
 fi
+if [ -z "$REMOTE" ] && [ -r /dev/tty ]; then
+  printf "Name this org connection [default]: " > /dev/tty
+  read -r REMOTE < /dev/tty
+fi
+REMOTE="\${REMOTE:-default}"
 if [ -n "$TOKEN" ]; then
   node "$APP/src/cli.js" login --remote "$REMOTE" --url "$HUB_URL" --token "$TOKEN" >/dev/null && echo "Logged in to $HUB_URL (remote: $REMOTE)"
 else
