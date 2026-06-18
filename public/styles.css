@@ -338,6 +338,7 @@ code {
   border-left: 3px solid var(--brand-2);
   padding: 8px 10px;
   background: #fff;
+  overflow-wrap: anywhere;
 }
 
 .event time {
@@ -511,20 +512,146 @@ details.advanced[open] summary {
 .copy-row input {
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 13px;
+  flex: 1;
+  min-width: 0;
 }
 
+/* ---- Tablet / phone: stack the console, turn the sidebar into a compact scroll nav ---- */
 @media (max-width: 850px) {
   .shell,
   .split {
     grid-template-columns: 1fr;
   }
 
+  /* Sidebar becomes a horizontal, swipeable nav strip under the sticky topbar. */
   .sidebar {
     border-right: 0;
     border-bottom: 1px solid var(--line);
+    display: flex;
+    flex-direction: row;
+    gap: 6px;
+    padding: 8px 12px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    position: sticky;
+    top: 58px;
+    z-index: 5;
+  }
+
+  .sidebar button {
+    width: auto;
+    margin-bottom: 0;
+    flex: 0 0 auto;
+    white-space: nowrap;
   }
 
   .content {
     padding: 16px;
+  }
+
+  /* Topbar may need to breathe; let it grow rather than clip. */
+  .topbar {
+    height: auto;
+    min-height: 58px;
+    padding: 8px 16px;
+    flex-wrap: wrap;
+  }
+
+  /* Touch-friendly targets. */
+  button,
+  .button,
+  .nav button,
+  .nav a,
+  input,
+  select {
+    min-height: 44px;
+  }
+
+  .toolbar h1 {
+    font-size: 22px;
+    overflow-wrap: anywhere;
+    min-width: 0;
+  }
+
+  /* Landing: dial the marketing hero down to phone scale. */
+  .hero {
+    min-height: 78vh;
+    padding: 20px;
+  }
+
+  .hero h1 {
+    font-size: clamp(34px, 11vw, 64px);
+  }
+
+  .hero p {
+    font-size: 16px;
+  }
+
+  .band {
+    padding: 28px 16px;
+  }
+
+  /* Toasts span the bottom of the viewport instead of a fixed 360px card. */
+  .toasts {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+  }
+
+  .toast {
+    max-width: none;
+  }
+}
+
+/* ---- Phone: data tables become stacked, labeled cards (no horizontal overflow) ---- */
+@media (max-width: 640px) {
+  .table {
+    border: 0;
+    background: transparent;
+  }
+
+  .table thead {
+    display: none;
+  }
+
+  .table,
+  .table tbody {
+    display: block;
+    width: 100%;
+  }
+
+  .table tr {
+    display: block;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #fff;
+    margin-bottom: 10px;
+    padding: 4px 0;
+  }
+
+  .table td {
+    display: block;
+    border: 0;
+    padding: 6px 12px;
+    overflow-wrap: anywhere;
+  }
+
+  .table td:empty {
+    display: none;
+  }
+
+  .table td::before {
+    content: attr(data-label);
+    display: block;
+    color: var(--muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 2px;
+  }
+
+  /* Cells with no label (action buttons) shouldn't reserve an empty label line. */
+  .table td:not([data-label])::before {
+    content: none;
   }
 }

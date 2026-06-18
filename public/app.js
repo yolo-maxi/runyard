@@ -224,7 +224,7 @@ async function renderDashboard() {
 function runsTable(runs) {
   if (!runs.length) return `<p class="muted">No runs yet.</p>`;
   return `<table class="table"><thead><tr><th>Run</th><th>Capability</th><th>Status</th><th>Step</th><th>Created</th></tr></thead><tbody>
-    ${runs.map((run) => `<tr><td><a href="#runs/${run.id}" data-run="${run.id}">${esc(run.id)}</a></td><td>${esc(run.capabilityName)}</td><td>${status(run.status)}</td><td>${esc(run.currentStep)}</td><td>${esc(run.createdAt)}</td></tr>`).join("")}
+    ${runs.map((run) => `<tr><td data-label="Run"><a href="#runs/${run.id}" data-run="${run.id}">${esc(run.id)}</a></td><td data-label="Capability">${esc(run.capabilityName)}</td><td data-label="Status">${status(run.status)}</td><td data-label="Step">${esc(run.currentStep)}</td><td data-label="Created">${esc(run.createdAt)}</td></tr>`).join("")}
   </tbody></table>`;
 }
 
@@ -423,7 +423,7 @@ async function renderRunners() {
   const data = await api("/api/runners");
   content.innerHTML = `${toolbar("Runners")}<section class="panel">
     ${data.runners.length ? `<table class="table"><thead><tr><th>Name</th><th>Status</th><th>Tags</th><th>Last heartbeat</th></tr></thead><tbody>
-      ${data.runners.map((runner) => `<tr><td>${esc(runner.name)}<br><span class="muted">${esc(runner.id)}</span></td><td>${status(runner.online ? "online" : "offline")}</td><td>${esc((runner.tags || []).join(", "))}</td><td>${esc(runner.lastHeartbeatAt || "never")}</td></tr>`).join("")}
+      ${data.runners.map((runner) => `<tr><td data-label="Name">${esc(runner.name)}<br><span class="muted">${esc(runner.id)}</span></td><td data-label="Status">${status(runner.online ? "online" : "offline")}</td><td data-label="Tags">${esc((runner.tags || []).join(", "))}</td><td data-label="Last heartbeat">${esc(runner.lastHeartbeatAt || "never")}</td></tr>`).join("")}
     </tbody></table>` : empty("No runners connected.", "Start one with <code>smithers-hub-runner</code> using a token that has the runner scope.")}
   </section>`;
 }
@@ -513,10 +513,10 @@ function tokenTable(tokens) {
   if (!tokens.length) return `<p class="muted">No tokens.</p>`;
   return `<table class="table"><thead><tr><th>Name</th><th>Scopes</th><th>State</th><th></th></tr></thead><tbody>
     ${tokens.map((token) => `<tr>
-      <td>${esc(token.name)}<br><span class="muted">${esc(token.id)}</span></td>
-      <td>${esc((token.scopes || []).join(", "))}</td>
-      <td>${status(token.active ? "online" : "offline")}${token.expiresAt ? `<br><span class="muted">expires ${esc(token.expiresAt)}</span>` : ""}</td>
-      <td>${token.active ? `<button class="danger" data-revoke="${esc(token.id)}">Revoke</button>` : "<span class=\"muted\">revoked</span>"}</td>
+      <td data-label="Name">${esc(token.name)}<br><span class="muted">${esc(token.id)}</span></td>
+      <td data-label="Scopes">${esc((token.scopes || []).join(", "))}</td>
+      <td data-label="State">${status(token.active ? "online" : "offline")}${token.expiresAt ? `<br><span class="muted">expires ${esc(token.expiresAt)}</span>` : ""}</td>
+      <td data-label="Action">${token.active ? `<button class="danger" data-revoke="${esc(token.id)}">Revoke</button>` : "<span class=\"muted\">revoked</span>"}</td>
     </tr>`).join("")}
   </tbody></table>`;
 }
@@ -621,7 +621,7 @@ async function renderAudit() {
   const rows = data.audit;
   content.innerHTML = `${toolbar("Audit Log")}<section class="panel">
     ${rows.length ? `<table class="table"><thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Target</th></tr></thead><tbody>
-      ${rows.map((entry) => `<tr><td>${esc(entry.createdAt)}</td><td>${esc(entry.actor)}</td><td>${esc(entry.action)}</td><td><span class="muted">${esc(entry.target || "")}</span></td></tr>`).join("")}
+      ${rows.map((entry) => `<tr><td data-label="Time">${esc(entry.createdAt)}</td><td data-label="Actor">${esc(entry.actor)}</td><td data-label="Action">${esc(entry.action)}</td><td data-label="Target"><span class="muted">${esc(entry.target || "")}</span></td></tr>`).join("")}
     </tbody></table>` : `<p class="muted">No audit entries yet.</p>`}
   </section>`;
 }
