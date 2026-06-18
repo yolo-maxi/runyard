@@ -1,0 +1,172 @@
+# Acceptance and Manual Tests
+
+This file captures user-facing acceptance criteria and manual tests for Smithers Hub.
+
+## Acceptance Criteria
+
+### Deployment
+
+- `https://hub.repo.box/` serves the public landing page.
+- `https://hub.repo.box/docs` serves installation and usage docs.
+- `https://hub.repo.box/app` serves the token-protected operations console.
+- `https://hub.repo.box/llms.txt` describes the agent-facing surface.
+- `https://hub.repo.box/openapi.json` describes the HTTP API.
+- `smithers-hub.service` is active on repo.box.
+- `smithers-hub-runner.service` is active on repo.box.
+
+### Authentication
+
+- A bootstrap token exists at `data/bootstrap-token.txt` on first deployment.
+- The Web Hub accepts a valid token and creates a long-lived browser session.
+- API, CLI, MCP, and runner requests work with bearer tokens.
+- Invalid tokens are rejected.
+
+### Capability Catalog
+
+- The catalog includes the seed capabilities:
+  - Review Pull Request
+  - Research Topic
+  - Prepare Spec
+  - Implement
+  - Run Smithers Workflow
+- Each capability exposes:
+  - name
+  - description
+  - category
+  - keywords
+  - input schema
+  - output schema
+  - required runner tags
+  - required skills
+  - required agents
+  - approval policy
+  - workflow metadata
+- Capabilities are editable through the Web Hub.
+
+### Runs and Artifacts
+
+- A capability run creates a durable run record.
+- The run detail view shows input, status, current step, event timeline, artifacts, and output.
+- Runner events are persisted.
+- Uploaded artifacts are stored on disk and downloadable through the Web/API.
+- Completed runs remain visible after execution.
+
+### Approvals
+
+- Capabilities that require approval enter `waiting_approval`.
+- Pending approvals appear in the Web approval inbox.
+- Approval can be resolved through Web/API/CLI/MCP.
+- Approved runs move back to `queued`.
+- Rejected runs are cancelled.
+- Telegram notifications are sent when Telegram is configured.
+
+### Runner
+
+- A runner can register with tags.
+- A runner heartbeat is visible in the Web Hub.
+- The repo.box runner can execute matching queued seed capabilities.
+- Local machines can start a runner with `SMITHERS_HUB_URL` and `SMITHERS_HUB_TOKEN`.
+
+### MCP
+
+- MCP initializes successfully.
+- `tools/list` returns the Hub tool set.
+- `list_capabilities` returns seed capabilities.
+- `run_capability` creates a run.
+- `get_run_status`, `get_run_logs`, and `get_run_artifacts` inspect the run.
+- `list_pending_approvals`, `approve_run`, and `reject_run` operate on centralized approvals.
+
+### CLI
+
+- `smithers-hub login` stores config.
+- `smithers-hub capabilities` lists the catalog.
+- `smithers-hub capability <id>` describes one capability.
+- `smithers-hub run <capability-id>` starts a run.
+- `smithers-hub runs` lists runs.
+- `smithers-hub logs <run-id>` prints event logs.
+- `smithers-hub artifacts <run-id>` lists artifacts.
+- `smithers-hub approvals` lists pending approvals.
+- `smithers-hub approve <approval-id>` and `smithers-hub reject <approval-id>` resolve approvals.
+- `smithers-hub runner start` starts a foreground runner.
+- `smithers-hub mcp install` prints MCP config.
+
+## Automated Tests
+
+Run:
+
+```bash
+pnpm test
+```
+
+Covered by the current automated tests:
+
+- Bootstrap token authentication.
+- Seeded capability, agent, skill, and knowledge records.
+- Run creation.
+- Runner registration.
+- Run claiming.
+- Event creation.
+- Artifact upload/storage.
+- Run completion.
+- Approval-required run creation.
+- Approval resolution.
+
+## Manual Smoke Tests
+
+### Web Smoke
+
+1. Open `https://hub.repo.box/app`.
+2. Log in with the bootstrap token from `/home/fran/smithers-hub/data/bootstrap-token.txt`.
+3. Open the Capability Catalog.
+4. Run `Prepare Spec` with a short goal.
+5. Open the run detail page.
+6. Confirm the run succeeds.
+7. Download `implementation-spec.md`.
+
+### Approval Smoke
+
+1. Run the `Implement` capability.
+2. Confirm the run enters `waiting_approval`.
+3. Open Approvals.
+4. Approve the request.
+5. Confirm the run moves to `queued`.
+6. Confirm the runner picks it up if tags match.
+
+### CLI Smoke
+
+```bash
+smithers-hub login --url https://hub.repo.box --token shub_...
+smithers-hub capabilities
+smithers-hub run research-topic --input '{"topic":"Smithers Hub CLI smoke","depth":"quick"}'
+smithers-hub runs
+```
+
+### MCP Smoke
+
+Send two JSON-RPC messages to `smithers-hub-mcp`:
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_capabilities","arguments":{}}}
+```
+
+Expected result:
+
+- Initialize returns server info.
+- `list_capabilities` returns five seed capabilities.
+
+### Runner Smoke
+
+```bash
+SMITHERS_HUB_URL=https://hub.repo.box \
+SMITHERS_HUB_TOKEN=shub_... \
+SMITHERS_RUNNER_TAGS=linux,node,git,shell,web,smithers \
+smithers-hub-runner
+```
+
+Expected result:
+
+- Runner registers.
+- Runner appears online in the Web Hub.
+- Runner claims matching queued runs.
+

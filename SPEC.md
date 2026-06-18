@@ -1,5 +1,11 @@
 # Smithers Hub Spec
 
+For the expanded decision record, user intent, expectations, and acceptance checks, see the `specs/` folder:
+
+- `specs/product-intent-and-user-expectations.md`
+- `specs/implementation-decisions.md`
+- `specs/acceptance-and-manual-tests.md`
+
 ## Summary
 
 Smithers Hub is a private, self-hosted company capability platform. Agents discover capabilities through MCP and CLI. Humans supervise through Web, Telegram, CLI, API, and MCP approvals. Runners execute work on the Hub VPS or local machines while the Hub stores the durable record.
@@ -44,4 +50,3 @@ data/
 ## Non-SaaS Model
 
 Smithers Hub is productized for installable private deployments. It is not multi-tenant SaaS in this version. Each company deploys its own Hub on its own domain.
-

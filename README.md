@@ -102,3 +102,10 @@ Manual checks:
 5. Run `Implement`; approve it through Web or MCP; confirm it queues and executes.
 6. Configure a local MCP client with `smithers-hub-mcp` and call `list_capabilities`.
 
+## Specs
+
+The durable product/spec record lives in `specs/`:
+
+- `specs/product-intent-and-user-expectations.md`
+- `specs/implementation-decisions.md`
+- `specs/acceptance-and-manual-tests.md`
