@@ -33,6 +33,101 @@ function json(value) {
   return `<pre class="json">${esc(JSON.stringify(value, null, 2))}</pre>`;
 }
 
+// --- Transient notifications -------------------------------------------------
+function toast(message, kind = "info") {
+  let host = document.querySelector(".toasts");
+  if (!host) {
+    host = document.createElement("div");
+    host.className = "toasts";
+    document.body.appendChild(host);
+  }
+  const el = document.createElement("div");
+  el.className = `toast ${kind}`;
+  el.textContent = message;
+  host.appendChild(el);
+  setTimeout(() => el.classList.add("show"), 10);
+  setTimeout(() => {
+    el.classList.remove("show");
+    setTimeout(() => el.remove(), 250);
+  }, 3600);
+}
+
+function empty(message, hint = "") {
+  return `<div class="empty"><p>${esc(message)}</p>${hint ? `<p class="muted">${hint}</p>` : ""}</div>`;
+}
+
+// --- Schema-driven form fields ----------------------------------------------
+// Render a labeled control for one JSON-Schema property.
+function schemaField(key, prop = {}, required = false) {
+  const type = prop.type || "string";
+  const hint = prop.description ? `<span class="field-hint">${esc(prop.description)}</span>` : "";
+  const label = `${esc(key)}${required ? ' <span class="req">*</span>' : ""}`;
+  let control;
+  if (Array.isArray(prop.enum)) {
+    control = `<select data-field="${esc(key)}" data-ftype="string">
+      <option value="">—</option>
+      ${prop.enum.map((opt) => `<option value="${esc(opt)}">${esc(opt)}</option>`).join("")}
+    </select>`;
+  } else if (type === "boolean") {
+    control = `<input type="checkbox" data-field="${esc(key)}" data-ftype="boolean">`;
+  } else if (type === "number" || type === "integer") {
+    control = `<input type="number" data-field="${esc(key)}" data-ftype="number">`;
+  } else if (type === "object" || type === "array") {
+    control = `<textarea data-field="${esc(key)}" data-ftype="json" placeholder="${type === "array" ? "[]" : "{}"}"></textarea>`;
+  } else {
+    control = `<input type="text" data-field="${esc(key)}" data-ftype="string">`;
+  }
+  return `<label>${label}${hint}${control}<span class="field-error" data-error-for="${esc(key)}"></span></label>`;
+}
+
+function schemaForm(schema = {}) {
+  const props = schema.properties || {};
+  const required = new Set(schema.required || []);
+  const keys = Object.keys(props);
+  if (!keys.length) return "";
+  return keys.map((key) => schemaField(key, props[key], required.has(key))).join("");
+}
+
+// Read structured fields back into an object, validating required + JSON fields. Returns {ok, values, errors}.
+function collectSchemaInput(scope, schema = {}) {
+  const required = new Set(schema.required || []);
+  const values = {};
+  const errors = {};
+  scope.querySelectorAll("[data-field]").forEach((el) => {
+    const key = el.dataset.field;
+    const ftype = el.dataset.ftype;
+    if (ftype === "boolean") {
+      values[key] = el.checked;
+      return;
+    }
+    const raw = el.value.trim();
+    if (!raw) {
+      if (required.has(key)) errors[key] = "required";
+      return;
+    }
+    if (ftype === "number") {
+      const n = Number(raw);
+      if (Number.isNaN(n)) errors[key] = "must be a number";
+      else values[key] = n;
+    } else if (ftype === "json") {
+      try {
+        values[key] = JSON.parse(raw);
+      } catch {
+        errors[key] = "invalid JSON";
+      }
+    } else {
+      values[key] = raw;
+    }
+  });
+  return { ok: Object.keys(errors).length === 0, values, errors };
+}
+
+function showFieldErrors(scope, errors) {
+  scope.querySelectorAll("[data-error-for]").forEach((el) => {
+    el.textContent = errors[el.dataset.errorFor] || "";
+  });
+}
+
 function toolbar(title, actions = "") {
   return `<div class="toolbar"><h1>${esc(title)}</h1><div class="toolbar-actions">${actions}</div></div>`;
 }
@@ -73,7 +168,7 @@ $("#login-form").addEventListener("submit", async (event) => {
     await api("/api/auth/token-login", { method: "POST", body: { token: $("#token").value } });
     location.reload();
   } catch (error) {
-    alert(error.message);
+    toast(error.message || "Login failed", "error");
   }
 });
 
@@ -91,6 +186,7 @@ async function render() {
   if (view === "skills") return renderEditableList("skills", "Skills");
   if (view === "knowledge") return renderEditableList("knowledge", "Knowledge");
   if (view === "tokens") return renderTokens();
+  if (view === "audit") return renderAudit();
   if (view === "settings") return renderSettings();
   return renderDashboard();
 }
@@ -98,7 +194,9 @@ async function render() {
 async function renderDashboard() {
   const data = await api("/api/dashboard");
   const stats = data.stats;
-  content.innerHTML = `${toolbar("Operations Dashboard", `<button onclick="location.hash='capabilities'; location.reload()">Run Capability</button>`)}
+  const gettingStarted = (stats.runs || 0) === 0;
+  content.innerHTML = `${toolbar("Operations Dashboard", `<button id="dash-run-cap">Run Capability</button>`)}
+    ${gettingStarted ? empty("Welcome to Smithers Hub.", "Pick a capability and run it, start a runner to execute work, or create scoped tokens for your agents. Start by opening the Capabilities tab.") : ""}
     <section class="stats">
       ${Object.entries({
         Capabilities: stats.capabilities,
@@ -119,6 +217,7 @@ async function renderDashboard() {
         ${approvalList(data.pendingApprovals)}
       </div>
     </section>`;
+  $("#dash-run-cap").addEventListener("click", () => setView("capabilities"));
 }
 
 function runsTable(runs) {
@@ -131,17 +230,17 @@ function runsTable(runs) {
 async function renderCapabilities() {
   const data = await api("/api/capabilities");
   content.innerHTML = `${toolbar("Capability Catalog", `<button id="new-cap">New Capability</button>`)}
-    <div class="grid">
+    ${data.capabilities.length ? `<div class="grid">
       ${data.capabilities.map((cap) => `<article class="item">
         <h3>${esc(cap.name)}</h3>
         <p class="muted">${esc(cap.description)}</p>
-        <p>${esc(cap.category)} · v${cap.version} · ${cap.enabled ? "enabled" : "disabled"}</p>
+        <p>${esc(cap.category)} · v${cap.version} · ${cap.enabled ? "enabled" : "disabled"}${cap.approvalPolicy?.required ? " · needs approval" : ""}</p>
         <div class="toolbar-actions">
           <button data-run="${esc(cap.slug)}" class="primary">Run</button>
           <button data-edit-cap="${esc(cap.slug)}">Edit</button>
         </div>
       </article>`).join("")}
-    </div>
+    </div>` : empty("No capabilities yet.", "Click New Capability to define the first action agents can run.")}
     <section id="editor" class="panel hidden"></section>`;
   document.querySelectorAll("[data-run]").forEach((button) => button.addEventListener("click", () => showRunForm(button.dataset.run)));
   document.querySelectorAll("[data-edit-cap]").forEach((button) => button.addEventListener("click", () => editCapability(button.dataset.editCap)));
@@ -151,47 +250,107 @@ async function renderCapabilities() {
 async function showRunForm(slug) {
   const data = await api(`/api/capabilities/${slug}`);
   const cap = data.capability;
-  const sample = Object.fromEntries(Object.entries(cap.inputSchema?.properties || {}).map(([key]) => [key, ""]));
+  const schema = cap.inputSchema || {};
+  const hasFields = Object.keys(schema.properties || {}).length > 0;
+  const approval = cap.approvalPolicy?.required;
+  const sample = Object.fromEntries(Object.entries(schema.properties || {}).map(([key]) => [key, ""]));
   const editor = $("#editor");
   editor.classList.remove("hidden");
+  editor.scrollIntoView({ behavior: "smooth", block: "nearest" });
   editor.innerHTML = `<h2>Run ${esc(cap.name)}</h2>
+    <p class="muted">${esc(cap.description || "")}</p>
+    ${approval ? `<p class="notice">This capability requires approval before it runs.${cap.approvalPolicy?.reason ? ` ${esc(cap.approvalPolicy.reason)}` : ""}</p>` : ""}
     <form id="run-form" class="form-grid">
-      <label>Input JSON<textarea id="run-input">${esc(JSON.stringify(sample, null, 2))}</textarea></label>
+      ${hasFields ? schemaForm(schema) : `<label>Input JSON<textarea data-field="__raw" data-ftype="json" placeholder="{}">{}</textarea><span class="field-hint">This capability has no declared input schema. Provide raw JSON.</span><span class="field-error" data-error-for="__raw"></span></label>`}
+      ${hasFields ? `<details class="advanced"><summary>Edit as raw JSON instead</summary><label><textarea id="run-raw" data-ftype="json" placeholder="{}">${esc(JSON.stringify(sample, null, 2))}</textarea></label></details>` : ""}
       <button class="primary" type="submit">Create Run</button>
     </form>
-    <h3>Capability Contract</h3>${json(cap)}`;
-  $("#run-form").addEventListener("submit", async (event) => {
+    <details class="advanced"><summary>Capability contract</summary>${json(cap)}</details>`;
+  const form = $("#run-form");
+  form.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const result = await api(`/api/capabilities/${slug}/run`, { method: "POST", body: { input: JSON.parse($("#run-input").value) } });
-    location.hash = `runs/${result.run.id}`;
-    state.view = `runs/${result.run.id}`;
-    await render();
+    let input;
+    const rawEl = $("#run-raw");
+    const advancedOpen = rawEl && rawEl.closest("details")?.open;
+    try {
+      if (!hasFields) {
+        input = JSON.parse(form.querySelector('[data-field="__raw"]').value || "{}");
+      } else if (advancedOpen) {
+        input = JSON.parse(rawEl.value || "{}");
+      } else {
+        const collected = collectSchemaInput(form, schema);
+        showFieldErrors(form, collected.errors);
+        if (!collected.ok) return toast("Please fix the highlighted fields", "error");
+        input = collected.values;
+      }
+    } catch {
+      return toast("Input is not valid JSON", "error");
+    }
+    try {
+      const result = await api(`/api/capabilities/${slug}/run`, { method: "POST", body: { input } });
+      toast(`Run created${approval ? " — pending approval" : ""}`, "ok");
+      location.hash = `runs/${result.run.id}`;
+      state.view = `runs/${result.run.id}`;
+      await render();
+    } catch (error) {
+      toast(error.message, "error");
+    }
   });
 }
 
 async function editCapability(slug = "") {
-  const cap = slug ? (await api(`/api/capabilities/${slug}`)).capability : { name: "", slug: "", description: "", category: "General", keywords: [], inputSchema: {}, outputSchema: {}, requiredRunnerTags: [], requiredSkills: [], requiredAgents: [], approvalPolicy: {}, workflow: { type: "builtin", name: "" }, enabled: true };
+  const cap = slug
+    ? (await api(`/api/capabilities/${slug}`)).capability
+    : { name: "", slug: "", description: "", category: "General", keywords: [], inputSchema: {}, outputSchema: {}, requiredRunnerTags: [], requiredSkills: [], requiredAgents: [], approvalPolicy: {}, workflow: { type: "builtin", name: "" }, enabled: true };
   const editor = $("#editor");
   editor.classList.remove("hidden");
+  editor.scrollIntoView({ behavior: "smooth", block: "nearest" });
   editor.innerHTML = `<h2>${slug ? "Edit" : "New"} Capability</h2>
     <form id="cap-form" class="form-grid">
-      <label>Name<input id="cap-name" value="${esc(cap.name)}"></label>
-      <label>Slug<input id="cap-slug" value="${esc(cap.slug)}" ${slug ? "disabled" : ""}></label>
+      <label>Name <span class="req">*</span><input id="cap-name" value="${esc(cap.name)}" required></label>
+      <label>Slug${slug ? "" : ' <span class="field-hint">Leave blank to derive from the name.</span>'}<input id="cap-slug" value="${esc(cap.slug)}" ${slug ? "disabled" : ""}></label>
       <label>Description<textarea id="cap-description">${esc(cap.description)}</textarea></label>
-      <label>Category<input id="cap-category" value="${esc(cap.category)}"></label>
-      <label>JSON Definition<textarea id="cap-json">${esc(JSON.stringify(cap, null, 2))}</textarea></label>
+      <label>Category<input id="cap-category" value="${esc(cap.category || "General")}"></label>
+      <label>Keywords<input id="cap-keywords" value="${esc((cap.keywords || []).join(", "))}"><span class="field-hint">Comma-separated.</span></label>
+      <label>Required runner tags<input id="cap-tags" value="${esc((cap.requiredRunnerTags || []).join(", "))}"><span class="field-hint">Comma-separated. Only runners with all these tags can execute it.</span></label>
+      <label class="inline"><input type="checkbox" id="cap-enabled" ${cap.enabled === false ? "" : "checked"}> Enabled</label>
+      <label class="inline"><input type="checkbox" id="cap-approval" ${cap.approvalPolicy?.required ? "checked" : ""}> Require approval before running</label>
+      <label>Approval reason<input id="cap-approval-reason" value="${esc(cap.approvalPolicy?.reason || "")}"></label>
+      <details class="advanced"><summary>Advanced: input/output schema &amp; workflow (JSON)</summary>
+        <label><textarea id="cap-json">${esc(JSON.stringify({ inputSchema: cap.inputSchema || {}, outputSchema: cap.outputSchema || {}, workflow: cap.workflow || {}, requiredSkills: cap.requiredSkills || [], requiredAgents: cap.requiredAgents || [] }, null, 2))}</textarea></label>
+      </details>
       <button class="primary" type="submit">Save Capability</button>
     </form>`;
   $("#cap-form").addEventListener("submit", async (event) => {
     event.preventDefault();
-    const payload = JSON.parse($("#cap-json").value);
-    payload.name = $("#cap-name").value;
-    payload.slug = $("#cap-slug").value || payload.slug;
-    payload.description = $("#cap-description").value;
-    payload.category = $("#cap-category").value;
-    if (slug) await api(`/api/capabilities/${slug}`, { method: "PATCH", body: payload });
-    else await api("/api/capabilities", { method: "POST", body: payload });
-    await renderCapabilities();
+    let advanced = {};
+    try {
+      advanced = JSON.parse($("#cap-json").value || "{}");
+    } catch {
+      return toast("Advanced JSON is invalid", "error");
+    }
+    const name = $("#cap-name").value.trim();
+    if (!name) return toast("Name is required", "error");
+    const payload = {
+      ...cap,
+      ...advanced,
+      name,
+      slug: slug || $("#cap-slug").value.trim() || undefined,
+      description: $("#cap-description").value,
+      category: $("#cap-category").value.trim() || "General",
+      keywords: $("#cap-keywords").value.split(",").map((k) => k.trim()).filter(Boolean),
+      requiredRunnerTags: $("#cap-tags").value.split(",").map((t) => t.trim()).filter(Boolean),
+      enabled: $("#cap-enabled").checked,
+      approvalPolicy: $("#cap-approval").checked ? { required: true, reason: $("#cap-approval-reason").value.trim() } : { required: false }
+    };
+    try {
+      if (slug) await api(`/api/capabilities/${slug}`, { method: "PATCH", body: payload });
+      else await api("/api/capabilities", { method: "POST", body: payload });
+      toast("Capability saved", "ok");
+      await renderCapabilities();
+    } catch (error) {
+      toast(error.message, "error");
+    }
   });
 }
 
@@ -262,9 +421,9 @@ async function renderArtifacts() {
 async function renderRunners() {
   const data = await api("/api/runners");
   content.innerHTML = `${toolbar("Runners")}<section class="panel">
-    <table class="table"><thead><tr><th>Name</th><th>Status</th><th>Tags</th><th>Last heartbeat</th></tr></thead><tbody>
-      ${data.runners.map((runner) => `<tr><td>${esc(runner.name)}<br><span class="muted">${esc(runner.id)}</span></td><td>${status(runner.status)}</td><td>${esc((runner.tags || []).join(", "))}</td><td>${esc(runner.lastHeartbeatAt)}</td></tr>`).join("")}
-    </tbody></table>
+    ${data.runners.length ? `<table class="table"><thead><tr><th>Name</th><th>Status</th><th>Tags</th><th>Last heartbeat</th></tr></thead><tbody>
+      ${data.runners.map((runner) => `<tr><td>${esc(runner.name)}<br><span class="muted">${esc(runner.id)}</span></td><td>${status(runner.online ? "online" : "offline")}</td><td>${esc((runner.tags || []).join(", "))}</td><td>${esc(runner.lastHeartbeatAt || "never")}</td></tr>`).join("")}
+    </tbody></table>` : empty("No runners connected.", "Start one with <code>smithers-hub-runner</code> using a token that has the runner scope.")}
   </section>`;
 }
 
@@ -301,20 +460,101 @@ async function editItem(kind, slug = "") {
   });
 }
 
+const TOKEN_SCOPES = ["api", "mcp", "runner", "admin"];
+
 async function renderTokens() {
+  const data = await api("/api/tokens");
   content.innerHTML = `${toolbar("Access Tokens")}
-    <section class="panel">
-      <form id="token-form" class="form-grid">
-        <label>Name<input id="token-name" value="local agent"></label>
-        <button class="primary" type="submit">Create Token</button>
-      </form>
-      <div id="created-token"></div>
+    <section class="split">
+      <div class="panel">
+        <h2>Create Token</h2>
+        <form id="token-form" class="form-grid">
+          <label>Name<input id="token-name" value="local agent"></label>
+          <label>Scopes
+            <div class="toolbar-actions">
+              ${TOKEN_SCOPES.map((scope) => `<label class="muted"><input type="checkbox" class="token-scope" value="${scope}" ${scope === "api" || scope === "mcp" ? "checked" : ""}> ${scope}</label>`).join("")}
+            </div>
+          </label>
+          <label>Expires in days (0 = never)<input id="token-expiry" type="number" min="0" value="0"></label>
+          <button class="primary" type="submit">Create Token</button>
+        </form>
+        <div id="created-token"></div>
+      </div>
+      <div class="panel">
+        <h2>Existing Tokens</h2>
+        ${tokenTable(data.tokens)}
+      </div>
     </section>`;
   $("#token-form").addEventListener("submit", async (event) => {
     event.preventDefault();
-    const data = await api("/api/tokens", { method: "POST", body: { name: $("#token-name").value, scopes: ["api", "mcp", "runner"] } });
-    $("#created-token").innerHTML = `<h3>Token</h3><p class="muted">This value is shown once.</p>${json(data.token)}`;
+    const scopes = Array.from(document.querySelectorAll(".token-scope:checked")).map((el) => el.value);
+    const expiresInDays = Number($("#token-expiry").value || 0);
+    const created = await api("/api/tokens", { method: "POST", body: { name: $("#token-name").value, scopes, expiresInDays } });
+    $("#created-token").innerHTML = `<h3>Token created</h3><p class="muted">This value is shown once. Copy it now.</p>
+      <div class="copy-row"><input id="token-value" readonly value="${esc(created.token.token)}"><button type="button" id="copy-token">Copy</button></div>`;
+    $("#copy-token").addEventListener("click", async () => {
+      const value = $("#token-value").value;
+      try {
+        await navigator.clipboard.writeText(value);
+        toast("Token copied", "ok");
+      } catch {
+        $("#token-value").select();
+        toast("Press Ctrl/Cmd+C to copy", "info");
+      }
+    });
+    toast("Token created", "ok");
+    await refreshTokenTable();
   });
+  bindRevoke();
+}
+
+function tokenTable(tokens) {
+  if (!tokens.length) return `<p class="muted">No tokens.</p>`;
+  return `<table class="table"><thead><tr><th>Name</th><th>Scopes</th><th>State</th><th></th></tr></thead><tbody>
+    ${tokens.map((token) => `<tr>
+      <td>${esc(token.name)}<br><span class="muted">${esc(token.id)}</span></td>
+      <td>${esc((token.scopes || []).join(", "))}</td>
+      <td>${status(token.active ? "online" : "offline")}${token.expiresAt ? `<br><span class="muted">expires ${esc(token.expiresAt)}</span>` : ""}</td>
+      <td>${token.active ? `<button class="danger" data-revoke="${esc(token.id)}">Revoke</button>` : "<span class=\"muted\">revoked</span>"}</td>
+    </tr>`).join("")}
+  </tbody></table>`;
+}
+
+async function refreshTokenTable() {
+  const data = await api("/api/tokens");
+  const panels = document.querySelectorAll(".panel");
+  if (panels[1]) panels[1].innerHTML = `<h2>Existing Tokens</h2>${tokenTable(data.tokens)}`;
+  bindRevoke();
+}
+
+function bindRevoke() {
+  document.querySelectorAll("[data-revoke]").forEach((button) =>
+    button.addEventListener("click", async () => {
+      if (!confirm("Revoke this token? It will stop working immediately.")) return;
+      try {
+        await api(`/api/tokens/${button.dataset.revoke}`, { method: "DELETE" });
+      } catch (error) {
+        alert(error.message);
+      }
+      await refreshTokenTable();
+    })
+  );
+}
+
+async function renderAudit() {
+  let data;
+  try {
+    data = await api("/api/audit");
+  } catch (error) {
+    content.innerHTML = `${toolbar("Audit Log")}<section class="panel"><p class="muted">${esc(error.message)} (admin scope required)</p></section>`;
+    return;
+  }
+  const rows = data.audit;
+  content.innerHTML = `${toolbar("Audit Log")}<section class="panel">
+    ${rows.length ? `<table class="table"><thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Target</th></tr></thead><tbody>
+      ${rows.map((entry) => `<tr><td>${esc(entry.createdAt)}</td><td>${esc(entry.actor)}</td><td>${esc(entry.action)}</td><td><span class="muted">${esc(entry.target || "")}</span></td></tr>`).join("")}
+    </tbody></table>` : `<p class="muted">No audit entries yet.</p>`}
+  </section>`;
 }
 
 async function renderSettings() {

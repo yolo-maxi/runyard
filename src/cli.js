@@ -45,14 +45,21 @@ program.option("--url <url>", "Hub URL").option("--token <token>", "Hub access t
 
 program
   .command("login")
-  .requiredOption("--url <url>", "Hub URL")
-  .requiredOption("--token <token>", "Hub access token")
+  .option("--url <url>", "Hub URL")
+  .option("--token <token>", "Hub access token")
   .description("Store a long-lived Hub token")
   .action(async (opts) => {
-    const hub = new HubClient({ baseUrl: opts.url, token: opts.token });
+    // Accept the flags whether they come before the subcommand (global) or after it (command-level).
+    const url = opts.url || program.opts().url;
+    const token = opts.token || program.opts().token;
+    if (!url || !token) {
+      console.error("login requires --url and --token");
+      process.exit(1);
+    }
+    const hub = new HubClient({ baseUrl: url, token });
     await hub.get("/api/me");
-    writeConfig({ url: opts.url.replace(/\/$/, ""), token: opts.token });
-    console.log(`Logged in to ${opts.url}`);
+    writeConfig({ url: url.replace(/\/$/, ""), token });
+    console.log(`Logged in to ${url}`);
   });
 
 program.command("logout").description("Remove local CLI config").action(() => {
@@ -127,8 +134,26 @@ program.command("knowledge").description("List knowledge resources").option("-q,
   print(data.knowledge, program.opts().json);
 });
 
-program.command("token-create <name>").description("Create a new access token").action(async (name) => {
-  print(await client(program.opts()).post("/api/tokens", { name, scopes: ["api", "mcp", "runner"] }), true);
+program
+  .command("token-create <name>")
+  .description("Create a new access token")
+  .option("--scopes <scopes>", "comma-separated scopes", "api,mcp,runner")
+  .option("--expires-in-days <days>", "expiry in days (0 = never)", "0")
+  .action(async (name, opts) => {
+    const scopes = opts.scopes.split(",").map((scope) => scope.trim()).filter(Boolean);
+    print(await client(program.opts()).post("/api/tokens", { name, scopes, expiresInDays: Number(opts.expiresInDays || 0) }), true);
+  });
+
+program.command("token-list").description("List access tokens (admin)").action(async () => {
+  print((await client(program.opts()).get("/api/tokens")).tokens, program.opts().json);
+});
+
+program.command("token-revoke <id>").description("Revoke an access token (admin)").action(async (id) => {
+  print(await client(program.opts()).delete(`/api/tokens/${id}`), program.opts().json);
+});
+
+program.command("audit").description("Show recent audit log (admin)").action(async () => {
+  print((await client(program.opts()).get("/api/audit")).audit, program.opts().json);
 });
 
 const runnerCommand = program.command("runner").description("Runner commands");

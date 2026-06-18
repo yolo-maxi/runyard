@@ -6,6 +6,36 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
+// Optional allow-list of filesystem roots the runner may operate in.
+const allowedRoots = String(process.env.SMITHERS_RUNNER_ALLOWED_ROOTS || "")
+  .split(/[:,]/)
+  .map((entry) => entry.trim())
+  .filter(Boolean)
+  .map((entry) => path.resolve(entry));
+
+let warnedNoAllowList = false;
+
+// Reject repository paths outside the configured roots. With no roots configured we permit
+// (preserving single-machine setups) but warn once, since this is arbitrary command execution.
+function assertAllowedRepo(repo) {
+  if (!repo) return repo;
+  const resolved = path.resolve(repo);
+  if (!allowedRoots.length) {
+    if (!warnedNoAllowList) {
+      console.warn(
+        "[smithers-hub-runner] SMITHERS_RUNNER_ALLOWED_ROOTS is not set; the runner will execute work in any path. Set it to constrain execution."
+      );
+      warnedNoAllowList = true;
+    }
+    return resolved;
+  }
+  const ok = allowedRoots.some((root) => resolved === root || resolved.startsWith(root + path.sep));
+  if (!ok) {
+    throw new Error(`repo path '${resolved}' is not within an allowed runner root`);
+  }
+  return resolved;
+}
+
 function fence(value) {
   return String(value ?? "").trim() || "_not provided_";
 }
@@ -25,7 +55,7 @@ async function git(repo, args) {
 
 async function reviewPr(input, emit) {
   await emit("workflow.step", "Gathering repository context");
-  const repo = input.repo;
+  const repo = assertAllowedRepo(input.repo);
   let status = "";
   let diff = "";
   let log = "";
@@ -160,7 +190,7 @@ ${fence(input.constraints)}
 
 async function implement(input, emit) {
   await emit("workflow.step", "Inspecting implementation request");
-  const repo = input.repo;
+  const repo = assertAllowedRepo(input.repo);
   let gitStatus = "";
   let tests = "";
   try {

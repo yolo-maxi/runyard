@@ -29,6 +29,18 @@ export function unsign(signed) {
   return value;
 }
 
+// Constant-time string comparison that never throws on length mismatch.
+export function timingSafeEqualStr(a, b) {
+  const ab = Buffer.from(String(a ?? ""));
+  const bb = Buffer.from(String(b ?? ""));
+  if (ab.length !== bb.length) {
+    // Compare against self to keep timing roughly constant, then fail.
+    timingSafeEqual(ab, ab);
+    return false;
+  }
+  return timingSafeEqual(ab, bb);
+}
+
 export function parseCookies(req) {
   const header = req.headers.cookie || "";
   return Object.fromEntries(

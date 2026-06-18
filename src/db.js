@@ -192,6 +192,16 @@ export function initDb() {
       comment TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS audit_log (
+      id TEXT PRIMARY KEY,
+      actor TEXT NOT NULL DEFAULT '',
+      action TEXT NOT NULL,
+      target TEXT,
+      detail TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
     CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
     CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at);
     CREATE INDEX IF NOT EXISTS idx_events_run ON run_events(run_id, created_at);
@@ -224,19 +234,52 @@ function ensureBootstrapToken() {
   console.log(`Smithers Hub bootstrap token written to ${tokenFile}`);
 }
 
-export function createAccessToken(name, token = randomToken(), scopes = ["api"]) {
+export function createAccessToken(name, token = randomToken(), scopes = ["api"], options = {}) {
   const record = {
     id: id("tok"),
     name,
     token_hash: hashToken(token),
     scopes: json(scopes, []),
-    created_at: now()
+    created_at: now(),
+    expires_at: options.expiresAt || null
   };
   run(
-    "INSERT INTO access_tokens (id, name, token_hash, scopes, created_at) VALUES ($id, $name, $token_hash, $scopes, $created_at)",
+    "INSERT INTO access_tokens (id, name, token_hash, scopes, created_at, expires_at) VALUES ($id, $name, $token_hash, $scopes, $created_at, $expires_at)",
     record
   );
-  return { id: record.id, name, token, scopes, createdAt: record.created_at };
+  return { id: record.id, name, token, scopes, createdAt: record.created_at, expiresAt: record.expires_at };
+}
+
+function normalizeToken(row) {
+  if (!row) return null;
+  const expired = Boolean(row.expires_at && row.expires_at <= now());
+  return {
+    id: row.id,
+    name: row.name,
+    scopes: parseJson(row.scopes, []),
+    createdAt: row.created_at,
+    lastUsedAt: row.last_used_at,
+    revokedAt: row.revoked_at,
+    expiresAt: row.expires_at,
+    active: !row.revoked_at && !expired
+  };
+}
+
+export function listAccessTokens() {
+  return all(
+    "SELECT id, name, scopes, created_at, last_used_at, revoked_at, expires_at FROM access_tokens ORDER BY created_at DESC"
+  ).map(normalizeToken);
+}
+
+export function getAccessToken(tokenId) {
+  return normalizeToken(one("SELECT * FROM access_tokens WHERE id = ?", [tokenId]));
+}
+
+export function revokeAccessToken(tokenId) {
+  const existing = one("SELECT id, revoked_at FROM access_tokens WHERE id = ?", [tokenId]);
+  if (!existing) return null;
+  if (!existing.revoked_at) run("UPDATE access_tokens SET revoked_at = ? WHERE id = ?", [now(), tokenId]);
+  return getAccessToken(tokenId);
 }
 
 export function authenticateToken(token) {
@@ -527,6 +570,35 @@ export function listRuns({ status = "", limit = 100 } = {}) {
   return rows.map(normalizeRun);
 }
 
+export function countRuns({ status = "" } = {}) {
+  return status
+    ? one("SELECT COUNT(*) AS count FROM runs WHERE status = ?", [status]).count
+    : one("SELECT COUNT(*) AS count FROM runs").count;
+}
+
+// Token id that owns a run, via the runner it was assigned to. Null if unassigned.
+export function runOwnerTokenId(runId) {
+  const r = one("SELECT runner_id FROM runs WHERE id = ?", [runId]);
+  if (!r?.runner_id) return null;
+  const runner = one("SELECT token_id FROM runners WHERE id = ?", [r.runner_id]);
+  return runner?.token_id || null;
+}
+
+// Auto-fail runs that have been executing past the deadline (e.g. a runner died mid-run).
+export function reapStuckRuns(maxMs) {
+  if (!maxMs || maxMs <= 0) return 0;
+  const cutoff = new Date(Date.now() - maxMs).toISOString();
+  const stuck = all(
+    "SELECT id FROM runs WHERE status IN ('assigned','running') AND COALESCE(started_at, assigned_at, created_at) < ?",
+    [cutoff]
+  );
+  for (const row of stuck) {
+    const result = transitionRun(row.id, "failed", { current_step: "timed out", error: "run exceeded execution deadline", completed_at: now() });
+    if (result.ok && !result.idempotent) addRunEvent(row.id, "run.failed", "Run exceeded execution deadline");
+  }
+  return stuck.length;
+}
+
 export function normalizeRun(row) {
   if (!row) return null;
   return {
@@ -563,6 +635,36 @@ export function updateRun(runId, updates) {
   return getRun(runId);
 }
 
+export const RUN_TERMINAL = new Set(["succeeded", "failed", "cancelled"]);
+
+const RUN_TRANSITIONS = {
+  waiting_approval: ["queued", "cancelled"],
+  queued: ["assigned", "running", "cancelled", "failed"],
+  assigned: ["running", "succeeded", "failed", "cancelled"],
+  running: ["succeeded", "failed", "cancelled"],
+  succeeded: [],
+  failed: [],
+  cancelled: []
+};
+
+export function canTransitionRun(from, to) {
+  if (from === to) return true;
+  return (RUN_TRANSITIONS[from] || []).includes(to);
+}
+
+// Guarded status change. Returns {ok, run, error, code, idempotent}. Re-applying a terminal status is a no-op.
+export function transitionRun(runId, toStatus, updates = {}) {
+  const current = getRun(runId);
+  if (!current) return { ok: false, code: 404, error: "run not found" };
+  if (current.status === toStatus && RUN_TERMINAL.has(toStatus)) {
+    return { ok: true, idempotent: true, run: current };
+  }
+  if (!canTransitionRun(current.status, toStatus)) {
+    return { ok: false, code: 409, error: `cannot transition run from '${current.status}' to '${toStatus}'`, run: current };
+  }
+  return { ok: true, run: updateRun(runId, { status: toStatus, ...updates }) };
+}
+
 export function addRunEvent(runId, type, message = "", data = {}) {
   const event = { id: id("evt"), run_id: runId, type, message, data: json(data, {}), created_at: now() };
   run(
@@ -584,10 +686,13 @@ export function listRunEvents(runId) {
 }
 
 export function registerRunner(input, tokenId = null) {
-  const existing = input.id ? one("SELECT * FROM runners WHERE id = ?", [input.id]) : null;
+  // Only allow updating an existing runner record if the caller's token owns it; otherwise mint a fresh id.
+  // This prevents one runner token from hijacking another runner's record by guessing its id.
+  const candidate = input.id ? one("SELECT * FROM runners WHERE id = ?", [input.id]) : null;
+  const existing = candidate && candidate.token_id && candidate.token_id === tokenId ? candidate : null;
   const timestamp = now();
   const payload = {
-    id: input.id || id("runner"),
+    id: existing ? existing.id : id("runner"),
     name: input.name || input.hostname || "runner",
     hostname: input.hostname || "",
     platform: input.platform || "",
@@ -614,9 +719,18 @@ export function registerRunner(input, tokenId = null) {
   return getRunner(payload.id);
 }
 
+export function runnerIsLive(lastHeartbeatAt) {
+  if (!lastHeartbeatAt) return false;
+  const last = Date.parse(lastHeartbeatAt);
+  if (Number.isNaN(last)) return false;
+  return Date.now() - last <= env.runnerOfflineMs;
+}
+
 export function getRunner(runnerId) {
   const row = one("SELECT * FROM runners WHERE id = ?", [runnerId]);
   if (!row) return null;
+  // Heartbeat-derived liveness: a runner that stopped reporting is offline regardless of its stored status.
+  const live = runnerIsLive(row.last_heartbeat_at);
   return {
     id: row.id,
     name: row.name,
@@ -624,7 +738,8 @@ export function getRunner(runnerId) {
     platform: row.platform,
     version: row.version,
     tags: parseJson(row.tags, []),
-    status: row.status,
+    status: live ? row.status === "offline" ? "online" : row.status : "offline",
+    online: live,
     currentRunId: row.current_run_id,
     createdAt: row.created_at,
     lastHeartbeatAt: row.last_heartbeat_at
@@ -654,19 +769,20 @@ function runnerMatches(capability, runner) {
 
 export function claimNextRun(runnerId) {
   const runner = getRunner(runnerId);
-  if (!runner) return null;
+  if (!runner || !runner.online) return null;
   const queued = listRuns({ status: "queued", limit: 200 });
   for (const candidate of queued) {
     const capability = getCapability(candidate.capabilitySlug);
     if (!runnerMatches(capability, runner)) continue;
-    const claimed = updateRun(candidate.id, {
-      runner_id: runnerId,
-      status: "assigned",
-      current_step: "assigned to runner",
-      assigned_at: now()
-    });
+    // Atomic claim: only succeeds if the run is still queued, so two runners can never both win it.
+    const timestamp = now();
+    const result = run(
+      "UPDATE runs SET runner_id=?, status='assigned', current_step='assigned to runner', assigned_at=?, updated_at=? WHERE id=? AND status='queued'",
+      [runnerId, timestamp, timestamp, candidate.id]
+    );
+    if (!result.changes) continue;
     addRunEvent(candidate.id, "run.assigned", `Assigned to ${runner.name}`, { runnerId });
-    return { run: claimed, capability };
+    return { run: getRun(candidate.id), capability };
   }
   return null;
 }
@@ -770,6 +886,7 @@ export function resolveApproval(approvalId, decision, resolvedBy = "api", commen
     [status, decision, resolvedBy, comment, now(), approvalId]
   );
   const approval = getApproval(approvalId);
+  if (approval) recordAudit(resolvedBy, `approval.${status}`, approvalId, { runId: approval.runId, comment });
   if (approval?.runId) {
     addRunEvent(approval.runId, `approval.${status}`, approval.title, { approvalId, comment });
     const runRecord = getRun(approval.runId);
@@ -782,6 +899,26 @@ export function resolveApproval(approvalId, decision, resolvedBy = "api", commen
     }
   }
   return approval;
+}
+
+export function recordAudit(actor, action, target = null, detail = {}) {
+  const entry = { id: id("aud"), actor: actor || "", action, target, detail: json(detail, {}), created_at: now() };
+  run(
+    "INSERT INTO audit_log (id, actor, action, target, detail, created_at) VALUES ($id, $actor, $action, $target, $detail, $created_at)",
+    entry
+  );
+  return { id: entry.id, actor: entry.actor, action, target, detail, createdAt: entry.created_at };
+}
+
+export function listAudit({ limit = 100 } = {}) {
+  return all("SELECT * FROM audit_log ORDER BY created_at DESC LIMIT ?", [limit]).map((row) => ({
+    id: row.id,
+    actor: row.actor,
+    action: row.action,
+    target: row.target,
+    detail: parseJson(row.detail, {}),
+    createdAt: row.created_at
+  }));
 }
 
 export function dashboardStats() {

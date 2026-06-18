@@ -384,6 +384,135 @@ code {
   display: none !important;
 }
 
+/* Toasts */
+.toasts {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  display: grid;
+  gap: 8px;
+  z-index: 100;
+}
+
+.toast {
+  min-width: 220px;
+  max-width: 360px;
+  padding: 11px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  box-shadow: 0 6px 20px rgba(15, 25, 35, 0.16);
+  font-size: 14px;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.2s, transform 0.2s;
+}
+
+.toast.show {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.toast.ok {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: var(--ok);
+}
+
+.toast.error {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: var(--danger);
+}
+
+/* Empty states */
+.empty {
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: var(--soft);
+  padding: 22px;
+  text-align: center;
+}
+
+.empty p {
+  margin: 0 0 6px;
+}
+
+.empty p:last-child {
+  margin-bottom: 0;
+}
+
+/* Form helpers */
+.field-hint {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.req {
+  color: var(--danger);
+}
+
+.field-error {
+  color: var(--danger);
+  font-size: 12px;
+  min-height: 0;
+}
+
+.field-error:empty {
+  display: none;
+}
+
+label.inline {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+label.inline input {
+  width: auto;
+}
+
+.notice {
+  border: 1px solid #fed7aa;
+  background: #fffbeb;
+  color: var(--warn);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 0 0 12px;
+  font-size: 14px;
+}
+
+details.advanced {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: var(--soft);
+}
+
+details.advanced summary {
+  cursor: pointer;
+  font-size: 14px;
+  color: #334155;
+}
+
+details.advanced[open] summary {
+  margin-bottom: 8px;
+}
+
+.copy-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.copy-row input {
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 13px;
+}
+
 @media (max-width: 850px) {
   .shell,
   .split {

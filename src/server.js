@@ -10,10 +10,13 @@ import {
   dashboardStats,
   getArtifact,
   getCapability,
+  countRuns,
   getRun,
   heartbeatRunner,
+  listAccessTokens,
   listAgents,
   listApprovals,
+  listAudit,
   listArtifacts,
   listCapabilities,
   listKnowledge,
@@ -21,8 +24,13 @@ import {
   listRunners,
   listRuns,
   listSkills,
+  reapStuckRuns,
+  recordAudit,
   registerRunner,
   resolveApproval,
+  revokeAccessToken,
+  runOwnerTokenId,
+  transitionRun,
   upsertAgent,
   upsertCapability,
   upsertKnowledge,
@@ -31,13 +39,21 @@ import {
 } from "./db.js";
 import { env } from "./env.js";
 import { now, slugify } from "./ids.js";
-import { parseCookies, sign, unsign } from "./security.js";
+import { parseCookies, sign, timingSafeEqualStr, unsign } from "./security.js";
 
 const app = express();
 app.disable("x-powered-by");
-app.set("trust proxy", true);
-app.use(express.json({ limit: "25mb" }));
+app.set("trust proxy", env.trustProxy);
+
+// Modest global body limit; artifact uploads (which carry base64 file content) get a larger one.
+const ARTIFACT_BODY_LIMIT = "25mb";
+const globalJson = express.json({ limit: "1mb" });
+const artifactJson = express.json({ limit: ARTIFACT_BODY_LIMIT });
+const isArtifactUpload = (req) => req.method === "POST" && /^\/api\/runs\/[^/]+\/artifacts\/?$/.test(req.path);
+app.use((req, res, next) => (isArtifactUpload(req) ? artifactJson : globalJson)(req, res, next));
 app.use(express.urlencoded({ extended: false }));
+
+const startedAt = Date.now();
 
 function publicUrl(req) {
   return `${req.protocol}://${req.get("host")}`;
@@ -58,6 +74,15 @@ function requireAuth(req, res, next) {
   next();
 }
 
+// Scope enforcement. `admin` is a superscope that satisfies every requirement.
+function requireScopes(...needed) {
+  return (req, res, next) => {
+    const scopes = req.token?.scopes || [];
+    if (scopes.includes("admin") || needed.some((scope) => scopes.includes(scope))) return next();
+    return res.status(403).json({ error: "insufficient scope", required: needed });
+  };
+}
+
 function sendSession(res, token) {
   res.cookie("shub_session", sign(token), {
     httpOnly: true,
@@ -70,6 +95,42 @@ function sendSession(res, token) {
 
 function requireBodySlug(body, fallback) {
   return body.slug || slugify(body.name || body.title || fallback);
+}
+
+// Minimal in-memory fixed-window rate limiter keyed by client + bucket.
+const rateBuckets = new Map();
+function rateLimit({ bucket, max, windowMs }) {
+  return (req, res, next) => {
+    const key = `${bucket}:${req.ip}`;
+    const nowMs = Date.now();
+    const entry = rateBuckets.get(key);
+    if (!entry || nowMs > entry.reset) {
+      rateBuckets.set(key, { count: 1, reset: nowMs + windowMs });
+      return next();
+    }
+    if (entry.count >= max) {
+      res.setHeader("retry-after", Math.ceil((entry.reset - nowMs) / 1000));
+      return res.status(429).json({ error: "too many requests" });
+    }
+    entry.count += 1;
+    next();
+  };
+}
+
+// Periodically evict expired buckets so distinct client IPs can't leak memory.
+const rateSweep = setInterval(() => {
+  const nowMs = Date.now();
+  for (const [key, entry] of rateBuckets) if (nowMs > entry.reset) rateBuckets.delete(key);
+}, 60_000);
+rateSweep.unref?.();
+
+// Restrict a run's lifecycle endpoints to the runner that owns it (or any admin token).
+function requireRunOwnerOrAdmin(req, res, next) {
+  const scopes = req.token?.scopes || [];
+  if (scopes.includes("admin")) return next();
+  if (!getRun(req.params.id)) return res.status(404).json({ error: "run not found" });
+  if (runOwnerTokenId(req.params.id) === req.token.id) return next();
+  return res.status(403).json({ error: "run not owned by this runner" });
 }
 
 async function notifyTelegram(approval) {
@@ -112,8 +173,30 @@ async function notifyTelegram(approval) {
 app.use((req, res, next) => {
   res.setHeader("x-content-type-options", "nosniff");
   res.setHeader("referrer-policy", "strict-origin-when-cross-origin");
+  res.setHeader("x-frame-options", "DENY");
+  res.setHeader(
+    "content-security-policy",
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'"
+  );
+  if (env.baseUrl.startsWith("https://")) {
+    res.setHeader("strict-transport-security", "max-age=31536000; includeSubDomains");
+  }
   next();
 });
+
+// General API rate limit (defense against scraping/abuse); login has a stricter bucket below.
+app.use("/api", rateLimit({ bucket: "api", max: 1200, windowMs: 60_000 }));
+
+app.get("/healthz", (_req, res) => res.json({ status: "ok", uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000) }));
+app.get("/readyz", (_req, res) => {
+  try {
+    dashboardStats();
+    res.json({ status: "ready" });
+  } catch (error) {
+    res.status(503).json({ status: "unavailable" });
+  }
+});
+app.get("/api/version", (_req, res) => res.json({ name: "smithers-hub", version: env.version, instanceName: env.instanceName }));
 
 app.get("/", (_req, res) => res.sendFile(path.join(env.root, "public", "landing.html")));
 app.get("/app", (_req, res) => res.sendFile(path.join(env.root, "public", "index.html")));
@@ -181,15 +264,17 @@ app.get("/api/setup", (_req, res) => {
     baseUrl: env.baseUrl,
     auth: "access-token",
     telegramConfigured: Boolean(env.telegramBotToken && env.telegramChatId),
+    telegramWebhookSecured: Boolean(env.telegramWebhookSecret),
     dataDir: env.dataDir
   });
 });
 
-app.post("/api/auth/token-login", (req, res) => {
+app.post("/api/auth/token-login", rateLimit({ bucket: "login", max: 10, windowMs: 60_000 }), (req, res) => {
   const token = req.body.token || "";
   const record = authenticateToken(token);
   if (!record) return res.status(401).json({ error: "invalid token" });
   sendSession(res, token);
+  recordAudit(record.name, "auth.login", record.id, {});
   res.json({ ok: true, token: { id: record.id, name: record.name, scopes: record.scopes } });
 });
 
@@ -202,9 +287,35 @@ app.get("/api/me", requireAuth, (req, res) => {
   res.json({ token: { id: req.token.id, name: req.token.name, scopes: req.token.scopes } });
 });
 
-app.post("/api/tokens", requireAuth, (req, res) => {
-  const token = createAccessToken(req.body.name || "access token", undefined, req.body.scopes || ["api", "mcp"]);
+app.get("/api/tokens", requireAuth, requireScopes("admin"), (_req, res) => {
+  res.json({ tokens: listAccessTokens() });
+});
+
+app.post("/api/tokens", requireAuth, requireScopes("admin"), (req, res) => {
+  const scopes = Array.isArray(req.body.scopes) && req.body.scopes.length ? req.body.scopes : ["api", "mcp"];
+  const days = Number(req.body.expiresInDays || 0);
+  const expiresAt = days > 0 ? new Date(Date.now() + days * 86_400_000).toISOString() : null;
+  const token = createAccessToken(req.body.name || "access token", undefined, scopes, { expiresAt });
+  recordAudit(req.token.name, "token.created", token.id, { scopes, expiresAt });
   res.json({ token });
+});
+
+app.get("/api/audit", requireAuth, requireScopes("admin"), (req, res) => {
+  res.json({ audit: listAudit({ limit: Number(req.query.limit || 100) }) });
+});
+
+app.delete("/api/tokens/:id", requireAuth, requireScopes("admin"), (req, res) => {
+  // Don't let an operator revoke the last usable admin token and lock everyone out.
+  const tokens = listAccessTokens();
+  const target = tokens.find((entry) => entry.id === req.params.id);
+  if (!target) return res.status(404).json({ error: "token not found" });
+  const activeAdmins = tokens.filter((entry) => entry.active && entry.scopes.includes("admin"));
+  if (target.active && target.scopes.includes("admin") && activeAdmins.length <= 1) {
+    return res.status(409).json({ error: "cannot revoke the last active admin token" });
+  }
+  const revoked = revokeAccessToken(req.params.id);
+  recordAudit(req.token.name, "token.revoked", req.params.id, {});
+  res.json({ token: revoked });
 });
 
 app.get("/api/dashboard", requireAuth, (_req, res) => {
@@ -215,7 +326,7 @@ app.get("/api/capabilities", requireAuth, (req, res) => {
   res.json({ capabilities: listCapabilities({ q: req.query.q || "" }) });
 });
 
-app.post("/api/capabilities", requireAuth, (req, res) => {
+app.post("/api/capabilities", requireAuth, requireScopes("admin"), (req, res) => {
   const body = { ...req.body, slug: requireBodySlug(req.body, "capability") };
   res.json({ capability: upsertCapability(body) });
 });
@@ -226,13 +337,13 @@ app.get("/api/capabilities/:id", requireAuth, (req, res) => {
   res.json({ capability });
 });
 
-app.patch("/api/capabilities/:id", requireAuth, (req, res) => {
+app.patch("/api/capabilities/:id", requireAuth, requireScopes("admin"), (req, res) => {
   const existing = getCapability(req.params.id);
   if (!existing) return res.status(404).json({ error: "capability not found" });
   res.json({ capability: upsertCapability({ ...existing, ...req.body, slug: existing.slug }) });
 });
 
-app.post("/api/capabilities/:id/run", requireAuth, async (req, res) => {
+app.post("/api/capabilities/:id/run", requireAuth, requireScopes("api", "mcp"), async (req, res) => {
   const capability = getCapability(req.params.id);
   if (!capability || !capability.enabled) return res.status(404).json({ error: "capability not found" });
   const run = createRun(capability, req.body.input || req.body || {}, { runnerId: req.body.runnerId });
@@ -242,20 +353,25 @@ app.post("/api/capabilities/:id/run", requireAuth, async (req, res) => {
 });
 
 app.get("/api/agents", requireAuth, (req, res) => res.json({ agents: listAgents(req.query.q || "") }));
-app.post("/api/agents", requireAuth, (req, res) => res.json({ agent: upsertAgent({ ...req.body, slug: requireBodySlug(req.body, "agent") }) }));
-app.patch("/api/agents/:slug", requireAuth, (req, res) => res.json({ agent: upsertAgent({ ...req.body, slug: req.params.slug }) }));
+app.post("/api/agents", requireAuth, requireScopes("admin"), (req, res) => res.json({ agent: upsertAgent({ ...req.body, slug: requireBodySlug(req.body, "agent") }) }));
+app.patch("/api/agents/:slug", requireAuth, requireScopes("admin"), (req, res) => res.json({ agent: upsertAgent({ ...req.body, slug: req.params.slug }) }));
 
 app.get("/api/skills", requireAuth, (req, res) => res.json({ skills: listSkills(req.query.q || "") }));
-app.post("/api/skills", requireAuth, (req, res) => res.json({ skill: upsertSkill({ ...req.body, slug: requireBodySlug(req.body, "skill") }) }));
-app.patch("/api/skills/:slug", requireAuth, (req, res) => res.json({ skill: upsertSkill({ ...req.body, slug: req.params.slug }) }));
+app.post("/api/skills", requireAuth, requireScopes("admin"), (req, res) => res.json({ skill: upsertSkill({ ...req.body, slug: requireBodySlug(req.body, "skill") }) }));
+app.patch("/api/skills/:slug", requireAuth, requireScopes("admin"), (req, res) => res.json({ skill: upsertSkill({ ...req.body, slug: req.params.slug }) }));
 
 app.get("/api/knowledge", requireAuth, (req, res) => res.json({ knowledge: listKnowledge(req.query.q || "") }));
-app.post("/api/knowledge", requireAuth, (req, res) =>
+app.post("/api/knowledge", requireAuth, requireScopes("admin"), (req, res) =>
   res.json({ knowledge: upsertKnowledge({ ...req.body, slug: requireBodySlug(req.body, "knowledge") }) })
 );
-app.patch("/api/knowledge/:slug", requireAuth, (req, res) => res.json({ knowledge: upsertKnowledge({ ...req.body, slug: req.params.slug }) }));
+app.patch("/api/knowledge/:slug", requireAuth, requireScopes("admin"), (req, res) => res.json({ knowledge: upsertKnowledge({ ...req.body, slug: req.params.slug }) }));
 
-app.get("/api/runs", requireAuth, (req, res) => res.json({ runs: listRuns({ status: req.query.status || "", limit: Number(req.query.limit || 100) }) }));
+app.get("/api/runs", requireAuth, (req, res) => {
+  reapStuckRuns(env.runDeadlineMs);
+  const status = req.query.status || "";
+  const limit = Math.min(Number(req.query.limit || 100), 500);
+  res.json({ runs: listRuns({ status, limit }), total: countRuns({ status }), limit });
+});
 app.get("/api/runs/:id", requireAuth, (req, res) => {
   const run = getRun(req.params.id);
   if (!run) return res.status(404).json({ error: "run not found" });
@@ -268,34 +384,38 @@ app.get("/api/runs/:id/logs", requireAuth, (req, res) => {
     .join("\n");
   res.type("text/plain").send(logs);
 });
-app.post("/api/runs/:id/events", requireAuth, (req, res) => {
+app.post("/api/runs/:id/events", requireAuth, requireScopes("runner"), requireRunOwnerOrAdmin, (req, res) => {
   const event = addRunEvent(req.params.id, req.body.type || "log", req.body.message || "", req.body.data || {});
   if (req.body.type === "workflow.step") updateRun(req.params.id, { current_step: req.body.message || "" });
   res.json({ event });
 });
-app.post("/api/runs/:id/start", requireAuth, (req, res) => {
-  const run = updateRun(req.params.id, { status: "running", current_step: "running", started_at: now() });
-  addRunEvent(req.params.id, "run.started", "Run started");
-  res.json({ run });
+app.post("/api/runs/:id/start", requireAuth, requireScopes("runner"), requireRunOwnerOrAdmin, (req, res) => {
+  const result = transitionRun(req.params.id, "running", { current_step: "running", started_at: now() });
+  if (!result.ok) return res.status(result.code).json({ error: result.error });
+  if (!result.idempotent) addRunEvent(req.params.id, "run.started", "Run started");
+  res.json({ run: result.run });
 });
-app.post("/api/runs/:id/complete", requireAuth, (req, res) => {
-  const run = updateRun(req.params.id, { status: "succeeded", current_step: "completed", output: req.body.output || {}, completed_at: now() });
-  addRunEvent(req.params.id, "run.succeeded", "Run completed");
-  res.json({ run });
+app.post("/api/runs/:id/complete", requireAuth, requireScopes("runner"), requireRunOwnerOrAdmin, (req, res) => {
+  const result = transitionRun(req.params.id, "succeeded", { current_step: "completed", output: req.body.output || {}, completed_at: now() });
+  if (!result.ok) return res.status(result.code).json({ error: result.error });
+  if (!result.idempotent) addRunEvent(req.params.id, "run.succeeded", "Run completed");
+  res.json({ run: result.run });
 });
-app.post("/api/runs/:id/fail", requireAuth, (req, res) => {
-  const run = updateRun(req.params.id, { status: "failed", current_step: "failed", error: req.body.error || "failed", completed_at: now() });
-  addRunEvent(req.params.id, "run.failed", req.body.error || "Run failed");
-  res.json({ run });
+app.post("/api/runs/:id/fail", requireAuth, requireScopes("runner"), requireRunOwnerOrAdmin, (req, res) => {
+  const result = transitionRun(req.params.id, "failed", { current_step: "failed", error: req.body.error || "failed", completed_at: now() });
+  if (!result.ok) return res.status(result.code).json({ error: result.error });
+  if (!result.idempotent) addRunEvent(req.params.id, "run.failed", req.body.error || "Run failed");
+  res.json({ run: result.run });
 });
-app.post("/api/runs/:id/cancel", requireAuth, (req, res) => {
-  const run = updateRun(req.params.id, { status: "cancelled", current_step: "cancelled", completed_at: now() });
-  addRunEvent(req.params.id, "run.cancelled", req.body.reason || "Run cancelled");
-  res.json({ run });
+app.post("/api/runs/:id/cancel", requireAuth, requireScopes("api", "mcp", "runner"), (req, res) => {
+  const result = transitionRun(req.params.id, "cancelled", { current_step: "cancelled", completed_at: now() });
+  if (!result.ok) return res.status(result.code).json({ error: result.error });
+  if (!result.idempotent) addRunEvent(req.params.id, "run.cancelled", req.body.reason || "Run cancelled");
+  res.json({ run: result.run });
 });
 
 app.get("/api/runs/:id/artifacts", requireAuth, (req, res) => res.json({ artifacts: listArtifacts({ runId: req.params.id }) }));
-app.post("/api/runs/:id/artifacts", requireAuth, (req, res) => {
+app.post("/api/runs/:id/artifacts", requireAuth, requireScopes("runner"), requireRunOwnerOrAdmin, (req, res) => {
   const runDir = path.join(env.artifactDir, "runs", req.params.id);
   mkdirSync(runDir, { recursive: true });
   const safeName = String(req.body.name || "artifact.txt").replace(/[/\\]/g, "-");
@@ -318,48 +438,79 @@ app.get("/api/artifacts", requireAuth, (req, res) => res.json({ artifacts: listA
 app.get("/api/artifacts/:id/download", requireAuth, (req, res) => {
   const artifact = getArtifact(req.params.id);
   if (!artifact) return res.status(404).json({ error: "artifact not found" });
+  // Containment: never serve a file that resolved outside the artifact directory.
+  const resolved = path.resolve(artifact.path);
+  if (!resolved.startsWith(path.resolve(env.artifactDir) + path.sep)) {
+    return res.status(400).json({ error: "artifact path outside storage root" });
+  }
   res.type(artifact.mimeType);
-  res.send(readFileSync(artifact.path));
+  // Force download so HTML/SVG artifacts never execute in the Hub origin.
+  res.setHeader("content-disposition", `attachment; filename="${path.basename(artifact.name).replace(/["\r\n]/g, "")}"`);
+  res.send(readFileSync(resolved));
 });
 
 app.get("/api/approvals", requireAuth, (req, res) => res.json({ approvals: listApprovals(req.query.status || "") }));
-app.post("/api/approvals/:id/approve", requireAuth, (req, res) =>
+app.post("/api/approvals/:id/approve", requireAuth, requireScopes("api", "mcp"), (req, res) =>
   res.json({ approval: resolveApproval(req.params.id, "approved", req.token.name, req.body.comment || "") })
 );
-app.post("/api/approvals/:id/reject", requireAuth, (req, res) =>
+app.post("/api/approvals/:id/reject", requireAuth, requireScopes("api", "mcp"), (req, res) =>
   res.json({ approval: resolveApproval(req.params.id, "rejected", req.token.name, req.body.comment || "") })
 );
 
-app.post("/api/runners/register", requireAuth, (req, res) => {
+app.post("/api/runners/register", requireAuth, requireScopes("runner"), (req, res) => {
   const runner = registerRunner(req.body, req.token.id);
   res.json({ runner });
 });
 app.get("/api/runners", requireAuth, (_req, res) => res.json({ runners: listRunners() }));
-app.post("/api/runners/:id/heartbeat", requireAuth, (req, res) => res.json({ runner: heartbeatRunner(req.params.id, req.body) }));
-app.get("/api/runners/:id/next-run", requireAuth, async (req, res) => {
+app.post("/api/runners/:id/heartbeat", requireAuth, requireScopes("runner"), (req, res) => res.json({ runner: heartbeatRunner(req.params.id, req.body) }));
+app.get("/api/runners/:id/next-run", requireAuth, requireScopes("runner"), async (req, res) => {
   const { claimNextRun } = await import("./db.js");
   res.json(claimNextRun(req.params.id) || {});
 });
 
-app.post("/api/telegram/webhook", express.json(), (req, res) => {
+app.post("/api/telegram/webhook", (req, res) => {
+  // Telegram authenticates webhooks via a secret token header configured on setWebhook.
+  // Without a configured secret we refuse to act, so the endpoint can't be used to forge approvals.
+  if (!env.telegramWebhookSecret) return res.status(503).json({ ok: false, error: "telegram webhook not configured" });
+  const provided = req.headers["x-telegram-bot-api-secret-token"] || "";
+  if (!timingSafeEqualStr(provided, env.telegramWebhookSecret)) return res.status(401).json({ ok: false });
   const callback = req.body.callback_query;
   if (callback?.data) {
+    // Only honor callbacks originating from the configured chat.
+    const chatId = String(callback.message?.chat?.id ?? "");
+    if (env.telegramChatId && chatId && chatId !== String(env.telegramChatId)) {
+      return res.status(403).json({ ok: false });
+    }
     const [decision, approvalId] = callback.data.split(":");
-    if (decision === "approve") resolveApproval(approvalId, "approved", `telegram:${callback.from?.username || callback.from?.id || "user"}`, "");
-    if (decision === "reject") resolveApproval(approvalId, "rejected", `telegram:${callback.from?.username || callback.from?.id || "user"}`, "");
+    const who = `telegram:${callback.from?.username || callback.from?.id || "user"}`;
+    if (decision === "approve") resolveApproval(approvalId, "approved", who, "");
+    if (decision === "reject") resolveApproval(approvalId, "rejected", who, "");
   }
   res.json({ ok: true });
 });
 
 app.use((error, _req, res, _next) => {
   console.error(error);
-  res.status(500).json({ error: "internal server error", detail: error.message });
+  // Respect known client errors (body too large, malformed JSON) but never leak internals.
+  const status = error.status || error.statusCode;
+  if (status === 413) return res.status(413).json({ error: "payload too large" });
+  if (status === 400 && error.type) return res.status(400).json({ error: "invalid request body" });
+  res.status(500).json({ error: "internal server error" });
 });
 
 if (process.argv[1]?.endsWith("server.js")) {
   app.listen(env.port, env.host, () => {
     console.log(`${env.instanceName} listening on http://${env.host}:${env.port}`);
   });
+  // Periodically auto-fail runs whose runner died mid-execution.
+  const reaper = setInterval(() => {
+    try {
+      reapStuckRuns(env.runDeadlineMs);
+    } catch (error) {
+      console.error("Run reaper failed:", error.message);
+    }
+  }, 60_000);
+  reaper.unref?.();
 }
 
 export { app };
