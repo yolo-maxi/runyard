@@ -91,6 +91,7 @@ async function notifyTelegram(approval) {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         chat_id: env.telegramChatId,
+        ...(env.telegramThreadId ? { message_thread_id: Number(env.telegramThreadId) } : {}),
         text,
         parse_mode: "Markdown",
         reply_markup: {

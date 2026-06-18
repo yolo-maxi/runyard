@@ -19,5 +19,6 @@ export const env = {
   sessionSecret: process.env.SMITHERS_HUB_SESSION_SECRET || "dev-smithers-hub-session-secret",
   bootstrapToken: process.env.SMITHERS_HUB_BOOTSTRAP_TOKEN || "",
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || process.env.SMITHERS_TELEGRAM_BOT_TOKEN || "",
-  telegramChatId: process.env.TELEGRAM_CHAT_ID || process.env.SMITHERS_TELEGRAM_CHAT_ID || ""
+  telegramChatId: process.env.TELEGRAM_CHAT_ID || process.env.SMITHERS_TELEGRAM_CHAT_ID || "",
+  telegramThreadId: process.env.TELEGRAM_THREAD_ID || process.env.SMITHERS_TELEGRAM_THREAD_ID || ""
 };
