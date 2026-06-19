@@ -31,26 +31,21 @@ function print(data, json) {
   }
 }
 
-function printMenu(data, json) {
+function printMenu(data, json, { all = false } = {}) {
   if (json) return print(data, true);
-  console.log(`${data.product || "Runyard"} menu`);
-  console.log("Hub is the source of truth for runs, logs, outputs, and artifacts.");
-  console.log("\nDiscover:");
-  console.log("  smithers-hub capabilities");
-  console.log("  smithers-hub capability <slug>");
-  console.log("\nChoose execution:");
-  for (const mode of data.executionModes || []) {
-    console.log(`  ${mode.id}: ${mode.cli}`);
-    console.log(`     runner: ${mode.runner}`);
+  console.log("Try: smithers-hub run hello");
+  const caps = data.capabilities || [];
+  const shown = all ? caps : caps.slice(0, 5);
+  if (shown.length) {
+    console.log("");
+    console.log("Capabilities:");
+    shown.forEach((cap, index) => console.log(`  ${index + 1}. ${cap.slug}\t${cap.name}`));
+    if (!all && caps.length > shown.length) {
+      console.log(`  …${caps.length - shown.length} more — run \`smithers-hub menu --all\` for the full catalog`);
+    }
   }
-  console.log("\nAfter a run:");
-  console.log("  smithers-hub run-status <run-id>");
-  console.log("  smithers-hub logs <run-id>");
-  console.log("  smithers-hub artifacts <run-id>");
-  if (data.capabilities?.length) {
-    console.log("\nCapabilities:");
-    for (const cap of data.capabilities) console.log(`  ${cap.slug}\t${cap.name}`);
-  }
+  console.log("");
+  console.log("After a run: smithers-hub run-status|logs|artifacts <run-id>");
 }
 
 function printRunCreated(data, json) {
@@ -165,9 +160,14 @@ program.command("status").description("Show current Hub identity").action(async 
   print(await client(program.opts()).get("/api/me"), program.opts().json);
 });
 
-program.command("menu").alias("discover").description("Show the Hub menu and local/remote run path").action(async () => {
-  printMenu(await client(program.opts()).get("/api/menu"), program.opts().json);
-});
+program
+  .command("menu")
+  .alias("discover")
+  .description("Show the next-action menu (top 5 capabilities)")
+  .option("--all", "show the full capability catalog instead of the top 5")
+  .action(async (opts) => {
+    printMenu(await client(program.opts()).get("/api/menu"), program.opts().json, { all: Boolean(opts.all) });
+  });
 
 program.command("capabilities").description("List capabilities").option("-q, --query <query>").action(async (opts) => {
   const data = await client(program.opts()).get(`/api/capabilities${opts.query ? `?q=${encodeURIComponent(opts.query)}` : ""}`);

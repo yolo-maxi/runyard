@@ -4,8 +4,32 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Runyard — Self-hosted control plane for agent runs</title>
-    <meta name="description" content="Runyard is a self-hosted control plane for agent runs. Discover capabilities through MCP, run them on local or remote runners, and keep approvals, logs, artifacts, skills, agents, and knowledge in one durable place." />
+    <meta name="description" content="Runyard is a self-hosted control plane for agent runs. Try a sample capability in one click, then connect MCP, CLI, API, or runners from the Advanced panel." />
     <link rel="stylesheet" href="/public/styles.css" />
+    <style>
+      .try-hero { display: grid; gap: 1.5rem; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); align-items: stretch; }
+      @media (max-width: 860px) { .try-hero { grid-template-columns: 1fr; } }
+      .try-copy h1 { margin-bottom: 0.25rem; }
+      .try-def { font-size: 1.05rem; line-height: 1.5; margin: 0.5rem 0 1rem; }
+      .try-def strong { font-weight: 600; }
+      .try-actions { margin-top: 1rem; display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center; }
+      .try-actions .button.primary { font-size: 1.05rem; padding: 0.7rem 1.2rem; }
+      .try-foot { margin-top: 0.75rem; }
+      .demo { background: rgba(0,0,0,0.55); color: #d8ffd8; border-radius: 12px; padding: 0.9rem 1rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; line-height: 1.45; min-height: 220px; box-shadow: 0 1px 2px rgba(0,0,0,0.15); overflow: hidden; }
+      .demo-head { color: #9fdcff; opacity: 0.85; margin-bottom: 0.4rem; }
+      .demo-line { display: block; opacity: 0; animation: demo-line 8s linear infinite; }
+      .demo-line:nth-child(2) { animation-delay: 0.6s; }
+      .demo-line:nth-child(3) { animation-delay: 1.4s; }
+      .demo-line:nth-child(4) { animation-delay: 2.2s; }
+      .demo-line:nth-child(5) { animation-delay: 3.0s; }
+      .demo-line:nth-child(6) { animation-delay: 3.8s; }
+      .demo-line:nth-child(7) { animation-delay: 4.6s; color: #f6c177; }
+      .demo-line:nth-child(8) { animation-delay: 5.4s; color: #9fdcff; }
+      @keyframes demo-line { 0% { opacity: 0; transform: translateY(4px); } 6% { opacity: 1; transform: translateY(0); } 70% { opacity: 1; } 100% { opacity: 0.35; transform: translateY(0); } }
+      details.advanced-block { background: var(--surface, rgba(255,255,255,0.04)); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 1rem 1.25rem; margin-top: 1rem; }
+      details.advanced-block > summary { cursor: pointer; font-weight: 600; }
+      details.advanced-block[open] > summary { margin-bottom: 1rem; }
+    </style>
   </head>
   <body>
     <header class="topbar">
@@ -15,7 +39,7 @@
         <span class="brand-pill" title="Public name for Smithers Hub">Smithers&nbsp;Hub</span>
       </div>
       <nav class="nav">
-        <a class="button" href="/docs">Setup</a>
+        <a class="button" href="/docs/quickstart">Quickstart</a>
         <a class="button" href="/llms.txt">llms.txt</a>
         <a class="button primary" href="/app">Open Hub</a>
       </nav>
@@ -23,73 +47,64 @@
     <main>
       <section class="hero">
         <div class="hero-inner">
-          <p class="hero-eyebrow">Self-hosted control plane for agent runs</p>
-          <h1>Runyard</h1>
-          <p>A capability operating system you run on your own box. Agents discover work through MCP, runners execute on a VPS or laptop, and the Hub keeps the durable record of approvals, logs, artifacts, skills, agents, and knowledge.</p>
-          <div class="hero-actions">
-            <a class="button primary" href="/app">Open the operations console</a>
-            <a class="button" href="/docs">Read setup docs</a>
-            <a class="button" href="/llms.txt">/llms.txt for agents</a>
+          <div class="try-hero">
+            <div class="try-copy">
+              <p class="hero-eyebrow">Self-hosted control plane for agent runs</p>
+              <h1>Run your first capability in one click</h1>
+              <p class="try-def">A <strong>capability</strong> is a team-defined action — a workflow with inputs, outputs, runner requirements, and an approval policy — that agents discover and run through Runyard. Pick one, hit Try, and watch logs stream while artifacts land on the Hub.</p>
+              <div class="try-actions">
+                <a class="button primary" href="/app?try=hello#workflows/hello/run">Try it: run <code>hello</code></a>
+                <a class="button" href="/docs/quickstart">Quickstart</a>
+              </div>
+              <p class="try-foot muted">Sample run uses the default single-host topology. No topology decision required up front — you can wire MCP, CLI, API, or a runner pool from <a href="/app#connect">Connect</a> after your first successful run.</p>
+            </div>
+            <div class="demo" aria-hidden="true">
+              <div class="demo-head">$ smithers-hub run hello --where local</div>
+              <span class="demo-line">→ queued run_01H9 capability=hello runner=local</span>
+              <span class="demo-line">  step 1/3 prepare workspace ✓</span>
+              <span class="demo-line">  step 2/3 invoke agent (claude) …</span>
+              <span class="demo-line">  log: collected 3 sources, drafting summary</span>
+              <span class="demo-line">  step 3/3 write artifact hello-output.md</span>
+              <span class="demo-line">  ✓ artifact hello-output.md (2.1 KB)</span>
+              <span class="demo-line">★ run succeeded · open /app#connect to wire your agents</span>
+              <span class="demo-line">$ _</span>
+            </div>
           </div>
-          <p class="hero-foot">Backwards-compatible CLI &amp; MCP bin: <code>smithers-hub</code>, <code>smithers-hub-mcp</code>, <code>smithers-hub-runner</code>.</p>
-        </div>
-      </section>
-      <section class="band band-setup">
-        <div class="band-inner">
-          <div class="toolbar"><h1>Get running in five minutes</h1></div>
-          <p class="muted">Runyard ships as a Node + SQLite app. No external services required to start. Replace <code>hub.example.com</code> with whatever domain you serve from.</p>
-          <div class="setup-grid">
-            <article class="setup-step">
-              <h3><span class="setup-num">1</span> Install</h3>
-              <pre class="json">git clone https://github.com/yolo-maxi/runyard
-cd runyard
-pnpm install
-pnpm build:vendor</pre>
-            </article>
-            <article class="setup-step">
-              <h3><span class="setup-num">2</span> Run locally</h3>
-              <pre class="json">pnpm start
-# server prints data/bootstrap-token.txt on first boot
-open http://127.0.0.1:43117/app</pre>
-              <p class="muted">First-start writes <code>data/bootstrap-token.txt</code>. Paste it on the login screen.</p>
-            </article>
-            <article class="setup-step">
-              <h3><span class="setup-num">3</span> Connect every agent</h3>
-              <pre class="json">bash &lt;(curl -fsSL https://hub.example.com/install.sh)
-smithers-hub mcp install --all</pre>
-              <p class="muted">Auto-detects Claude Code/Desktop, Codex, Cursor, Windsurf, Gemini, VS Code.</p>
-            </article>
-            <article class="setup-step">
-              <h3><span class="setup-num">4</span> Bring runners online</h3>
-              <pre class="json">SMITHERS_HUB_URL=https://hub.example.com \
+          <details class="advanced-block">
+            <summary>Advanced: install MCP, CLI, API, or a runner pool</summary>
+            <p class="muted">Most operators don't need any of this until after their first successful run. Each card below mirrors the snippets shown in <a href="/app#connect">/app#connect</a>; bin names match the current build.</p>
+            <div class="setup-grid">
+              <article class="setup-step">
+                <h3>MCP</h3>
+                <p class="muted">Wire every detected AI client to this Hub.</p>
+                <pre class="json">smithers-hub mcp install --all
+# auto-detects Claude Code/Desktop, Codex, Cursor, Windsurf, Gemini, VS Code</pre>
+              </article>
+              <article class="setup-step">
+                <h3>CLI</h3>
+                <p class="muted">Authenticate, then run the next-action menu.</p>
+                <pre class="json">smithers-hub login --url https://hub.example.com
+smithers-hub menu                # try: smithers-hub run hello
+smithers-hub menu --all          # full catalog</pre>
+              </article>
+              <article class="setup-step">
+                <h3>HTTP API</h3>
+                <p class="muted">Bearer-token API mirrors every CLI/MCP action.</p>
+                <pre class="json">curl -H "authorization: Bearer $TOKEN" \
+  https://hub.example.com/api/menu
+curl https://hub.example.com/llms.txt</pre>
+              </article>
+              <article class="setup-step">
+                <h3>Runner pool</h3>
+                <p class="muted">Bring more capacity online with one process per host.</p>
+                <pre class="json">SMITHERS_HUB_URL=https://hub.example.com \
 SMITHERS_HUB_TOKEN=shub_... \
 SMITHERS_RUNNER_TAGS=linux,node,git,shell,web,smithers \
 smithers-hub-runner</pre>
-              <p class="muted">Add more on VPSes, workstations, or laptops; the Hub matches runs by tag.</p>
-            </article>
-          </div>
-        </div>
-      </section>
-      <section class="band">
-        <div class="band-inner">
-          <div class="toolbar"><h1>Topology options</h1></div>
-          <div class="grid">
-            <article class="item">
-              <span class="status-dot status-dot-ok" aria-hidden="true"></span>
-              <h3>Private Hub</h3>
-              <p class="muted">One Hub per org, behind your own domain, with SQLite and artifacts under a backed-up data directory.</p>
-            </article>
-            <article class="item">
-              <span class="status-dot status-dot-info" aria-hidden="true"></span>
-              <h3>Runner Pool</h3>
-              <p class="muted">Put build and browser work on worker VPSes or laptops. The Hub owns the queue; runners poll over HTTPS.</p>
-            </article>
-            <article class="item">
-              <span class="status-dot status-dot-warn" aria-hidden="true"></span>
-              <h3>Public Docs, Private Ops</h3>
-              <p class="muted">Serve docs statically, keep the operations console, API, MCP, runner tokens, SQLite, and artifacts private.</p>
-            </article>
-          </div>
+              </article>
+            </div>
+            <p class="muted">Need the full bring-up? See <a href="/docs/quickstart">/docs/quickstart</a> for install, topology, security, env vars, and verification.</p>
+          </details>
         </div>
       </section>
       <section class="band">
@@ -119,7 +134,7 @@ smithers-hub-runner</pre>
             <article class="item">
               <span class="status-dot status-dot-info" aria-hidden="true"></span>
               <h3>Open agent surface</h3>
-              <p class="muted">Stable HTTP API, <code>/openapi.json</code>, <code>/llms.txt</code>, and an MCP server keep agents and humans on the same surface.</p>
+              <p class="muted">Stable HTTP API, <code>/openapi.json</code>, <code>/llms.txt</code> (rendered from <code>get_menu</code>), and an MCP server keep agents and humans on the same surface.</p>
             </article>
             <article class="item">
               <span class="status-dot status-dot-danger" aria-hidden="true"></span>

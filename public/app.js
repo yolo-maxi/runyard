@@ -1360,6 +1360,18 @@ async function showRunForm(slug) {
     try {
       const result = await api(`/api/capabilities/${slug}/run`, { method: "POST", body: { input } });
       toast("Run created", "ok");
+      // Landing's "Try it" CTA sends users here with ?try=<slug>. After the
+      // sample run is queued, route them to /app#connect so they wire MCP,
+      // CLI, API, or a runner pool *after* seeing a capability succeed.
+      const tryParam = new URLSearchParams(location.search).get("try");
+      if (tryParam && tryParam === slug) {
+        const url = new URL(location.href);
+        url.searchParams.delete("try");
+        window.history.replaceState({}, "", `${url.pathname}${url.search}#connect`);
+        state.view = "connect";
+        await render();
+        return;
+      }
       location.hash = deepLinks.run(result.run.id).slice(1);
       state.view = `runs/${result.run.id}`;
       await render();
@@ -2288,7 +2300,37 @@ function bindCopy() {
 async function renderConnect() {
   const origin = location.origin;
   const installCmd = `bash <(curl -fsSL ${origin}/install.sh)`;
+  const mcpSnippet = `smithers-hub mcp install --all`;
+  const cliSnippet = `smithers-hub login --url ${origin}\nsmithers-hub menu        # then: smithers-hub run hello`;
+  const apiSnippet = `curl -H "authorization: Bearer $TOKEN" ${origin}/api/menu`;
+  const runnerSnippet = `SMITHERS_HUB_URL=${origin} \\\nSMITHERS_HUB_TOKEN=shub_... \\\nSMITHERS_RUNNER_TAGS=linux,node,git,shell,web,smithers \\\nsmithers-hub-runner`;
   content.innerHTML = `${toolbar("Connect an Agent or Teammate", "", deepLinks.connect())}
+    <section class="panel">
+      <h2>Connect agents</h2>
+      <p class="muted">Now that your first capability has run, wire any of these channels. Bin names match the current build — copy and paste verbatim.</p>
+      <div class="setup-grid">
+        <article class="setup-step">
+          <h3>MCP</h3>
+          <p class="muted">Auto-configure every detected AI client (Claude Code/Desktop, Codex, Cursor, Windsurf, Gemini, VS Code).</p>
+          <div class="copy-row"><input readonly value="${esc(mcpSnippet)}"><button data-copy="${esc(mcpSnippet)}">Copy</button></div>
+        </article>
+        <article class="setup-step">
+          <h3>CLI</h3>
+          <p class="muted">Authenticate, then show the next-action menu and run <code>hello</code>.</p>
+          <pre class="json">${esc(cliSnippet)}</pre>
+        </article>
+        <article class="setup-step">
+          <h3>HTTP API</h3>
+          <p class="muted">Bearer-token API; mirrors every CLI/MCP action. Discovery at <code>/llms.txt</code> + <code>/openapi.json</code>.</p>
+          <div class="copy-row"><input readonly value="${esc(apiSnippet)}"><button data-copy="${esc(apiSnippet)}">Copy</button></div>
+        </article>
+        <article class="setup-step">
+          <h3>Runner pool</h3>
+          <p class="muted">Bring more capacity online — one runner process per host.</p>
+          <pre class="json">${esc(runnerSnippet)}</pre>
+        </article>
+      </div>
+    </section>
     <section class="split">
       <div class="panel">
         <h2>1 · Install the client</h2>

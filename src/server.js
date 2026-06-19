@@ -1475,54 +1475,52 @@ echo "  smithers-hub mcp install --all # connect every AI agent on this machine"
 app.get("/", (_req, res) => res.sendFile(path.join(env.root, "public", "landing.html")));
 app.get("/app", (_req, res) => res.sendFile(path.join(env.root, "public", "index.html")));
 app.get("/docs", (_req, res) => res.sendFile(path.join(env.root, "public", "docs.html")));
+app.get("/docs/quickstart", (_req, res) => res.sendFile(path.join(env.root, "public", "docs.html")));
 app.use("/public", express.static(path.join(env.root, "public")));
 
+// /llms.txt is rendered at request time from hubMenuPayload — the same source
+// get_menu returns over MCP — so the tool list and capability catalog can never drift.
 app.get("/llms.txt", (req, res) => {
-  res.type("text/plain").send(`# Runyard (codebase: smithers-hub)
-
-Runyard is a self-hosted control plane for agent runs. Agents discover
-capabilities over MCP/CLI/HTTP, runners execute them, and the Hub stores
-the durable record of logs, events, artifacts, approvals, skills, agents,
-and knowledge. One private deployment per company/org.
-
-Primary agent interface:
-- MCP server: smithers-hub-mcp
-- HTTP API: ${publicUrl(req)}/api
-- OpenAPI: ${publicUrl(req)}/openapi.json
-- Menu: ${publicUrl(req)}/api/menu
-- Capability catalog: ${publicUrl(req)}/api/capabilities
-- Setup docs: ${publicUrl(req)}/docs
-
-Core tools:
-- get_menu
-- list_capabilities
-- search_capabilities
-- describe_capability
-- run_capability (pass executionMode "local" or "remote")
-- get_run_status
-- get_run_logs
-- get_run_artifacts
-- list_runners
-- list_pending_approvals
-- approve_run
-- reject_run
-- request_changes_run
-- cancel_run
-- search_artifacts
-- list_agents
-- list_skills
-- search_knowledge
-
-Authenticate with a Hub access token using Bearer auth. Tokens can be
-scoped (api, mcp, approvals); the first one is written to
-data/bootstrap-token.txt on the server's machine on first boot.
-
-Run path:
-1. Discover with get_menu/list_capabilities.
-2. Choose local or remote execution.
-3. Start with run_capability or smithers-hub run --where local|remote.
-4. Fetch status, logs, outputs, and artifacts from the Hub.
-`);
+  const menu = hubMenuPayload(req);
+  const base = publicUrl(req);
+  const lines = [];
+  lines.push(`# ${menu.product || "Runyard"} (codebase: ${menu.codebase || "smithers-hub"})`);
+  lines.push("");
+  lines.push("Self-hosted control plane for agent runs. Agents discover capabilities");
+  lines.push("over MCP/CLI/HTTP, runners execute them, and the Hub stores the durable");
+  lines.push("record of logs, events, artifacts, approvals, skills, agents, and knowledge.");
+  lines.push("One private deployment per company/org.");
+  lines.push("");
+  lines.push("Primary agent interface:");
+  lines.push("- MCP server: smithers-hub-mcp");
+  lines.push(`- HTTP API: ${base}/api`);
+  lines.push(`- OpenAPI: ${base}/openapi.json`);
+  lines.push(`- Menu: ${base}/api/menu`);
+  lines.push(`- Capability catalog: ${base}/api/capabilities`);
+  lines.push(`- Setup docs: ${base}/docs/quickstart`);
+  lines.push("");
+  lines.push("Tools (mirrors get_menu):");
+  for (const tool of menu.tools || []) lines.push(`- ${tool}`);
+  lines.push("");
+  lines.push("Capabilities (mirrors get_menu):");
+  for (const cap of menu.capabilities || []) {
+    const desc = cap.description ? ` — ${cap.description}` : "";
+    lines.push(`- ${cap.slug}: ${cap.name}${desc}`);
+  }
+  lines.push("");
+  lines.push("Execution modes:");
+  for (const mode of menu.executionModes || []) lines.push(`- ${mode.id} → runners tagged ${mode.runnerLocation}`);
+  lines.push("");
+  lines.push("Authenticate with a Hub access token using Bearer auth. Tokens can be");
+  lines.push("scoped (api, mcp, approvals); the first one is written to");
+  lines.push("data/bootstrap-token.txt on the server's machine on first boot.");
+  lines.push("");
+  lines.push("Run path:");
+  lines.push("1. Discover with get_menu / list_capabilities.");
+  lines.push("2. Choose local or remote execution.");
+  lines.push("3. Start with run_capability or `smithers-hub run --where local|remote`.");
+  lines.push("4. Fetch status, logs, outputs, and artifacts from the Hub.");
+  res.type("text/plain").send(`${lines.join("\n")}\n`);
 });
 
 app.get("/openapi.json", (req, res) => {
