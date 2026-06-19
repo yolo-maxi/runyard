@@ -188,6 +188,8 @@ Optional:
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_APPROVAL_CHAT_ID` or `SMITHERS_TELEGRAM_APPROVAL_CHAT_ID` for private approval DMs (preferred)
 - `TELEGRAM_CHAT_ID` and `TELEGRAM_THREAD_ID` remain a backward-compatible fallback when a private approval chat is not configured
+- `SMITHERS_OBSTRUCTION_ANALYSIS_API_KEY` or `OPENAI_API_KEY` plus optional `SMITHERS_OBSTRUCTION_ANALYSIS_MODEL` for best-effort terminal run obstruction analysis artifacts.
+- `SMITHERS_OBSTRUCTION_ANALYSIS_ENABLED=0` disables the LLM obstruction analysis pass without disabling deterministic `run-retrospective.json` artifacts.
 
 Runner-side variables (used by `smithers-hub-runner`):
 

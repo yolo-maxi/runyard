@@ -11,10 +11,15 @@ process.env.SMITHERS_HUB_DATA_DIR = temp;
 process.env.SMITHERS_HUB_DB = path.join(temp, "test.sqlite");
 process.env.SMITHERS_HUB_SESSION_SECRET = "test-secret";
 process.env.SMITHERS_HUB_BOOTSTRAP_TOKEN = "shub_test_token";
+process.env.SMITHERS_OBSTRUCTION_ANALYSIS_ENABLED = "0";
 
 const { app, notifyTelegram } = await import("../src/server.js");
 const { env } = await import("../src/env.js");
 const { addRunEvent, autoQueueLegacyRunStartApprovals, createApproval, transitionRun, updateRun } = await import("../src/db.js");
+const {
+  RUN_OBSTRUCTION_ANALYSIS_ARTIFACT_NAME,
+  setRunObstructionAnalyzerForTest
+} = await import("../src/runObstructionAnalysis.js");
 
 let server;
 let baseUrl;
@@ -89,6 +94,55 @@ function raw(pathname, options = {}, bearer = token) {
     const data = text && contentType.includes("application/json") ? JSON.parse(text) : text || null;
     return { status: response.status, data, headers: response.headers };
   });
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForArtifact(runId, name, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const { artifacts } = await api(`/api/runs/${runId}/artifacts`);
+    const artifact = artifacts.find((entry) => entry.name === name);
+    if (artifact) return artifact;
+    await sleep(20);
+  }
+  throw new Error(`timed out waiting for artifact ${name}`);
+}
+
+async function waitForEvent(runId, type, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const { events } = await api(`/api/runs/${runId}/events`);
+    const event = events.find((entry) => entry.type === type);
+    if (event) return event;
+    await sleep(20);
+  }
+  throw new Error(`timed out waiting for event ${type}`);
+}
+
+function fakeObstructionAnalysis(overrides = {}) {
+  return {
+    severity: overrides.severity || "medium",
+    confidence: overrides.confidence || "medium",
+    summary: overrides.summary || "Bounded fake obstruction analysis.",
+    observations: [
+      {
+        evidence: overrides.evidence || "warning/retry evidence in redacted event summary",
+        inference: overrides.inference || "The run had avoidable friction.",
+        severity: overrides.observationSeverity || "low",
+        confidence: overrides.observationConfidence || "medium"
+      }
+    ],
+    obstructions: overrides.obstructions || [],
+    suggestedWorkflowImprovements: overrides.suggestedWorkflowImprovements || ["Summarize retry/fallback counts in workflow output."],
+    suggestedAgentImprovements: overrides.suggestedAgentImprovements || ["Call out successful-but-painful runs in the final response."],
+    suggestedSkillOrKnowledgeImprovements:
+      overrides.suggestedSkillOrKnowledgeImprovements || ["Document recurring runner/tool issues as reusable knowledge."],
+    followUpQuestions: overrides.followUpQuestions || ["Was this retry expected for the runner?"],
+    doNotAutoMutate: false
+  };
 }
 
 function signedTelegramInitData({ botToken, userId, authDate = Math.floor(Date.now() / 1000), hashOverride = "", user = {} }) {
@@ -228,6 +282,11 @@ describe("Smithers Hub API", () => {
   it("stores a retrospective artifact when a stale run is auto-failed", async () => {
     const previousDeadline = env.runDeadlineMs;
     env.runDeadlineMs = 1;
+    setRunObstructionAnalyzerForTest(async () => ({
+      provider: "test",
+      model: "fake",
+      analysis: fakeObstructionAnalysis({ severity: "high", summary: "Stale run exceeded the deadline." })
+    }));
     try {
       const created = await api("/api/capabilities/hello/run", {
         method: "POST",
@@ -247,8 +306,174 @@ describe("Smithers Hub API", () => {
       assert.ok(retrospective);
       const content = JSON.parse(readFileSync(retrospective.path, "utf8"));
       assert.equal(content.outcome.diagnostics.reason, "run exceeded execution deadline");
+      const obstruction = await waitForArtifact(created.run.id, RUN_OBSTRUCTION_ANALYSIS_ARTIFACT_NAME);
+      const obstructionContent = JSON.parse(readFileSync(obstruction.path, "utf8"));
+      assert.equal(obstructionContent.run.status, "failed");
+      assert.equal(obstructionContent.doNotAutoMutate, true);
     } finally {
       env.runDeadlineMs = previousDeadline;
+      setRunObstructionAnalyzerForTest(null);
+    }
+  });
+
+  it("stores obstruction analysis for a successful terminal run with warning and retry evidence", async () => {
+    const analyzerCalls = [];
+    setRunObstructionAnalyzerForTest(async (request) => {
+      analyzerCalls.push(request);
+      assert.equal(request.promptPayload.includes("shub_success_secret"), false);
+      assert.ok(request.payload.evidence.detectedSignals.successfulButPainful);
+      return {
+        provider: "test",
+        model: "fake",
+        analysis: fakeObstructionAnalysis({
+          severity: "low",
+          summary: "Successful run had retry friction.",
+          evidence: "warning and retry events were present",
+          inference: "The task completed but was noisier than necessary."
+        })
+      };
+    });
+    try {
+      const created = await api("/api/capabilities/hello/run", {
+        method: "POST",
+        body: { input: { goal: "success with retry evidence", token: "shub_success_secret" } }
+      });
+      await api(`/api/runs/${created.run.id}/start`, { method: "POST", body: {} });
+      updateRun(created.run.id, {
+        started_at: new Date(Date.now() - 25 * 60_000).toISOString()
+      });
+      await api(`/api/runs/${created.run.id}/events`, {
+        method: "POST",
+        body: {
+          type: "workflow.step",
+          message: "Retrying package install after transient warning token=shub_success_secret"
+        }
+      });
+      await api(`/api/runs/${created.run.id}/events`, {
+        method: "POST",
+        body: { type: "runner.warning", message: "fallback path used after retry" }
+      });
+      await api(`/api/runs/${created.run.id}/complete`, { method: "POST", body: { output: { ok: true, secret: "raw-output" } } });
+
+      const obstruction = await waitForArtifact(created.run.id, RUN_OBSTRUCTION_ANALYSIS_ARTIFACT_NAME);
+      const content = JSON.parse(readFileSync(obstruction.path, "utf8"));
+      assert.equal(content.schemaVersion, "smithers.hub.run-obstruction-analysis.v1");
+      assert.equal(content.run.status, "succeeded");
+      assert.equal(content.severity, "low");
+      assert.equal(content.doNotAutoMutate, true);
+      assert.equal(content.policy.autoMutations, false);
+      assert.equal(content.evidence.detectedSignals.successfulButPainful, true);
+      assert.equal(content.observations[0].evidence, "warning and retry events were present");
+      assert.equal(JSON.stringify(content).includes("shub_success_secret"), false);
+      assert.equal(JSON.stringify(content).includes("raw-output"), false);
+      assert.equal(analyzerCalls.length, 1);
+    } finally {
+      setRunObstructionAnalyzerForTest(null);
+    }
+  });
+
+  it("stores obstruction analysis for a failed terminal run", async () => {
+    setRunObstructionAnalyzerForTest(async () => ({
+      provider: "test",
+      model: "fake",
+      analysis: fakeObstructionAnalysis({
+        severity: "high",
+        confidence: "high",
+        summary: "Failed run hit a build obstruction.",
+        obstructions: [
+          {
+            category: "tool",
+            evidence: "run.failed event and diagnostic error",
+            inference: "The build step was blocked by a tool failure.",
+            severity: "high",
+            confidence: "high"
+          }
+        ]
+      })
+    }));
+    try {
+      const created = await api("/api/capabilities/hello/run", {
+        method: "POST",
+        body: { input: { goal: "failed obstruction" } }
+      });
+      await api(`/api/runs/${created.run.id}/start`, { method: "POST", body: {} });
+      await api(`/api/runs/${created.run.id}/events`, {
+        method: "POST",
+        body: { type: "workflow.step", message: "building artifact" }
+      });
+      await api(`/api/runs/${created.run.id}/fail`, { method: "POST", body: { error: "synthetic failure for obstruction" } });
+
+      const obstruction = await waitForArtifact(created.run.id, RUN_OBSTRUCTION_ANALYSIS_ARTIFACT_NAME);
+      const retrospective = (await api(`/api/runs/${created.run.id}/artifacts`)).artifacts.find((artifact) => artifact.name === "run-retrospective.json");
+      assert.ok(retrospective, "deterministic retrospective should still be present");
+      const content = JSON.parse(readFileSync(obstruction.path, "utf8"));
+      assert.equal(content.run.status, "failed");
+      assert.equal(content.outcome.succeeded, false);
+      assert.equal(content.severity, "high");
+      assert.equal(content.obstructions[0].category, "tool");
+      assert.equal(content.doNotAutoMutate, true);
+    } finally {
+      setRunObstructionAnalyzerForTest(null);
+    }
+  });
+
+  it("records obstruction analysis failure without blocking terminalization", async () => {
+    setRunObstructionAnalyzerForTest(async () => {
+      throw new Error("provider unavailable token=shub_failure_secret");
+    });
+    try {
+      const created = await api("/api/capabilities/hello/run", {
+        method: "POST",
+        body: { input: { goal: "analysis failure" } }
+      });
+      await api(`/api/runs/${created.run.id}/start`, { method: "POST", body: {} });
+      const failed = await raw(`/api/runs/${created.run.id}/fail`, {
+        method: "POST",
+        body: { error: "terminal failure still succeeds" }
+      });
+      assert.equal(failed.status, 200);
+      assert.equal(failed.data.run.status, "failed");
+
+      const event = await waitForEvent(created.run.id, "run.obstruction_analysis_failed");
+      assert.match(event.data.error, /provider unavailable/);
+      assert.equal(event.data.error.includes("shub_failure_secret"), false);
+      const artifacts = await api(`/api/runs/${created.run.id}/artifacts`);
+      assert.ok(artifacts.artifacts.find((artifact) => artifact.name === "run-retrospective.json"));
+      assert.equal(artifacts.artifacts.some((artifact) => artifact.name === RUN_OBSTRUCTION_ANALYSIS_ARTIFACT_NAME), false);
+    } finally {
+      setRunObstructionAnalyzerForTest(null);
+    }
+  });
+
+  it("does not duplicate obstruction artifacts when terminalization is retried", async () => {
+    let calls = 0;
+    setRunObstructionAnalyzerForTest(async () => {
+      calls += 1;
+      return { provider: "test", model: "fake", analysis: fakeObstructionAnalysis({ severity: "medium" }) };
+    });
+    try {
+      const created = await api("/api/capabilities/hello/run", {
+        method: "POST",
+        body: { input: { goal: "dedupe obstruction" } }
+      });
+      await api(`/api/runs/${created.run.id}/start`, { method: "POST", body: {} });
+      await api(`/api/runs/${created.run.id}/events`, {
+        method: "POST",
+        body: { type: "runner.warning", message: "retrying once before completion" }
+      });
+      await api(`/api/runs/${created.run.id}/complete`, { method: "POST", body: { output: { ok: true } } });
+      await waitForArtifact(created.run.id, RUN_OBSTRUCTION_ANALYSIS_ARTIFACT_NAME);
+      const retried = await raw(`/api/runs/${created.run.id}/complete`, {
+        method: "POST",
+        body: { output: { ok: true } }
+      });
+      assert.equal(retried.status, 200);
+      await sleep(100);
+      const artifacts = await api(`/api/runs/${created.run.id}/artifacts`);
+      assert.equal(artifacts.artifacts.filter((artifact) => artifact.name === RUN_OBSTRUCTION_ANALYSIS_ARTIFACT_NAME).length, 1);
+      assert.equal(calls, 1);
+    } finally {
+      setRunObstructionAnalyzerForTest(null);
     }
   });
 

@@ -14,6 +14,7 @@ process.env.SMITHERS_HUB_DATA_DIR = temp;
 process.env.SMITHERS_HUB_DB = path.join(temp, "test.sqlite");
 process.env.SMITHERS_HUB_SESSION_SECRET = "test-secret";
 process.env.SMITHERS_HUB_BOOTSTRAP_TOKEN = "shub_cli_mcp_token";
+process.env.SMITHERS_OBSTRUCTION_ANALYSIS_ENABLED = "0";
 
 const { app } = await import("../src/server.js");
 

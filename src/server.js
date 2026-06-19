@@ -45,6 +45,12 @@ import {
 import { env } from "./env.js";
 import { now, slugify } from "./ids.js";
 import { buildRunRetrospectiveArtifact, RUN_RETROSPECTIVE_ARTIFACT_NAME } from "./runRetrospective.js";
+import {
+  analyzeRunObstructions,
+  obstructionAnalyzerConfigured,
+  redactAnalysisText,
+  RUN_OBSTRUCTION_ANALYSIS_ARTIFACT_NAME
+} from "./runObstructionAnalysis.js";
 import { executionIntentFromInput, normalizeExecutionIntent } from "./runExecution.js";
 import { parseCookies, sign, timingSafeEqualStr, unsign } from "./security.js";
 
@@ -66,6 +72,7 @@ const TELEGRAM_WEBAPP_SESSION_PREFIX = "telegram-webapp:";
 const TELEGRAM_WEBAPP_SESSION_MAX_AGE_MS = 1000 * 60 * 60 * 24;
 const TELEGRAM_WEBAPP_AUTH_MAX_AGE_SECONDS = 10 * 60;
 const TELEGRAM_WEBAPP_AUTH_FUTURE_SKEW_SECONDS = 60;
+const pendingObstructionAnalyses = new Set();
 
 function publicUrl(req) {
   return `${req.protocol}://${req.get("host")}`;
@@ -2233,21 +2240,21 @@ app.post("/api/runs/:id/complete", requireAuth, requireScopes("runner"), require
   if (!result.ok) return res.status(result.code).json({ error: result.error });
   if (!result.idempotent) addRunEvent(req.params.id, "run.succeeded", "Run completed");
   const chainedRun = result.idempotent ? null : queueNextChainedRun(result.run, output, req);
-  if (!result.idempotent) recordRunRetrospectiveArtifact(result.run.id);
+  if (!result.idempotent) recordRunTerminalArtifacts(result.run.id);
   res.json({ run: result.run, chainedRun: chainedRun ? withRunLinks(chainedRun) : null });
 });
 app.post("/api/runs/:id/fail", requireAuth, requireScopes("runner"), requireRunOwnerOrAdmin, (req, res) => {
   const result = transitionRun(req.params.id, "failed", { current_step: "failed", error: req.body.error || "failed", completed_at: now() });
   if (!result.ok) return res.status(result.code).json({ error: result.error });
   if (!result.idempotent) addRunEvent(req.params.id, "run.failed", req.body.error || "Run failed");
-  if (!result.idempotent) recordRunRetrospectiveArtifact(result.run.id);
+  if (!result.idempotent) recordRunTerminalArtifacts(result.run.id);
   res.json({ run: result.run });
 });
 app.post("/api/runs/:id/cancel", requireAuth, requireScopes("api", "mcp", "runner"), (req, res) => {
   const result = transitionRun(req.params.id, "cancelled", { current_step: "cancelled", completed_at: now() });
   if (!result.ok) return res.status(result.code).json({ error: result.error });
   if (!result.idempotent) addRunEvent(req.params.id, "run.cancelled", req.body.reason || "Run cancelled");
-  if (!result.idempotent) recordRunRetrospectiveArtifact(result.run.id);
+  if (!result.idempotent) recordRunTerminalArtifacts(result.run.id);
   res.json({ run: result.run });
 });
 
@@ -2331,6 +2338,41 @@ function ensureRunRetrospectiveArtifact(runId) {
   return storeRunArtifact(run, artifact);
 }
 
+function hasRunObstructionAnalysisArtifact(artifacts = []) {
+  return artifacts.some(
+    (artifact) =>
+      artifact.name === RUN_OBSTRUCTION_ANALYSIS_ARTIFACT_NAME
+      || artifact.metadata?.kind === "run-obstruction-analysis"
+  );
+}
+
+async function ensureRunObstructionAnalysisArtifact(runId) {
+  if (!obstructionAnalyzerConfigured(env)) return null;
+  const run = getRun(runId);
+  if (!run || !["succeeded", "failed", "cancelled"].includes(run.status)) return null;
+  const existing = listArtifacts({ runId });
+  if (hasRunObstructionAnalysisArtifact(existing)) return null;
+  const artifacts = existing.map(withArtifactLinks);
+  const events = listRunEvents(runId);
+  const linkedRun = withRunLinks(run);
+  const capability = getCapability(run.capabilitySlug);
+  const linkedCapability = capability ? withCapabilityLinks(capability) : null;
+  const artifact = await analyzeRunObstructions(
+    {
+      run: linkedRun,
+      capability: linkedCapability,
+      artifacts,
+      logSummary: summarizeRunEvents(events),
+      diagnostics: runDiagnostics(run, events, artifacts),
+      generatedAt: now()
+    },
+    { config: env }
+  );
+  if (!artifact) return null;
+  if (hasRunObstructionAnalysisArtifact(listArtifacts({ runId }))) return null;
+  return storeRunArtifact(run, artifact);
+}
+
 function recordRunRetrospectiveArtifact(runId) {
   try {
     return ensureRunRetrospectiveArtifact(runId);
@@ -2343,9 +2385,37 @@ function recordRunRetrospectiveArtifact(runId) {
   }
 }
 
+async function recordRunObstructionAnalysisArtifact(runId) {
+  try {
+    return await ensureRunObstructionAnalysisArtifact(runId);
+  } catch (error) {
+    console.error(`Run obstruction analysis artifact failed for ${runId}:`, redactAnalysisText(error.message || error, 500));
+    addRunEvent(runId, "run.obstruction_analysis_failed", "Run obstruction analysis artifact generation failed", {
+      error: redactAnalysisText(error.message || error, 500)
+    });
+    return null;
+  }
+}
+
+function scheduleRunObstructionAnalysisArtifact(runId) {
+  if (!runId || pendingObstructionAnalyses.has(runId) || !obstructionAnalyzerConfigured(env)) return;
+  pendingObstructionAnalyses.add(runId);
+  setImmediate(() => {
+    recordRunObstructionAnalysisArtifact(runId).finally(() => {
+      pendingObstructionAnalyses.delete(runId);
+    });
+  });
+}
+
+function recordRunTerminalArtifacts(runId) {
+  const retrospective = recordRunRetrospectiveArtifact(runId);
+  scheduleRunObstructionAnalysisArtifact(runId);
+  return retrospective;
+}
+
 function reapStuckRunsWithRetrospectives(maxMs) {
   const runIds = reapStuckRunIds(maxMs);
-  for (const runId of runIds) recordRunRetrospectiveArtifact(runId);
+  for (const runId of runIds) recordRunTerminalArtifacts(runId);
   return runIds.length;
 }
 

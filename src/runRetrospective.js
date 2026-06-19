@@ -1,5 +1,6 @@
 export const RUN_RETROSPECTIVE_ARTIFACT_NAME = "run-retrospective.json";
 export const RUN_RETROSPECTIVE_SCHEMA_VERSION = "smithers.hub.run-retrospective.v1";
+const GENERATED_RUN_ARTIFACT_NAMES = new Set([RUN_RETROSPECTIVE_ARTIFACT_NAME, "run-obstruction-analysis.json"]);
 
 const SAFE_ARTIFACT_METADATA_KEYS = new Set([
   "generatedBy",
@@ -60,7 +61,7 @@ function safeArtifactMetadata(metadata) {
 
 function artifactInventory(artifacts = []) {
   return (artifacts || [])
-    .filter((artifact) => artifact?.name !== RUN_RETROSPECTIVE_ARTIFACT_NAME)
+    .filter((artifact) => !GENERATED_RUN_ARTIFACT_NAMES.has(artifact?.name))
     .map((artifact) => ({
       id: artifact.id || "",
       name: artifact.name || "",

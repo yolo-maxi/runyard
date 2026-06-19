@@ -50,6 +50,11 @@ function parseRoots(value) {
     .map((entry) => path.resolve(entry));
 }
 
+function parseBool(value, fallback = true) {
+  if (value == null || value === "") return fallback;
+  return !/^(0|false|off|no)$/i.test(String(value).trim());
+}
+
 export const env = {
   root,
   dataDir,
@@ -96,5 +101,14 @@ export const env = {
   })(),
   // Runs executing longer than this are auto-failed by the reaper. 0 disables.
   runDeadlineMs: Number(process.env.SMITHERS_RUN_DEADLINE_MS || 30 * 60_000),
+  // Best-effort terminal run obstruction analysis. If no provider/API key is
+  // configured, the artifact pass is skipped; deterministic retrospectives
+  // still run normally.
+  obstructionAnalysisEnabled: parseBool(process.env.SMITHERS_OBSTRUCTION_ANALYSIS_ENABLED, true),
+  obstructionAnalysisApiKey: process.env.SMITHERS_OBSTRUCTION_ANALYSIS_API_KEY || process.env.OPENAI_API_KEY || "",
+  obstructionAnalysisUrl: process.env.SMITHERS_OBSTRUCTION_ANALYSIS_URL || "",
+  obstructionAnalysisModel: process.env.SMITHERS_OBSTRUCTION_ANALYSIS_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini",
+  obstructionAnalysisTimeoutMs: Number(process.env.SMITHERS_OBSTRUCTION_ANALYSIS_TIMEOUT_MS || 20_000),
+  obstructionAnalysisMaxPromptChars: Number(process.env.SMITHERS_OBSTRUCTION_ANALYSIS_MAX_PROMPT_CHARS || 12_000),
   version: "0.1.0"
 };
