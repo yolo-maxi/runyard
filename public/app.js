@@ -134,6 +134,232 @@ function empty(message, hint = "") {
   return `<div class="empty"><p>${esc(message)}</p>${hint ? `<p class="muted">${hint}</p>` : ""}</div>`;
 }
 
+// --- Next-best-action card ---------------------------------------------------
+// Picks the single highest-signal next step a fresh tenant should take, based
+// on current state. Returned HTML is injected at the top of the Home view so
+// the empty-zero metric tiles stop being the first thing a new user sees.
+function nextBestActionCard({ runners = [], capabilities = [], stats = {}, failed24h = 0 }) {
+  const offline = runners.filter((r) => !r.online).length;
+  const onlineRunners = runners.length - offline;
+  // Priority: connect a runner → publish a workflow → investigate failures →
+  // celebrate (no action). The button always deep-links to the action surface.
+  let title;
+  let body;
+  let actionHref;
+  let actionLabel;
+  let tone = "primary";
+  if (!runners.length) {
+    title = "Connect your first runner";
+    body = "A runner executes workflows on a machine you control. Set one up in under a minute and we'll auto-detect it here.";
+    actionHref = "#onboarding";
+    actionLabel = "Start onboarding";
+  } else if (!capabilities.length) {
+    title = "Publish your first workflow";
+    body = "Workflows are the actions agents and humans can trigger. Start from a template or paste your own.";
+    actionHref = "#workflows";
+    actionLabel = "Browse templates";
+  } else if (failed24h > 0) {
+    title = `Investigate ${failed24h} failed run${failed24h === 1 ? "" : "s"}`;
+    body = "Recent runs ended in failure. Open them to read the diagnostic timeline and re-run.";
+    actionHref = "#runs";
+    actionLabel = "Open failed runs";
+    tone = "danger";
+  } else if (onlineRunners === 0) {
+    title = "All runners are offline";
+    body = "No runner has heartbeated recently. Start a runner process to begin executing queued work.";
+    actionHref = "#runners";
+    actionLabel = "View runners";
+    tone = "warn";
+  } else {
+    title = "Everything looks healthy";
+    body = "Your runners are online, workflows are published, and no recent failures. Trigger a run to keep the pace.";
+    actionHref = "#workflows";
+    actionLabel = "Run a workflow";
+    tone = "ok";
+  }
+  return `<section class="nba-card nba-${esc(tone)}" role="region" aria-label="Next best action">
+    <div class="nba-body">
+      <h2 class="nba-title">${esc(title)}</h2>
+      <p class="nba-text">${esc(body)}</p>
+    </div>
+    <div class="nba-actions"><a class="button primary nba-cta" href="${esc(actionHref)}">${esc(actionLabel)}</a></div>
+  </section>`;
+}
+
+// --- Sample workflow templates -----------------------------------------------
+// Cheap starter capabilities seeded into the tenant when a user clicks
+// "Use template" on the empty workflows page. We POST them through the
+// existing /api/capabilities upsert path so no server change is needed.
+const WORKFLOW_TEMPLATES = [
+  {
+    slug: "hello-world",
+    name: "Hello world",
+    category: "starter",
+    description: "Prints a greeting from a runner. Quickest way to confirm the pipe is wired end to end.",
+    enabled: true,
+    requiredRunnerTags: ["smithers"],
+    requiredSkills: [],
+    requiredAgents: [],
+    inputSchema: { type: "object", properties: { name: { type: "string", description: "Who to greet" } } },
+    workflow: { type: "shell", entry: "echo 'hello from runyard'" }
+  },
+  {
+    slug: "fetch-and-summarize",
+    name: "Fetch & summarize URL",
+    category: "starter",
+    description: "Downloads a page and asks the default agent to summarize it. Tests outbound HTTP + agent loop.",
+    enabled: true,
+    requiredRunnerTags: ["smithers", "web"],
+    requiredSkills: [],
+    requiredAgents: [],
+    inputSchema: { type: "object", required: ["url"], properties: { url: { type: "string", description: "Page to summarize" } } },
+    workflow: { type: "shell", entry: "echo summarize $url" }
+  },
+  {
+    slug: "scheduled-check",
+    name: "Scheduled health check",
+    category: "starter",
+    description: "Skeleton for a periodic check: hit an endpoint, alert on failure. Pair with /schedule when ready.",
+    enabled: true,
+    requiredRunnerTags: ["smithers"],
+    requiredSkills: [],
+    requiredAgents: [],
+    inputSchema: { type: "object", properties: { url: { type: "string" } } },
+    workflow: { type: "shell", entry: "curl -sf $url" }
+  }
+];
+
+function templateCard(template) {
+  return `<article class="template-card">
+    <h3>${esc(template.name)}</h3>
+    <p class="muted">${esc(template.description)}</p>
+    <p class="template-meta muted">${esc(template.category)} · runs on <code>${esc((template.requiredRunnerTags || []).join(", ") || "any")}</code></p>
+    <div class="toolbar-actions">
+      <button class="primary" data-use-template="${esc(template.slug)}">Use template</button>
+    </div>
+  </article>`;
+}
+
+function bindTemplateButtons() {
+  document.querySelectorAll("[data-use-template]").forEach((button) => {
+    if (button.dataset.tplBound === "1") return;
+    button.dataset.tplBound = "1";
+    button.addEventListener("click", async () => {
+      const slug = button.dataset.useTemplate;
+      const template = WORKFLOW_TEMPLATES.find((t) => t.slug === slug);
+      if (!template) return;
+      button.disabled = true;
+      try {
+        await api("/api/capabilities", { method: "POST", body: template });
+        toast(`Created ${template.name}`, "ok");
+        setView(`workflows/${template.slug}`);
+      } catch (error) {
+        toast(error.message || "Could not create template", "error");
+        button.disabled = false;
+      }
+    });
+  });
+}
+
+// --- Sidebar badges (failed-24h, offline runners) ---------------------------
+// A tiny pill rendered inside each sidebar button so an operator sees that
+// something needs attention without having to open the tab first. Counts are
+// refreshed every 30s and on every navigation; visiting the tab clears it.
+const SIDEBAR_BADGE_STATE = { runners: 0, runs: 0 };
+
+function applySidebarBadges() {
+  document.querySelectorAll(".sidebar button").forEach((button) => {
+    const view = button.dataset.view;
+    const existing = button.querySelector(".sidebar-badge");
+    let count = 0;
+    let tone = "warn";
+    if (view === "home") {
+      count = SIDEBAR_BADGE_STATE.runs;
+      tone = "danger";
+    } else if (view === "agents") {
+      count = 0;
+    }
+    if (!count) {
+      if (existing) existing.remove();
+      return;
+    }
+    if (existing) {
+      existing.textContent = String(count);
+      existing.dataset.tone = tone;
+    } else {
+      const badge = document.createElement("span");
+      badge.className = "sidebar-badge";
+      badge.dataset.tone = tone;
+      badge.textContent = String(count);
+      button.appendChild(badge);
+    }
+  });
+}
+
+async function refreshSidebarBadges() {
+  try {
+    const [runsData, runnersData] = await Promise.all([
+      api("/api/runs?limit=50").catch(() => ({ runs: [] })),
+      api("/api/runners").catch(() => ({ runners: [] }))
+    ]);
+    const cutoff = Date.now() - 24 * 3600 * 1000;
+    SIDEBAR_BADGE_STATE.runs = (runsData.runs || []).filter((r) => {
+      if (!["failed", "error"].includes(r.status)) return false;
+      const t = Date.parse(r.completedAt || r.createdAt || "");
+      return Number.isNaN(t) ? true : t >= cutoff;
+    }).length;
+    SIDEBAR_BADGE_STATE.runners = (runnersData.runners || []).filter((r) => !r.online).length;
+    applySidebarBadges();
+  } catch {
+    // best-effort; badges stay as last known
+  }
+}
+
+// --- Reveal/hide secret strings ---------------------------------------------
+// Masks a high-value secret (token/bearer) behind •••••• with a Show toggle
+// and a Copy button that always grabs the real value. Used in token-issued
+// confirmations and the MCP config snippets where the bearer leaks easily.
+function secretInput(id, value, { label = "Secret" } = {}) {
+  return `<div class="copy-row secret-row" data-secret-id="${esc(id)}">
+    <input id="${esc(id)}" readonly type="password" value="${esc(value)}" data-secret-value="${esc(value)}" aria-label="${esc(label)}">
+    <button type="button" class="button" data-secret-toggle="${esc(id)}">Show</button>
+    <button type="button" class="button" data-secret-copy="${esc(id)}">Copy</button>
+  </div>`;
+}
+
+function bindSecretToggles() {
+  document.querySelectorAll("[data-secret-toggle]").forEach((button) => {
+    if (button.dataset.secretBound === "1") return;
+    button.dataset.secretBound = "1";
+    button.addEventListener("click", () => {
+      const input = document.getElementById(button.dataset.secretToggle);
+      if (!input) return;
+      const hidden = input.type === "password";
+      input.type = hidden ? "text" : "password";
+      button.textContent = hidden ? "Hide" : "Show";
+    });
+  });
+  document.querySelectorAll("[data-secret-copy]").forEach((button) => {
+    if (button.dataset.secretBound === "1") return;
+    button.dataset.secretBound = "1";
+    button.addEventListener("click", () => {
+      const input = document.getElementById(button.dataset.secretCopy);
+      if (!input) return;
+      copyText(input.dataset.secretValue || input.value);
+    });
+  });
+}
+
+// --- Tooltip helper ---------------------------------------------------------
+// Renders a small "?" badge that explains jargon inline and links into docs.
+function helpTip(text, docsAnchor = "") {
+  const href = docsAnchor ? `/docs#${esc(docsAnchor)}` : "/docs";
+  return `<span class="help-tip" tabindex="0" role="note" aria-label="${esc(text)}">
+    <span aria-hidden="true">?</span>
+    <span class="help-tip-bubble">${esc(text)} <a href="${esc(href)}">Learn more</a></span>
+  </span>`;
+}
+
 // --- Schema-driven form fields ----------------------------------------------
 // Render a labeled control for one JSON-Schema property.
 function schemaField(key, prop = {}, required = false) {
@@ -266,6 +492,16 @@ function setView(view) {
   state.view = view;
   closeAdminMenu();
   location.hash = view;
+  // Visiting Runs / home implies "seen" — drop the runs-failed badge optimistically
+  // so the UI feels responsive; the next poll re-derives it from the API.
+  if (view === "home" || view === "runs") {
+    SIDEBAR_BADGE_STATE.runs = 0;
+    applySidebarBadges();
+  }
+  if (view === "runners") {
+    SIDEBAR_BADGE_STATE.runners = 0;
+    applySidebarBadges();
+  }
   render().catch(showError);
 }
 
@@ -337,6 +573,10 @@ async function bootAuthenticated(data) {
     location.reload();
   });
   await render();
+  // Best-effort badges: first paint immediately, then poll every 30s.
+  // Visiting Runs/Home clears the count locally so the badge updates fast.
+  refreshSidebarBadges();
+  setInterval(refreshSidebarBadges, 30_000);
   markTelegramWebAppReady();
 }
 
@@ -402,6 +642,7 @@ async function render() {
     return;
   }
   if (view === "connect") return renderConnect();
+  if (view === "onboarding") return renderOnboarding();
   if (view === "approvals") return segments[1] ? renderApprovalDetail(segments[1]) : renderApprovals();
   if (view === "runners") return renderRunners();
   if (view === "tokens") return renderTokens();
@@ -673,15 +914,115 @@ function runCard(run, artifacts = []) {
   </article>`;
 }
 
+// --- First-run onboarding wizard --------------------------------------------
+// Three steps: (1) name the runner, (2) copy the curl|bash install line with
+// the freshly-minted token pre-injected, (3) poll /api/runners until something
+// heartbeats and offer a sample workflow to run. The wizard stays at
+// /#onboarding so users can come back to it from any deep link.
+async function renderOnboarding() {
+  content.innerHTML = `${toolbar("Get started", "", "#onboarding")}
+    <section class="panel onboarding">
+      <ol class="onboarding-steps">
+        <li class="onboarding-step active" id="ob-step-1">
+          <h2><span class="onboarding-num">1</span> Name your runner</h2>
+          <p class="muted">This is the label you'll see in the Runners table. Hostnames work well.</p>
+          <form id="onboarding-name-form" class="form-grid">
+            <label>Runner name <input id="ob-runner-name" placeholder="e.g. fran-laptop" autocomplete="off"></label>
+            <button class="primary" type="submit">Continue</button>
+          </form>
+        </li>
+        <li class="onboarding-step" id="ob-step-2" aria-hidden="true">
+          <h2><span class="onboarding-num">2</span> Start the runner</h2>
+          <p class="muted">Paste this into a terminal on the machine that will execute work. The token is pre-injected and scoped to <code>runner</code> only.</p>
+          <div class="copy-row"><input id="ob-install" readonly value="" aria-label="Install command"><button class="button" data-copy-el="ob-install">Copy</button></div>
+          <p class="muted ob-poll-status" id="ob-poll-status">Waiting for runner to connect…</p>
+        </li>
+        <li class="onboarding-step" id="ob-step-3" aria-hidden="true">
+          <h2><span class="onboarding-num">3</span> Run a sample workflow</h2>
+          <p class="muted">Your runner is online. Pick a starter and trigger it — the run will appear on the home page.</p>
+          <div class="grid ob-templates">${WORKFLOW_TEMPLATES.map(templateCard).join("")}</div>
+        </li>
+      </ol>
+      <p class="muted ob-skip"><a href="#runs" id="ob-skip">Skip the wizard — I'll wire this up later</a></p>
+    </section>`;
+  bindCopy();
+  bindTemplateButtons();
+  document.getElementById("ob-skip").addEventListener("click", () => {
+    sessionStorage.setItem("onboardingSkipped", "1");
+  });
+  const nameForm = document.getElementById("onboarding-name-form");
+  let pollTimer = null;
+  const stopPolling = () => { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } };
+  nameForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const name = (document.getElementById("ob-runner-name").value || "").trim() || "runner";
+    let token = "";
+    try {
+      const data = await api("/api/tokens", { method: "POST", body: { name: `onboarding:${name}`, scopes: ["runner"] } });
+      token = data.token?.token || "";
+    } catch (error) {
+      // Token issuance requires admin scope — degrade gracefully so users
+      // without that scope still see the install command, just without an
+      // auto-injected token. They can paste their own.
+      toast(error.message || "Could not auto-mint a runner token — paste your own when prompted", "info");
+    }
+    const cmd = token
+      ? `SMITHERS_HUB_URL=${location.origin} SMITHERS_HUB_TOKEN=${token} SMITHERS_RUNNER_NAME=${name} bash <(curl -fsSL ${location.origin}/install.sh)`
+      : `SMITHERS_HUB_URL=${location.origin} SMITHERS_RUNNER_NAME=${name} bash <(curl -fsSL ${location.origin}/install.sh)`;
+    document.getElementById("ob-install").value = cmd;
+    document.getElementById("ob-step-1").classList.remove("active");
+    const step2 = document.getElementById("ob-step-2");
+    step2.classList.add("active");
+    step2.removeAttribute("aria-hidden");
+    step2.scrollIntoView({ behavior: "smooth", block: "start" });
+    // Poll for the runner to come online. Once detected, advance to step 3.
+    pollTimer = setInterval(async () => {
+      try {
+        const result = await api("/api/runners");
+        const online = (result.runners || []).find((r) => r.online);
+        if (!online) return;
+        stopPolling();
+        document.getElementById("ob-poll-status").innerHTML = `<span class="status online">●</span> Connected as <strong>${esc(online.name)}</strong>`;
+        const step3 = document.getElementById("ob-step-3");
+        step3.classList.add("active");
+        step3.removeAttribute("aria-hidden");
+        step3.scrollIntoView({ behavior: "smooth", block: "start" });
+        toast(`Runner ${online.name} connected`, "ok");
+      } catch {
+        // network blip — keep polling
+      }
+    }, 2500);
+  });
+}
+
 // --- Home: active runs up top, completed below ------------------------------
 async function renderHome() {
-  const [runsData, dash] = await Promise.all([
+  const [runsData, dash, runnersData, capabilitiesData] = await Promise.all([
     api("/api/runs?limit=100"),
-    api("/api/dashboard").catch(() => ({ stats: {}, pendingApprovals: [] }))
+    api("/api/dashboard").catch(() => ({ stats: {}, pendingApprovals: [] })),
+    api("/api/runners").catch(() => ({ runners: [] })),
+    api("/api/capabilities").catch(() => ({ capabilities: [] }))
   ]);
   const runs = runsData.runs || [];
+  const runners = runnersData.runners || [];
+  const capabilities = capabilitiesData.capabilities || [];
+  // First-run gate: a fresh tenant with no runners and no runs is redirected
+  // into the guided onboarding wizard once per session. We honor an explicit
+  // hash so dismissing the wizard ("Skip" → location.hash="#runs") sticks.
+  if (!runners.length && !runs.length && !sessionStorage.getItem("onboardingSkipped") && location.hash !== "#runs" && location.hash !== "#home") {
+    setView("onboarding");
+    return;
+  }
   const active = runs.filter(isActiveRun);
   const completed = runs.filter((r) => !isActiveRun(r));
+  // Compute the failed-in-24h count once so both the NBA card and sidebar
+  // badge agree on what "needs attention".
+  const cutoff = Date.now() - 24 * 3600 * 1000;
+  const failed24h = runs.filter((r) => {
+    if (!["failed", "error"].includes(r.status)) return false;
+    const t = Date.parse(r.completedAt || r.createdAt || "");
+    return Number.isNaN(t) ? true : t >= cutoff;
+  }).length;
   // Best-effort artifact bucket — if the call fails we just skip the preview.
   const artifactsByRun = new Map();
   try {
@@ -705,6 +1046,7 @@ async function renderHome() {
     : `${stats.runnerActiveSlots ?? 0}/${stats.runnerCapacity ?? 0} slots`;
   content.innerHTML = `${toolbar("Runs", `<button id="home-new-run">Run a workflow</button>`, deepLinks.home())}
     <p class="muted deep-link-hint">Every page, run, workflow, and artifact has a stable URL — click 🔗 to copy a shareable link.</p>
+    ${nextBestActionCard({ runners, capabilities, stats, failed24h })}
     ${gettingStarted ? empty("No runs yet.", "Pick a workflow and run it, or start a runner to execute work. Head to Workflows to begin.") : ""}
     ${renderRunnerPoolSummary(pool)}
     <section class="stats home-stats">
@@ -749,7 +1091,28 @@ function runsTable(runs) {
 }
 
 async function renderCapabilities() {
-  const data = await api("/api/capabilities");
+  const [data, runsData] = await Promise.all([
+    api("/api/capabilities"),
+    api("/api/runs?limit=200").catch(() => ({ runs: [] }))
+  ]);
+  // Bucket the last 10 runs per workflow so each card can show a "last run"
+  // chip and a quick success rate without an extra API per card.
+  const runsBySlug = new Map();
+  for (const run of runsData.runs || []) {
+    const slug = run.capabilitySlug;
+    if (!slug) continue;
+    if (!runsBySlug.has(slug)) runsBySlug.set(slug, []);
+    const bucket = runsBySlug.get(slug);
+    if (bucket.length < 10) bucket.push(run);
+  }
+  const workflowStats = (slug) => {
+    const bucket = runsBySlug.get(slug) || [];
+    if (!bucket.length) return { last: "", success: null, total: 0 };
+    const finished = bucket.filter((r) => !isActiveRun(r));
+    const ok = finished.filter((r) => r.status === "succeeded").length;
+    const rate = finished.length ? Math.round((ok / finished.length) * 100) : null;
+    return { last: relativeTime(bucket[0].createdAt), success: rate, total: bucket.length };
+  };
   content.innerHTML = `${toolbar("Workflows", `<button id="new-cap">New Workflow</button>`, deepLinks.workflows())}
     <p class="muted">A workflow is a capability your agents can invoke. They appear as MCP tools and as launchable buttons here. Each workflow has a shareable link — open 🔗 to copy.</p>
     ${data.capabilities.length ? `<div class="grid">
@@ -757,26 +1120,37 @@ async function renderCapabilities() {
         const skills = (cap.requiredSkills || []).slice(0, 4);
         const agents = (cap.requiredAgents || []).slice(0, 4);
         const tags = (cap.requiredRunnerTags || []).slice(0, 4);
+        const wfs = workflowStats(cap.slug);
+        const lastChip = wfs.last
+          ? `<span class="chip chip-last-run" title="Last run">⏱ ${esc(wfs.last)}</span>`
+          : `<span class="chip chip-last-run muted" title="No runs yet">never run</span>`;
+        const rateChip = wfs.success != null
+          ? `<span class="chip chip-success ${wfs.success >= 90 ? "ok" : wfs.success >= 60 ? "warn" : "danger"}" title="Success rate over last ${esc(wfs.total)} run${wfs.total === 1 ? "" : "s"}">✓ ${esc(wfs.success)}%</span>`
+          : "";
         return `<article class="item workflow-card" id="workflow-${esc(cap.slug)}">
           <h3><a href="${esc(deepLinks.workflow(cap.slug))}">${esc(cap.name)}</a> ${shareButton(deepLinks.workflow(cap.slug), `Copy share link to ${cap.name}`)}</h3>
           <p class="muted workflow-desc">${esc(cap.description)}</p>
           <p class="workflow-meta">${esc(cap.category)} · v${cap.version} · ${cap.enabled ? "enabled" : "disabled"}${cap.approvalPolicy?.required ? " · needs approval" : ""}</p>
+          <p class="workflow-run-chips">${lastChip}${rateChip}</p>
           ${agents.length ? `<div class="pill-row"><span class="pill-label">Agents</span>${pills(agents)}</div>` : ""}
           ${skills.length ? `<div class="pill-row"><span class="pill-label">Skills</span>${pills(skills)}</div>` : ""}
           ${tags.length ? `<div class="pill-row"><span class="pill-label">Runner tags</span>${pills(tags, { kind: "pill tag" })}</div>` : ""}
           <div class="toolbar-actions">
             <a class="button" href="${esc(deepLinks.workflow(cap.slug))}">Open</a>
-            <button data-run="${esc(cap.slug)}" class="primary">Run</button>
+            <button data-run="${esc(cap.slug)}" class="primary" title="Run this workflow now">▶ Run</button>
             <button data-edit-cap="${esc(cap.slug)}">Edit</button>
           </div>
         </article>`;
       }).join("")}
-    </div>` : empty("No workflows yet.", "Click New Workflow to define the first action agents can run.")}
+    </div>` : `${empty("No workflows yet.", "Pick a starter below or click New Workflow to define your own.")}
+      <h2 class="section-heading">Starter templates</h2>
+      <div class="grid template-grid">${WORKFLOW_TEMPLATES.map(templateCard).join("")}</div>`}
     <section id="editor" class="panel hidden"></section>`;
   document.querySelectorAll("[data-run]").forEach((button) => button.addEventListener("click", () => setView(`workflows/${button.dataset.run}/run`)));
   document.querySelectorAll("[data-edit-cap]").forEach((button) => button.addEventListener("click", () => editCapability(button.dataset.editCap)));
   $("#new-cap").addEventListener("click", () => editCapability());
   bindCopy();
+  bindTemplateButtons();
 }
 
 // --- Workflow detail page ---------------------------------------------------
@@ -2082,12 +2456,49 @@ async function renderRunners() {
   const data = await api("/api/runners");
   const pool = data.pool || null;
   const summary = renderRunnerPoolSummary(pool);
+  // Heartbeat freshness drives the dot color: <30s green, <2m amber, else red.
+  // We render the absolute timestamp as a tooltip so log forensics still work.
+  const heartbeatCell = (runner) => {
+    const iso = runner.lastHeartbeatAt;
+    if (!iso) return `<span class="muted">never</span>`;
+    const t = Date.parse(iso);
+    if (Number.isNaN(t)) return esc(iso);
+    const ageMs = Date.now() - t;
+    const tone = ageMs <= 30_000 ? "ok" : ageMs <= 120_000 ? "warn" : "danger";
+    return `<span class="hb-cell hb-${tone}" title="${esc(iso)}">${esc(relativeTime(iso))}</span>`;
+  };
   content.innerHTML = `${toolbar("Runners", "", deepLinks.runners())}<section class="panel">
     ${summary}
-    ${data.runners.length ? `<table class="table"><thead><tr><th>Name</th><th>Status</th><th>Capacity</th><th>Tags</th><th>Last heartbeat</th></tr></thead><tbody>
-      ${data.runners.map((runner) => `<tr><td data-label="Name">${esc(runner.name)}<br><span class="muted">${esc(runner.id)}</span></td><td data-label="Status">${status(runner.online ? "online" : "offline")}</td><td data-label="Capacity">${runnerCapacityCell(runner)}</td><td data-label="Tags">${esc((runner.tags || []).join(", "))}</td><td data-label="Last heartbeat">${esc(runner.lastHeartbeatAt || "never")}</td></tr>`).join("")}
+    ${data.runners.length ? `<table class="table runners-table"><thead><tr><th>Name</th><th>Status</th><th>Capacity</th><th>Version</th><th>OS · host</th><th>Tags</th><th>Last seen</th><th></th></tr></thead><tbody>
+      ${data.runners.map((runner) => `<tr id="runner-row-${esc(runner.id)}"><td data-label="Name">${esc(runner.name)}<br><span class="muted">${esc(runner.id)}</span></td><td data-label="Status">${status(runner.online ? "online" : "offline")}</td><td data-label="Capacity">${runnerCapacityCell(runner)}</td><td data-label="Version">${runner.version ? `<code>${esc(runner.version)}</code>` : '<span class="muted">unknown</span>'}</td><td data-label="OS · host">${(runner.platform || runner.hostname) ? `${esc(runner.platform || "?")} · <span class="muted">${esc(runner.hostname || "?")}</span>` : '<span class="muted">—</span>'}</td><td data-label="Tags">${esc((runner.tags || []).join(", "))}</td><td data-label="Last seen">${heartbeatCell(runner)}</td><td data-label="Actions"><button class="button" data-runner-ping="${esc(runner.id)}" title="Refresh heartbeat reading">Send test ping</button> <button class="button" data-runner-toggle="${esc(runner.id)}" aria-expanded="false">Details</button></td></tr>
+      <tr class="runner-detail-row hidden" id="runner-detail-${esc(runner.id)}"><td colspan="8"><dl class="runner-detail-grid"><dt>Runner ID</dt><dd><code>${esc(runner.id)}</code></dd><dt>Hostname</dt><dd>${esc(runner.hostname || "—")}</dd><dt>Platform</dt><dd>${esc(runner.platform || "—")}</dd><dt>Version</dt><dd>${esc(runner.version || "—")}</dd><dt>Tags</dt><dd>${esc((runner.tags || []).join(", ") || "—")}</dd><dt>Created</dt><dd>${esc(runner.createdAt || "—")}</dd><dt>Last heartbeat</dt><dd>${esc(runner.lastHeartbeatAt || "never")}</dd><dt>Current run</dt><dd>${runner.currentRunId ? `<a href="${esc(deepLinks.run(runner.currentRunId))}">${esc(runner.currentRunId)}</a>` : "<span class=\"muted\">idle</span>"}</dd></dl></td></tr>`).join("")}
     </tbody></table>` : empty("No runners connected.", "Start one with <code>smithers-hub-runner</code> using a token that has the runner scope. Set <code>SMITHERS_RUNNER_CONCURRENCY=4</code> on a dedicated pool host for ~4 concurrent jobs.")}
   </section>`;
+  document.querySelectorAll("[data-runner-toggle]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const id = button.dataset.runnerToggle;
+      const row = document.getElementById(`runner-detail-${id}`);
+      if (!row) return;
+      const open = !row.classList.toggle("hidden");
+      button.setAttribute("aria-expanded", open ? "true" : "false");
+    });
+  });
+  document.querySelectorAll("[data-runner-ping]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const id = button.dataset.runnerPing;
+      button.disabled = true;
+      try {
+        // Re-fetch the runner list so the heartbeat freshness re-paints with
+        // the latest server-side reading. No bespoke "ping" endpoint exists —
+        // re-rendering serves the same observable purpose.
+        await renderRunners();
+        toast(`Refreshed heartbeat for ${id}`, "ok");
+      } catch (error) {
+        toast(error.message || "Refresh failed", "error");
+        button.disabled = false;
+      }
+    });
+  });
   bindCopy();
 }
 
@@ -2220,18 +2631,9 @@ async function renderTokens() {
     const scopes = Array.from(document.querySelectorAll(".token-scope:checked")).map((el) => el.value);
     const expiresInDays = Number($("#token-expiry").value || 0);
     const created = await api("/api/tokens", { method: "POST", body: { name: $("#token-name").value, scopes, expiresInDays } });
-    $("#created-token").innerHTML = `<h3>Token created</h3><p class="muted">This value is shown once. Copy it now.</p>
-      <div class="copy-row"><input id="token-value" readonly value="${esc(created.token.token)}"><button type="button" id="copy-token">Copy</button></div>`;
-    $("#copy-token").addEventListener("click", async () => {
-      const value = $("#token-value").value;
-      try {
-        await navigator.clipboard.writeText(value);
-        toast("Token copied", "ok");
-      } catch {
-        $("#token-value").select();
-        toast("Press Ctrl/Cmd+C to copy", "info");
-      }
-    });
+    $("#created-token").innerHTML = `<h3>Token created</h3><p class="muted">This value is shown once. Copy it now — hidden by default to keep it out of screenshots.</p>
+      ${secretInput("token-value", created.token.token, { label: "New token" })}`;
+    bindSecretToggles();
     toast("Token created", "ok");
     await refreshTokenTable();
   });
@@ -2264,8 +2666,9 @@ function bindRevoke() {
       if (!confirm("Revoke this token? It will stop working immediately.")) return;
       try {
         await api(`/api/tokens/${button.dataset.revoke}`, { method: "DELETE" });
+        toast("Token revoked", "ok");
       } catch (error) {
-        alert(error.message);
+        toast(error.message || "Revoke failed", "error");
       }
       await refreshTokenTable();
     })
@@ -2368,12 +2771,13 @@ async function renderConnect() {
     try {
       const data = await api("/api/tokens", { method: "POST", body: { name: $("#invite-name").value || "teammate", scopes } });
       $("#invite-out").innerHTML = `<h3>Send these to your teammate</h3>
-        <p class="muted">Token (shown once) — they paste it when the installer asks:</p>
-        <div class="copy-row"><input id="invite-token" readonly value="${esc(data.token.token)}"><button data-copy-el="invite-token">Copy</button></div>
+        <p class="muted">Token (shown once) — they paste it when the installer asks. Hidden by default to keep it out of screenshots:</p>
+        ${secretInput("invite-token", data.token.token, { label: "Teammate token" })}
         <p class="muted">Install command:</p>
         <div class="copy-row"><input id="invite-cmd" readonly value="${esc(installCmd)}"><button data-copy-el="invite-cmd">Copy</button></div>
         <p class="muted">Then they run <code>smithers-hub mcp install --all</code>. Revoke anytime under Tokens.</p>`;
       bindCopy();
+      bindSecretToggles();
       toast("Token generated", "ok");
     } catch (error) {
       toast(error.message, "error");
