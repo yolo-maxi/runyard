@@ -251,7 +251,7 @@ export default smithers((ctx) => {
                 tail += `\n$ ${cmd}\n${out.split("\n").slice(-20).join("\n")}`;
                 checks.push(cmd);
               };
-              run("corepack enable >/dev/null 2>&1 || true; pnpm install");
+              run("corepack enable >/dev/null 2>&1 || true; CI=true pnpm install");
               const pkgPath = path.join(productDir, "package.json");
               if (packageScript(pkgPath, "lint")) run("pnpm lint");
               if (packageScript(pkgPath, "test")) run("pnpm test");
