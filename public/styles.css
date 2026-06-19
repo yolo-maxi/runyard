@@ -941,6 +941,13 @@ details.advanced[open] summary {
   font-size: 13px;
 }
 
+/* Desktop: the rail is rendered as a <details open> for mobile parity, but
+   we hide the disclosure summary so it reads exactly like the pre-collapsible
+   <aside>. The mobile breakpoint below re-enables the summary as a tap target. */
+.workflow-graph-side > .workflow-graph-side-summary {
+  display: none;
+}
+
 .workflow-graph-side ul {
   list-style: none;
   padding: 0;
@@ -2996,11 +3003,26 @@ details.advanced[open] summary {
   .nba-card { flex-direction: column; align-items: flex-start; }
   .table { display: block; overflow-x: auto; }
 
-  /* Workflow detail collapses to a tab-only layout: hide the ReactFlow
-     side-rail (its content is repeated in the Code/Overview tabs anyway) and
-     let the four .workflow-tabs scroll horizontally so all of Overview /
-     Graph / Code / Runs stay reachable on a phone without page reflow. */
-  .workflow-graph-side { display: none; }
+  /* Workflow detail collapses to a tab-only layout: the ReactFlow side-rail
+     becomes a closed <details> disclosure (it's a <details> element with a
+     "Run details" summary) so the metadata is still reachable on a phone with
+     one tap instead of being display:none'd. The four .workflow-tabs scroll
+     horizontally so all of Overview / Graph / Code / Runs stay reachable on a
+     phone without page reflow. */
+  .workflow-graph-side {
+    display: block;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    max-width: none;
+    padding: 10px 12px;
+  }
+  .workflow-graph-side > .workflow-graph-side-summary {
+    display: list-item;
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--ink);
+    padding: 4px 0;
+  }
   .workflow-tabs {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
@@ -3078,6 +3100,96 @@ details.advanced[open] summary {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* Per-phase wall-clock duration sits under the label so a stuck phase reads
+   visibly different from a fast one. The active phase carries [data-live-start]
+   and is rewritten once a second by the global ticker in app.js. */
+.run-progress-phase-duration {
+  margin-left: 6px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  opacity: 0.9;
+}
+.run-progress-phase.phase-active .run-progress-phase-duration,
+.run-progress-phase.phase-stalled .run-progress-phase-duration {
+  color: inherit;
+  opacity: 1;
+}
+
+/* Compact stats strip — demoted from the lead position on Home so live runs
+   take the visual weight; the totals now read as a secondary chip row. */
+.home-stats.compact {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 6px 0 14px;
+}
+.home-stats.compact .stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--soft);
+  font-size: 12px;
+}
+.home-stats.compact .stat strong {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.home-stats.compact .stat .muted {
+  font-size: 11px;
+}
+.in-flight-heading {
+  margin-top: 4px;
+}
+
+/* Workflow runs list — left-border accent + status glyph so triage-at-a-glance
+   doesn't depend on reading the text pill. Colors map to the existing signal
+   tokens; the glyph is a Unicode shape so high-contrast / mono themes still
+   distinguish rows even when the accent color collapses. */
+.wf-run-row {
+  border-left: 4px solid var(--line);
+  padding-left: 10px;
+  margin-bottom: 6px;
+}
+.wf-run-row[data-status="running"],
+.wf-run-row[data-status="assigned"],
+.wf-run-row[data-status="pending"] { border-left-color: var(--ok); }
+.wf-run-row[data-status="queued"] { border-left-color: var(--brand-2); }
+.wf-run-row[data-status="waiting_approval"] { border-left-color: var(--warn); }
+.wf-run-row[data-status="succeeded"],
+.wf-run-row[data-status="approved"] { border-left-color: var(--brand); }
+.wf-run-row[data-status="failed"],
+.wf-run-row[data-status="error"] { border-left-color: var(--danger); }
+.wf-run-row[data-status="cancelled"],
+.wf-run-row[data-status="rejected"] { border-left-color: #94a3b8; }
+.wf-run-glyph {
+  display: inline-block;
+  width: 1.2em;
+  margin-right: 4px;
+  font-weight: 700;
+  text-align: center;
+  color: var(--ink);
+}
+.wf-run-row[data-status="running"] .wf-run-glyph,
+.wf-run-row[data-status="assigned"] .wf-run-glyph,
+.wf-run-row[data-status="pending"] .wf-run-glyph { color: var(--ok); }
+.wf-run-row[data-status="queued"] .wf-run-glyph { color: var(--brand-2); }
+.wf-run-row[data-status="waiting_approval"] .wf-run-glyph { color: var(--warn); }
+.wf-run-row[data-status="succeeded"] .wf-run-glyph,
+.wf-run-row[data-status="approved"] .wf-run-glyph { color: var(--brand); }
+.wf-run-row[data-status="failed"] .wf-run-glyph,
+.wf-run-row[data-status="error"] .wf-run-glyph { color: var(--danger); }
+.wf-run-row[data-status="cancelled"] .wf-run-glyph,
+.wf-run-row[data-status="rejected"] .wf-run-glyph { color: #475569; }
+@media (prefers-reduced-motion: reduce) {
+  .run-progress-phase.phase-active .run-progress-dot,
+  .run-progress-phase.phase-stalled .run-progress-dot {
+    animation: none;
+  }
 }
 @keyframes run-progress-pulse {
   0%, 100% { transform: scale(1); }

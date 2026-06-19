@@ -827,6 +827,27 @@ function isActiveRun(run) {
   return ACTIVE_STATUSES.has(run.status);
 }
 
+// Glyph for triage-at-a-glance in dense run lists. The text status pill is
+// kept alongside for a11y; the glyph is `aria-hidden` so AT users aren't
+// double-announced. High-contrast / reduced-motion still renders these as
+// plain Unicode characters with no animation.
+function runStatusGlyph(s) {
+  switch (s) {
+    case "running":
+    case "assigned":
+    case "pending": return "▶";
+    case "queued": return "⏸";
+    case "waiting_approval": return "✋";
+    case "succeeded":
+    case "approved": return "✓";
+    case "failed":
+    case "error": return "✗";
+    case "cancelled":
+    case "rejected": return "⚠";
+    default: return "•";
+  }
+}
+
 const DIAGNOSTIC_STATUSES = new Set(["failed", "error", "cancelled", "rejected", "waiting_approval"]);
 
 function isDiagnosticRun(run) {
@@ -971,8 +992,54 @@ function runPhaseStates(run) {
   return { queued, running, outcome };
 }
 
+// Per-phase wall-clock durations for the progress strip. Each phase reports
+// either a final `ms` (when bounded by both ends) or a `liveStart` ms-epoch
+// the global ticker uses to refresh in place each second. We deliberately
+// derive from the same timestamps the rest of the UI uses (createdAt,
+// startedAt, completedAt) instead of adding a server field — keeps data
+// shapes unchanged per PM directive.
+function runPhaseDurations(run) {
+  const status = run?.status || "";
+  const created = Date.parse(run?.createdAt || "");
+  const started = Date.parse(run?.startedAt || "");
+  const completed = Date.parse(run?.completedAt || run?.endedAt || "");
+  const finiteCreated = Number.isFinite(created);
+  const finiteStarted = Number.isFinite(started);
+  const finiteCompleted = Number.isFinite(completed);
+  const queued = { ms: null, liveStart: null };
+  if (finiteCreated) {
+    if (finiteStarted) queued.ms = Math.max(0, started - created);
+    else if (status === "queued") queued.liveStart = created;
+  }
+  const running = { ms: null, liveStart: null };
+  // Fall back to createdAt as the run-start when startedAt is missing — some
+  // runners don't stamp it on early failures, and `0s` reads better than blank.
+  const runStart = finiteStarted ? started : (finiteCreated && status !== "queued" ? created : null);
+  if (runStart != null) {
+    if (finiteCompleted) running.ms = Math.max(0, completed - runStart);
+    else if (["running", "assigned", "pending", "waiting_approval"].includes(status)) running.liveStart = runStart;
+  }
+  return { queued, running, outcome: { ms: null, liveStart: null } };
+}
+
+function renderPhaseDurationHtml(state, dur) {
+  if (!dur) return "";
+  // Future / pending phases stay blank so users can tell at a glance which
+  // step hasn't started yet.
+  if (state === "pending") return "";
+  if (dur.liveStart != null) {
+    const initial = formatDuration(Math.max(0, Date.now() - dur.liveStart));
+    return `<span class="run-progress-phase-duration" data-live-start="${esc(String(dur.liveStart))}">${esc(initial)}</span>`;
+  }
+  if (dur.ms != null) {
+    return `<span class="run-progress-phase-duration">${esc(formatDuration(dur.ms))}</span>`;
+  }
+  return "";
+}
+
 function runProgressStrip(run) {
   const phases = runPhaseStates(run);
+  const durations = runPhaseDurations(run);
   const outcomeLabel = phases.outcome === "ok"
     ? "Done"
     : phases.outcome === "fail"
@@ -982,15 +1049,16 @@ function runProgressStrip(run) {
         : "Done";
   const runningLabel = phases.running === "stalled" ? "Stalled" : "Running";
   const items = [
-    { key: "queued", label: "Queued", state: phases.queued },
-    { key: "running", label: runningLabel, state: phases.running },
-    { key: "outcome", label: outcomeLabel, state: phases.outcome }
+    { key: "queued", label: "Queued", state: phases.queued, dur: durations.queued },
+    { key: "running", label: runningLabel, state: phases.running, dur: durations.running },
+    { key: "outcome", label: outcomeLabel, state: phases.outcome, dur: durations.outcome }
   ];
   const currentStep = run?.currentStep ? `<span class="run-progress-step-name muted" title="Current step">${esc(run.currentStep)}</span>` : "";
   return `<ol class="run-progress-strip" data-run-progress="${esc(run?.id || "")}" aria-label="Run progress">
     ${items.map((p) => `<li class="run-progress-phase phase-${esc(p.state)}" data-phase="${esc(p.key)}">
       <span class="run-progress-dot" aria-hidden="true"></span>
       <span class="run-progress-label">${esc(p.label)}</span>
+      ${renderPhaseDurationHtml(p.state, p.dur)}
     </li>`).join("")}
     ${currentStep}
   </ol>`;
@@ -1415,8 +1483,12 @@ async function renderHome() {
     <p class="muted deep-link-hint">Every page, run, workflow, and artifact has a stable URL — click 🔗 to copy a shareable link.</p>
     ${renderHomeFilterBar(filters)}
     ${gettingStarted ? empty("No runs yet.", "Pick a workflow and run it, or start a runner to execute work. Head to Workflows to begin.") : ""}
-    ${renderRunnerPoolSummary(pool)}
-    <section class="stats home-stats">
+    ${renderRunnerPoolSummary(pool, { context: "home" })}
+    ${(!filtersActive && active.length)
+      ? `<h2 class="section-heading in-flight-heading">In flight <span class="muted">${active.length} live</span></h2>
+         <section class="run-grid live in-flight">${active.map((run) => runCard(run, artifactsByRun.get(run.id) || [])).join("")}</section>`
+      : ""}
+    <section class="stats home-stats compact" aria-label="Hub totals">
       ${Object.entries({
         "Active runs": active.length,
         Queued: queued,
@@ -1433,11 +1505,7 @@ async function renderHome() {
            ? `<section class="run-grid">${runs.map((run) => runCard(run, artifactsByRun.get(run.id) || [])).join("")}</section>`
            : `<p class="muted">No runs match the current filters. <a href="#runs">Clear filters</a> to see everything.</p>`}
          ${paginationHtml}`
-      : `<h2 class="section-heading">Active <span class="muted">${active.length} live</span></h2>
-         ${active.length
-           ? `<section class="run-grid live">${active.map((run) => runCard(run, artifactsByRun.get(run.id) || [])).join("")}</section>`
-           : `<p class="muted run-empty">No active runs right now. Start one from <a href="${esc(deepLinks.workflows())}">Workflows</a>.</p>`}
-         <h2 class="section-heading">Recent &amp; completed</h2>
+      : `<h2 class="section-heading">Recent &amp; completed</h2>
          ${completed.length
            ? `<section class="run-grid">${completed.slice(0, 30).map((run) => runCard(run, artifactsByRun.get(run.id) || [])).join("")}</section>`
            : `<p class="muted">Completed runs and their artifacts will appear here.</p>`}`}
@@ -2043,9 +2111,20 @@ function GraphCanvas({ React, ReactFlow, nodes, edges, sideNodes }) {
       )
     ),
     sideHtml.length
+      // <details> instead of <aside> so the rail collapses (closed by default)
+      // on narrow viewports instead of vanishing entirely. CSS hides the
+      // summary above 900px so desktop reads exactly like before. We default
+      // the `open` attribute from a media query so the initial paint matches
+      // the user's actual viewport rather than always flashing open then closed.
       ? React.createElement(
-          "aside",
-          { className: "workflow-graph-side" },
+          "details",
+          {
+            className: "workflow-graph-side",
+            open: typeof window !== "undefined"
+              && typeof window.matchMedia === "function"
+              && window.matchMedia("(min-width: 901px)").matches
+          },
+          React.createElement("summary", { className: "workflow-graph-side-summary" }, "Run details"),
           React.createElement("strong", null, "Required by workflow"),
           React.createElement("ul", null, ...sideHtml)
         )
@@ -2067,6 +2146,11 @@ function renderStaticGraphSvg(graph) {
   const width = Math.max(maxX - minX, 480);
   const height = Math.max(maxY - minY, 200);
   const positionById = new Map(nodes.map((node) => [node.id, node.position]));
+  // Edge stroke colors — `#637083` matches the --muted design token (sequence
+  // edges) and `#0ea5e9` matches the parallel-fan accent used elsewhere.
+  // Each color gets its own marker so arrowheads inherit the edge color.
+  const SEQ_STROKE = "#637083";
+  const PAR_STROKE = "#0ea5e9";
   const edgesHtml = (graph.edges || [])
     .map((edge) => {
       const src = positionById.get(edge.source);
@@ -2076,8 +2160,10 @@ function renderStaticGraphSvg(graph) {
       const y1 = src.y + 32 - minY;
       const x2 = dst.x - minX;
       const y2 = dst.y + 32 - minY;
-      const stroke = edge.kind === "parallel" ? "#0ea5e9" : "#637083";
-      return `<path d="M ${x1} ${y1} C ${x1 + 50} ${y1}, ${x2 - 50} ${y2}, ${x2} ${y2}" stroke="${stroke}" stroke-width="1.5" fill="none" stroke-dasharray="${edge.kind === "parallel" ? "4 4" : ""}"/>`;
+      const parallel = edge.kind === "parallel";
+      const stroke = parallel ? PAR_STROKE : SEQ_STROKE;
+      const markerId = parallel ? "sm-arrow-par" : "sm-arrow-seq";
+      return `<path d="M ${x1} ${y1} C ${x1 + 50} ${y1}, ${x2 - 50} ${y2}, ${x2} ${y2}" stroke="${stroke}" stroke-width="1.5" fill="none" stroke-dasharray="${parallel ? "4 4" : ""}" marker-end="url(#${markerId})"/>`;
     })
     .join("");
   const nodesHtml = nodes
@@ -2094,8 +2180,19 @@ function renderStaticGraphSvg(graph) {
       </g>`;
     })
     .join("");
+  // Arrowhead markers (one per edge color) so the no-JS fallback still shows
+  // unambiguous source→target direction in screenshots. `orient="auto"` keeps
+  // the head aligned with the bezier endpoint; refX/refY tuck it just inside
+  // the target node so it doesn't overlap the node border.
+  const markerDefs = `
+    <marker id="sm-arrow-seq" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="${SEQ_STROKE}"/>
+    </marker>
+    <marker id="sm-arrow-par" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="${PAR_STROKE}"/>
+    </marker>`;
   return `<svg class="workflow-graph-static" viewBox="0 0 ${width} ${height}" role="img" aria-label="Workflow graph (static fallback)">
-    <defs></defs>
+    <defs>${markerDefs}</defs>
     ${edgesHtml}
     ${nodesHtml}
   </svg>`;
@@ -2108,12 +2205,16 @@ function workflowRunsList(runs) {
     const project = runProject(run);
     const branch = runBranch(run);
     const active = isActiveRun(run);
+    const glyph = runStatusGlyph(run.status);
     // Active runs default to expanded so users see the progress strip
     // immediately; completed runs collapse to a one-liner that the user can
-    // expand to inspect after the fact.
-    return `<li class="wf-run-row">
+    // expand to inspect after the fact. `data-status` drives the left-border
+    // accent color; `wf-run-glyph` is the shape signal that stays distinct
+    // even when accent colors collapse under high-contrast OS themes.
+    return `<li class="wf-run-row" data-status="${esc(run.status || "")}">
       <details class="wf-run-progress-details" ${active ? "open" : ""}>
         <summary class="wf-run-progress-summary">
+          <span class="wf-run-glyph" aria-hidden="true">${esc(glyph)}</span>
           <a href="${esc(deepLinks.run(run.id))}" class="wf-run-title">${esc(title)}</a>
           <span class="wf-run-status">${status(run.status)}</span>
           <span class="muted wf-run-when">${esc(relativeTime(run.createdAt))}${dur ? ` · ${esc(dur)}` : ""}</span>
@@ -2908,7 +3009,11 @@ function runnerCapacityCell(runner) {
   </span>`;
 }
 
-function renderRunnerPoolSummary(pool) {
+// `context` lets callers drop admin-only chips on non-admin surfaces. Pass
+// `"runners-admin"` from the Runners page to keep the active/capacity chip;
+// everywhere else (operator home, etc.) it's hidden because the operator
+// can't act on it and the noise drowns out the queued/free signals.
+function renderRunnerPoolSummary(pool, { context = "runners-admin" } = {}) {
   if (!pool) return "";
   const queued = pool.queued || 0;
   const capacity = pool.totalCapacity || 0;
@@ -2917,7 +3022,9 @@ function renderRunnerPoolSummary(pool) {
   const queueChip = queued
     ? `<span class="chip chip-queue" title="Runs waiting for a free runner slot">⏳ ${esc(queued)} queued</span>`
     : `<span class="chip chip-queue empty" title="Queue is empty">⏳ queue empty</span>`;
-  const capacityChip = `<span class="chip chip-runner" title="Active slots / total capacity across online runners">🛠 ${esc(active)} / ${esc(capacity)} slots</span>`;
+  const capacityChip = context === "runners-admin"
+    ? `<span class="chip chip-runner" title="Active slots / total capacity across online runners">🛠 ${esc(active)} / ${esc(capacity)} slots</span>`
+    : "";
   const availableChip = `<span class="chip ${available ? "chip-branch" : "chip-version"}" title="Free slots across the pool">🟢 ${esc(available)} free</span>`;
   return `<p class="runner-pool-summary">${queueChip}${capacityChip}${availableChip}</p>`;
 }
@@ -3300,5 +3407,21 @@ window.addEventListener("hashchange", () => {
 // which is visible on the login screen too, so operators see which hub they
 // just hit before they even authenticate.
 refreshEnvChip().catch(() => { /* best-effort header decoration */ });
+
+// Live-tick wall-clock durations on the active phase of each run progress
+// strip without re-fetching from the API. The `[data-live-start]` attribute
+// holds the ms-epoch the phase began; we recompute formatDuration() against
+// `Date.now()` once a second. The loop is a no-op (and cheap) when no strips
+// are mounted, so it can stay running for the page's lifetime.
+setInterval(() => {
+  const nodes = document.querySelectorAll(".run-progress-phase-duration[data-live-start]");
+  if (!nodes.length) return;
+  const now = Date.now();
+  for (const node of nodes) {
+    const start = Number(node.dataset.liveStart);
+    if (!Number.isFinite(start)) continue;
+    node.textContent = formatDuration(Math.max(0, now - start));
+  }
+}, 1000);
 
 boot();
