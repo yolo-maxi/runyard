@@ -1,0 +1,12 @@
+{
+  "generatedAt": "2026-06-19T01:51:53.092Z",
+  "bundles": [
+    "reactflow.bundle.js",
+    "highlight.bundle.js"
+  ],
+  "styles": [
+    "reactflow.css",
+    "highlight.css",
+    "highlight-dark.css"
+  ]
+}

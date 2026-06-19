@@ -44,6 +44,7 @@ Expected behavior:
 - A human can see the capability catalog.
 - A human can edit capabilities, agents, skills, and knowledge resources.
 - A human can inspect run history and current run state.
+- A human can open a workflow and see Overview, Visual graph (ReactFlow), Code (syntax-highlighted source), and Runs tabs without leaving the page.
 - A human can open a run and see inputs, current step, events, logs, artifacts, approvals, and output.
 - A human can approve or reject pending approvals in the Web Hub.
 - A human can use Telegram approval notifications when configured.

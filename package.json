@@ -14,13 +14,20 @@
     "runner": "node src/smithers-runner.js",
     "mcp": "node src/mcp.js",
     "cli": "node src/cli.js",
+    "build:vendor": "node bin/build-vendor.mjs",
     "test": "node --experimental-sqlite --test tests/*.test.js"
   },
   "dependencies": {
     "commander": "^14.0.2",
     "express": "^4.19.2"
   },
-  "devDependencies": {},
+  "devDependencies": {
+    "@xyflow/react": "^12.11.0",
+    "esbuild": "^0.28.1",
+    "highlight.js": "^11.11.1",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
   "engines": {
     "node": ">=22.5"
   },

@@ -908,3 +908,37 @@ describe("Idea to Product capability", () => {
     assert.match(src, /ClaudeCodeAgent/);
   });
 });
+
+describe("App Skinner capability", () => {
+  it("is seeded as an approval-checkpoint Smithers workflow", async () => {
+    const { capabilities } = await api("/api/capabilities");
+    const cap = capabilities.find((c) => c.slug === "app-skinner");
+    assert.ok(cap, "app-skinner capability should be in the catalog");
+    assert.equal(cap.workflow.engine, "smithers");
+    assert.equal(cap.workflow.entry, ".smithers/workflows/app-skinner.tsx");
+    assert.ok(cap.inputSchema.required.includes("appIdea"));
+    assert.equal(cap.inputSchema.properties.skinCount.type, "number");
+    assert.deepEqual(cap.requiredRunnerTags, ["smithers", "vps"]);
+    assert.equal(cap.approvalPolicy.required, true);
+  });
+
+  it("queues immediately and relies on the skin approval checkpoint", async () => {
+    const created = await api("/api/capabilities/app-skinner/run", {
+      method: "POST",
+      body: { input: { appIdea: "A/B cat compass miniapp", skinCount: 3 } }
+    });
+    assert.equal(created.run.status, "queued");
+    assert.equal(created.run.capabilitySlug, "app-skinner");
+    const approval = (await api("/api/approvals?status=pending")).approvals.find((item) => item.runId === created.run.id);
+    assert.equal(approval, undefined);
+  });
+
+  it("ships the app-skinner workflow template in the runner bundle", () => {
+    const tpl = path.join(process.cwd(), "workflow-templates", "workflows", "app-skinner.tsx");
+    assert.ok(existsSync(tpl));
+    const src = readFileSync(tpl, "utf8");
+    assert.match(src, /Approve app skin direction/);
+    assert.match(src, /visual skins/);
+    assert.match(src, /ClaudeCodeAgent/);
+  });
+});

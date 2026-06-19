@@ -214,5 +214,40 @@ export const seedCapabilities = [
       reason: "Runs coding agents and can deploy a new repo.box subdomain."
     },
     workflow: { engine: "smithers", entry: ".smithers/workflows/idea-to-product.tsx" }
+  },
+  {
+    slug: "app-skinner",
+    name: "App Skinner",
+    description:
+      "Explores visual skins for an app idea, proposes a shortlist, pauses for approval, then produces a concrete production skin brief for the selected direction.",
+    category: "Product",
+    keywords: ["skin", "visual", "brand", "design", "taste", "approval", "miniapp", "smithers"],
+    inputSchema: {
+      type: "object",
+      required: ["appIdea"],
+      properties: {
+        appIdea: { type: "string", description: "Raw app, miniapp, product, or feature idea to skin." },
+        productContext: { type: "string", description: "Optional users, tone, brand, screenshots, repo, or constraints." },
+        skinCount: { type: "number", description: "How many distinct skin concepts to propose (2-6, default 4)." },
+        mustInclude: { type: "string", description: "Optional motifs, references, copy tone, or brand requirements to include." },
+        avoid: { type: "string", description: "Optional aesthetics, motifs, colors, references, or risks to avoid." }
+      }
+    },
+    outputSchema: {
+      type: "object",
+      properties: {
+        proposal: { type: "object" },
+        skinApproval: { type: "object" },
+        brief: { type: "object" }
+      }
+    },
+    requiredRunnerTags: ["smithers", "vps"],
+    requiredSkills: ["visual-design", "brand-strategy"],
+    requiredAgents: ["taste-agent", "design-director"],
+    approvalPolicy: {
+      required: true,
+      reason: "Pauses for human approval before turning a proposed visual skin into an implementation brief."
+    },
+    workflow: { engine: "smithers", entry: ".smithers/workflows/app-skinner.tsx" }
   }
 ];

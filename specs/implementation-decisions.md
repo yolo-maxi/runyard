@@ -293,6 +293,47 @@ Reasoning:
 - Humans supervise work and edit shared company context.
 - The UI should be dense and operational, not a marketing-only landing page.
 
+### Decision: Workflow detail uses tabs (Overview / Visual graph / Code / Runs)
+
+The workflow detail page is organized into four explicit tabs surfaced as a deep-linkable sub-nav (`#workflows/<slug>/<tab>`):
+
+- **Overview** — description, required agents/skills/runner tags, approval policy, deep link, latest runs preview.
+- **Visual graph** — a ReactFlow canvas (pan, wheel zoom, fit/reset controls, minimap) over a graph derived server-side from the workflow source. A static SVG fallback renders only when the vendored ReactFlow bundle can't load.
+- **Code** — a syntax-highlighted (highlight.js) viewer for the workflow source with virtual sub-tabs Code / Agents / workflowGraph and a copy-source action. Read-only.
+- **Runs** — the recent runs list for this workflow with a "Run this workflow" entry point.
+
+Reasoning:
+
+- Springfield demonstrated that a code-aware visual canvas plus a readable code view dramatically improves the operator's grasp of a workflow.
+- Smithers source remains the source of truth; the canvas and code view are renderers, not an independent semantic layer.
+- ReactFlow handles pan/zoom/handles/fitView so we don't reinvent canvas plumbing.
+
+### Decision: Workflow source endpoint at `/api/capabilities/<slug>/source`
+
+The Web Hub and any MCP/CLI client can pull the workflow's actual source file plus a derived `graph` payload. The endpoint reads files only from `workflow-templates/workflows/` and resolves the candidate filename from `capability.workflow.entry` and `<slug>.tsx`. Path traversal is blocked at resolution time.
+
+The response includes:
+
+- `code`, `path`, `language`, `sizeBytes`
+- `metadata` — parsed from leading `// smithers-*` header comments.
+- `sections` — virtual slices for `code`, `agents`, `workflowGraph`.
+- `graph` — `{ nodes, edges, sideNodes, metadata }` first-pass parsed from the JSX (Sequence/Parallel containers, Task ids/agent attributes, kind heuristics for entry/approval/test/commit/push/build/deploy/verify/task).
+
+Reasoning:
+
+- The visual graph and code viewer both need the same authoritative payload; one endpoint avoids drift.
+- A first-pass parser keeps the implementation small while leaving an obvious extension point: when the orchestrator exposes a real `workflowGraph` description, the server can swap in that instead of regex-derived structure.
+
+### Decision: ReactFlow and highlight.js are vendored under `public/vendor/`
+
+The browser console loads ReactFlow + React + ReactDOM and highlight.js from same-origin ES module bundles. The bundles are produced by `pnpm run build:vendor` (`bin/build-vendor.mjs` — uses esbuild) and committed alongside the matching stylesheets and a `manifest.json`.
+
+Reasoning:
+
+- The Hub is private and self-hosted; loading external CDNs at runtime would weaken that posture.
+- Bundling once keeps the existing CSP (`script-src 'self'`) intact and the static Express server unchanged.
+- Re-run `pnpm run build:vendor` after upgrading any of those upstream packages.
+
 ### Decision: Landing page and docs are public, console requires token
 
 Reasoning:

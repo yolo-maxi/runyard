@@ -720,10 +720,28 @@ async function renderCapabilities() {
 }
 
 // --- Workflow detail page ---------------------------------------------------
-// Renders the rich detail view for one workflow: description, required
-// agents/skills/runner tags, approval policy, code/entry, latest runs, and
-// an inline "Run this workflow" form. The Edit modal is reachable from the
-// page header so editing is one click away without leaving the context.
+// Renders the rich detail view for one workflow with explicit tabs:
+//   Overview      — description, required agents/skills/runner tags, policy
+//   Visual graph  — ReactFlow renderer over workflow source/metadata
+//   Code          — syntax-highlighted source viewer (Code / Agents / Graph)
+//   Runs          — recent runs for this workflow, plus the "Run" form
+// Tabs are deep-linkable via #workflows/<slug>/<tab>.
+const WORKFLOW_TABS = [
+  { key: "overview", label: "Overview", aliases: ["", "edit"] },
+  { key: "graph", label: "Visual graph", aliases: ["visual", "diagram"] },
+  { key: "code", label: "Code", aliases: ["source"] },
+  { key: "runs", label: "Runs", aliases: ["run"] }
+];
+
+function resolveWorkflowTab(sub) {
+  const value = String(sub || "").toLowerCase();
+  for (const tab of WORKFLOW_TABS) {
+    if (tab.key === value) return tab.key;
+    if (tab.aliases.includes(value)) return tab.key;
+  }
+  return "overview";
+}
+
 async function renderWorkflowDetail(slug, { sub = "" } = {}) {
   let cap;
   try {
@@ -749,6 +767,10 @@ async function renderWorkflowDetail(slug, { sub = "" } = {}) {
   const workflow = cap.workflow || {};
   const approval = cap.approvalPolicy || {};
   const entryLabel = workflow.entry || workflow.name || (workflow.type ? `${workflow.type}` : "");
+  const activeTab = resolveWorkflowTab(sub);
+  const tabsHtml = WORKFLOW_TABS
+    .map((tab) => `<a class="tab ${tab.key === activeTab ? "active" : ""}" data-wf-tab="${tab.key}" href="#workflows/${encodeURIComponent(slug)}/${tab.key === "overview" ? "" : tab.key}">${esc(tab.label)}</a>`)
+    .join("");
   const headerActions = `
     <button id="wf-run" class="primary">Run this workflow</button>
     <button id="wf-edit">Edit</button>
@@ -758,17 +780,9 @@ async function renderWorkflowDetail(slug, { sub = "" } = {}) {
     { label: "Workflows", href: deepLinks.workflows() },
     { label: cap.name || slug, href: deepLinks.workflow(slug), current: true }
   ]);
-  content.innerHTML = `${crumbNav}${toolbar(cap.name, headerActions, deepLinks.workflow(slug))}
-    <p class="muted workflow-detail-desc">${esc(cap.description || "No description.")}</p>
-    <p class="workflow-meta-row muted">
-      <span>${esc(cap.category || "General")}</span>
-      <span>·</span>
-      <span>v${esc(cap.version)}</span>
-      <span>·</span>
-      <span>${cap.enabled ? "enabled" : "disabled"}</span>
-      ${approval.required ? `<span>·</span><span class="status waiting_approval">has approval checkpoints</span>` : ""}
-    </p>
-    <section class="split">
+
+  const overviewHtml = `
+    <section class="split workflow-tab-body">
       <div class="panel" id="panel-wf-detail">
         ${agents.length ? `<h3>Required agents</h3>${pills(agents, { link: (s) => deepLinks.agent(s) })}` : ""}
         ${skills.length ? `<h3>Required skills</h3>${pills(skills, { link: (s) => deepLinks.skill(s) })}` : ""}
@@ -781,6 +795,7 @@ async function renderWorkflowDetail(slug, { sub = "" } = {}) {
         ${entryLabel
           ? `<p><span class="kbd">${esc(entryLabel)}</span>${workflow.engine ? ` <span class="muted">· engine ${esc(workflow.engine)}</span>` : ""}</p>`
           : `<p class="muted">No explicit entry registered.</p>`}
+        <p class="muted">Open the <a href="#workflows/${esc(slug)}/graph">Visual graph</a> tab to see the ReactFlow diagram, or <a href="#workflows/${esc(slug)}/code">Code</a> to read the source.</p>
         <details class="advanced">
           <summary>Workflow contract (JSON)</summary>
           ${json({ inputSchema: cap.inputSchema || {}, outputSchema: cap.outputSchema || {}, workflow, requiredSkills: skills, requiredAgents: agents, requiredRunnerTags: tags, approvalPolicy: approval })}
@@ -791,20 +806,438 @@ async function renderWorkflowDetail(slug, { sub = "" } = {}) {
         <div class="copy-row"><input readonly value="${esc(deepLinks.abs(deepLinks.workflow(slug)))}"><button data-copy="${esc(deepLinks.abs(deepLinks.workflow(slug)))}">Copy</button></div>
         <h3>Latest runs ${shareButton(deepLinks.workflowRuns(slug), "Copy share link to this workflow's runs")}</h3>
         ${runs.length ? workflowRunsList(runs.slice(0, 8)) : `<p class="muted">No runs yet.</p>`}
-        ${runs.length > 8 ? `<p class="muted"><a href="${esc(deepLinks.workflowRuns(slug))}">See all ${runs.length}</a></p>` : ""}
+        ${runs.length > 8 ? `<p class="muted"><a href="#workflows/${esc(slug)}/runs">See all ${runs.length}</a></p>` : ""}
       </div>
-    </section>
+    </section>`;
+
+  const graphHtml = `
+    <section class="workflow-tab-body workflow-graph-tab">
+      <div class="panel workflow-graph-panel">
+        <header class="workflow-graph-header">
+          <div>
+            <h3>Visual graph</h3>
+            <p class="muted">Smithers source is the source of truth. The canvas renders the workflow JSX into nodes, handles, and edges — pan and zoom with ReactFlow controls.</p>
+          </div>
+          <div class="workflow-graph-actions">
+            <button type="button" id="wf-graph-fit" class="button">Fit view</button>
+            <a class="button" href="#workflows/${esc(slug)}/code">Read source</a>
+          </div>
+        </header>
+        <div class="workflow-graph-host" id="wf-graph-host">
+          <div class="workflow-graph-loading muted">Loading ReactFlow…</div>
+        </div>
+        <noscript>
+          <p class="muted">Enable JavaScript to see the interactive ReactFlow diagram. A static fallback is available in the Code tab.</p>
+        </noscript>
+      </div>
+    </section>`;
+
+  const codeHtml = `
+    <section class="workflow-tab-body workflow-code-tab">
+      <div class="panel workflow-code-panel">
+        <header class="workflow-code-header">
+          <div>
+            <h3>Code</h3>
+            <p class="muted" id="wf-code-path">Loading source…</p>
+          </div>
+          <div class="workflow-code-actions">
+            <nav class="tabs subtabs" id="wf-code-subtabs" aria-label="Source sections"></nav>
+            <button type="button" id="wf-code-copy" class="button" disabled>Copy source</button>
+          </div>
+        </header>
+        <div class="workflow-code-host" id="wf-code-host">
+          <p class="muted">Fetching the workflow source…</p>
+        </div>
+      </div>
+    </section>`;
+
+  const runsHtml = `
+    <section class="workflow-tab-body workflow-runs-tab">
+      <div class="panel">
+        <header class="workflow-runs-header">
+          <div>
+            <h3>Recent runs ${shareButton(deepLinks.workflowRuns(slug), "Copy share link to this workflow's runs")}</h3>
+            <p class="muted">${runs.length ? `Last ${Math.min(runs.length, 20)} runs of <strong>${esc(cap.name || slug)}</strong>.` : "No runs yet."}</p>
+          </div>
+          <button id="wf-run-2" class="primary">Run this workflow</button>
+        </header>
+        ${runs.length ? workflowRunsList(runs.slice(0, 20)) : empty("No runs yet.", "Trigger a run to see the timeline, artifacts, and outputs here.")}
+      </div>
+    </section>`;
+
+  content.innerHTML = `${crumbNav}${toolbar(cap.name, headerActions, deepLinks.workflow(slug))}
+    <p class="muted workflow-detail-desc">${esc(cap.description || "No description.")}</p>
+    <p class="workflow-meta-row muted">
+      <span>${esc(cap.category || "General")}</span>
+      <span>·</span>
+      <span>v${esc(cap.version)}</span>
+      <span>·</span>
+      <span>${cap.enabled ? "enabled" : "disabled"}</span>
+      ${approval.required ? `<span>·</span><span class="status waiting_approval">has approval checkpoints</span>` : ""}
+    </p>
+    <nav class="tabs workflow-tabs" aria-label="Workflow sections">${tabsHtml}</nav>
+    <div id="workflow-tab-body">
+      ${activeTab === "overview" ? overviewHtml : ""}
+      ${activeTab === "graph" ? graphHtml : ""}
+      ${activeTab === "code" ? codeHtml : ""}
+      ${activeTab === "runs" ? runsHtml : ""}
+    </div>
     <section id="editor" class="panel hidden"></section>`;
+
   $("#wf-run").addEventListener("click", () => setView(`workflows/${slug}/run`));
   $("#wf-edit").addEventListener("click", () => editCapability(slug));
+  document.querySelectorAll("[data-wf-tab]").forEach((anchor) => {
+    anchor.addEventListener("click", (event) => {
+      event.preventDefault();
+      const target = anchor.dataset.wfTab;
+      setView(`workflows/${slug}${target === "overview" ? "" : `/${target}`}`);
+    });
+  });
   bindCopy();
+
+  if (activeTab === "graph") {
+    await renderWorkflowGraphTab(slug, cap);
+  } else if (activeTab === "code") {
+    await renderWorkflowCodeTab(slug, cap);
+  } else if (activeTab === "runs") {
+    $("#wf-run-2")?.addEventListener("click", () => setView(`workflows/${slug}/run`));
+  }
+
   if (sub === "run") {
     await showRunForm(slug);
   } else if (sub === "edit") {
     await editCapability(slug);
-  } else if (sub === "runs") {
-    $("#panel-wf-side")?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
+}
+
+// --- Workflow Code tab (highlight.js viewer) --------------------------------
+// Pulls /api/capabilities/<slug>/source and renders syntax-highlighted code.
+// Sub-tabs split the file into Code / Agents / Graph slices when those
+// sections are detectable in the source.
+async function renderWorkflowCodeTab(slug, cap) {
+  const host = $("#wf-code-host");
+  const subtabs = $("#wf-code-subtabs");
+  const pathEl = $("#wf-code-path");
+  const copyBtn = $("#wf-code-copy");
+  if (!host) return;
+  let payload;
+  try {
+    payload = await api(`/api/capabilities/${encodeURIComponent(slug)}/source`);
+  } catch (error) {
+    host.innerHTML = `<p class="notice">Could not load workflow source: ${esc(error.message)}</p>`;
+    return;
+  }
+  if (!payload.available) {
+    host.innerHTML = `<p class="muted">${esc(payload.message || "No workflow source file shipped for this capability.")}</p>
+      <p class="muted">Registered entry: <code>${esc(cap?.workflow?.entry || "—")}</code></p>`;
+    return;
+  }
+  pathEl.textContent = `${payload.path} · ${payload.language.toUpperCase()} · ${formatBytes(payload.sizeBytes)}`;
+  copyBtn.disabled = false;
+  copyBtn.addEventListener("click", () => copyText(payload.code));
+
+  const sections = payload.sections || {};
+  const sectionDefs = [
+    { key: "code", label: "Code", body: payload.code || "" },
+    { key: "agents", label: "Agents", body: sections.agents?.text || "" },
+    { key: "workflowGraph", label: "workflowGraph", body: sections.workflowGraph?.text || "" }
+  ].filter((entry) => entry.body && entry.body.trim().length);
+
+  subtabs.innerHTML = sectionDefs
+    .map((entry, index) => `<button type="button" class="tab ${index === 0 ? "active" : ""}" data-code-section="${esc(entry.key)}">${esc(entry.label)}</button>`)
+    .join("");
+
+  const highlighter = await loadHighlighter();
+  function render(section) {
+    const def = sectionDefs.find((entry) => entry.key === section) || sectionDefs[0];
+    if (!def) {
+      host.innerHTML = `<p class="muted">No code to display.</p>`;
+      return;
+    }
+    const language = payload.language === "tsx" || payload.language === "ts" ? "typescript" : payload.language === "jsx" || payload.language === "js" ? "javascript" : payload.language;
+    host.innerHTML = `<pre class="workflow-code"><code class="hljs language-${esc(language || "plaintext")}">${esc(def.body)}</code></pre>`;
+    if (highlighter) {
+      try {
+        highlighter.highlightElement(host.querySelector("code"));
+      } catch {
+        // best-effort; raw escaped text is already legible.
+      }
+    }
+  }
+
+  document.querySelectorAll("[data-code-section]").forEach((button) => {
+    button.addEventListener("click", () => {
+      document.querySelectorAll("[data-code-section]").forEach((b) => b.classList.toggle("active", b === button));
+      render(button.dataset.codeSection);
+    });
+  });
+  render(sectionDefs[0]?.key || "code");
+}
+
+let highlighterPromise = null;
+async function loadHighlighter() {
+  if (highlighterPromise) return highlighterPromise;
+  highlighterPromise = import(/* @vite-ignore */ "/public/vendor/highlight.bundle.js")
+    .then((module) => module?.default || module?.hljs || null)
+    .catch(() => null);
+  return highlighterPromise;
+}
+
+// --- Workflow Visual graph tab (ReactFlow renderer) -------------------------
+async function renderWorkflowGraphTab(slug, cap) {
+  const host = $("#wf-graph-host");
+  if (!host) return;
+  let payload;
+  try {
+    payload = await api(`/api/capabilities/${encodeURIComponent(slug)}/source`);
+  } catch (error) {
+    host.innerHTML = `<p class="notice">Could not load workflow graph: ${esc(error.message)}</p>`;
+    return;
+  }
+  const graph = payload.graph || deriveClientGraphFallback(cap);
+  const reactflow = await loadReactFlow();
+  if (!reactflow) {
+    host.innerHTML = renderStaticGraphSvg(graph) +
+      `<p class="muted graph-fallback-note">ReactFlow bundle could not be loaded; showing static fallback. Re-run <code>pnpm build:vendor</code> on the server to refresh the vendored ReactFlow bundle.</p>`;
+    return;
+  }
+  try {
+    mountReactFlowGraph(reactflow, host, graph);
+  } catch (error) {
+    host.innerHTML = renderStaticGraphSvg(graph) +
+      `<p class="muted graph-fallback-note">ReactFlow failed to mount (${esc(error.message)}). Showing static fallback.</p>`;
+  }
+}
+
+let reactFlowPromise = null;
+async function loadReactFlow() {
+  if (reactFlowPromise) return reactFlowPromise;
+  reactFlowPromise = import(/* @vite-ignore */ "/public/vendor/reactflow.bundle.js")
+    .then((module) => module || null)
+    .catch(() => null);
+  return reactFlowPromise;
+}
+
+function deriveClientGraphFallback(cap = {}) {
+  return {
+    name: cap?.name || cap?.slug || "Workflow",
+    nodes: [
+      { id: "workflow", kind: "entry", label: cap?.name || cap?.slug || "Workflow" },
+      { id: "execute", kind: "task", label: cap?.workflow?.entry || cap?.workflow?.name || "execute" }
+    ],
+    edges: [{ id: "e-workflow-execute", source: "workflow", target: "execute", kind: "sequence" }],
+    sideNodes: []
+  };
+}
+
+function layoutGraph(graph) {
+  const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
+  const edges = Array.isArray(graph?.edges) ? graph.edges : [];
+  // Compute the "rank" of each node from the workflow entry using BFS.
+  const adjacency = new Map();
+  for (const node of nodes) adjacency.set(node.id, []);
+  for (const edge of edges) if (adjacency.has(edge.source)) adjacency.get(edge.source).push(edge.target);
+  const rank = new Map();
+  const entry = nodes.find((node) => node.kind === "entry") || nodes[0];
+  if (!entry) return { positions: new Map(), columns: [] };
+  const queue = [[entry.id, 0]];
+  rank.set(entry.id, 0);
+  while (queue.length) {
+    const [id, r] = queue.shift();
+    for (const next of adjacency.get(id) || []) {
+      if (!rank.has(next) || rank.get(next) < r + 1) {
+        rank.set(next, r + 1);
+        queue.push([next, r + 1]);
+      }
+    }
+  }
+  for (const node of nodes) if (!rank.has(node.id)) rank.set(node.id, 0);
+  const columns = new Map();
+  for (const node of nodes) {
+    const column = rank.get(node.id) ?? 0;
+    if (!columns.has(column)) columns.set(column, []);
+    columns.get(column).push(node);
+  }
+  const positions = new Map();
+  const columnWidth = 230;
+  const rowHeight = 110;
+  for (const [column, items] of columns.entries()) {
+    items.forEach((node, index) => {
+      const x = column * columnWidth;
+      const y = (index - (items.length - 1) / 2) * rowHeight;
+      positions.set(node.id, { x, y });
+    });
+  }
+  return { positions, columns: Array.from(columns.entries()) };
+}
+
+function nodeColor(kind) {
+  switch (kind) {
+    case "entry": return { background: "#0f766e", color: "#fff", border: "#0d5e57" };
+    case "approval": return { background: "#fffbeb", color: "#b45309", border: "#fcd34d" };
+    case "deploy": return { background: "#ecfeff", color: "#0e7490", border: "#67e8f9" };
+    case "test": return { background: "#eef2ff", color: "#4338ca", border: "#a5b4fc" };
+    case "commit":
+    case "push": return { background: "#f5f3ff", color: "#6d28d9", border: "#c4b5fd" };
+    case "build": return { background: "#fef3c7", color: "#92400e", border: "#fcd34d" };
+    case "verify": return { background: "#dcfce7", color: "#166534", border: "#86efac" };
+    case "agent":
+    case "skill":
+    case "tag": return { background: "#f1f5f9", color: "#334155", border: "#cbd5f5" };
+    default: return { background: "#ffffff", color: "#15191f", border: "#d9e0ea" };
+  }
+}
+
+function mountReactFlowGraph(reactflow, host, graph) {
+  const { React, ReactDOMClient, ReactFlow } = reactflow;
+  if (!React || !ReactDOMClient || !ReactFlow) throw new Error("vendor bundle missing React/ReactFlow exports");
+  const { positions } = layoutGraph(graph);
+
+  const reactNodes = (graph.nodes || []).map((node) => {
+    const palette = nodeColor(node.kind);
+    return {
+      id: node.id,
+      data: { label: nodeLabel(node) },
+      position: positions.get(node.id) || { x: 0, y: 0 },
+      style: {
+        borderRadius: 10,
+        border: `1px solid ${palette.border}`,
+        background: palette.background,
+        color: palette.color,
+        padding: "10px 14px",
+        minWidth: 168,
+        fontSize: 13,
+        boxShadow: "0 4px 12px rgba(15, 25, 35, 0.08)"
+      },
+      type: node.kind === "entry" ? "input" : "default"
+    };
+  });
+  const reactEdges = (graph.edges || []).map((edge) => ({
+    id: edge.id,
+    source: edge.source,
+    target: edge.target,
+    animated: edge.kind === "parallel",
+    label: edge.kind === "parallel" ? "parallel" : undefined,
+    style: { stroke: edge.kind === "parallel" ? "#0ea5e9" : "#637083" }
+  }));
+
+  host.innerHTML = "";
+  host.classList.add("workflow-graph-mounted");
+  const root = ReactDOMClient.createRoot(host);
+  const Component = React.createElement(GraphCanvas, {
+    React,
+    ReactFlow,
+    nodes: reactNodes,
+    edges: reactEdges,
+    sideNodes: graph.sideNodes || []
+  });
+  root.render(Component);
+}
+
+function nodeLabel(node) {
+  const lines = [node.label || node.id];
+  if (node.sublabel) lines.push(node.sublabel);
+  return lines.join("\n");
+}
+
+function GraphCanvas({ React, ReactFlow, nodes, edges, sideNodes }) {
+  const { ReactFlow: Flow, Background, Controls, MiniMap } = ReactFlow;
+  const Provider = ReactFlow.ReactFlowProvider;
+  const instanceRef = React.useRef(null);
+  const onInit = React.useCallback((instance) => {
+    instanceRef.current = instance;
+    setTimeout(() => instance.fitView({ padding: 0.2 }), 0);
+  }, []);
+  React.useEffect(() => {
+    const button = document.getElementById("wf-graph-fit");
+    if (!button) return undefined;
+    const handler = () => instanceRef.current?.fitView({ padding: 0.2, duration: 400 });
+    button.addEventListener("click", handler);
+    return () => button.removeEventListener("click", handler);
+  }, []);
+  const sideHtml = (sideNodes || []).map((node) =>
+    React.createElement("li", { key: node.id, className: `graph-side-pill graph-side-${node.kind}` }, node.label)
+  );
+  return React.createElement(
+    "div",
+    { className: "workflow-graph-canvas" },
+    React.createElement(
+      Provider,
+      null,
+      React.createElement(
+        Flow,
+        {
+          nodes,
+          edges,
+          fitView: true,
+          fitViewOptions: { padding: 0.2 },
+          onInit,
+          minZoom: 0.2,
+          maxZoom: 2,
+          proOptions: { hideAttribution: true }
+        },
+        React.createElement(Background, { gap: 18, color: "#d9e0ea" }),
+        React.createElement(Controls, { showInteractive: false }),
+        React.createElement(MiniMap, { pannable: true, zoomable: true })
+      )
+    ),
+    sideHtml.length
+      ? React.createElement(
+          "aside",
+          { className: "workflow-graph-side" },
+          React.createElement("strong", null, "Required by workflow"),
+          React.createElement("ul", null, ...sideHtml)
+        )
+      : null
+  );
+}
+
+// Static SVG fallback — only rendered if the ReactFlow vendor bundle can't
+// be loaded. Keeps the page useful for no-JS / failed-network scenarios.
+function renderStaticGraphSvg(graph) {
+  const { positions } = layoutGraph(graph);
+  const nodes = (graph.nodes || []).map((node) => ({ ...node, position: positions.get(node.id) || { x: 0, y: 0 } }));
+  if (!nodes.length) return `<p class="muted">No graph nodes derived from source.</p>`;
+  const padding = 32;
+  const minX = Math.min(...nodes.map((n) => n.position.x)) - padding;
+  const maxX = Math.max(...nodes.map((n) => n.position.x)) + 200 + padding;
+  const minY = Math.min(...nodes.map((n) => n.position.y)) - padding;
+  const maxY = Math.max(...nodes.map((n) => n.position.y)) + 80 + padding;
+  const width = Math.max(maxX - minX, 480);
+  const height = Math.max(maxY - minY, 200);
+  const positionById = new Map(nodes.map((node) => [node.id, node.position]));
+  const edgesHtml = (graph.edges || [])
+    .map((edge) => {
+      const src = positionById.get(edge.source);
+      const dst = positionById.get(edge.target);
+      if (!src || !dst) return "";
+      const x1 = src.x + 200 - minX;
+      const y1 = src.y + 32 - minY;
+      const x2 = dst.x - minX;
+      const y2 = dst.y + 32 - minY;
+      const stroke = edge.kind === "parallel" ? "#0ea5e9" : "#637083";
+      return `<path d="M ${x1} ${y1} C ${x1 + 50} ${y1}, ${x2 - 50} ${y2}, ${x2} ${y2}" stroke="${stroke}" stroke-width="1.5" fill="none" stroke-dasharray="${edge.kind === "parallel" ? "4 4" : ""}"/>`;
+    })
+    .join("");
+  const nodesHtml = nodes
+    .map((node) => {
+      const palette = nodeColor(node.kind);
+      const x = node.position.x - minX;
+      const y = node.position.y - minY;
+      const label = (node.label || node.id || "").slice(0, 32);
+      const sub = (node.sublabel || "").slice(0, 40);
+      return `<g transform="translate(${x},${y})">
+        <rect width="200" height="64" rx="10" ry="10" fill="${palette.background}" stroke="${palette.border}" />
+        <text x="14" y="26" font-size="13" fill="${palette.color}" font-weight="600">${esc(label)}</text>
+        ${sub ? `<text x="14" y="46" font-size="11" fill="${palette.color}" opacity="0.7">${esc(sub)}</text>` : ""}
+      </g>`;
+    })
+    .join("");
+  return `<svg class="workflow-graph-static" viewBox="0 0 ${width} ${height}" role="img" aria-label="Workflow graph (static fallback)">
+    <defs></defs>
+    ${edgesHtml}
+    ${nodesHtml}
+  </svg>`;
 }
 
 function workflowRunsList(runs) {

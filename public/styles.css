@@ -718,7 +718,165 @@ details.advanced[open] summary {
   border-color: var(--line);
 }
 
-/* ---- Tabs (Agents sub-nav) ---- */
+/* ---- Workflow detail: tabs, code viewer, ReactFlow graph host ---- */
+.workflow-tabs {
+  margin-top: 6px;
+}
+
+.workflow-tab-body {
+  margin-top: 4px;
+}
+
+.subtabs {
+  display: inline-flex;
+  margin: 0;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+
+.subtabs .tab {
+  min-height: 30px;
+  padding: 4px 10px;
+  font-size: 13px;
+}
+
+.workflow-code-panel,
+.workflow-graph-panel {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+
+.workflow-code-header,
+.workflow-graph-header,
+.workflow-runs-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.workflow-code-actions,
+.workflow-graph-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.workflow-code-host {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fafafa;
+  overflow: hidden;
+  max-height: 70vh;
+}
+
+.workflow-code {
+  margin: 0;
+  padding: 16px;
+  overflow: auto;
+  max-height: 70vh;
+  background: transparent;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.5;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  white-space: pre;
+}
+
+.workflow-code-host code.hljs {
+  background: transparent;
+  padding: 0;
+}
+
+.workflow-graph-host {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafc;
+  min-height: 460px;
+  height: clamp(420px, 60vh, 720px);
+  display: grid;
+  align-items: stretch;
+  justify-items: stretch;
+  position: relative;
+  overflow: hidden;
+}
+
+.workflow-graph-host.workflow-graph-mounted {
+  background: #ffffff;
+}
+
+.workflow-graph-host .workflow-graph-loading {
+  align-self: center;
+  justify-self: center;
+}
+
+.workflow-graph-canvas {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  min-height: 420px;
+}
+
+.workflow-graph-canvas .react-flow {
+  min-height: 420px;
+}
+
+.workflow-graph-side {
+  align-self: stretch;
+  min-width: 180px;
+  max-width: 220px;
+  padding: 14px;
+  border-left: 1px solid var(--line);
+  background: var(--soft);
+  overflow: auto;
+  font-size: 13px;
+}
+
+.workflow-graph-side ul {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+  display: grid;
+  gap: 6px;
+}
+
+.graph-side-pill {
+  display: inline-flex;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #fff;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  font-size: 12px;
+  width: fit-content;
+}
+
+.graph-side-agent { border-color: #c4b5fd; color: #4338ca; }
+.graph-side-skill { border-color: #93c5fd; color: #1d4ed8; }
+.graph-side-tag { border-color: #fcd34d; color: #92400e; }
+
+.graph-fallback-note {
+  margin: 8px 0 0;
+}
+
+.workflow-graph-static {
+  width: 100%;
+  height: auto;
+  max-height: 70vh;
+  background: #fff;
+  border-radius: 8px;
+}
+
+.workflow-graph-canvas .react-flow__attribution {
+  display: none;
+}
+
+/* ---- Tabs (Agents sub-nav, workflow tabs) ---- */
 .tabs {
   display: flex;
   gap: 2px;
@@ -736,6 +894,10 @@ details.advanced[open] summary {
   border-bottom: 2px solid transparent;
   color: var(--muted);
   min-height: 38px;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .tabs .tab.active {
@@ -1513,6 +1675,22 @@ details.advanced[open] summary {
   /* Run grid: single column on phones so cards keep readable width. */
   .run-grid {
     grid-template-columns: 1fr;
+  }
+
+  /* Workflow detail tabs: stack the visual graph side rail under the canvas. */
+  .workflow-graph-canvas {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .workflow-graph-side {
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    max-width: none;
+  }
+
+  .workflow-code-host,
+  .workflow-code {
+    max-height: 60vh;
   }
 }
 

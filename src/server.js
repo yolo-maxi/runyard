@@ -1098,6 +1098,398 @@ app.get("/api/capabilities/:id", requireAuth, (req, res) => {
   res.json({ capability: withCapabilityLinks(capability) });
 });
 
+// --- Workflow source + graph ------------------------------------------------
+// Serves the actual workflow code (the source-of-truth template authored in
+// `workflow-templates/workflows/<slug>.tsx`) together with a parsed metadata
+// header and a first-pass workflow graph derived from the JSX structure. The
+// Hub code viewer and the ReactFlow visualizer both consume this endpoint —
+// Smithers source remains the source of truth and the canvas is a renderer.
+app.get("/api/capabilities/:id/source", requireAuth, (req, res) => {
+  const capability = getCapability(req.params.id);
+  if (!capability) return res.status(404).json({ error: "capability not found" });
+  const source = loadWorkflowSource(capability);
+  if (!source) {
+    return res.json({
+      slug: capability.slug,
+      available: false,
+      capability: withCapabilityLinks(capability),
+      message: "No workflow source file shipped for this capability. The graph below is derived from registered metadata only.",
+      graph: deriveWorkflowGraphFromMetadata(capability)
+    });
+  }
+  const metadata = parseWorkflowMetadata(source.code);
+  const sections = sliceWorkflowSections(source.code);
+  const graph = deriveWorkflowGraph(source.code, capability);
+  res.json({
+    slug: capability.slug,
+    available: true,
+    capability: withCapabilityLinks(capability),
+    path: source.relativePath,
+    language: source.language,
+    sizeBytes: source.code.length,
+    metadata,
+    sections,
+    code: source.code,
+    graph
+  });
+});
+
+const WORKFLOW_TEMPLATES_DIR = path.resolve(env.root, "workflow-templates", "workflows");
+const WORKFLOW_EXTENSIONS = [".tsx", ".jsx", ".ts", ".js"];
+
+// Map a registered capability to the on-disk workflow source. We look at the
+// configured workflow.entry first (just the basename, sanitized to a slug to
+// keep this away from filesystem-traversal), then fall back to <slug>.tsx.
+function loadWorkflowSource(capability) {
+  const candidates = workflowSourceCandidates(capability);
+  for (const candidate of candidates) {
+    const absolute = path.resolve(WORKFLOW_TEMPLATES_DIR, candidate);
+    if (!absolute.startsWith(WORKFLOW_TEMPLATES_DIR + path.sep)) continue;
+    if (!existsSync(absolute)) continue;
+    const code = readFileSync(absolute, "utf8");
+    const ext = path.extname(absolute).slice(1).toLowerCase();
+    return {
+      absolutePath: absolute,
+      relativePath: path.relative(env.root, absolute),
+      language: ext || "txt",
+      code
+    };
+  }
+  return null;
+}
+
+function workflowSourceCandidates(capability) {
+  const slug = String(capability.slug || "").trim();
+  const candidates = [];
+  const entry = capability?.workflow?.entry || capability?.workflow?.path || "";
+  if (typeof entry === "string" && entry.trim()) {
+    const safeBase = path.basename(entry.trim());
+    if (/^[A-Za-z0-9_.-]+$/.test(safeBase)) candidates.push(safeBase);
+    const slugFromEntry = safeBase.replace(/\.(tsx|jsx|ts|js)$/i, "");
+    if (slugFromEntry && /^[A-Za-z0-9_.-]+$/.test(slugFromEntry)) {
+      for (const ext of WORKFLOW_EXTENSIONS) candidates.push(`${slugFromEntry}${ext}`);
+    }
+  }
+  if (slug && /^[A-Za-z0-9_-]+$/.test(slug)) {
+    for (const ext of WORKFLOW_EXTENSIONS) candidates.push(`${slug}${ext}`);
+  }
+  return Array.from(new Set(candidates));
+}
+
+// Header tags such as `// smithers-display-name: Hello (proof)` are how the
+// workflow authors annotate their templates. We parse those leading comments
+// only so we never pick up keys from the implementation body.
+function parseWorkflowMetadata(code) {
+  const out = {};
+  const lines = String(code || "").split(/\r?\n/);
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (line.startsWith("//")) {
+      const match = line.match(/^\/\/\s*smithers-([a-z][a-z0-9-]*)\s*:\s*(.*)$/i);
+      if (match) {
+        out[camelCase(match[1])] = match[2].trim();
+        continue;
+      }
+      continue;
+    }
+    if (line.startsWith("/*") || line.startsWith("/**")) continue;
+    if (line.startsWith("*")) continue;
+    break;
+  }
+  return out;
+}
+
+function camelCase(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+}
+
+// Split the file into Code / Agents / workflowGraph virtual tabs without
+// rewriting it: each section returns a {start,end} line range plus the
+// extracted text. The full file is always returned under `code` so a viewer
+// can stay one document while still surfacing the meaningful pieces.
+function sliceWorkflowSections(code) {
+  const lines = String(code || "").split(/\r?\n/);
+  const sections = {
+    code: { startLine: 1, endLine: lines.length, text: code },
+    agents: collectLineRanges(lines, [
+      /\bnew\s+ClaudeCodeAgent\b/,
+      /\bnew\s+CodexCLIAgent\b/,
+      /\bnew\s+[A-Z][A-Za-z0-9_]*Agent\b/,
+      /\bagent\s*[:=]/,
+      /providers\.[a-z]+/
+    ]),
+    workflowGraph: collectLineRanges(lines, [
+      /<Workflow\b/,
+      /<\/Workflow>/,
+      /<Sequence\b/,
+      /<\/Sequence>/,
+      /<Parallel\b/,
+      /<\/Parallel>/,
+      /<Task\b/,
+      /<\/Task>/,
+      /<Loop\b/,
+      /<\/Loop>/
+    ])
+  };
+  return sections;
+}
+
+function collectLineRanges(lines, patterns) {
+  const hits = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    if (patterns.some((re) => re.test(lines[i]))) hits.push(i);
+  }
+  if (!hits.length) return { startLine: 0, endLine: 0, text: "" };
+  // Merge consecutive line numbers (within a 2-line gap) into contiguous spans.
+  const spans = [];
+  for (const index of hits) {
+    const last = spans[spans.length - 1];
+    if (last && index - last.end <= 2) last.end = index;
+    else spans.push({ start: index, end: index });
+  }
+  const out = spans
+    .map(({ start, end }) => {
+      const from = Math.max(0, start - 1);
+      const to = Math.min(lines.length - 1, end + 1);
+      return `// L${from + 1}-${to + 1}\n${lines.slice(from, to + 1).join("\n")}`;
+    })
+    .join("\n\n");
+  return { startLine: spans[0].start + 1, endLine: spans[spans.length - 1].end + 1, text: out };
+}
+
+const TASK_ID_RE = /<Task\b[^>]*?\bid=(?:"([^"]+)"|\{`([^`]+)`\}|\{'([^']+)'\}|`([^`]+)`)/;
+const TASK_AGENT_RE = /\bagent=\{([A-Za-z0-9_.()\s,]+)\}/;
+const TASK_OUTPUT_RE = /\boutput=\{([A-Za-z0-9_.\s,]+)\}/;
+const TASK_RETRIES_RE = /\bretries=\{(\d+)\}/;
+const TASK_TIMEOUT_RE = /\btimeoutMs=\{([^}]+)\}/;
+const KEYWORDS = {
+  approval: /\bApproval\b|approvalKind|createApproval/,
+  deploy: /\bdeploy\b|caddy|systemctl/i,
+  test: /\bpnpm[\s,]*\[?\s*['"]test['"]|\bpnpm test\b|\btest\b.*passed/i,
+  commit: /\bgit[^"]*commit\b|\bcommit\b.*hash/i,
+  push: /\bgit push\b|\bpush\b.*origin/i,
+  build: /\bpnpm[\s,]*\[?\s*['"]build['"]|\bbuild\b/i
+};
+
+// Walks the file once, tracking Sequence/Parallel nesting so each Task knows
+// which container it lives in. The result is a {nodes,edges} pair shaped for
+// the ReactFlow visualizer; SVG fallback consumes the same structure.
+function deriveWorkflowGraph(code, capability = {}) {
+  const lines = String(code || "").split(/\r?\n/);
+  const stack = [];
+  const containers = [];
+  const tasks = [];
+  let workflowName = capability?.name || "";
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const wfOpen = line.match(/<Workflow\b[^>]*\bname=(?:"([^"]+)"|\{`([^`]+)`\})/);
+    if (wfOpen) workflowName = wfOpen[1] || wfOpen[2] || workflowName;
+    if (/<Sequence\b/.test(line)) {
+      const container = { kind: "sequence", id: `seq-${containers.length + 1}`, line: i + 1 };
+      containers.push(container);
+      stack.push(container);
+    }
+    if (/<Parallel\b/.test(line)) {
+      const concurrency = (line.match(/maxConcurrency=\{?([^},\s>]+)\}?/) || [])[1] || "";
+      const container = { kind: "parallel", id: `par-${containers.length + 1}`, line: i + 1, concurrency };
+      containers.push(container);
+      stack.push(container);
+    }
+    if (/<\/Parallel>/.test(line) || /<\/Sequence>/.test(line)) stack.pop();
+    const taskMatch = line.match(TASK_ID_RE);
+    if (taskMatch) {
+      const rawId = taskMatch[1] || taskMatch[2] || taskMatch[3] || taskMatch[4] || `task-${tasks.length + 1}`;
+      // Tasks created inside a .map can use template literals like
+      // `audit-${i + 1}` for their id — collapse those into a single readable
+      // lane label rather than leaking the interpolation syntax into the graph.
+      const taskId = rawId.replace(/\$\{[^}]+\}/g, "N").replace(/\s+/g, "");
+      const agent = pickAgent(line);
+      const output = (line.match(TASK_OUTPUT_RE) || [])[1] || "";
+      const retries = (line.match(TASK_RETRIES_RE) || [])[1] || "";
+      const timeout = (line.match(TASK_TIMEOUT_RE) || [])[1] || "";
+      const container = stack[stack.length - 1] || null;
+      const block = readTaskBlock(lines, i);
+      tasks.push({
+        id: taskId,
+        line: i + 1,
+        agent,
+        output,
+        retries,
+        timeout,
+        container,
+        kind: classifyTask(taskId, block)
+      });
+    }
+  }
+
+  const nodes = [];
+  const edges = [];
+  const workflowNodeId = "workflow";
+  nodes.push({
+    id: workflowNodeId,
+    type: "entry",
+    label: workflowName || capability?.name || capability?.slug || "Workflow",
+    kind: "entry",
+    sublabel: capability?.workflow?.engine ? `engine ${capability.workflow.engine}` : ""
+  });
+
+  // Track the "previous frontier" — set of nodes that feed into the next task.
+  let frontier = [workflowNodeId];
+  let openParallel = null;
+  let parallelFanIn = [];
+
+  for (const task of tasks) {
+    nodes.push({
+      id: task.id,
+      type: task.kind,
+      label: task.id,
+      kind: task.kind,
+      agent: task.agent,
+      output: task.output,
+      retries: task.retries,
+      timeout: task.timeout,
+      line: task.line,
+      sublabel: taskSublabel(task)
+    });
+    if (task.container?.kind === "parallel") {
+      if (openParallel !== task.container.id) {
+        // Close any previous parallel fan-in (becomes the new frontier).
+        if (parallelFanIn.length) frontier = parallelFanIn;
+        openParallel = task.container.id;
+        parallelFanIn = [];
+      }
+      for (const src of frontier) edges.push(edgeBetween(src, task.id, task.container));
+      parallelFanIn.push(task.id);
+    } else {
+      if (parallelFanIn.length) {
+        frontier = parallelFanIn;
+        parallelFanIn = [];
+        openParallel = null;
+      }
+      for (const src of frontier) edges.push(edgeBetween(src, task.id, task.container));
+      frontier = [task.id];
+    }
+  }
+  if (parallelFanIn.length) frontier = parallelFanIn;
+
+  const requiredAgents = capability?.requiredAgents || [];
+  const requiredSkills = capability?.requiredSkills || [];
+  const runnerTags = capability?.requiredRunnerTags || [];
+  const sideNodes = [];
+  for (const agent of requiredAgents) {
+    sideNodes.push({ id: `agent:${agent}`, type: "agent", label: agent, kind: "agent" });
+  }
+  for (const skill of requiredSkills) {
+    sideNodes.push({ id: `skill:${skill}`, type: "skill", label: skill, kind: "skill" });
+  }
+  for (const tag of runnerTags) {
+    sideNodes.push({ id: `tag:${tag}`, type: "tag", label: tag, kind: "tag" });
+  }
+
+  return {
+    name: workflowName || capability?.name || capability?.slug || "Workflow",
+    nodes,
+    edges,
+    sideNodes,
+    metadata: {
+      taskCount: tasks.length,
+      parallelGroups: containers.filter((c) => c.kind === "parallel").length,
+      sequenceGroups: containers.filter((c) => c.kind === "sequence").length
+    }
+  };
+}
+
+function deriveWorkflowGraphFromMetadata(capability = {}) {
+  const nodes = [
+    {
+      id: "workflow",
+      type: "entry",
+      kind: "entry",
+      label: capability?.name || capability?.slug || "Workflow",
+      sublabel: capability?.workflow?.engine ? `engine ${capability.workflow.engine}` : ""
+    },
+    {
+      id: "execute",
+      type: "task",
+      kind: "task",
+      label: capability?.workflow?.entry || capability?.workflow?.name || "execute",
+      sublabel: capability?.category || ""
+    }
+  ];
+  const edges = [{ id: "e-workflow-execute", source: "workflow", target: "execute", kind: "sequence" }];
+  const sideNodes = [];
+  for (const agent of capability?.requiredAgents || []) sideNodes.push({ id: `agent:${agent}`, type: "agent", kind: "agent", label: agent });
+  for (const skill of capability?.requiredSkills || []) sideNodes.push({ id: `skill:${skill}`, type: "skill", kind: "skill", label: skill });
+  for (const tag of capability?.requiredRunnerTags || []) sideNodes.push({ id: `tag:${tag}`, type: "tag", kind: "tag", label: tag });
+  return { name: capability?.name || capability?.slug || "Workflow", nodes, edges, sideNodes, metadata: { taskCount: 1, parallelGroups: 0, sequenceGroups: 1 } };
+}
+
+function pickAgent(line) {
+  const match = line.match(TASK_AGENT_RE);
+  if (!match) return "";
+  return match[1].trim().replace(/\s+/g, " ");
+}
+
+function edgeBetween(source, target, container) {
+  return {
+    id: `e-${source}-${target}`,
+    source,
+    target,
+    kind: container?.kind || "sequence",
+    container: container?.id || ""
+  };
+}
+
+function readTaskBlock(lines, startIndex) {
+  let depth = 0;
+  let lineCount = 0;
+  const out = [];
+  for (let i = startIndex; i < Math.min(lines.length, startIndex + 60); i += 1) {
+    const line = lines[i];
+    out.push(line);
+    if (/<Task\b/.test(line)) depth += 1;
+    if (/<\/Task>/.test(line) || (/\/>\s*$/.test(line) && depth > 0 && i !== startIndex - 1)) depth -= 1;
+    lineCount += 1;
+    if (depth <= 0 && lineCount > 1) break;
+  }
+  return out.join("\n");
+}
+
+function classifyTask(id, block) {
+  // Names beat content: a task literally named `deploy` is a deploy step, even
+  // if its prompt happens to mention testing or commits. Falling back to the
+  // body covers tasks with generic ids ("step3") that still do recognisable
+  // work like calling systemctl/caddy or running pnpm test.
+  const idText = String(id || "").toLowerCase();
+  if (/(^|[-_])approval|approvals?$/.test(idText)) return "approval";
+  if (/(^|[-_])deploy|deploys?$/.test(idText)) return "deploy";
+  if (/(^|[-_])(test|tests|verify|gate)$/.test(idText)) return "test";
+  if (/(^|[-_])commit$/.test(idText)) return "commit";
+  if (/(^|[-_])push$/.test(idText)) return "push";
+  if (/(^|[-_])build$/.test(idText)) return "build";
+  const text = String(block || "").toLowerCase();
+  if (/\bapprovalkind|createapproval|requestapproval/.test(text)) return "approval";
+  if (/\bsystemctl|caddy|reload|restart/.test(text)) return "deploy";
+  if (KEYWORDS.test.test(text)) return "test";
+  if (KEYWORDS.commit.test(text)) return "commit";
+  if (KEYWORDS.push.test(text)) return "push";
+  if (KEYWORDS.build.test(text)) return "build";
+  if (/\bverif/.test(text)) return "verify";
+  return "task";
+}
+
+function taskSublabel(task) {
+  const bits = [];
+  if (task.agent) bits.push(`agent ${task.agent}`);
+  if (task.retries) bits.push(`retries=${task.retries}`);
+  if (task.output) bits.push(`out=${task.output}`);
+  if (task.container?.kind === "parallel") bits.push("parallel lane");
+  return bits.join(" · ");
+}
+
 app.patch("/api/capabilities/:id", requireAuth, requireScopes("admin"), (req, res) => {
   const existing = getCapability(req.params.id);
   if (!existing) return res.status(404).json({ error: "capability not found" });
