@@ -3,10 +3,12 @@
 // smithers-description: Sandboxed Solidity audit. Sanitizes the target into /tmp, builds local auditor bundles, runs read-only Smithers audit agents over them, and consolidates findings into a Markdown report. Artifacts only; never writes the target.
 /** @jsxImportSource smithers-orchestrator */
 import { createSmithers, Sequence, Parallel, ClaudeCodeAgent } from "smithers-orchestrator";
+import os from "node:os";
+import path from "node:path";
 import { z } from "zod/v4";
 
 // The local audit skill (sandbox + bundle scripts + references) must be installed on the runner.
-const SKILL_DIR = process.env.AUDIT_SKILL_DIR || "/home/xiko/clawd/skills/audit";
+const SKILL_DIR = process.env.AUDIT_SKILL_DIR || path.join(os.homedir(), "clawd", "skills", "audit");
 
 const prepareSchema = z.looseObject({
   target: z.string(),

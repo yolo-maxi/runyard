@@ -1,8 +1,17 @@
 {
   "name": "smithers-hub",
   "version": "0.1.0",
-  "description": "Self-hosted capability hub, runner, CLI, and MCP server for Smithers-powered agents.",
-  "private": true,
+  "description": "Runyard: self-hosted control plane, runner, CLI, and MCP server for agent runs.",
+  "private": false,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yolo-maxi/runyard.git"
+  },
+  "homepage": "https://runyard.repo.box",
+  "bugs": {
+    "url": "https://github.com/yolo-maxi/runyard/issues"
+  },
   "type": "module",
   "bin": {
     "smithers-hub": "./bin/smithers-hub.js",

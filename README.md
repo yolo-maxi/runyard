@@ -19,7 +19,7 @@ Requirements:
 - A writable `data/` directory
 
 ```bash
-git clone https://github.com/<org>/runyard
+git clone https://github.com/yolo-maxi/runyard
 cd runyard
 pnpm install
 pnpm build:vendor   # vendors highlight.js + react-flow for the workflow viewer
@@ -28,10 +28,10 @@ pnpm build:vendor   # vendors highlight.js + react-flow for the workflow viewer
 If you already have a Hub running, you can install just the CLI + MCP client (Node.js 18+) from it:
 
 ```bash
-bash <(curl -fsSL https://hub.repo.box/install.sh)
+bash <(curl -fsSL https://hub.example.com/install.sh)
 ```
 
-(`hub.repo.box` is an example deployment — substitute your own domain.)
+(`hub.example.com` is an example deployment — substitute your own domain.)
 
 ## Run locally
 
@@ -63,14 +63,43 @@ smithers-hub remotes                                              # list them
 
 To onboard a teammate, open the **Connect** tab in the Web Hub, generate a token, and send them the install command + token — they paste it when prompted.
 
-## Deploy shape
+## Topology Options
 
-- Node + SQLite single-process server.
-- Local-disk artifacts under `data/artifacts/`.
-- Bearer-token auth only.
-- One private deployment per company/org.
-- Reverse-proxy with TLS in front (Caddy, nginx, Traefik). The Hub itself does not terminate TLS.
-- Runners can run on a VPS, Linux workstations, or macOS laptops.
+Runyard is built for one private Hub per company/org. The repo is generic; our own deployment is just one topology.
+
+Recommended private org topology:
+
+- Hub server: small VPS running Node + SQLite behind Caddy/nginx/Traefik.
+- Data: local SQLite and artifacts under `SMITHERS_HUB_DATA_DIR`; back up this directory.
+- Runners: separate VPSes, Linux workstations, or macOS laptops that poll the Hub over HTTPS.
+- Queue: centralized in the Hub. Runners never touch SQLite directly.
+- Auth: Hub-issued bearer tokens for Web, API, CLI, MCP, and runners.
+
+Small/local topology:
+
+- Run the Hub and one runner on the same machine.
+- Use `BASE_URL=http://127.0.0.1:43117` while developing.
+- Keep runner capacity low unless the machine is dedicated to builds.
+
+Dedicated runner pool topology:
+
+- Keep the Hub as the lightweight control plane.
+- Run one or more runner processes on worker VPSes.
+- Set `SMITHERS_RUNNER_CAPACITY` / `SMITHERS_RUNNER_CONCURRENCY` according to CPU and memory.
+- Use runner tags such as `linux`, `browser`, `gpu`, `dangerous`, or `deploy` to route work.
+
+Public docs + private Hub topology:
+
+- Serve the marketing/setup docs as a static site.
+- Keep `/app`, API, MCP, SQLite, artifacts, and runner tokens on the private Hub deployment.
+- This repo's own public docs live at `https://runyard.repo.box`; the live operations Hub stays at `https://hub.repo.box`.
+
+Our current topology:
+
+- `runyard.repo.box`: static landing/setup docs only.
+- `hub.repo.box`: live token-protected Runyard Hub.
+- repo.box serves production web traffic.
+- A separate Hetzner worker host runs the higher-capacity runner pool, so builds and agent work do not compete with the serving box.
 
 ## Agent interfaces
 
@@ -84,7 +113,7 @@ Discovery:
 CLI:
 
 ```bash
-smithers-hub login --url https://hub.repo.box --token shub_...
+smithers-hub login --url https://hub.example.com --token shub_...
 smithers-hub capabilities
 smithers-hub capability prepare-spec
 smithers-hub run prepare-spec --input '{"goal":"Prepare a rollout spec"}'
@@ -100,7 +129,7 @@ MCP config:
 {
   "command": "smithers-hub-mcp",
   "env": {
-    "SMITHERS_HUB_URL": "https://hub.repo.box",
+    "SMITHERS_HUB_URL": "https://hub.example.com",
     "SMITHERS_HUB_TOKEN": "shub_..."
   }
 }
@@ -109,7 +138,7 @@ MCP config:
 Runner:
 
 ```bash
-SMITHERS_HUB_URL=https://hub.repo.box \
+SMITHERS_HUB_URL=https://hub.example.com \
 SMITHERS_HUB_TOKEN=shub_... \
 SMITHERS_RUNNER_NAME=hetzner-vps-runner \
 SMITHERS_RUNNER_LOCATION=vps \
@@ -159,6 +188,7 @@ Runner-side variables (used by `smithers-hub-runner`):
 
 - Single auth primitive: every surface (Web, API, CLI, MCP, runner) authenticates with a Hub access token.
 - Private deployment: Runyard is meant for one org per deployment. There is no multi-tenant SaaS database.
+- Public/docs split: if you expose a public landing page, keep it static. Do not expose `/app`, runner tokens, SQLite files, artifacts, or deployment env files publicly.
 - Bootstrap token: the first token is written to `data/bootstrap-token.txt` — rotate it via the Connect tab.
 - Scopes: API tokens can be scoped (`api`, `mcp`, `approvals`) so approvers can be issued narrower keys.
 - Runners execute work on behalf of authenticated requests; isolate sensitive runners by tag set.
@@ -182,7 +212,7 @@ Manual checks:
 
 ## Open source & contributions
 
-Runyard is structured for open-source release. The directories that matter:
+Runyard is open source under the MIT license. The directories that matter:
 
 - `bin/` — CLI/MCP/runner entry points
 - `src/` — server, CLI, MCP, runner, db, security
@@ -193,7 +223,7 @@ Runyard is structured for open-source release. The directories that matter:
 
 Conventions:
 
-- Treat hostnames like `hub.repo.box` as examples only. Do not hard-code private hostnames in new code or docs.
+- Treat hostnames like `hub.example.com` as examples only. Do not hard-code private hostnames in new code or docs.
 - File issues and PRs against the public Runyard repo.
 - The gated pipeline runs `pnpm test`, `git diff --check`, and smoke-checks `/healthz`, `/app`, `/docs`, `/llms.txt` before deploy.
 

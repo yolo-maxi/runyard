@@ -1,18 +1,18 @@
 // smithers-source: authored
 // smithers-display-name: Implement Change (gated)
-// smithers-description: Runs an implementation agent for a change request, then gates it (pnpm test, staged diff, a sane commit, push to origin) before optionally deploying to the prod/repo.box target. deploy=false stops after push and reports what would deploy.
+// smithers-description: Runs an implementation agent for a change request, then gates it (pnpm test, staged diff, a sane commit, push to origin) before optionally deploying to a configured production target. deploy=false stops after push and reports what would deploy.
 /** @jsxImportSource smithers-orchestrator */
 import { createSmithers, Sequence, ClaudeCodeAgent } from "smithers-orchestrator";
 import { existsSync } from "node:fs";
 import { z } from "zod/v4";
 
-// Repo + deploy target are the existing repo.box flow; overridable for tests/sandboxes.
-const REPO = process.env.GATED_REPO_DIR || "/home/xiko/smithers-hub";
+// Repo + deploy target are deployment-specific; set env vars on your runner.
+const REPO = process.env.GATED_REPO_DIR || process.cwd();
 const PROD_REMOTE = process.env.GATED_PROD_REMOTE || "prod";
-const PROD_HOST = process.env.GATED_PROD_HOST || "fran@204.168.190.248";
-const PROD_DIR = process.env.GATED_PROD_DIR || "/home/fran/smithers-hub";
-const DEPLOY_KEY = process.env.GATED_DEPLOY_KEY || "/home/xiko/.ssh/id_ed25519";
-const HEALTH_BASE = process.env.GATED_HEALTH_URL || "https://hub.repo.box";
+const PROD_HOST = process.env.GATED_PROD_HOST || "";
+const PROD_DIR = process.env.GATED_PROD_DIR || "";
+const DEPLOY_KEY = process.env.GATED_DEPLOY_KEY || "";
+const HEALTH_BASE = process.env.GATED_HEALTH_URL || process.env.BASE_URL || "http://127.0.0.1:43117";
 function resolveTool(envName, fallback, candidates) {
   const configured = process.env[envName];
   if (configured) return configured;
@@ -20,10 +20,6 @@ function resolveTool(envName, fallback, candidates) {
 }
 const GIT = resolveTool("GATED_GIT_BIN", "git", ["/usr/bin/git", "/usr/local/bin/git"]);
 const PNPM = resolveTool("GATED_PNPM_BIN", "pnpm", [
-  "/home/xiko/.local/bin/pnpm",
-  "/home/fran/.local/bin/pnpm",
-  "/home/xiko/.local/node-v22.16.0-linux-x64/bin/pnpm",
-  "/home/fran/.local/node-v22.16.0-linux-x64/bin/pnpm",
   "/usr/local/bin/pnpm",
   "/usr/bin/pnpm"
 ]);
@@ -31,11 +27,6 @@ const SSH = resolveTool("GATED_SSH_BIN", "ssh", ["/usr/bin/ssh", "/usr/local/bin
 const CURL = resolveTool("GATED_CURL_BIN", "curl", ["/usr/bin/curl", "/usr/local/bin/curl"]);
 const TOOL_PATH = [
   process.env.PATH || "",
-  "/home/fran/.bun/bin",
-  "/home/fran/.local/node-v22.16.0-linux-x64/bin",
-  "/home/fran/.local/bin",
-  "/home/xiko/.bun/bin",
-  "/home/xiko/.local/bin",
   "/usr/local/bin",
   "/usr/bin",
   "/bin"
@@ -176,9 +167,12 @@ export default smithers((ctx) => {
           <Task id="deploy" output={outputs.deploy} retries={0}>
             {async () => {
               const { execFileSync } = await import("node:child_process");
-              const target = `${PROD_REMOTE} (${PROD_HOST}:${PROD_DIR})`;
+              const target = PROD_HOST && PROD_DIR ? `${PROD_REMOTE} (${PROD_HOST}:${PROD_DIR})` : `${PROD_REMOTE} (not configured)`;
               if (!ctx.input.deploy) {
                 return { deployed: false, wouldDeploy: true, target, verify: `deploy=false — would push ${commit.commit} to ${target}, reset main, and restart the hub.` };
+              }
+              if (!PROD_HOST || !PROD_DIR || !DEPLOY_KEY) {
+                throw new Error("GATE FAILED: deploy=true requires GATED_PROD_HOST, GATED_PROD_DIR, and GATED_DEPLOY_KEY on the runner.");
               }
               const env = { ...TOOL_ENV, GIT_SSH_COMMAND: `${SSH} -i ${DEPLOY_KEY} -o BatchMode=yes -o StrictHostKeyChecking=accept-new` };
               execFileSync(GIT, ["push", PROD_REMOTE, `${commit.commit}:refs/heads/sync-tmp`], { cwd: REPO, encoding: "utf8", env });

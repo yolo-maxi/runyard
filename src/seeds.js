@@ -220,7 +220,7 @@ export const seedCapabilities = [
     slug: "implement-change-gated",
     name: "Implement Change (gated)",
     description:
-      "Runs an implementation agent for a change request, then gates it (pnpm test, staged diff, a sane commit, push to origin) before optionally deploying to the repo.box prod target. deploy=false stops after push and reports what would deploy.",
+      "Runs an implementation agent for a change request, then gates it (pnpm test, staged diff, a sane commit, push to origin) before optionally deploying to a configured production target. deploy=false stops after push and reports what would deploy.",
     category: "Engineering",
     keywords: ["implement", "build", "test", "git", "deploy", "gate", "smithers"],
     inputSchema: {
@@ -247,15 +247,15 @@ export const seedCapabilities = [
     slug: "idea-to-product",
     name: "Idea to Product",
     description:
-      "Turns a raw product idea into a scoped MVP spec, builds it with an implementation agent, verifies the basics, deploys it to repo.box, and returns the URL. Private by default; public access is explicit.",
+      "Turns a raw product idea into a scoped MVP spec, builds it with an implementation agent, verifies the basics, deploys it to a configured static host, and returns the URL. Private by default; public access is explicit.",
     category: "Product",
-    keywords: ["idea", "product", "mvp", "build", "test", "deploy", "repo.box", "smithers"],
+    keywords: ["idea", "product", "mvp", "build", "test", "deploy", "static-site", "smithers"],
     inputSchema: {
       type: "object",
       required: ["idea"],
       properties: {
         idea: { type: "string", description: "The raw product idea." },
-        preferredSubdomain: { type: "string", description: "Optional preferred repo.box subdomain prefix." },
+        preferredSubdomain: { type: "string", description: "Optional preferred static-site subdomain prefix." },
         constraints: { type: "string", description: "Optional product, design, stack, or business constraints." },
         deploy: { type: "boolean", description: "Deploy after gates pass (default true)." },
         publicAccess: { type: "boolean", description: "Deploy without auth if true. Default false." }
@@ -276,7 +276,7 @@ export const seedCapabilities = [
     requiredAgents: ["spec-writer", "implementation-agent"],
     approvalPolicy: {
       required: true,
-      reason: "Runs coding agents and can deploy a new repo.box subdomain."
+      reason: "Runs coding agents and can deploy a new static site."
     },
     workflow: { engine: "smithers", entry: ".smithers/workflows/idea-to-product.tsx" }
   },

@@ -28,7 +28,7 @@ import {
   listRunners,
   listRuns,
   listSkills,
-  reapStuckRuns,
+  reapStuckRunIds,
   recordAudit,
   registerRunner,
   resolveApproval,
@@ -44,6 +44,7 @@ import {
 } from "./db.js";
 import { env } from "./env.js";
 import { now, slugify } from "./ids.js";
+import { buildRunRetrospectiveArtifact, RUN_RETROSPECTIVE_ARTIFACT_NAME } from "./runRetrospective.js";
 import { parseCookies, sign, timingSafeEqualStr, unsign } from "./security.js";
 
 const app = express();
@@ -2013,7 +2014,7 @@ app.post("/api/knowledge", requireAuth, requireScopes("admin"), (req, res) =>
 app.patch("/api/knowledge/:slug", requireAuth, requireScopes("admin"), (req, res) => res.json({ knowledge: upsertKnowledge({ ...req.body, slug: req.params.slug }) }));
 
 app.get("/api/runs", requireAuth, (req, res) => {
-  reapStuckRuns(env.runDeadlineMs);
+  reapStuckRunsWithRetrospectives(env.runDeadlineMs);
   const status = req.query.status || "";
   const limit = Math.min(Number(req.query.limit || 100), 500);
   // Optional capability filter — used by the workflow detail page to list
@@ -2144,18 +2145,21 @@ app.post("/api/runs/:id/complete", requireAuth, requireScopes("runner"), require
   if (!result.ok) return res.status(result.code).json({ error: result.error });
   if (!result.idempotent) addRunEvent(req.params.id, "run.succeeded", "Run completed");
   const chainedRun = result.idempotent ? null : queueNextChainedRun(result.run, output, req);
+  if (!result.idempotent) recordRunRetrospectiveArtifact(result.run.id);
   res.json({ run: result.run, chainedRun: chainedRun ? withRunLinks(chainedRun) : null });
 });
 app.post("/api/runs/:id/fail", requireAuth, requireScopes("runner"), requireRunOwnerOrAdmin, (req, res) => {
   const result = transitionRun(req.params.id, "failed", { current_step: "failed", error: req.body.error || "failed", completed_at: now() });
   if (!result.ok) return res.status(result.code).json({ error: result.error });
   if (!result.idempotent) addRunEvent(req.params.id, "run.failed", req.body.error || "Run failed");
+  if (!result.idempotent) recordRunRetrospectiveArtifact(result.run.id);
   res.json({ run: result.run });
 });
 app.post("/api/runs/:id/cancel", requireAuth, requireScopes("api", "mcp", "runner"), (req, res) => {
   const result = transitionRun(req.params.id, "cancelled", { current_step: "cancelled", completed_at: now() });
   if (!result.ok) return res.status(result.code).json({ error: result.error });
   if (!result.idempotent) addRunEvent(req.params.id, "run.cancelled", req.body.reason || "Run cancelled");
+  if (!result.idempotent) recordRunRetrospectiveArtifact(result.run.id);
   res.json({ run: result.run });
 });
 
@@ -2193,29 +2197,74 @@ app.post("/api/runs/:id/rerun", requireAuth, requireScopes("api", "mcp"), async 
 });
 
 app.get("/api/runs/:id/artifacts", requireAuth, (req, res) => res.json({ artifacts: listArtifacts({ runId: req.params.id }).map(withArtifactLinks) }));
-app.post("/api/runs/:id/artifacts", requireAuth, requireScopes("runner"), requireRunOwnerOrAdmin, (req, res) => {
-  const runRecord = getRun(req.params.id);
-  if (!runRecord) return res.status(404).json({ error: "run not found" });
+function storeRunArtifact(runRecord, body = {}) {
   const workflowSlug = slugify(runRecord.capabilitySlug || runRecord.capabilityName || "workflow") || "workflow";
   const runDate = String(runRecord.createdAt || now()).slice(0, 10) || "unknown-date";
-  const runDir = path.join(env.artifactDir, "runs", workflowSlug, runDate, req.params.id);
+  const runDir = path.join(env.artifactDir, "runs", workflowSlug, runDate, runRecord.id);
   mkdirSync(runDir, { recursive: true });
-  const safeName = String(req.body.name || "artifact.txt")
+  const safeName = String(body.name || "artifact.txt")
     .replace(/[/\\]/g, "-")
     .replace(/[\0\r\n]/g, "")
     .trim() || "artifact.txt";
   const filePath = path.join(runDir, safeName);
-  const content = req.body.contentBase64 ? Buffer.from(req.body.contentBase64, "base64") : Buffer.from(String(req.body.content || ""));
+  const content = body.contentBase64 ? Buffer.from(body.contentBase64, "base64") : Buffer.from(String(body.content ?? ""));
   writeFileSync(filePath, content);
   const stats = statSync(filePath);
-  const artifact = createArtifact({
-    runId: req.params.id,
+  return createArtifact({
+    runId: runRecord.id,
     name: safeName,
-    mimeType: req.body.mimeType || "application/octet-stream",
+    mimeType: body.mimeType || "application/octet-stream",
     sizeBytes: stats.size,
     path: filePath,
-    metadata: req.body.metadata || {}
+    metadata: body.metadata || {}
   });
+}
+
+function ensureRunRetrospectiveArtifact(runId) {
+  const run = getRun(runId);
+  if (!run) return null;
+  const existing = listArtifacts({ runId });
+  if (existing.some((artifact) => artifact.name === RUN_RETROSPECTIVE_ARTIFACT_NAME || artifact.metadata?.kind === "run-retrospective")) {
+    return null;
+  }
+  const artifacts = existing.map(withArtifactLinks);
+  const events = listRunEvents(runId);
+  const linkedRun = withRunLinks(run);
+  const capability = getCapability(run.capabilitySlug);
+  const linkedCapability = capability ? withCapabilityLinks(capability) : null;
+  const artifact = buildRunRetrospectiveArtifact({
+    run: linkedRun,
+    capability: linkedCapability,
+    artifacts,
+    logSummary: summarizeRunEvents(events),
+    diagnostics: runDiagnostics(run, events, artifacts),
+    generatedAt: now()
+  });
+  return storeRunArtifact(run, artifact);
+}
+
+function recordRunRetrospectiveArtifact(runId) {
+  try {
+    return ensureRunRetrospectiveArtifact(runId);
+  } catch (error) {
+    console.error(`Run retrospective artifact failed for ${runId}:`, error.message);
+    addRunEvent(runId, "run.retrospective_failed", "Run retrospective artifact generation failed", {
+      error: String(error.message || error).slice(0, 500)
+    });
+    return null;
+  }
+}
+
+function reapStuckRunsWithRetrospectives(maxMs) {
+  const runIds = reapStuckRunIds(maxMs);
+  for (const runId of runIds) recordRunRetrospectiveArtifact(runId);
+  return runIds.length;
+}
+
+app.post("/api/runs/:id/artifacts", requireAuth, requireScopes("runner"), requireRunOwnerOrAdmin, (req, res) => {
+  const runRecord = getRun(req.params.id);
+  if (!runRecord) return res.status(404).json({ error: "run not found" });
+  const artifact = storeRunArtifact(runRecord, req.body);
   res.json({ artifact });
 });
 
@@ -2323,7 +2372,7 @@ if (process.argv[1]?.endsWith("server.js")) {
   // Periodically auto-fail runs whose runner died mid-execution.
   const reaper = setInterval(() => {
     try {
-      reapStuckRuns(env.runDeadlineMs);
+      reapStuckRunsWithRetrospectives(env.runDeadlineMs);
     } catch (error) {
       console.error("Run reaper failed:", error.message);
     }

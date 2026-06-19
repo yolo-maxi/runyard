@@ -27,6 +27,7 @@
           <a href="#what">What is Runyard</a>
           <a href="#install">Install</a>
           <a href="#run-local">Run locally</a>
+          <a href="#topology">Topology</a>
           <a href="#deploy">Deploy</a>
           <a href="#auth">Auth tokens</a>
           <a href="#cli">CLI</a>
@@ -45,16 +46,26 @@
 
         <h2 id="install">Install</h2>
         <p>Requirements: Node.js 22.5+ (the server uses <code>--experimental-sqlite</code>), <code>pnpm</code>, and a writable <code>data/</code> directory.</p>
-        <pre class="json">git clone https://github.com/&lt;org&gt;/runyard
+        <pre class="json">git clone https://github.com/yolo-maxi/runyard
 cd runyard
 pnpm install
 pnpm build:vendor   # vendors highlight.js + react-flow for the workflow viewer</pre>
-        <p class="muted">Public clients can also install the CLI from a running hub with <code>bash &lt;(curl -fsSL https://hub.repo.box/install.sh)</code>. <code>hub.repo.box</code> is just an example domain — use whatever you host on.</p>
+        <p class="muted">Public clients can also install the CLI from a running hub with <code>bash &lt;(curl -fsSL https://hub.example.com/install.sh)</code>. <code>hub.example.com</code> is just an example domain — use whatever you host on.</p>
 
         <h2 id="run-local">Run locally</h2>
         <pre class="json">PORT=43117 BASE_URL=http://127.0.0.1:43117 pnpm start
 # server writes data/bootstrap-token.txt on first boot
 open http://127.0.0.1:43117/app</pre>
+
+        <h2 id="topology">Topology options</h2>
+        <p>Runyard is built for one private Hub per company or org. The Hub owns durable state; runners are disposable workers that poll over HTTPS. You can adapt the deployment shape to your threat model and hardware.</p>
+        <ul>
+          <li><strong>Small/local.</strong> Hub and one runner on the same machine. Best for development or a solo operator. Keep runner capacity low.</li>
+          <li><strong>Private org.</strong> Hub on a small VPS with TLS reverse proxy, SQLite/artifacts on local disk, runners on separate machines.</li>
+          <li><strong>Dedicated runner pool.</strong> One or more worker VPSes advertise tags and capacity. The Hub queue stays centralized; runners do not access SQLite directly.</li>
+          <li><strong>Public docs + private Hub.</strong> Serve setup docs as a static public site, while `/app`, API, MCP, runner tokens, SQLite, and artifacts stay on the private Hub.</li>
+          <li><strong>Our deployment.</strong> <code>runyard.repo.box</code> is static docs. <code>hub.repo.box</code> is the live token-protected Hub. Build/agent work runs on a separate worker host, not on the serving box.</li>
+        </ul>
 
         <h2 id="deploy">Deploy</h2>
         <ul>
@@ -70,7 +81,7 @@ open http://127.0.0.1:43117/app</pre>
         <p>Runyard uses long-lived access tokens. On first boot the server writes <code>data/bootstrap-token.txt</code> — that becomes the operator key for Web login, CLI, MCP, API, and runner registration. Issue additional tokens from the <strong>Connect</strong> tab inside the Hub.</p>
 
         <h2 id="cli">CLI</h2>
-        <pre class="json">smithers-hub login --url https://hub.repo.box --token shub_...
+        <pre class="json">smithers-hub login --url https://hub.example.com --token shub_...
 smithers-hub capabilities
 smithers-hub capability prepare-spec
 smithers-hub run prepare-spec --input '{"goal":"Prepare a rollout spec"}'
@@ -88,7 +99,7 @@ smithers-hub remotes</pre>
         <pre class="json">{
   "command": "smithers-hub-mcp",
   "env": {
-    "SMITHERS_HUB_URL": "https://hub.repo.box",
+    "SMITHERS_HUB_URL": "https://hub.example.com",
     "SMITHERS_HUB_TOKEN": "shub_..."
   }
 }</pre>
@@ -96,7 +107,7 @@ smithers-hub remotes</pre>
 
         <h2 id="runners">Runner pool</h2>
         <p>Runners are stateless processes that poll the Hub for queued work. Each runner advertises a tag set and an optional capacity:</p>
-        <pre class="json">SMITHERS_HUB_URL=https://hub.repo.box \
+        <pre class="json">SMITHERS_HUB_URL=https://hub.example.com \
 SMITHERS_HUB_TOKEN=shub_... \
 SMITHERS_RUNNER_NAME=hetzner-vps-runner \
 SMITHERS_RUNNER_LOCATION=vps \
@@ -116,7 +127,7 @@ smithers-hub-runner</pre>
         <h2 id="env">Environment variables</h2>
         <p>Required for production:</p>
         <ul>
-          <li><code>BASE_URL</code> — the public origin (e.g. <code>https://hub.repo.box</code>).</li>
+          <li><code>BASE_URL</code> — the public origin (e.g. <code>https://hub.example.com</code>).</li>
           <li><code>PORT</code> — port the server binds to.</li>
           <li><code>SMITHERS_HUB_SESSION_SECRET</code> — long random string. Sessions and CSRF derive from it.</li>
           <li><code>SMITHERS_HUB_BOOTSTRAP_TOKEN</code> or read access to <code>data/bootstrap-token.txt</code>.</li>
@@ -138,6 +149,7 @@ smithers-hub-runner</pre>
         <ul>
           <li><strong>Single auth primitive.</strong> Every surface (Web, API, CLI, MCP, runner) authenticates with a Hub access token.</li>
           <li><strong>Private deployment.</strong> Runyard is meant for one org per deployment behind a domain you control. There is no multi-tenant SaaS database.</li>
+          <li><strong>Static public docs.</strong> If you publish a marketing/setup site, make it static. Do not expose `/app`, access tokens, SQLite files, artifacts, or environment files.</li>
           <li><strong>Bootstrap token.</strong> The first token is written to <code>data/bootstrap-token.txt</code>; rotate it via the Connect tab once you are logged in.</li>
           <li><strong>Scopes.</strong> API tokens can be scoped (<code>api</code>, <code>mcp</code>, <code>approvals</code>) so approvers can be issued narrower keys.</li>
           <li><strong>Permissive runners.</strong> Runners execute work on behalf of authenticated requests. Treat the runner host as if it has the privileges of any operator who can submit a capability run; isolate sensitive runners with restricted tag sets.</li>
@@ -166,7 +178,7 @@ curl -s http://127.0.0.1:43117/openapi.json | head</pre>
           <li>The repo is structured for open-source release: <code>bin/</code>, <code>src/</code>, <code>public/</code>, <code>specs/</code>, <code>workflow-templates/</code>, <code>tests/</code>.</li>
           <li>Specs live under <code>specs/</code>. Read them before changing product behaviour — they describe intent, expectations, decisions, and acceptance checks.</li>
           <li>The gated pipeline runs <code>pnpm test</code>, <code>git diff --check</code>, and smoke-checks <code>/healthz</code>, <code>/app</code>, <code>/docs</code>, <code>/llms.txt</code> before deploy.</li>
-          <li>File issues and PRs against the public Runyard repo. Keep <code>hub.repo.box</code> references in examples only — do not hard-code private hostnames in new code or docs.</li>
+          <li>File issues and PRs against the public Runyard repo. Keep private hostnames out of code and use <code>hub.example.com</code> in docs.</li>
         </ul>
 
         <h2 id="deep-links">Deep links</h2>

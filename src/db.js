@@ -673,18 +673,26 @@ export function runOwnerTokenId(runId) {
 }
 
 // Auto-fail runs that have been executing past the deadline (e.g. a runner died mid-run).
-export function reapStuckRuns(maxMs) {
-  if (!maxMs || maxMs <= 0) return 0;
+export function reapStuckRunIds(maxMs) {
+  if (!maxMs || maxMs <= 0) return [];
   const cutoff = new Date(Date.now() - maxMs).toISOString();
   const stuck = all(
     "SELECT id FROM runs WHERE status IN ('assigned','running') AND COALESCE(started_at, assigned_at, created_at) < ?",
     [cutoff]
   );
+  const reaped = [];
   for (const row of stuck) {
     const result = transitionRun(row.id, "failed", { current_step: "timed out", error: "run exceeded execution deadline", completed_at: now() });
-    if (result.ok && !result.idempotent) addRunEvent(row.id, "run.failed", "Run exceeded execution deadline");
+    if (result.ok && !result.idempotent) {
+      addRunEvent(row.id, "run.failed", "Run exceeded execution deadline");
+      reaped.push(row.id);
+    }
   }
-  return stuck.length;
+  return reaped;
+}
+
+export function reapStuckRuns(maxMs) {
+  return reapStuckRunIds(maxMs).length;
 }
 
 export function normalizeRun(row) {

@@ -412,7 +412,7 @@ async function render() {
 
 // --- Virtual artifact/log grouping ------------------------------------------
 // Display-layer only: we build a human-readable identity folder
-// (e.g. "Fran--software-audit--05-mar-26") from the run's metadata and use
+// (e.g. "operator--software-audit--05-mar-26") from the run's metadata and use
 // it as the visual grouping label for that run's artifacts and logs. The
 // physical artifact storage (run_id + name on disk) is unchanged, so old
 // runs and existing API consumers continue to work as-is.

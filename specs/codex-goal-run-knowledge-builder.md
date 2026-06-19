@@ -1,20 +1,19 @@
-# Goal: Build A Smithers Run Knowledge Loop
+# Goal: Build A Runyard Run Knowledge Loop
 
 ## Context
 
-Fran wants Smithers Hub to improve our skills, agents, and workflows by analyzing previous runs and turning run evidence into better building blocks for future runs.
+Runyard should improve its skills, agents, and workflows by analyzing previous runs and turning run evidence into better building blocks for future runs.
 
 The product direction is:
-- Analyze completed, failed, cancelled, and waiting Smithers Hub runs.
+- Analyze completed, failed, cancelled, and waiting Runyard runs.
 - Extract durable lessons, failure patterns, missing gates, reusable prompt improvements, workflow/agent/skill improvements, and knowledge resources.
 - Make those findings visible and actionable in the Hub, not buried in logs.
 - Keep this private and local-first. Do not leak tokens, logs, paths, or secrets.
 
 Project:
-- Repo: `/home/xiko/smithers-hub`
-- Brief: `/home/xiko/clawd/memory/projects/smithers-hub.md`
-- Production: `https://hub.repo.box`
-- Repo.box is publish/serve-only. Build/test/agent execution must stay on Hetzner.
+- Repo: this Runyard repository.
+- Production/live smoke URLs are deployment-specific. Use `https://hub.example.com` in docs and configure real hosts through runner environment variables.
+- If your serving host is separate from your build host, keep build/test/agent execution on the worker host.
 
 ## What To Build
 
@@ -62,7 +61,7 @@ If you add DB/schema/API helpers, follow existing patterns and tests.
 - Use `pnpm`, never npm.
 - Follow existing code style and local helpers.
 - Keep edits scoped.
-- Do not run builds/tests on repo.box.
+- Do not run builds/tests on a serving-only host.
 - Do not expose secrets from `data/`, `.env`, tokens, or raw logs.
 - Do not overwrite unrelated changes.
 - Commit only intentional changes.
@@ -72,21 +71,18 @@ If you add DB/schema/API helpers, follow existing patterns and tests.
 Loop until clean or document a real blocker:
 - `pnpm test`
 - Verify seeded catalog/API exposes the new capability.
-- If deployed, verify live:
-  - `https://hub.repo.box/healthz`
-  - `https://hub.repo.box/app`
-  - `https://hub.repo.box/openapi.json`
-- Prefer a local or live smoke run if the runner setup is available without violating the repo.box publish-only rule. If not possible, explain why and verify the workflow source/tests instead.
+- If deployed, verify the deployment-specific `/healthz`, `/app`, and `/openapi.json` routes.
+- Prefer a local or live smoke run if the runner setup is available without violating serving/build separation. If not possible, explain why and verify the workflow source/tests instead.
 
 ## Deliverables
 
 - Code committed to `main`.
 - Push to `origin/main`.
 - Deploy to `prod` only after tests pass and the change is safe.
-- Update `/home/xiko/clawd/memory/projects/smithers-hub.md` with what shipped.
+- Update the project brief or release notes with what shipped.
 - Report:
   - commit hash
   - tests run
   - live verification
-  - capability/workflow deep link, e.g. `https://hub.repo.box/app#workflows/run-knowledge-builder`
+  - capability/workflow deep link, e.g. `https://hub.example.com/app#workflows/run-knowledge-builder`
   - any follow-up ideas

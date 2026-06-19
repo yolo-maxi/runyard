@@ -37,11 +37,11 @@
       <section class="band band-setup">
         <div class="band-inner">
           <div class="toolbar"><h1>Get running in five minutes</h1></div>
-          <p class="muted">Runyard ships as a Node + SQLite app. No external services required to start. Replace <code>hub.repo.box</code> with whatever domain you serve from.</p>
+          <p class="muted">Runyard ships as a Node + SQLite app. No external services required to start. Replace <code>hub.example.com</code> with whatever domain you serve from.</p>
           <div class="setup-grid">
             <article class="setup-step">
               <h3><span class="setup-num">1</span> Install</h3>
-              <pre class="json">git clone https://github.com/&lt;org&gt;/runyard
+              <pre class="json">git clone https://github.com/yolo-maxi/runyard
 cd runyard
 pnpm install
 pnpm build:vendor</pre>
@@ -55,17 +55,39 @@ open http://127.0.0.1:43117/app</pre>
             </article>
             <article class="setup-step">
               <h3><span class="setup-num">3</span> Connect every agent</h3>
-              <pre class="json">bash &lt;(curl -fsSL https://hub.repo.box/install.sh)
+              <pre class="json">bash &lt;(curl -fsSL https://hub.example.com/install.sh)
 smithers-hub mcp install --all</pre>
               <p class="muted">Auto-detects Claude Code/Desktop, Codex, Cursor, Windsurf, Gemini, VS Code.</p>
             </article>
             <article class="setup-step">
               <h3><span class="setup-num">4</span> Bring runners online</h3>
-              <pre class="json">SMITHERS_HUB_URL=https://hub.repo.box \
+              <pre class="json">SMITHERS_HUB_URL=https://hub.example.com \
 SMITHERS_HUB_TOKEN=shub_... \
 SMITHERS_RUNNER_TAGS=linux,node,git,shell,web,smithers \
 smithers-hub-runner</pre>
               <p class="muted">Add more on VPSes, workstations, or laptops; the Hub matches runs by tag.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+      <section class="band">
+        <div class="band-inner">
+          <div class="toolbar"><h1>Topology options</h1></div>
+          <div class="grid">
+            <article class="item">
+              <span class="status-dot status-dot-ok" aria-hidden="true"></span>
+              <h3>Private Hub</h3>
+              <p class="muted">One Hub per org, behind your own domain, with SQLite and artifacts under a backed-up data directory.</p>
+            </article>
+            <article class="item">
+              <span class="status-dot status-dot-info" aria-hidden="true"></span>
+              <h3>Runner Pool</h3>
+              <p class="muted">Put build and browser work on worker VPSes or laptops. The Hub owns the queue; runners poll over HTTPS.</p>
+            </article>
+            <article class="item">
+              <span class="status-dot status-dot-warn" aria-hidden="true"></span>
+              <h3>Public Docs, Private Ops</h3>
+              <p class="muted">Serve docs statically, keep the operations console, API, MCP, runner tokens, SQLite, and artifacts private.</p>
             </article>
           </div>
         </div>

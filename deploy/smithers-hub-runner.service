@@ -1,18 +1,18 @@
 [Unit]
-Description=Smithers Hub VPS Runner
-After=network.target smithers-hub.service
+Description=Runyard Runner
+After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/fran/smithers-hub
-EnvironmentFile=/home/fran/smithers-hub/.env
-Environment=SMITHERS_HUB_URL=http://127.0.0.1:43117
-Environment="SMITHERS_RUNNER_NAME=repo.box VPS runner"
-Environment=SMITHERS_RUNNER_TAGS=linux,node,git,shell,web,smithers,repo-box
-Environment=PATH=/home/fran/.bun/bin:/home/fran/.local/node-v22.16.0-linux-x64/bin:/home/fran/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=/home/fran/.local/node-v22.16.0-linux-x64/bin/node /home/fran/smithers-hub/src/smithers-runner.js
+WorkingDirectory=/opt/runyard
+EnvironmentFile=/etc/runyard/runner.env
+Environment=SMITHERS_HUB_URL=https://hub.example.com
+Environment="SMITHERS_RUNNER_NAME=vps-runner-1"
+Environment=SMITHERS_RUNNER_TAGS=linux,node,git,shell,web,smithers
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/env node /opt/runyard/src/smithers-runner.js
 Restart=always
 RestartSec=3
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target

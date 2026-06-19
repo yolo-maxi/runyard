@@ -1,6 +1,6 @@
 // smithers-source: authored
 // smithers-display-name: Idea to Product
-// smithers-description: Turns a raw idea into a scoped product spec, builds it, tests it, deploys it to repo.box, and returns the URL. Private-by-default, with an explicit publicAccess escape hatch.
+// smithers-description: Turns a raw idea into a scoped product spec, builds it, tests it, deploys it to a configured static host, and returns the URL. Private-by-default, with an explicit publicAccess escape hatch.
 /** @jsxImportSource smithers-orchestrator */
 import { createHash, randomBytes } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -11,11 +11,11 @@ import { createSmithers, Sequence, ClaudeCodeAgent } from "smithers-orchestrator
 import { z } from "zod/v4";
 
 const PRODUCTS_ROOT = process.env.IDEA_PRODUCTS_ROOT || path.join(os.homedir(), "idea-products");
-const STATIC_ROOT = process.env.REPOBOX_STATIC_ROOT || "/var/www/repo.box/subdomains";
-const CADDYFILE = process.env.REPOBOX_CADDYFILE || "/etc/caddy/Caddyfile";
-const PUBLIC_SUFFIX = process.env.REPOBOX_PUBLIC_SUFFIX || "repo.box";
-const REPOBOX_HOST = process.env.REPOBOX_HOST || "fran@204.168.190.248";
-const REPOBOX_SSH_KEY = process.env.REPOBOX_SSH_KEY || path.join(os.homedir(), ".ssh/id_ed25519");
+const STATIC_ROOT = process.env.REPOBOX_STATIC_ROOT || process.env.STATIC_SITE_ROOT || "/var/www/runyard/subdomains";
+const CADDYFILE = process.env.REPOBOX_CADDYFILE || process.env.STATIC_SITE_CADDYFILE || "/etc/caddy/Caddyfile";
+const PUBLIC_SUFFIX = process.env.REPOBOX_PUBLIC_SUFFIX || process.env.STATIC_SITE_PUBLIC_SUFFIX || "example.com";
+const REPOBOX_HOST = process.env.REPOBOX_HOST || process.env.STATIC_SITE_HOST || "";
+const REPOBOX_SSH_KEY = process.env.REPOBOX_SSH_KEY || process.env.STATIC_SITE_SSH_KEY || "";
 const REPOBOX_DEPLOY_MODE = process.env.REPOBOX_DEPLOY_MODE || "ssh";
 const AGENT_PATH_PREFIX = [
   path.join(os.homedir(), ".npm-global/bin"),
@@ -28,9 +28,9 @@ mkdirSync(PRODUCTS_ROOT, { recursive: true });
 
 const ideaSchema = z.object({
   idea: z.string().describe("Raw product idea."),
-  preferredSubdomain: z.string().default("").describe("Optional repo.box subdomain prefix."),
+  preferredSubdomain: z.string().default("").describe("Optional static-site subdomain prefix."),
   constraints: z.string().default("").describe("Optional product, design, stack, or business constraints."),
-  deploy: z.boolean().default(true).describe("Deploy to repo.box after gates pass."),
+  deploy: z.boolean().default(true).describe("Deploy to the configured static host after gates pass."),
   publicAccess: z.boolean().default(false).describe("If true, deploy without auth. Default false.")
 });
 
@@ -210,7 +210,7 @@ export default smithers((ctx) => {
 
         {expanded && (
           <Task id="narrow" output={outputs.narrow} agent={strategist} timeoutMs={10 * 60 * 1000}>
-            {`Narrow the expanded directions into one shippable MVP spec for a repo.box-hosted product.\n\n` +
+            {`Narrow the expanded directions into one shippable MVP spec for a static-hosted product.\n\n` +
               `Raw idea: ${ctx.input.idea}\nPreferred subdomain: ${ctx.input.preferredSubdomain || "(choose one)"}\n` +
               `Expanded context:\n${JSON.stringify(expanded, null, 2)}\n\n` +
               `Choose a short lowercase subdomain slug. Scope must fit one focused build pass. Include concrete acceptance criteria and a test plan. ` +
@@ -293,6 +293,9 @@ export default smithers((ctx) => {
                   target,
                   verify: "deploy=false"
                 };
+              }
+              if (REPOBOX_DEPLOY_MODE !== "local" && (!REPOBOX_HOST || !REPOBOX_SSH_KEY)) {
+                throw new Error("GATE FAILED: deploy=true requires REPOBOX_HOST/STATIC_SITE_HOST and REPOBOX_SSH_KEY/STATIC_SITE_SSH_KEY on the runner, or REPOBOX_DEPLOY_MODE=local.");
               }
               copyDist(dist, target);
               rmSync(path.join(target, ".git"), { recursive: true, force: true });

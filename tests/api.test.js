@@ -94,7 +94,7 @@ function raw(pathname, options = {}, bearer = token) {
 function signedTelegramInitData({ botToken, userId, authDate = Math.floor(Date.now() / 1000), hashOverride = "", user = {} }) {
   const params = new URLSearchParams({
     query_id: "AAE-test-query",
-    user: JSON.stringify({ id: userId, first_name: "Fran", username: "fran", ...user }),
+    user: JSON.stringify({ id: userId, first_name: "Operator", username: "operator", ...user }),
     auth_date: String(authDate)
   });
   const dataCheckString = [...params.entries()]
@@ -184,13 +184,72 @@ describe("Smithers Hub API", () => {
     await api(`/api/runs/${created.run.id}/complete`, { method: "POST", body: { output: { ok: true } } });
     const detail = await api(`/api/runs/${created.run.id}`);
     assert.equal(detail.run.status, "succeeded");
-    assert.equal(detail.artifacts.length, 1);
-    assert.equal(readFileSync(detail.artifacts[0].path, "utf8"), "# result");
-    assert.ok(detail.artifacts[0].path.includes(path.join("artifacts", "runs", "hello", detail.run.createdAt.slice(0, 10), created.run.id)));
-    assert.equal(detail.artifacts[0].deepLink, `/app#runs/${created.run.id}/artifacts/${detail.artifacts[0].id}`);
-    assert.equal(detail.artifacts[0].deepLinkRun, `/app#runs/${created.run.id}`);
+    assert.equal(detail.artifacts.length, 2);
+    const resultArtifact = detail.artifacts.find((artifact) => artifact.name === "result.md");
+    const retrospective = detail.artifacts.find((artifact) => artifact.name === "run-retrospective.json");
+    assert.ok(resultArtifact);
+    assert.ok(retrospective);
+    assert.equal(readFileSync(resultArtifact.path, "utf8"), "# result");
+    assert.ok(resultArtifact.path.includes(path.join("artifacts", "runs", "hello", detail.run.createdAt.slice(0, 10), created.run.id)));
+    assert.equal(resultArtifact.deepLink, `/app#runs/${created.run.id}/artifacts/${resultArtifact.id}`);
+    assert.equal(resultArtifact.deepLinkRun, `/app#runs/${created.run.id}`);
+    const retrospectiveContent = JSON.parse(readFileSync(retrospective.path, "utf8"));
+    assert.equal(retrospectiveContent.schemaVersion, "smithers.hub.run-retrospective.v1");
+    assert.equal(retrospectiveContent.run.id, created.run.id);
+    assert.equal(retrospectiveContent.run.status, "succeeded");
+    assert.equal(retrospectiveContent.policy.autoMutations, false);
+    assert.equal(retrospectiveContent.evidence.artifactInventory.some((artifact) => artifact.name === "result.md"), true);
     const runArtifacts = await api(`/api/runs/${created.run.id}/artifacts`);
-    assert.equal(runArtifacts.artifacts[0].deepLink, `/app#runs/${created.run.id}/artifacts/${runArtifacts.artifacts[0].id}`);
+    assert.ok(runArtifacts.artifacts.every((artifact) => artifact.deepLink === `/app#runs/${created.run.id}/artifacts/${artifact.id}`));
+  });
+
+  it("stores a retrospective artifact for failed runs without workflow-authored output", async () => {
+    const created = await api("/api/capabilities/hello/run", {
+      method: "POST",
+      body: { input: { goal: "fail with retrospective" } }
+    });
+    await api(`/api/runs/${created.run.id}/start`, { method: "POST", body: {} });
+    await api(`/api/runs/${created.run.id}/events`, {
+      method: "POST",
+      body: { type: "workflow.step", message: "validating failure capture" }
+    });
+    await api(`/api/runs/${created.run.id}/fail`, { method: "POST", body: { error: "synthetic test failure" } });
+
+    const artifacts = await api(`/api/runs/${created.run.id}/artifacts`);
+    const retrospective = artifacts.artifacts.find((artifact) => artifact.name === "run-retrospective.json");
+    assert.ok(retrospective);
+    const content = JSON.parse(readFileSync(retrospective.path, "utf8"));
+    assert.equal(content.run.status, "failed");
+    assert.equal(content.outcome.succeeded, false);
+    assert.equal(content.outcome.diagnostics.headline, "synthetic test failure");
+    assert.equal(content.notes.some((note) => note.includes("did not modify workflows")), true);
+  });
+
+  it("stores a retrospective artifact when a stale run is auto-failed", async () => {
+    const previousDeadline = env.runDeadlineMs;
+    env.runDeadlineMs = 1;
+    try {
+      const created = await api("/api/capabilities/hello/run", {
+        method: "POST",
+        body: { input: { goal: "timeout retrospective" } }
+      });
+      updateRun(created.run.id, {
+        status: "running",
+        current_step: "stale runner",
+        assigned_at: "2000-01-01T00:00:00.000Z",
+        started_at: "2000-01-01T00:00:00.000Z"
+      });
+
+      await api("/api/runs");
+      const detail = await api(`/api/runs/${created.run.id}`);
+      assert.equal(detail.run.status, "failed");
+      const retrospective = detail.artifacts.find((artifact) => artifact.name === "run-retrospective.json");
+      assert.ok(retrospective);
+      const content = JSON.parse(readFileSync(retrospective.path, "utf8"));
+      assert.equal(content.outcome.diagnostics.reason, "run exceeded execution deadline");
+    } finally {
+      env.runDeadlineMs = previousDeadline;
+    }
   });
 
   it("queues the next chained workflow when a run completes", async () => {
@@ -371,8 +430,8 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
     const restoreFetch = captureTelegramFetch(calls);
     const restoreEnv = withTelegramEnv({
       telegramBotToken: botToken,
-      telegramApprovalChatId: "475212779",
-      telegramApprovalUserIds: "475212779"
+      telegramApprovalChatId: "123456789",
+      telegramApprovalUserIds: "123456789"
     });
     try {
       const { created, approval } = await createCheckpointApproval("implement-change-gated", {
@@ -380,7 +439,7 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
         deploy: false
       });
 
-      const initData = signedTelegramInitData({ botToken, userId: 475212779 });
+      const initData = signedTelegramInitData({ botToken, userId: 123456789 });
       const auth = await raw("/api/auth/telegram-webapp", { method: "POST", body: { initData } }, null);
       assert.equal(auth.status, 200);
       const cookie = firstCookie(auth.headers.get("set-cookie"));
@@ -388,7 +447,7 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
 
       const me = await raw("/api/me", { headers: { cookie } }, null);
       assert.equal(me.status, 200);
-      assert.equal(me.data.token.id, "telegram-webapp:475212779");
+      assert.equal(me.data.token.id, "telegram-webapp:123456789");
       assert.deepEqual(me.data.token.scopes, ["approvals"]);
 
       assert.equal((await raw(`/api/approvals/${approval.id}`, { headers: { cookie } }, null)).status, 200);
@@ -402,7 +461,7 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
       );
       assert.equal(changed.status, 200);
       assert.equal(changed.data.approval.decision, "changes_requested");
-      assert.equal(changed.data.approval.resolvedBy, "telegram:fran");
+      assert.equal(changed.data.approval.resolvedBy, "telegram:operator");
     } finally {
       restoreEnv();
       restoreFetch();
@@ -413,11 +472,11 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
     const botToken = "123456:test-bot-secret";
     const restoreEnv = withTelegramEnv({
       telegramBotToken: botToken,
-      telegramApprovalChatId: "475212779",
-      telegramApprovalUserIds: "475212779"
+      telegramApprovalChatId: "123456789",
+      telegramApprovalUserIds: "123456789"
     });
     try {
-      const initData = signedTelegramInitData({ botToken, userId: 475212779, hashOverride: "0".repeat(64) });
+      const initData = signedTelegramInitData({ botToken, userId: 123456789, hashOverride: "0".repeat(64) });
       const auth = await raw("/api/auth/telegram-webapp", { method: "POST", body: { initData } }, null);
       assert.equal(auth.status, 401);
       assert.equal(auth.data.error, "invalid telegram signature");
@@ -430,8 +489,8 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
     const botToken = "123456:test-bot-secret";
     const restoreEnv = withTelegramEnv({
       telegramBotToken: botToken,
-      telegramApprovalChatId: "475212779",
-      telegramApprovalUserIds: "475212779"
+      telegramApprovalChatId: "123456789",
+      telegramApprovalUserIds: "123456789"
     });
     try {
       const initData = signedTelegramInitData({ botToken, userId: 111 });
@@ -447,12 +506,12 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
     const botToken = "123456:test-bot-secret";
     const restoreEnv = withTelegramEnv({
       telegramBotToken: botToken,
-      telegramApprovalChatId: "475212779",
-      telegramApprovalUserIds: "475212779"
+      telegramApprovalChatId: "123456789",
+      telegramApprovalUserIds: "123456789"
     });
     try {
       const authDate = Math.floor(Date.now() / 1000) - 3600;
-      const initData = signedTelegramInitData({ botToken, userId: 475212779, authDate });
+      const initData = signedTelegramInitData({ botToken, userId: 123456789, authDate });
       const auth = await raw("/api/auth/telegram-webapp", { method: "POST", body: { initData } }, null);
       assert.equal(auth.status, 401);
       assert.equal(auth.data.error, "telegram auth expired");
@@ -474,7 +533,7 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
     try {
       const created = await api("/api/capabilities/implement-change-gated/run", {
         method: "POST",
-        body: { input: { workPrompt: "No noisy run-start DM", repo: "/home/xiko/smithers-hub", targetBranch: "main", deploy: true } }
+        body: { input: { workPrompt: "No noisy run-start DM", repo: "/tmp/runyard", targetBranch: "main", deploy: true } }
       });
       assert.equal(created.run.status, "queued");
       const approval = (await api("/api/approvals?status=pending")).approvals.find((item) => item.runId === created.run.id);
@@ -536,10 +595,10 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
           approvalScope: "workflow_checkpoint",
           capability: "hello",
           input: {
-            requestedBy: "Fran <ops>",
+            requestedBy: "Operator <ops>",
             proposedAction: "Approve the deploy checkpoint after tests pass.",
             change: "Ship <b>approval</b> DM formatting & keep JSON out",
-            repo: "/home/xiko/smithers-hub",
+            repo: "/tmp/runyard",
             targetBranch: "main",
             deploy: true
           }
@@ -556,8 +615,8 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
       assert.match(send.body.text, /<b>Proposed change<\/b>\n<pre>Ship &lt;b&gt;approval&lt;\/b&gt; DM formatting &amp; keep JSON out<\/pre>/);
       assert.match(send.body.text, /<b>Decision \/ action<\/b>\nApprove the deploy checkpoint after tests pass\./);
       assert.match(send.body.text, /<b>Workflow<\/b>\nHello \(Smithers proof\) \(hello\)/);
-      assert.match(send.body.text, /<b>Originator:<\/b> Fran &lt;ops&gt;/);
-      assert.match(send.body.text, /<b>Project \/ repo \/ path:<\/b> \/home\/xiko\/smithers-hub/);
+      assert.match(send.body.text, /<b>Originator:<\/b> Operator &lt;ops&gt;/);
+      assert.match(send.body.text, /<b>Project \/ repo \/ path:<\/b> \/tmp\/runyard/);
       assert.match(send.body.text, /<b>Target branch:<\/b> main/);
       assert.match(send.body.text, /<b>Deploy:<\/b> yes/);
       assert.match(send.body.text, /<b>Run<\/b>\n<code>run_[a-f0-9]{20}<\/code> \(queued\)/);
@@ -1081,7 +1140,7 @@ describe("Idea to Product capability", () => {
     const tpl = path.join(process.cwd(), "workflow-templates", "workflows", "idea-to-product.tsx");
     assert.ok(existsSync(tpl));
     const src = readFileSync(tpl, "utf8");
-    assert.match(src, /repo\.box/);
+    assert.match(src, /configured static host|STATIC_SITE_HOST/);
     assert.match(src, /publicAccess/);
     assert.match(src, /Set-Cookie/);
     assert.match(src, /pnpm build/);

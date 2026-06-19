@@ -1,18 +1,19 @@
 # Acceptance and Manual Tests
 
-This file captures user-facing acceptance criteria and manual tests for Smithers Hub.
+This file captures user-facing acceptance criteria and manual tests for Runyard.
 
 ## Acceptance Criteria
 
 ### Deployment
 
-- `https://hub.repo.box/` serves the public landing page.
-- `https://hub.repo.box/docs` serves installation and usage docs.
+- `https://runyard.repo.box/` serves the public static landing page.
+- `https://runyard.repo.box/docs` serves public installation and topology docs.
+- `https://hub.repo.box/` may serve the same product landing inside the live deployment, but the live operations surface is `https://hub.repo.box/app`.
 - `https://hub.repo.box/app` serves the token-protected operations console.
 - `https://hub.repo.box/llms.txt` describes the agent-facing surface.
 - `https://hub.repo.box/openapi.json` describes the HTTP API.
 - `smithers-hub.service` is active on repo.box.
-- `smithers-hub-runner.service` is active on repo.box.
+- Higher-capacity runners are active on worker machines, not on the serving box.
 
 ### Authentication
 
@@ -75,7 +76,7 @@ This file captures user-facing acceptance criteria and manual tests for Smithers
 
 - A runner can register with tags.
 - A runner heartbeat is visible in the Web Hub.
-- The repo.box runner can execute matching queued seed capabilities.
+- A matching runner can execute queued seed capabilities.
 - Local machines can start a runner with `SMITHERS_HUB_URL` and `SMITHERS_HUB_TOKEN`.
 
 ### MCP
@@ -127,7 +128,7 @@ Covered by the current automated tests:
 ### Web Smoke
 
 1. Open `https://hub.repo.box/app`.
-2. Log in with the bootstrap token from `/home/fran/smithers-hub/data/bootstrap-token.txt`.
+2. Log in with the deployment bootstrap token.
 3. Open the Capability Catalog.
 4. Run `Prepare Spec` with a short goal.
 5. Open the run detail page.
@@ -146,7 +147,7 @@ Covered by the current automated tests:
 ### CLI Smoke
 
 ```bash
-smithers-hub login --url https://hub.repo.box --token shub_...
+smithers-hub login --url https://hub.example.com --token shub_...
 smithers-hub capabilities
 smithers-hub run research-topic --input '{"topic":"Smithers Hub CLI smoke","depth":"quick"}'
 smithers-hub runs
@@ -169,7 +170,7 @@ Expected result:
 ### Runner Smoke
 
 ```bash
-SMITHERS_HUB_URL=https://hub.repo.box \
+SMITHERS_HUB_URL=https://hub.example.com \
 SMITHERS_HUB_TOKEN=shub_... \
 SMITHERS_RUNNER_TAGS=linux,node,git,shell,web,smithers \
 smithers-hub-runner

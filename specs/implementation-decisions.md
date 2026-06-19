@@ -1,12 +1,12 @@
 # Implementation Decisions
 
-This file records the implementation decisions made for the current Smithers Hub build.
+This file records the implementation decisions made for the current Runyard build.
 
 ## Product and Deployment Model
 
 ### Decision: Private installable product, not hosted SaaS
 
-Smithers Hub is built as one private deployment per company.
+Runyard is built as one private deployment per company.
 
 Reasoning:
 
@@ -16,25 +16,25 @@ Reasoning:
 
 Expectation:
 
-- `hub.repo.box` is one company deployment.
+- `hub.example.com` is a representative company deployment.
 - Another org can deploy the same repo to a different machine/domain.
 
-### Decision: `hub.repo.box` is the production deployment
+### Decision: public docs can be split from the private Hub
 
-The first deployment is on the repo.box VPS, not the Hetzner primary machine.
+The open-source project supports a public static landing/setup site while the live operations Hub remains private.
 
 Reasoning:
 
-- `*.repo.box` DNS points to the repo.box VPS.
-- Deploying the app on Hetzner would not serve the requested domain without extra routing.
+- Setup docs are safe to publish broadly.
+- The Web console, API, MCP endpoint, runner tokens, SQLite database, artifacts, and environment files are operational surfaces and should stay on the private Hub.
+- A public docs site lets outsiders understand the topology without exposing our live deployment.
 
-Deployment details:
+Current project deployment:
 
-- App path: `/home/fran/smithers-hub`
-- Domain: `https://hub.repo.box`
-- Hub service: `smithers-hub.service`
-- Runner service: `smithers-hub-runner.service`
-- Caddy route: `hub.repo.box -> 127.0.0.1:43117`
+- Public static docs: `https://runyard.repo.box`.
+- Live operations Hub: `https://hub.repo.box`.
+- The serving box handles production web traffic.
+- Higher-capacity runner work is assigned to a separate worker host so builds do not compete with serving traffic.
 
 ### Decision: Port `43117`
 
@@ -54,7 +54,7 @@ The app uses Node, Express, and Node's built-in `node:sqlite` module.
 Reasoning:
 
 - The existing Smithers Studio codebase used Node/Express patterns.
-- Node 22 was already installed on repo.box for Springfield.
+- Node 22 is the current target runtime.
 - SQLite fits the private self-hosted product and local disk backup model.
 - Avoiding extra database services keeps installation and backup simple.
 
@@ -168,14 +168,15 @@ Reasoning:
 - It avoids overbuilding a full scheduler or permission engine.
 - It keeps the future path open for stricter dispatch.
 
-### Decision: The repo.box VPS has a default runner
+### Decision: Runners should be separate from the serving box when capacity grows
 
-The deployed Hub includes `smithers-hub-runner.service`.
+Single-machine installs may run a runner beside the Hub, but production runner capacity should live on worker machines.
 
 Reasoning:
 
-- The product should work immediately after deployment.
-- A user should be able to run seed capabilities before installing a separate local runner.
+- The Hub server is lightweight and should remain responsive.
+- Agent/build/browser work can consume CPU, memory, disk, and network.
+- Keeping workers separate makes queue capacity visible and safer to tune.
 
 ### Decision: Runner pool capacity is advertised per-runner; the queue stays centralized
 
@@ -189,7 +190,7 @@ Reasoning:
 
 Caveat:
 
-- `repo.box` should not be used as a build/runner host. The systemd unit shipped in `deploy/` exists for first-boot convenience but stays at `capacity=1` unless explicitly overridden. Pool capacity should target a separate VPS so deploying the Hub never competes with running builds on the same machine.
+- The systemd unit shipped in `deploy/` is a generic template. Operators should adapt paths, env files, runner tags, and capacity for their own host layout.
 
 ### Decision: Built-in workflow adapters for seed capabilities
 
@@ -374,7 +375,7 @@ Future hardening:
 
 ### Decision: Secrets are not committed
 
-Production secrets live in `/home/fran/smithers-hub/.env`, excluded from source sync.
+Production secrets live in a deployment-specific env file such as `/etc/runyard/runyard.env`, excluded from source sync.
 
 Reasoning:
 
