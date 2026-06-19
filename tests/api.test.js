@@ -244,7 +244,7 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
     assert.equal(res.status, 503);
   });
 
-  it("sends approval notifications to the private Telegram approval chat without a topic thread", async () => {
+  it("sends readable private Telegram approvals with a miniapp open button", async () => {
     const calls = [];
     const restoreFetch = captureTelegramFetch(calls);
     const restoreEnv = withTelegramEnv({
@@ -257,28 +257,36 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
     try {
       const created = await api("/api/capabilities/implement-change-gated/run", {
         method: "POST",
-        body: { input: { workPrompt: "Private approval notification", deploy: true } }
+        body: { input: { workPrompt: "Private approval notification", repo: "/home/xiko/smithers-hub", targetBranch: "main", deploy: true } }
       });
       assert.equal(created.run.status, "waiting_approval");
       const send = calls.find((call) => call.url.endsWith("/sendMessage"));
       assert.ok(send);
       assert.equal(send.body.chat_id, "12345");
       assert.equal(Object.hasOwn(send.body, "message_thread_id"), false);
-      assert.match(send.body.text, /Title: Approve Implement Change \(gated\)/);
+      assert.match(send.body.text, /Requested by: token: bootstrap-admin/);
       assert.match(send.body.text, /Workflow: Implement Change \(gated\) \(implement-change-gated\)/);
-      assert.match(send.body.text, /Deploy: yes/);
-      assert.match(send.body.text, /Run link: https:\/\/hub\.example\/app#runs\//);
-      assert.match(send.body.text, /Approval link: https:\/\/hub\.example\/app#approvals\//);
+      assert.match(send.body.text, /Project: \/home\/xiko\/smithers-hub/);
+      assert.match(send.body.text, /Target branch: main/);
+      assert.match(send.body.text, /Deploy: true/);
+      assert.match(send.body.text, /Run: run_[a-f0-9]{20} \(waiting_approval\)/);
+      assert.match(send.body.text, /Approval: appr_[a-f0-9]{20}/);
+      assert.match(send.body.text, /Working on: Private approval notification/);
+      assert.match(send.body.text, /Proposed action: Queue Implement Change \(gated\) for runner execution, with deploy enabled, targeting main\./);
+      assert.doesNotMatch(send.body.text, /Approval link:/);
+      assert.doesNotMatch(send.body.text, /"workPrompt"|\{|\}/);
       const buttons = send.body.reply_markup.inline_keyboard.flat();
-      assert.ok(buttons.find((button) => button.text === "Open approval" && button.url.includes("/app#approvals/")));
+      assert.ok(buttons.find((button) => button.text === "Open approval" && button.web_app?.url.includes("/app#approvals/")));
       assert.ok(buttons.find((button) => button.text === "Approve" && /^approval:approve:appr_[a-f0-9]{20}$/.test(button.callback_data)));
+      assert.ok(buttons.find((button) => button.text === "Request changes" && /^approval:request_changes:appr_[a-f0-9]{20}$/.test(button.callback_data)));
+      assert.ok(buttons.find((button) => button.text === "Reject" && /^approval:reject:appr_[a-f0-9]{20}$/.test(button.callback_data)));
     } finally {
       restoreEnv();
       restoreFetch();
     }
   });
 
-  it("resolves Telegram webhook callback approve and reject decisions", async () => {
+  it("resolves Telegram approve callbacks and removes action buttons", async () => {
     const calls = [];
     const restoreFetch = captureTelegramFetch(calls);
     const restoreEnv = withTelegramEnv({
@@ -306,7 +314,7 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
               id: "cb-approve",
               data: `approval:approve:${approveApproval.id}`,
               from: { id: 42, username: "fran" },
-              message: { chat: { id: 12345 } }
+              message: { message_id: 11, chat: { id: 12345 } }
             }
           }
         },
@@ -314,8 +322,33 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
       );
       assert.equal(approved.status, 200);
       assert.equal(approved.data.approval.status, "approved");
+      assert.equal(approved.data.approval.decision, "approved");
       assert.equal((await api(`/api/runs/${approveRun.run.id}`)).run.status, "queued");
+      const ack = calls.find((call) => call.url.endsWith("/answerCallbackQuery") && call.body.callback_query_id === "cb-approve");
+      assert.ok(ack);
+      assert.equal(ack.body.text, "Approved.");
+      const edit = calls.find((call) => call.url.endsWith("/editMessageReplyMarkup") && call.body.message_id === 11);
+      assert.ok(edit);
+      assert.equal(String(edit.body.chat_id), "12345");
+      assert.deepEqual(edit.body.reply_markup.inline_keyboard, []);
+    } finally {
+      restoreEnv();
+      restoreFetch();
+    }
+  });
 
+  it("resolves Telegram reject callbacks and removes action buttons", async () => {
+    const calls = [];
+    const restoreFetch = captureTelegramFetch(calls);
+    const restoreEnv = withTelegramEnv({
+      telegramBotToken: "test-bot-token",
+      telegramApprovalChatId: "12345",
+      telegramChatId: "",
+      telegramThreadId: "",
+      telegramWebhookSecret: "telegram-test-secret",
+      baseUrl: "https://hub.example"
+    });
+    try {
       const rejectRun = await api("/api/capabilities/implement-change-gated/run", {
         method: "POST",
         body: { input: { workPrompt: "Reject from Telegram", deploy: false } }
@@ -332,7 +365,7 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
               id: "cb-reject",
               data: `reject:${rejectApproval.id}`,
               from: { id: 42, username: "fran" },
-              message: { chat: { id: 12345 } }
+              message: { message_id: 12, chat: { id: 12345 } }
             }
           }
         },
@@ -340,10 +373,67 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
       );
       assert.equal(rejected.status, 200);
       assert.equal(rejected.data.approval.status, "rejected");
+      assert.equal(rejected.data.approval.decision, "rejected");
       assert.equal((await api(`/api/runs/${rejectRun.run.id}`)).run.status, "cancelled");
-      const ackCalls = calls.filter((call) => call.url.endsWith("/answerCallbackQuery"));
-      assert.ok(ackCalls.find((call) => call.body.callback_query_id === "cb-approve"));
-      assert.ok(ackCalls.find((call) => call.body.callback_query_id === "cb-reject"));
+      const ack = calls.find((call) => call.url.endsWith("/answerCallbackQuery") && call.body.callback_query_id === "cb-reject");
+      assert.ok(ack);
+      assert.equal(ack.body.text, "Rejected.");
+      const edit = calls.find((call) => call.url.endsWith("/editMessageReplyMarkup") && call.body.message_id === 12);
+      assert.ok(edit);
+      assert.deepEqual(edit.body.reply_markup.inline_keyboard, []);
+    } finally {
+      restoreEnv();
+      restoreFetch();
+    }
+  });
+
+  it("resolves Telegram request-changes callbacks and removes action buttons", async () => {
+    const calls = [];
+    const restoreFetch = captureTelegramFetch(calls);
+    const restoreEnv = withTelegramEnv({
+      telegramBotToken: "test-bot-token",
+      telegramApprovalChatId: "12345",
+      telegramChatId: "",
+      telegramThreadId: "",
+      telegramWebhookSecret: "telegram-test-secret",
+      baseUrl: "https://hub.example"
+    });
+    try {
+      const changesRun = await api("/api/capabilities/implement-change-gated/run", {
+        method: "POST",
+        body: { input: { workPrompt: "Change this from Telegram", deploy: false } }
+      });
+      const changesApproval = (await api("/api/approvals?status=pending")).approvals.find((item) => item.runId === changesRun.run.id);
+      assert.ok(changesApproval);
+      const changed = await raw(
+        "/api/telegram/webhook",
+        {
+          method: "POST",
+          headers: { "x-telegram-bot-api-secret-token": "telegram-test-secret" },
+          body: {
+            callback_query: {
+              id: "cb-changes",
+              data: `approval:request_changes:${changesApproval.id}`,
+              from: { id: 42, username: "fran" },
+              message: { message_id: 13, chat: { id: 12345 } }
+            }
+          }
+        },
+        null
+      );
+      assert.equal(changed.status, 200);
+      assert.equal(changed.data.approval.status, "rejected");
+      assert.equal(changed.data.approval.decision, "changes_requested");
+      assert.equal(changed.data.approval.comment, "Changes requested from Telegram");
+      const run = (await api(`/api/runs/${changesRun.run.id}`)).run;
+      assert.equal(run.status, "cancelled");
+      assert.equal(run.currentStep, "changes requested; run cancelled");
+      const ack = calls.find((call) => call.url.endsWith("/answerCallbackQuery") && call.body.callback_query_id === "cb-changes");
+      assert.ok(ack);
+      assert.equal(ack.body.text, "Changes requested.");
+      const edit = calls.find((call) => call.url.endsWith("/editMessageReplyMarkup") && call.body.message_id === 13);
+      assert.ok(edit);
+      assert.deepEqual(edit.body.reply_markup.inline_keyboard, []);
     } finally {
       restoreEnv();
       restoreFetch();
@@ -393,8 +483,28 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
     const detail = await api(`/api/approvals/${approval.id}`);
     assert.equal(detail.approval.deepLink, `/app#approvals/${approval.id}`);
     assert.equal(detail.approval.context.workflow.slug, "idea-to-product");
+    assert.equal(detail.approval.context.requestedBy, "token: bootstrap-admin");
     const appPage = await fetch(`${baseUrl}/app#approvals/${approval.id}`);
     assert.equal(appPage.status, 200);
+  });
+
+  it("resolves web/API request-changes decisions with a comment", async () => {
+    const created = await api("/api/capabilities/implement-change-gated/run", {
+      method: "POST",
+      body: { input: { workPrompt: "Needs more detail", deploy: false } }
+    });
+    const approval = (await api("/api/approvals?status=pending")).approvals.find((item) => item.runId === created.run.id);
+    assert.ok(approval);
+    const resolved = await api(`/api/approvals/${approval.id}/request-changes`, {
+      method: "POST",
+      body: { comment: "Please include the target branch and rollout plan." }
+    });
+    assert.equal(resolved.approval.status, "rejected");
+    assert.equal(resolved.approval.decision, "changes_requested");
+    assert.equal(resolved.approval.comment, "Please include the target branch and rollout plan.");
+    const run = (await api(`/api/runs/${created.run.id}`)).run;
+    assert.equal(run.status, "cancelled");
+    assert.equal(run.currentStep, "changes requested; run cancelled");
   });
 
   it("has a readiness probe and run pagination metadata", async () => {

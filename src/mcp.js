@@ -22,6 +22,7 @@ const tools = [
   { name: "list_pending_approvals", description: "List pending approvals.", inputSchema: { type: "object", properties: {} } },
   { name: "approve_run", description: "Approve a Hub approval request.", inputSchema: { type: "object", required: ["approvalId"], properties: { approvalId: { type: "string" }, comment: { type: "string" } } } },
   { name: "reject_run", description: "Reject a Hub approval request.", inputSchema: { type: "object", required: ["approvalId"], properties: { approvalId: { type: "string" }, comment: { type: "string" } } } },
+  { name: "request_changes_run", description: "Request changes for a Hub approval request.", inputSchema: { type: "object", required: ["approvalId"], properties: { approvalId: { type: "string" }, comment: { type: "string" } } } },
   { name: "cancel_run", description: "Cancel a run.", inputSchema: { type: "object", required: ["runId"], properties: { runId: { type: "string" }, reason: { type: "string" } } } },
   { name: "search_artifacts", description: "Search artifacts.", inputSchema: { type: "object", properties: { query: { type: "string" } } } },
   { name: "list_agents", description: "List reusable Hub agents.", inputSchema: { type: "object", properties: {} } },
@@ -47,6 +48,7 @@ async function callTool(name, args = {}) {
   if (name === "list_pending_approvals") return result(await client.get("/api/approvals?status=pending"));
   if (name === "approve_run") return result(await client.post(`/api/approvals/${encodeURIComponent(args.approvalId)}/approve`, { comment: args.comment || "Approved through MCP" }));
   if (name === "reject_run") return result(await client.post(`/api/approvals/${encodeURIComponent(args.approvalId)}/reject`, { comment: args.comment || "Rejected through MCP" }));
+  if (name === "request_changes_run") return result(await client.post(`/api/approvals/${encodeURIComponent(args.approvalId)}/request-changes`, { comment: args.comment || "Changes requested through MCP" }));
   if (name === "cancel_run") return result(await client.post(`/api/runs/${encodeURIComponent(args.runId)}/cancel`, { reason: args.reason || "Cancelled through MCP" }));
   if (name === "search_artifacts") return result(await client.get(`/api/artifacts?q=${encodeURIComponent(args.query || "")}`));
   if (name === "list_agents") return result(await client.get("/api/agents"));

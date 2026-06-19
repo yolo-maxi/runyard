@@ -63,6 +63,12 @@ button.danger {
   border-color: var(--danger);
 }
 
+button.warning {
+  color: #fff;
+  background: var(--warn);
+  border-color: var(--warn);
+}
+
 button:disabled {
   opacity: 0.55;
   cursor: not-allowed;
@@ -1165,6 +1171,11 @@ details.advanced[open] summary {
   line-height: 1.55;
 }
 
+.approval-proposed-change {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .approval-facts {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
@@ -1198,6 +1209,13 @@ details.advanced[open] summary {
   gap: 5px;
   color: #334155;
   font-size: 14px;
+}
+
+.approval-resolved {
+  border: 1px solid var(--line);
+  background: var(--soft);
+  border-radius: 8px;
+  padding: 12px;
 }
 
 .approval-side .json {

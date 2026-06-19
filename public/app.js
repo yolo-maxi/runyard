@@ -918,6 +918,19 @@ function approvalDeployLine(approval) {
   return `<p><span class="muted">Deploy</span><br><span class="chip ${deploy ? "chip-runner" : "chip-version"}">${deploy ? "yes" : "no"}</span></p>`;
 }
 
+function approvalFact(label, value) {
+  if (!value) return "";
+  return `<p><span class="muted">${esc(label)}</span><br>${value}</p>`;
+}
+
+function approvalDecisionLabel(approval) {
+  const decision = approval?.decision || approval?.status || "";
+  if (decision === "approved") return "Approved";
+  if (decision === "changes_requested") return "Changes requested";
+  if (decision === "rejected") return "Rejected";
+  return decision || "Pending";
+}
+
 function approvalList(approvals) {
   if (!approvals.length) return `<p class="muted">No pending approvals.</p>`;
   return `<div class="approval-list">${approvals.map((approval) => `<article class="item approval-card" id="approval-${esc(approval.id)}">
@@ -957,6 +970,7 @@ async function renderApprovalDetail(id) {
   const context = approvalContext(approval);
   const workflow = context.workflow;
   const run = context.run;
+  const project = context.project || {};
   const canResolve = approval.status === "pending";
   const actions = `<a class="button" href="${esc(deepLinks.approvals())}">All approvals</a>${run ? ` <a class="button" href="${esc(run.deepLink)}">Open run</a>` : ""}`;
   content.innerHTML = `${toolbar(approval.title, actions, deepLinks.approval(approval.id))}
@@ -970,24 +984,32 @@ async function renderApprovalDetail(id) {
         <h2>Context</h2>
         <p class="approval-description">${esc(approval.description || "No description provided.")}</p>
         <div class="approval-facts">
-          <p><span class="muted">Workflow</span><br>${workflow?.deepLink ? `<a href="${esc(workflow.deepLink)}">${esc(approvalWorkflowLabel(approval))}</a>` : esc(approvalWorkflowLabel(approval))}</p>
+          ${approvalFact("Requested by", esc(context.requestedBy || approval.requestedBy || "workflow"))}
+          ${approvalFact("Workflow", workflow?.deepLink ? `<a href="${esc(workflow.deepLink)}">${esc(approvalWorkflowLabel(approval))}</a>` : esc(approvalWorkflowLabel(approval)))}
+          ${approvalFact("Project / repo / path", project.display ? esc(project.display) : "")}
+          ${approvalFact("Target branch", context.targetBranch ? esc(context.targetBranch) : context.branch ? esc(context.branch) : "")}
           ${approvalDeployLine(approval)}
-          <p><span class="muted">Requested by</span><br>${esc(approval.requestedBy || "workflow")}</p>
-          <p><span class="muted">Run</span><br>${approvalRunLink(approval) || `<span class="muted">No linked run</span>`}</p>
+          ${approvalFact("Approval ID", `<span class="run-id-mono">${esc(approval.id)}</span>`)}
+          ${approvalFact("Run", approvalRunLink(approval) || `<span class="muted">No linked run</span>`)}
         </div>
+        ${context.proposedChange ? `<h3>Proposed change</h3><p class="approval-proposed-change">${esc(context.proposedChange)}</p>` : ""}
         ${run ? `<h3>Linked run</h3>
           <p><strong>${esc(run.title || approval.runId)}</strong> ${status(run.status)}</p>
           <p class="muted">${esc(run.description || run.currentStep || "")}</p>` : ""}
-        <h3>What happens</h3>
-        <p class="notice">${esc(context.whatHappensIfApproved || "Approving marks this approval approved.")}</p>
+        <h3>Proposed action</h3>
+        <p class="notice">${esc(context.proposedAction || context.whatHappensIfApproved || "Approving marks this approval approved.")}</p>
+        <h3>Decision outcomes</h3>
+        <p class="muted">${esc(context.whatHappensIfApproved || "Approving marks this approval approved.")}</p>
+        <p class="muted">${esc(context.whatHappensIfChangesRequested || "Requesting changes records changes_requested.")}</p>
         <p class="muted">${esc(context.whatHappensIfRejected || "Rejecting marks this approval rejected.")}</p>
         ${canResolve ? `<div class="approval-decision">
-          <label>Decision note<textarea id="approval-comment" placeholder="Optional note for the audit log"></textarea></label>
+          <label>Decision note<textarea id="approval-comment" placeholder="Optional for approve/reject. For request changes, describe the new inputs or changes needed."></textarea></label>
           <div class="toolbar-actions">
             <button id="approval-approve" class="primary">Approve</button>
+            <button id="approval-request-changes" class="warning">Request changes</button>
             <button id="approval-reject" class="danger">Reject</button>
           </div>
-        </div>` : `<p class="muted">Resolved by ${esc(approval.resolvedBy || "unknown")} at ${esc(approval.resolvedAt || "unknown")}${approval.comment ? `: ${esc(approval.comment)}` : ""}</p>`}
+        </div>` : `<p class="approval-resolved"><strong>${esc(approvalDecisionLabel(approval))}</strong><br><span class="muted">Resolved by ${esc(approval.resolvedBy || "unknown")} at ${esc(approval.resolvedAt || "unknown")}${approval.comment ? `: ${esc(approval.comment)}` : ""}</span></p>`}
       </div>
       <aside class="panel approval-side">
         <h2>Approval link</h2>
@@ -998,15 +1020,21 @@ async function renderApprovalDetail(id) {
     </section>`;
   if (canResolve) {
     $("#approval-approve").addEventListener("click", () => resolveApproval(approval.id, "approve", { rerender: "detail" }));
+    $("#approval-request-changes").addEventListener("click", () => resolveApproval(approval.id, "request-changes", { rerender: "detail" }));
     $("#approval-reject").addEventListener("click", () => resolveApproval(approval.id, "reject", { rerender: "detail" }));
   }
   bindCopy();
 }
 
 async function resolveApproval(id, decision, { rerender = "list" } = {}) {
-  const comment = $("#approval-comment")?.value?.trim() || "Resolved from Web Hub";
+  const defaultComments = {
+    approve: "Approved from Web Hub",
+    reject: "Rejected from Web Hub",
+    "request-changes": "Changes requested from Web Hub"
+  };
+  const comment = $("#approval-comment")?.value?.trim() || defaultComments[decision] || "Resolved from Web Hub";
   await api(`/api/approvals/${id}/${decision}`, { method: "POST", body: { comment } });
-  toast(decision === "approve" ? "Approval granted" : "Approval rejected", "ok");
+  toast(decision === "approve" ? "Approval granted" : decision === "request-changes" ? "Changes requested" : "Approval rejected", "ok");
   if (rerender === "detail") return renderApprovalDetail(id);
   if (rerender === "none") return null;
   return renderApprovals();

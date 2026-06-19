@@ -545,11 +545,14 @@ export function createRun(capability, input, options = {}) {
   );
   addRunEvent(runId, "run.created", `Run created for ${capability.name}`, { capability: capability.slug });
   if (approvalRequired) {
+    const payload = { capability: capability.slug, input };
+    if (options.origin) payload.origin = options.origin;
     createApproval({
       runId,
       title: `Approve ${capability.name}`,
       description: capability.approvalPolicy?.reason || "This capability requires approval before execution.",
-      payload: { capability: capability.slug, input }
+      requestedBy: options.requestedBy || "workflow",
+      payload
     });
   }
   return getRun(runId);
@@ -880,21 +883,47 @@ export function listApprovals(status = "") {
 }
 
 export function resolveApproval(approvalId, decision, resolvedBy = "api", comment = "") {
-  const status = decision === "approved" ? "approved" : "rejected";
+  const normalizedDecision = decision === "approved" ? "approved" : decision === "changes_requested" ? "changes_requested" : "rejected";
+  const resolution = {
+    approved: {
+      status: "approved",
+      auditAction: "approval.approved",
+      eventType: "approval.approved",
+      runStatus: "queued",
+      currentStep: "approval granted; queued",
+      completedAt: null
+    },
+    rejected: {
+      status: "rejected",
+      auditAction: "approval.rejected",
+      eventType: "approval.rejected",
+      runStatus: "cancelled",
+      currentStep: "approval rejected",
+      completedAt: now()
+    },
+    changes_requested: {
+      status: "rejected",
+      auditAction: "approval.changes_requested",
+      eventType: "approval.changes_requested",
+      runStatus: "cancelled",
+      currentStep: "changes requested; run cancelled",
+      completedAt: now()
+    }
+  }[normalizedDecision];
   run(
     "UPDATE approvals SET status=?, decision=?, resolved_by=?, comment=?, resolved_at=? WHERE id=? AND status='pending'",
-    [status, decision, resolvedBy, comment, now(), approvalId]
+    [resolution.status, normalizedDecision, resolvedBy, comment, now(), approvalId]
   );
   const approval = getApproval(approvalId);
-  if (approval) recordAudit(resolvedBy, `approval.${status}`, approvalId, { runId: approval.runId, comment });
+  if (approval) recordAudit(resolvedBy, resolution.auditAction, approvalId, { runId: approval.runId, decision: normalizedDecision, comment });
   if (approval?.runId) {
-    addRunEvent(approval.runId, `approval.${status}`, approval.title, { approvalId, comment });
+    addRunEvent(approval.runId, resolution.eventType, approval.title, { approvalId, decision: normalizedDecision, comment });
     const runRecord = getRun(approval.runId);
     if (runRecord?.status === "waiting_approval") {
       updateRun(approval.runId, {
-        status: status === "approved" ? "queued" : "cancelled",
-        current_step: status === "approved" ? "approval granted; queued" : "approval rejected",
-        completed_at: status === "rejected" ? now() : null
+        status: resolution.runStatus,
+        current_step: resolution.currentStep,
+        completed_at: resolution.completedAt
       });
     }
   }

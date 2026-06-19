@@ -183,6 +183,10 @@ program.command("reject <id>").description("Reject an approval request").option(
   print(await client(program.opts()).post(`/api/approvals/${id}/reject`, { comment: opts.comment }), program.opts().json);
 });
 
+program.command("request-changes <id>").description("Request changes for an approval request").option("-c, --comment <comment>", "").action(async (id, opts) => {
+  print(await client(program.opts()).post(`/api/approvals/${id}/request-changes`, { comment: opts.comment }), program.opts().json);
+});
+
 program.command("cancel <runId>").description("Cancel a run").option("-r, --reason <reason>", "").action(async (runId, opts) => {
   print(await client(program.opts()).post(`/api/runs/${runId}/cancel`, { reason: opts.reason }), program.opts().json);
 });

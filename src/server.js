@@ -83,10 +83,16 @@ const deepLinks = {
 // from input, capability, and timing so cards and detail pages have substance
 // even on workflows that don't set them. Backward-compatible: all originals
 // stay; we add `title`, `description`, `project`, `branch`, `durationMs`.
-const PROJECT_INPUT_KEYS = ["project", "repo", "repository", "target", "targetPath", "path", "subdomain", "preferredSubdomain"];
-const BRANCH_INPUT_KEYS = ["branch", "targetBranch", "ref", "gitBranch"];
+const PROJECT_INPUT_KEYS = ["project", "projectName", "workspace", "repo", "repository", "githubRepo", "target", "subdomain", "preferredSubdomain"];
+const REPO_INPUT_KEYS = ["repo", "repository", "githubRepo", "repositoryUrl", "repoUrl", "GITHUB_REPOSITORY", "REPOSITORY", "REPO"];
+const PATH_INPUT_KEYS = ["path", "targetPath", "repoPath", "projectPath", "cwd", "workingDirectory", "directory", "PWD", "CWD"];
+const BRANCH_INPUT_KEYS = ["branch", "targetBranch", "baseBranch", "ref", "gitBranch", "GITHUB_REF_NAME", "BRANCH", "TARGET_BRANCH"];
 const TITLE_INPUT_KEYS = ["title", "name", "goal", "task", "prompt", "topic", "idea", "workPrompt", "question"];
 const DESCRIPTION_INPUT_KEYS = ["description", "summary", "notes", "scope", "constraints", "reason", "rationale", "context"];
+const CHANGE_INPUT_KEYS = ["workPrompt", "idea", "spec", "change", "changes", "task", "goal", "prompt", "description", "summary", "context", "notes"];
+const ACTION_INPUT_KEYS = ["proposedAction", "action", "operation", "command"];
+const ORIGIN_INPUT_KEYS = ["requestedBy", "requester", "originator", "user", "username", "owner", "actor", "source", "from"];
+const CONTEXT_OBJECT_KEYS = ["context", "metadata", "env", "environment", "project", "git"];
 
 function firstString(input, keys) {
   if (!input || typeof input !== "object") return "";
@@ -95,6 +101,32 @@ function firstString(input, keys) {
     if (typeof value === "string" && value.trim()) return value.trim();
   }
   return "";
+}
+
+function firstContextString(input, keys) {
+  const direct = firstString(input, keys);
+  if (direct) return direct;
+  if (!input || typeof input !== "object") return "";
+  for (const parentKey of CONTEXT_OBJECT_KEYS) {
+    const parent = input[parentKey];
+    if (parent && typeof parent === "object" && !Array.isArray(parent)) {
+      const nested = firstString(parent, keys);
+      if (nested) return nested;
+    }
+  }
+  return "";
+}
+
+function uniqueNonempty(values) {
+  const seen = new Set();
+  const output = [];
+  for (const value of values) {
+    const text = String(value || "").trim();
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    output.push(text);
+  }
+  return output;
 }
 
 function truncate(text, max) {
@@ -134,8 +166,8 @@ function withRunLinks(run) {
     ...run,
     title: deriveRunTitle(run),
     description: deriveRunDescription(run),
-    project: firstString(run.input, PROJECT_INPUT_KEYS),
-    branch: firstString(run.input, BRANCH_INPUT_KEYS),
+    project: firstContextString(run.input, PROJECT_INPUT_KEYS),
+    branch: firstContextString(run.input, BRANCH_INPUT_KEYS),
     durationMs: runDurationMs(run),
     deepLink: deepLinks.run(run.id),
     deepLinkLogs: deepLinks.runLogs(run.id),
@@ -217,6 +249,53 @@ function approvalPayloadSummary(approval) {
   return summary;
 }
 
+function approvalRequestedBy(approval, input) {
+  const payloadOrigin = approval?.payload?.origin;
+  if (payloadOrigin && typeof payloadOrigin === "object") {
+    const name = firstString(payloadOrigin, ["name", "tokenName", "actor", "source"]);
+    const via = firstString(payloadOrigin, ["via", "type", "channel"]);
+    if (name && via) return `${via}: ${name}`;
+    if (name) return name;
+  }
+  const inputOrigin = firstContextString(input, ORIGIN_INPUT_KEYS);
+  return inputOrigin || approval?.requestedBy || "workflow";
+}
+
+function approvalProjectContext(input) {
+  const project = firstContextString(input, PROJECT_INPUT_KEYS);
+  const repo = firstContextString(input, REPO_INPUT_KEYS);
+  const pathValue = firstContextString(input, PATH_INPUT_KEYS);
+  const branch = firstContextString(input, BRANCH_INPUT_KEYS);
+  const targetBranch = firstContextString(input, ["targetBranch", "TARGET_BRANCH"]) || branch;
+  const display = uniqueNonempty([project, repo, pathValue]).join(" / ");
+  return {
+    project,
+    repo,
+    path: pathValue,
+    branch,
+    targetBranch,
+    display
+  };
+}
+
+function approvalProposedChange(input, run, approval) {
+  const fromInput = firstContextString(input, CHANGE_INPUT_KEYS);
+  if (fromInput) return truncate(fromInput, 700);
+  const runDescription = run ? deriveRunDescription(run) : "";
+  if (runDescription) return truncate(runDescription, 700);
+  return truncate(approval?.description || "", 700);
+}
+
+function approvalProposedAction(input, run, workflowName, deploy, targetBranch) {
+  const fromInput = firstContextString(input, ACTION_INPUT_KEYS);
+  if (fromInput) return truncate(fromInput, 320);
+  if (!run) return "Mark this approval approved.";
+  const parts = [`Queue ${workflowName || "this workflow"} for runner execution`];
+  if (deploy != null) parts.push(deploy ? "with deploy enabled" : "with deploy disabled");
+  if (targetBranch) parts.push(`targeting ${targetBranch}`);
+  return `${parts.join(", ")}.`;
+}
+
 function approvalContext(approval) {
   const run = approval?.runId ? getRun(approval.runId) : null;
   const input = approvalInput(approval, run);
@@ -224,7 +303,15 @@ function approvalContext(approval) {
   const capability = capabilitySlug ? getCapability(capabilitySlug) : null;
   const workflowName = run?.capabilityName || capability?.name || capabilitySlug || "";
   const deployPresent = hasOwn(input, "deploy");
+  const deploy = deployPresent ? Boolean(input.deploy) : null;
+  const project = approvalProjectContext(input);
+  const proposedChange = approvalProposedChange(input, run, approval);
   return {
+    approval: {
+      id: approval?.id || "",
+      status: approval?.status || ""
+    },
+    requestedBy: approvalRequestedBy(approval, input),
     workflow: workflowName
       ? {
           slug: capabilitySlug,
@@ -233,7 +320,10 @@ function approvalContext(approval) {
           deepLink: capabilitySlug ? deepLinks.workflow(capabilitySlug) : ""
         }
       : null,
-    deploy: deployPresent ? Boolean(input.deploy) : null,
+    project,
+    deploy,
+    branch: project.branch || "",
+    targetBranch: project.targetBranch || "",
     run: run
       ? {
           id: run.id,
@@ -244,10 +334,15 @@ function approvalContext(approval) {
           deepLink: deepLinks.run(run.id)
         }
       : null,
-    inputTitle: firstString(input, TITLE_INPUT_KEYS),
+    inputTitle: firstContextString(input, TITLE_INPUT_KEYS),
+    proposedAction: approvalProposedAction(input, run, workflowName, deploy, project.targetBranch),
+    proposedChange,
     whatHappensIfApproved: run
       ? "The run will move from waiting_approval to queued, then a matching runner can execute it."
       : "This approval will be marked approved.",
+    whatHappensIfChangesRequested: run
+      ? "The approval will record changes_requested, the run will be cancelled, and the comment should describe the requested changes."
+      : "This approval will record changes_requested.",
     whatHappensIfRejected: run ? "The run will be cancelled and will not execute." : "This approval will be marked rejected."
   };
 }
@@ -284,6 +379,20 @@ function requireScopes(...needed) {
     const scopes = req.token?.scopes || [];
     if (scopes.includes("admin") || needed.some((scope) => scopes.includes(scope))) return next();
     return res.status(403).json({ error: "insufficient scope", required: needed });
+  };
+}
+
+function requestOrigin(req) {
+  const token = req.token || {};
+  const scopes = token.scopes || [];
+  const via = scopes.includes("mcp") && !scopes.includes("api") ? "mcp" : scopes.includes("runner") && !scopes.includes("api") ? "runner" : "token";
+  return {
+    requestedBy: `${via}: ${token.name || token.id || "unknown"}`,
+    origin: {
+      type: via,
+      name: token.name || "",
+      scopes
+    }
   };
 }
 
@@ -352,27 +461,31 @@ function telegramApprovalTarget() {
 
 function telegramApprovalText(approval) {
   const context = approvalContext(approval);
-  const approvalUrl = absoluteDeepLink(deepLinks.approval(approval.id));
-  const runUrl = approval.runId ? absoluteDeepLink(deepLinks.run(approval.runId)) : "";
   const workflow = context.workflow?.name
     ? `${context.workflow.name}${context.workflow.slug ? ` (${context.workflow.slug})` : ""}`
     : "Unknown workflow";
   return [
     `${env.instanceName} approval requested`,
     "",
-    `Title: ${approval.title}`,
-    `Description: ${approval.description || "No description provided."}`,
+    `Requested by: ${context.requestedBy}`,
     `Workflow: ${workflow}`,
-    context.deploy == null ? "" : `Deploy: ${context.deploy ? "yes" : "no"}`,
+    context.project?.display ? `Project: ${truncate(context.project.display, 180)}` : "",
+    context.targetBranch ? `Target branch: ${context.targetBranch}` : context.branch ? `Branch: ${context.branch}` : "",
+    context.deploy == null ? "" : `Deploy: ${context.deploy ? "true" : "false"}`,
     approval.runId ? `Run: ${approval.runId}${context.run?.status ? ` (${context.run.status})` : ""}` : "",
-    runUrl ? `Run link: ${runUrl}` : "",
-    `Approval link: ${approvalUrl}`,
+    `Approval: ${approval.id}`,
+    context.proposedChange ? `Working on: ${truncate(context.proposedChange, 700)}` : "",
+    `Proposed action: ${truncate(context.proposedAction || "Resolve this approval.", 320)}`,
     "",
-    `If approved: ${context.whatHappensIfApproved}`,
-    `If rejected: ${context.whatHappensIfRejected}`
+    "Open the approval with the button below."
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+function telegramApprovalOpenButton(target, approvalUrl) {
+  if (target.private) return { text: "Open approval", web_app: { url: approvalUrl } };
+  return { text: "Open approval", url: approvalUrl };
 }
 
 async function notifyTelegram(approval) {
@@ -389,9 +502,10 @@ async function notifyTelegram(approval) {
         text: telegramApprovalText(approval),
         reply_markup: {
           inline_keyboard: [
-            [{ text: "Open approval", url: approvalUrl }],
+            [telegramApprovalOpenButton(target, approvalUrl)],
             [
               { text: "Approve", callback_data: `approval:approve:${approval.id}` },
+              { text: "Request changes", callback_data: `approval:request_changes:${approval.id}` },
               { text: "Reject", callback_data: `approval:reject:${approval.id}` }
             ]
           ]
@@ -416,9 +530,16 @@ function parseTelegramApprovalCallback(data) {
   } else {
     return { ok: false, code: 400, error: "invalid callback data format" };
   }
-  if (action !== "approve" && action !== "reject") return { ok: false, code: 400, error: "invalid approval decision" };
+  const normalizedAction = action.replace(/-/g, "_");
+  if (!["approve", "reject", "request_changes", "changes_requested", "changes"].includes(normalizedAction)) {
+    return { ok: false, code: 400, error: "invalid approval decision" };
+  }
   if (!/^appr_[a-f0-9]{20}$/.test(approvalId)) return { ok: false, code: 400, error: "invalid approval id" };
-  return { ok: true, approvalId, decision: action === "approve" ? "approved" : "rejected" };
+  return {
+    ok: true,
+    approvalId,
+    decision: normalizedAction === "approve" ? "approved" : normalizedAction === "reject" ? "rejected" : "changes_requested"
+  };
 }
 
 async function answerTelegramCallbackQuery(callbackQueryId, text) {
@@ -433,6 +554,36 @@ async function answerTelegramCallbackQuery(callbackQueryId, text) {
   } catch (error) {
     console.error("Telegram callback acknowledgement failed:", error.message);
   }
+}
+
+async function clearTelegramApprovalButtons(callback) {
+  if (!env.telegramBotToken) return;
+  const payload = callback.inline_message_id
+    ? { inline_message_id: callback.inline_message_id, reply_markup: { inline_keyboard: [] } }
+    : callback.message?.chat?.id && callback.message?.message_id
+      ? {
+          chat_id: callback.message.chat.id,
+          message_id: callback.message.message_id,
+          reply_markup: { inline_keyboard: [] }
+        }
+      : null;
+  if (!payload) return;
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${env.telegramBotToken}/editMessageReplyMarkup`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    if (!response.ok) console.error("Telegram approval button cleanup failed:", response.status);
+  } catch (error) {
+    console.error("Telegram approval button cleanup failed:", error.message);
+  }
+}
+
+function approvalDecisionLabel(decision) {
+  if (decision === "approved") return "Approved";
+  if (decision === "changes_requested") return "Changes requested";
+  return "Rejected";
 }
 
 app.use((req, res, next) => {
@@ -565,6 +716,7 @@ Core tools:
 - list_pending_approvals
 - approve_run
 - reject_run
+- request_changes_run
 - cancel_run
 - search_artifacts
 - list_agents
@@ -593,6 +745,7 @@ app.get("/openapi.json", (req, res) => {
       "/approvals": { get: { summary: "List approvals" } },
       "/approvals/{id}/approve": { post: { summary: "Approve request" } },
       "/approvals/{id}/reject": { post: { summary: "Reject request" } },
+      "/approvals/{id}/request-changes": { post: { summary: "Request changes" } },
       "/runners/register": { post: { summary: "Register runner" } },
       "/runners/{id}/next-run": { get: { summary: "Claim next run for runner" } }
     }
@@ -696,7 +849,12 @@ app.patch("/api/capabilities/:id", requireAuth, requireScopes("admin"), (req, re
 app.post("/api/capabilities/:id/run", requireAuth, requireScopes("api", "mcp"), async (req, res) => {
   const capability = getCapability(req.params.id);
   if (!capability || !capability.enabled) return res.status(404).json({ error: "capability not found" });
-  const run = createRun(capability, req.body.input || req.body || {}, { runnerId: req.body.runnerId });
+  const origin = requestOrigin(req);
+  const run = createRun(capability, req.body.input || req.body || {}, {
+    runnerId: req.body.runnerId,
+    requestedBy: origin.requestedBy,
+    origin: origin.origin
+  });
   const pending = listApprovals("pending").find((approval) => approval.runId === run.id);
   if (pending) await notifyTelegram(pending);
   res.status(202).json({
@@ -831,10 +989,13 @@ function resolveApprovalHttp(req, res, decision) {
   const approval = getApproval(req.params.id);
   if (!approval) return res.status(404).json({ error: "approval not found" });
   if (approval.status !== "pending") return res.status(409).json({ error: "approval is not pending", approval: withApprovalLinks(approval) });
-  res.json({ approval: withApprovalLinks(resolveApproval(req.params.id, decision, req.token.name, req.body.comment || "")) });
+  const defaultComment =
+    decision === "approved" ? "Approved from Web/API" : decision === "changes_requested" ? "Changes requested from Web/API" : "Rejected from Web/API";
+  res.json({ approval: withApprovalLinks(resolveApproval(req.params.id, decision, req.token.name, req.body.comment || defaultComment)) });
 }
 app.post("/api/approvals/:id/approve", requireAuth, requireScopes("api", "mcp"), (req, res) => resolveApprovalHttp(req, res, "approved"));
 app.post("/api/approvals/:id/reject", requireAuth, requireScopes("api", "mcp"), (req, res) => resolveApprovalHttp(req, res, "rejected"));
+app.post("/api/approvals/:id/request-changes", requireAuth, requireScopes("api", "mcp"), (req, res) => resolveApprovalHttp(req, res, "changes_requested"));
 
 app.post("/api/runners/register", requireAuth, requireScopes("runner"), (req, res) => {
   const runner = registerRunner(req.body, req.token.id);
@@ -874,11 +1035,14 @@ app.post("/api/telegram/webhook", async (req, res) => {
     }
     if (approval.status !== "pending") {
       await answerTelegramCallbackQuery(callback.id, `Approval is already ${approval.status}.`);
+      await clearTelegramApprovalButtons(callback);
       return res.status(409).json({ ok: false, error: "approval is not pending", approval: withApprovalLinks(approval) });
     }
     const who = `telegram:${callback.from?.username || callback.from?.id || "user"}`;
-    const resolved = resolveApproval(parsed.approvalId, parsed.decision, who, "Resolved from Telegram");
-    await answerTelegramCallbackQuery(callback.id, parsed.decision === "approved" ? "Approved." : "Rejected.");
+    const comment = parsed.decision === "changes_requested" ? "Changes requested from Telegram" : `${approvalDecisionLabel(parsed.decision)} from Telegram`;
+    const resolved = resolveApproval(parsed.approvalId, parsed.decision, who, comment);
+    await answerTelegramCallbackQuery(callback.id, `${approvalDecisionLabel(parsed.decision)}.`);
+    await clearTelegramApprovalButtons(callback);
     return res.json({ ok: true, approval: withApprovalLinks(resolved) });
   }
   res.json({ ok: true, ignored: "no callback query data" });
