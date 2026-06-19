@@ -23,6 +23,7 @@ const AGENT_PATH_PREFIX = [
 ].join(":");
 
 process.env.PATH = `${AGENT_PATH_PREFIX}:${process.env.PATH || ""}`;
+mkdirSync(PRODUCTS_ROOT, { recursive: true });
 
 const ideaSchema = z.object({
   idea: z.string().describe("Raw product idea."),
