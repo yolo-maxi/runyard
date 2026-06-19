@@ -1,5 +1,6 @@
 import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -20,6 +21,7 @@ const token = "shub_test_token";
 const telegramEnvKeys = [
   "telegramBotToken",
   "telegramApprovalChatId",
+  "telegramApprovalUserIds",
   "telegramChatId",
   "telegramThreadId",
   "telegramWebhookSecret",
@@ -82,8 +84,28 @@ function raw(pathname, options = {}, bearer = token) {
     body: options.body && typeof options.body !== "string" ? JSON.stringify(options.body) : options.body
   }).then(async (response) => {
     const text = await response.text();
-    return { status: response.status, data: text ? JSON.parse(text) : null };
+    return { status: response.status, data: text ? JSON.parse(text) : null, headers: response.headers };
   });
+}
+
+function signedTelegramInitData({ botToken, userId, authDate = Math.floor(Date.now() / 1000), hashOverride = "", user = {} }) {
+  const params = new URLSearchParams({
+    query_id: "AAE-test-query",
+    user: JSON.stringify({ id: userId, first_name: "Fran", username: "fran", ...user }),
+    auth_date: String(authDate)
+  });
+  const dataCheckString = [...params.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => `${key}=${value}`)
+    .join("\n");
+  const secret = createHmac("sha256", "WebAppData").update(botToken).digest();
+  const hash = createHmac("sha256", secret).update(dataCheckString).digest("hex");
+  params.set("hash", hashOverride || hash);
+  return params.toString();
+}
+
+function firstCookie(setCookie) {
+  return String(setCookie || "").split(";")[0];
 }
 
 before(async () => {
@@ -236,12 +258,124 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
     const buf = Buffer.from(await r2.arrayBuffer());
     assert.equal(buf[0], 0x1f); // gzip magic
     assert.equal(buf[1], 0x8b);
+
+    const appPage = await fetch(`${baseUrl}/app`);
+    assert.equal(appPage.status, 200);
+    const csp = appPage.headers.get("content-security-policy") || "";
+    assert.match(csp, /script-src 'self' https:\/\/telegram\.org/);
+    assert.match(csp, /frame-ancestors 'self' https:\/\/web\.telegram\.org https:\/\/\*\.telegram\.org/);
+    assert.equal(appPage.headers.get("x-frame-options"), null);
+    assert.match(await appPage.text(), /https:\/\/telegram\.org\/js\/telegram-web-app\.js\?62/);
+    const appJs = await fetch(`${baseUrl}/public/app.js`);
+    assert.equal(appJs.status, 200);
+    const appCode = await appJs.text();
+    assert.match(appCode, /\/api\/auth\/telegram-webapp/);
+    assert.match(appCode, /window\.Telegram\?\.WebApp/);
+    assert.match(appCode, /ready\?\.\(\)/);
   });
 
   it("rejects unconfigured / unauthenticated Telegram webhook calls", async () => {
     // No TELEGRAM_WEBHOOK_SECRET configured in the test env -> endpoint disabled.
     const res = await raw("/api/telegram/webhook", { method: "POST", body: { callback_query: { data: "approve:appr_x" } } }, null);
     assert.equal(res.status, 503);
+  });
+
+  it("authenticates Telegram WebApp initData for the approval operator", async () => {
+    const botToken = "123456:test-bot-secret";
+    const calls = [];
+    const restoreFetch = captureTelegramFetch(calls);
+    const restoreEnv = withTelegramEnv({
+      telegramBotToken: botToken,
+      telegramApprovalChatId: "475212779",
+      telegramApprovalUserIds: "475212779"
+    });
+    try {
+      const created = await api("/api/capabilities/implement-change-gated/run", {
+        method: "POST",
+        body: { input: { workPrompt: "Telegram WebApp auth valid", deploy: false } }
+      });
+      const approval = (await api("/api/approvals?status=pending")).approvals.find((item) => item.runId === created.run.id);
+      assert.ok(approval);
+
+      const initData = signedTelegramInitData({ botToken, userId: 475212779 });
+      const auth = await raw("/api/auth/telegram-webapp", { method: "POST", body: { initData } }, null);
+      assert.equal(auth.status, 200);
+      const cookie = firstCookie(auth.headers.get("set-cookie"));
+      assert.match(cookie, /^shub_session=/);
+
+      const me = await raw("/api/me", { headers: { cookie } }, null);
+      assert.equal(me.status, 200);
+      assert.equal(me.data.token.id, "telegram-webapp:475212779");
+      assert.deepEqual(me.data.token.scopes, ["approvals"]);
+
+      assert.equal((await raw(`/api/approvals/${approval.id}`, { headers: { cookie } }, null)).status, 200);
+      assert.equal((await raw(`/api/runs/${created.run.id}`, { headers: { cookie } }, null)).status, 200);
+      assert.equal((await raw("/api/capabilities", { headers: { cookie } }, null)).status, 403);
+
+      const changed = await raw(
+        `/api/approvals/${approval.id}/request-changes`,
+        { method: "POST", headers: { cookie }, body: { comment: "Please revise from Telegram miniapp." } },
+        null
+      );
+      assert.equal(changed.status, 200);
+      assert.equal(changed.data.approval.decision, "changes_requested");
+      assert.equal(changed.data.approval.resolvedBy, "telegram:fran");
+    } finally {
+      restoreEnv();
+      restoreFetch();
+    }
+  });
+
+  it("rejects Telegram WebApp initData with an invalid hash", async () => {
+    const botToken = "123456:test-bot-secret";
+    const restoreEnv = withTelegramEnv({
+      telegramBotToken: botToken,
+      telegramApprovalChatId: "475212779",
+      telegramApprovalUserIds: "475212779"
+    });
+    try {
+      const initData = signedTelegramInitData({ botToken, userId: 475212779, hashOverride: "0".repeat(64) });
+      const auth = await raw("/api/auth/telegram-webapp", { method: "POST", body: { initData } }, null);
+      assert.equal(auth.status, 401);
+      assert.equal(auth.data.error, "invalid telegram signature");
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it("rejects Telegram WebApp initData for the wrong user", async () => {
+    const botToken = "123456:test-bot-secret";
+    const restoreEnv = withTelegramEnv({
+      telegramBotToken: botToken,
+      telegramApprovalChatId: "475212779",
+      telegramApprovalUserIds: "475212779"
+    });
+    try {
+      const initData = signedTelegramInitData({ botToken, userId: 111 });
+      const auth = await raw("/api/auth/telegram-webapp", { method: "POST", body: { initData } }, null);
+      assert.equal(auth.status, 403);
+      assert.equal(auth.data.error, "telegram user is not authorized");
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it("rejects stale Telegram WebApp auth_date values", async () => {
+    const botToken = "123456:test-bot-secret";
+    const restoreEnv = withTelegramEnv({
+      telegramBotToken: botToken,
+      telegramApprovalChatId: "475212779",
+      telegramApprovalUserIds: "475212779"
+    });
+    try {
+      const authDate = Math.floor(Date.now() / 1000) - 3600;
+      const initData = signedTelegramInitData({ botToken, userId: 475212779, authDate });
+      const auth = await raw("/api/auth/telegram-webapp", { method: "POST", body: { initData } }, null);
+      assert.equal(auth.status, 401);
+      assert.equal(auth.data.error, "telegram auth expired");
+    } finally {
+      restoreEnv();
+    }
   });
 
   it("sends readable private Telegram approvals with a miniapp open button", async () => {

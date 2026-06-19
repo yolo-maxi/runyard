@@ -1,6 +1,8 @@
 const state = {
   me: null,
-  view: "home"
+  view: "home",
+  telegramAuthAttempted: false,
+  telegramAuthError: ""
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -229,31 +231,89 @@ function showError(error) {
   content.innerHTML = `<section class="panel"><h2>Something failed</h2><p class="muted">${esc(error.message)}</p></section>`;
 }
 
+function telegramWebApp() {
+  return window.Telegram?.WebApp || null;
+}
+
+function telegramWebAppInitData() {
+  return telegramWebApp()?.initData || "";
+}
+
+async function authenticateTelegramWebApp() {
+  const initData = telegramWebAppInitData();
+  if (!initData || state.telegramAuthAttempted) return false;
+  state.telegramAuthAttempted = true;
+  try {
+    await api("/api/auth/telegram-webapp", { method: "POST", body: { initData } });
+    state.telegramAuthError = "";
+    return true;
+  } catch (error) {
+    state.telegramAuthError = error.message || "Telegram approval access failed";
+    return false;
+  }
+}
+
+function markTelegramWebAppReady() {
+  try {
+    telegramWebApp()?.ready?.();
+  } catch {
+    // Telegram readiness is advisory; Hub auth/rendering should not depend on it.
+  }
+}
+
+function showAuthFallback() {
+  if (state.telegramAuthError && telegramWebApp()) {
+    const panel = $("#login .panel");
+    if (panel && !$("#telegram-auth-error")) {
+      const notice = document.createElement("p");
+      notice.id = "telegram-auth-error";
+      notice.className = "muted";
+      notice.textContent = `Telegram approval access failed: ${state.telegramAuthError}`;
+      panel.insertBefore(notice, $("#login-form"));
+    }
+  }
+  $("#login").classList.remove("hidden");
+  $("#app").classList.add("hidden");
+}
+
+async function bootAuthenticated(data) {
+  state.me = data.token;
+  $("#login").classList.add("hidden");
+  $("#app").classList.remove("hidden");
+  state.view = location.hash.slice(1) || "home";
+  // Bind every nav button (sidebar + admin dropdown) that declares a view.
+  document.querySelectorAll("[data-view]").forEach((button) =>
+    button.addEventListener("click", () => setView(button.dataset.view))
+  );
+  // Close the admin dropdown when the user clicks outside of it.
+  document.addEventListener("click", (event) => {
+    const menu = document.getElementById("admin-menu");
+    if (menu && menu.open && !menu.contains(event.target)) menu.open = false;
+  });
+  $("#logout").addEventListener("click", async () => {
+    await api("/api/auth/logout", { method: "POST", body: {} });
+    location.reload();
+  });
+  await render();
+  markTelegramWebAppReady();
+}
+
 async function boot() {
   try {
-    const data = await api("/api/me");
-    state.me = data.token;
-    $("#login").classList.add("hidden");
-    $("#app").classList.remove("hidden");
-    state.view = location.hash.slice(1) || "home";
-    // Bind every nav button (sidebar + admin dropdown) that declares a view.
-    document.querySelectorAll("[data-view]").forEach((button) =>
-      button.addEventListener("click", () => setView(button.dataset.view))
-    );
-    // Close the admin dropdown when the user clicks outside of it.
-    document.addEventListener("click", (event) => {
-      const menu = document.getElementById("admin-menu");
-      if (menu && menu.open && !menu.contains(event.target)) menu.open = false;
-    });
-    $("#logout").addEventListener("click", async () => {
-      await api("/api/auth/logout", { method: "POST", body: {} });
-      location.reload();
-    });
-    await render();
+    return await bootAuthenticated(await api("/api/me"));
   } catch {
-    $("#login").classList.remove("hidden");
-    $("#app").classList.add("hidden");
+    // Try Telegram Mini App auth once before showing the normal token login.
   }
+
+  if (await authenticateTelegramWebApp()) {
+    try {
+      return await bootAuthenticated(await api("/api/me"));
+    } catch (error) {
+      state.telegramAuthError = error.message || "Hub session was not accepted";
+    }
+  }
+
+  showAuthFallback();
 }
 
 $("#login-form").addEventListener("submit", async (event) => {

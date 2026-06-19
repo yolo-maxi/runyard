@@ -69,6 +69,14 @@ export const env = {
     process.env.TELEGRAM_APPROVAL_USER_ID ||
     process.env.SMITHERS_TELEGRAM_APPROVAL_USER_ID ||
     "",
+  telegramApprovalUserIds:
+    process.env.TELEGRAM_APPROVAL_USER_IDS ||
+    process.env.SMITHERS_TELEGRAM_APPROVAL_USER_IDS ||
+    process.env.TELEGRAM_APPROVAL_CHAT_ID ||
+    process.env.SMITHERS_TELEGRAM_APPROVAL_CHAT_ID ||
+    process.env.TELEGRAM_APPROVAL_USER_ID ||
+    process.env.SMITHERS_TELEGRAM_APPROVAL_USER_ID ||
+    "",
   telegramChatId: process.env.TELEGRAM_CHAT_ID || process.env.SMITHERS_TELEGRAM_CHAT_ID || "",
   telegramThreadId: process.env.TELEGRAM_THREAD_ID || process.env.SMITHERS_TELEGRAM_THREAD_ID || "",
   telegramWebhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET || "",

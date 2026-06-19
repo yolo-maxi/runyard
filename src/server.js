@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { createHmac } from "node:crypto";
 import path from "node:path";
 import express from "express";
 import {
@@ -56,6 +57,11 @@ app.use((req, res, next) => (isArtifactUpload(req) ? artifactJson : globalJson)(
 app.use(express.urlencoded({ extended: false }));
 
 const startedAt = Date.now();
+const SESSION_COOKIE_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 365;
+const TELEGRAM_WEBAPP_SESSION_PREFIX = "telegram-webapp:";
+const TELEGRAM_WEBAPP_SESSION_MAX_AGE_MS = 1000 * 60 * 60 * 24;
+const TELEGRAM_WEBAPP_AUTH_MAX_AGE_SECONDS = 10 * 60;
+const TELEGRAM_WEBAPP_AUTH_FUTURE_SKEW_SECONDS = 60;
 
 function publicUrl(req) {
   return `${req.protocol}://${req.get("host")}`;
@@ -358,18 +364,140 @@ function withApprovalLinks(approval) {
   };
 }
 
+function csvValues(value) {
+  return String(value || "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function firstCsvValue(value) {
+  return csvValues(value)[0] || "";
+}
+
+function telegramApprovalUserAllowlist() {
+  return new Set(csvValues(env.telegramApprovalUserIds || env.telegramApprovalChatId).map(String));
+}
+
+function telegramUserLabel(user) {
+  const handle = user?.username || [user?.first_name, user?.last_name].filter(Boolean).join(" ");
+  return `telegram:${handle || user?.id || "user"}`;
+}
+
+function parseTelegramUser(raw) {
+  if (!raw) return null;
+  try {
+    const user = JSON.parse(raw);
+    if (user && user.id != null) return user;
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function verifyTelegramWebAppInitData(initData) {
+  if (!env.telegramBotToken) return { ok: false, code: 503, error: "telegram webapp auth not configured" };
+  if (typeof initData !== "string" || !initData.trim() || initData.length > 8192) {
+    return { ok: false, code: 400, error: "missing telegram init data" };
+  }
+
+  const params = new URLSearchParams(initData);
+  const hash = params.get("hash") || "";
+  if (!/^[a-f0-9]{64}$/i.test(hash)) return { ok: false, code: 401, error: "invalid telegram signature" };
+
+  const pairs = [];
+  for (const [key, value] of params.entries()) {
+    if (key !== "hash") pairs.push([key, value]);
+  }
+  if (!pairs.length) return { ok: false, code: 401, error: "invalid telegram signature" };
+
+  pairs.sort(([a], [b]) => a.localeCompare(b));
+  const dataCheckString = pairs.map(([key, value]) => `${key}=${value}`).join("\n");
+  const secret = createHmac("sha256", "WebAppData").update(env.telegramBotToken).digest();
+  const expectedHash = createHmac("sha256", secret).update(dataCheckString).digest("hex");
+  if (!timingSafeEqualStr(hash.toLowerCase(), expectedHash)) {
+    return { ok: false, code: 401, error: "invalid telegram signature" };
+  }
+
+  const authDate = Number(params.get("auth_date") || 0);
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  if (!Number.isFinite(authDate) || authDate <= 0 || authDate > nowSeconds + TELEGRAM_WEBAPP_AUTH_FUTURE_SKEW_SECONDS) {
+    return { ok: false, code: 401, error: "invalid telegram auth date" };
+  }
+  if (nowSeconds - authDate > TELEGRAM_WEBAPP_AUTH_MAX_AGE_SECONDS) {
+    return { ok: false, code: 401, error: "telegram auth expired" };
+  }
+
+  const user = parseTelegramUser(params.get("user"));
+  if (!user) return { ok: false, code: 401, error: "telegram user missing" };
+  const allowlist = telegramApprovalUserAllowlist();
+  if (!allowlist.size) return { ok: false, code: 503, error: "telegram approval operator not configured" };
+  if (!allowlist.has(String(user.id))) return { ok: false, code: 403, error: "telegram user is not authorized" };
+
+  return { ok: true, authDate, user };
+}
+
+function createTelegramWebAppSession(user) {
+  const issuedAt = Math.floor(Date.now() / 1000);
+  const payload = {
+    type: "telegram-webapp",
+    uid: String(user.id),
+    name: telegramUserLabel(user),
+    scopes: ["approvals"],
+    iat: issuedAt,
+    exp: issuedAt + Math.floor(TELEGRAM_WEBAPP_SESSION_MAX_AGE_MS / 1000)
+  };
+  return `${TELEGRAM_WEBAPP_SESSION_PREFIX}${Buffer.from(JSON.stringify(payload)).toString("base64url")}`;
+}
+
+function authenticateTelegramWebAppSession(value) {
+  if (!String(value || "").startsWith(TELEGRAM_WEBAPP_SESSION_PREFIX)) return null;
+  try {
+    const encoded = String(value).slice(TELEGRAM_WEBAPP_SESSION_PREFIX.length);
+    const payload = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
+    if (payload?.type !== "telegram-webapp" || !payload.uid || !Array.isArray(payload.scopes)) return null;
+    if (Number(payload.exp || 0) <= Math.floor(Date.now() / 1000)) return null;
+    if (!telegramApprovalUserAllowlist().has(String(payload.uid))) return null;
+    return {
+      id: `telegram-webapp:${payload.uid}`,
+      name: payload.name || `telegram:${payload.uid}`,
+      scopes: payload.scopes,
+      authMethod: "telegram-webapp",
+      telegramUserId: String(payload.uid)
+    };
+  } catch {
+    return null;
+  }
+}
+
+function authenticateSessionValue(value) {
+  return authenticateTelegramWebAppSession(value) || authenticateToken(value);
+}
+
+function telegramSessionCanAccess(req) {
+  if (req.method === "GET" && req.path === "/api/me") return true;
+  if (req.method === "GET" && /^\/api\/approvals(?:\/[^/]+)?\/?$/.test(req.path)) return true;
+  if (req.method === "POST" && /^\/api\/approvals\/[^/]+\/(?:approve|reject|request-changes)\/?$/.test(req.path)) return true;
+  if (req.method === "GET" && /^\/api\/runs(?:\/[^/]+(?:\/(?:events|logs|artifacts))?)?\/?$/.test(req.path)) return true;
+  if (req.method === "GET" && /^\/api\/artifacts\/[^/]+\/download\/?$/.test(req.path)) return true;
+  return false;
+}
+
 function authFromRequest(req) {
   const header = req.headers.authorization || "";
   const bearer = header.toLowerCase().startsWith("bearer ") ? header.slice(7) : "";
   const cookies = parseCookies(req);
   const cookieToken = cookies.shub_session ? unsign(cookies.shub_session) : "";
-  return authenticateToken(bearer || cookieToken);
+  return bearer ? authenticateToken(bearer) : authenticateSessionValue(cookieToken);
 }
 
 function requireAuth(req, res, next) {
   const token = authFromRequest(req);
   if (!token) return res.status(401).json({ error: "unauthorized" });
   req.token = token;
+  if (token.authMethod === "telegram-webapp" && !telegramSessionCanAccess(req)) {
+    return res.status(403).json({ error: "telegram session cannot access this endpoint" });
+  }
   next();
 }
 
@@ -396,14 +524,18 @@ function requestOrigin(req) {
   };
 }
 
-function sendSession(res, token) {
-  res.cookie("shub_session", sign(token), {
+function sendSessionValue(res, value, maxAge = SESSION_COOKIE_MAX_AGE_MS) {
+  res.cookie("shub_session", sign(value), {
     httpOnly: true,
     secure: env.baseUrl.startsWith("https://"),
     sameSite: "lax",
     path: "/",
-    maxAge: 1000 * 60 * 60 * 24 * 365
+    maxAge
   });
+}
+
+function sendSession(res, token) {
+  sendSessionValue(res, token);
 }
 
 function requireBodySlug(body, fallback) {
@@ -447,7 +579,8 @@ function requireRunOwnerOrAdmin(req, res, next) {
 }
 
 function telegramApprovalTarget() {
-  if (env.telegramApprovalChatId) return { chatId: env.telegramApprovalChatId, private: true };
+  const approvalChatId = firstCsvValue(env.telegramApprovalChatId);
+  if (approvalChatId) return { chatId: approvalChatId, private: true };
   if (env.telegramChatId) {
     const threadId = Number(env.telegramThreadId);
     return {
@@ -587,12 +720,14 @@ function approvalDecisionLabel(decision) {
 }
 
 app.use((req, res, next) => {
+  const appSurface = req.path === "/app";
+  const frameAncestors = appSurface ? "'self' https://web.telegram.org https://*.telegram.org" : "'none'";
   res.setHeader("x-content-type-options", "nosniff");
   res.setHeader("referrer-policy", "strict-origin-when-cross-origin");
-  res.setHeader("x-frame-options", "DENY");
+  if (!appSurface) res.setHeader("x-frame-options", "DENY");
   res.setHeader(
     "content-security-policy",
-    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'"
+    `default-src 'self'; script-src 'self' https://telegram.org; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors ${frameAncestors}; base-uri 'none'; form-action 'self'; object-src 'none'`
   );
   if (env.baseUrl.startsWith("https://")) {
     res.setHeader("strict-transport-security", "max-age=31536000; includeSubDomains");
@@ -773,6 +908,23 @@ app.post("/api/auth/token-login", rateLimit({ bucket: "login", max: 10, windowMs
   sendSession(res, token);
   recordAudit(record.name, "auth.login", record.id, {});
   res.json({ ok: true, token: { id: record.id, name: record.name, scopes: record.scopes } });
+});
+
+app.post("/api/auth/telegram-webapp", rateLimit({ bucket: "telegram-webapp-login", max: 30, windowMs: 60_000 }), (req, res) => {
+  const verified = verifyTelegramWebAppInitData(req.body.initData || "");
+  if (!verified.ok) return res.status(verified.code).json({ error: verified.error });
+  const sessionValue = createTelegramWebAppSession(verified.user);
+  const actor = telegramUserLabel(verified.user);
+  sendSessionValue(res, sessionValue, TELEGRAM_WEBAPP_SESSION_MAX_AGE_MS);
+  recordAudit(actor, "auth.telegram_webapp", String(verified.user.id), { authDate: verified.authDate });
+  res.json({
+    ok: true,
+    token: {
+      id: `telegram-webapp:${verified.user.id}`,
+      name: actor,
+      scopes: ["approvals"]
+    }
+  });
 });
 
 app.post("/api/auth/logout", (_req, res) => {
@@ -993,9 +1145,11 @@ function resolveApprovalHttp(req, res, decision) {
     decision === "approved" ? "Approved from Web/API" : decision === "changes_requested" ? "Changes requested from Web/API" : "Rejected from Web/API";
   res.json({ approval: withApprovalLinks(resolveApproval(req.params.id, decision, req.token.name, req.body.comment || defaultComment)) });
 }
-app.post("/api/approvals/:id/approve", requireAuth, requireScopes("api", "mcp"), (req, res) => resolveApprovalHttp(req, res, "approved"));
-app.post("/api/approvals/:id/reject", requireAuth, requireScopes("api", "mcp"), (req, res) => resolveApprovalHttp(req, res, "rejected"));
-app.post("/api/approvals/:id/request-changes", requireAuth, requireScopes("api", "mcp"), (req, res) => resolveApprovalHttp(req, res, "changes_requested"));
+app.post("/api/approvals/:id/approve", requireAuth, requireScopes("api", "mcp", "approvals"), (req, res) => resolveApprovalHttp(req, res, "approved"));
+app.post("/api/approvals/:id/reject", requireAuth, requireScopes("api", "mcp", "approvals"), (req, res) => resolveApprovalHttp(req, res, "rejected"));
+app.post("/api/approvals/:id/request-changes", requireAuth, requireScopes("api", "mcp", "approvals"), (req, res) =>
+  resolveApprovalHttp(req, res, "changes_requested")
+);
 
 app.post("/api/runners/register", requireAuth, requireScopes("runner"), (req, res) => {
   const runner = registerRunner(req.body, req.token.id);
