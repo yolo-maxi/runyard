@@ -65,7 +65,7 @@ Tradeoff:
 
 ### Decision: Local disk artifacts
 
-Artifacts are written under `data/artifacts/runs/<run-id>/`.
+New artifacts are written under `data/artifacts/runs/<workflow-slug>/<YYYY-MM-DD>/<run-id>/`.
 
 Reasoning:
 

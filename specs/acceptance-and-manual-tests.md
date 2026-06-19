@@ -47,6 +47,7 @@ This file captures user-facing acceptance criteria and manual tests for Smithers
 
 - A capability run creates a durable run record.
 - The run detail view shows input, status, current step, event timeline, artifacts, and output.
+- Run cards and run detail show artifacts in the context of their owning run; there is no standalone Artifacts page in the human console.
 - Runner events are persisted.
 - Uploaded artifacts are stored on disk and downloadable through the Web/API.
 - Completed runs remain visible after execution.

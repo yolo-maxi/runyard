@@ -81,7 +81,13 @@ const deepLinks = {
   workflowEdit: (slug) => `/app#workflows/${encodeURIComponent(slug)}/edit`,
   workflowRun: (slug) => `/app#workflows/${encodeURIComponent(slug)}/run`,
   agent: (slug) => `/app#agents/agents/${encodeURIComponent(slug)}`,
-  artifact: (id) => `/app#artifacts/${encodeURIComponent(id)}`,
+  artifact: (artifact) => {
+    const id = typeof artifact === "object" ? artifact.id : artifact;
+    const runId = typeof artifact === "object" ? artifact.runId : "";
+    return runId
+      ? `/app#runs/${encodeURIComponent(runId)}/artifacts/${encodeURIComponent(id)}`
+      : `/app#runs`;
+  },
   approval: (id) => `/app#approvals/${encodeURIComponent(id)}`
 };
 
@@ -201,7 +207,7 @@ function withAgentLinks(agent) {
 
 function withArtifactLinks(artifact) {
   if (!artifact || typeof artifact !== "object") return artifact;
-  return { ...artifact, deepLink: deepLinks.artifact(artifact.id) };
+  return { ...artifact, deepLink: deepLinks.artifact(artifact), deepLinkRun: deepLinks.run(artifact.runId) };
 }
 
 function absoluteDeepLink(link) {
@@ -1153,9 +1159,16 @@ app.post("/api/runs/:id/cancel", requireAuth, requireScopes("api", "mcp", "runne
 
 app.get("/api/runs/:id/artifacts", requireAuth, (req, res) => res.json({ artifacts: listArtifacts({ runId: req.params.id }).map(withArtifactLinks) }));
 app.post("/api/runs/:id/artifacts", requireAuth, requireScopes("runner"), requireRunOwnerOrAdmin, (req, res) => {
-  const runDir = path.join(env.artifactDir, "runs", req.params.id);
+  const runRecord = getRun(req.params.id);
+  if (!runRecord) return res.status(404).json({ error: "run not found" });
+  const workflowSlug = slugify(runRecord.capabilitySlug || runRecord.capabilityName || "workflow") || "workflow";
+  const runDate = String(runRecord.createdAt || now()).slice(0, 10) || "unknown-date";
+  const runDir = path.join(env.artifactDir, "runs", workflowSlug, runDate, req.params.id);
   mkdirSync(runDir, { recursive: true });
-  const safeName = String(req.body.name || "artifact.txt").replace(/[/\\]/g, "-");
+  const safeName = String(req.body.name || "artifact.txt")
+    .replace(/[/\\]/g, "-")
+    .replace(/[\0\r\n]/g, "")
+    .trim() || "artifact.txt";
   const filePath = path.join(runDir, safeName);
   const content = req.body.contentBase64 ? Buffer.from(req.body.contentBase64, "base64") : Buffer.from(String(req.body.content || ""));
   writeFileSync(filePath, content);

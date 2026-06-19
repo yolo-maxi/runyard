@@ -70,8 +70,9 @@ const deepLinks = {
   agent: (slug) => `#agents/agents/${encodeURIComponent(slug)}`,
   skill: (slug) => `#agents/skills/${encodeURIComponent(slug)}`,
   knowledgeItem: (slug) => `#agents/knowledge/${encodeURIComponent(slug)}`,
-  artifacts: () => "#artifacts",
-  artifact: (id) => `#artifacts/${encodeURIComponent(id)}`,
+  artifact: (artifact) => artifact?.runId
+    ? `#runs/${encodeURIComponent(artifact.runId)}/artifacts/${encodeURIComponent(artifact.id)}`
+    : "#runs",
   tokens: () => "#tokens",
   runners: () => "#runners",
   audit: () => "#audit",
@@ -357,7 +358,8 @@ async function render() {
   highlightSidebar(view);
   if (view === "runs" && segments[1]) {
     const focus = segments[2] || ""; // "logs" | "artifacts" | ""
-    return renderRunDetail(segments[1], { focus });
+    const focusId = segments[3] || "";
+    return renderRunDetail(segments[1], { focus, focusId });
   }
   if (view === "home" || view === "runs" || view === "dashboard") return renderHome();
   if (view === "workflows" || view === "capabilities") {
@@ -384,7 +386,6 @@ async function render() {
   }
   if (view === "connect") return renderConnect();
   if (view === "approvals") return segments[1] ? renderApprovalDetail(segments[1]) : renderApprovals();
-  if (view === "artifacts") return renderArtifacts(segments[1] || "");
   if (view === "runners") return renderRunners();
   if (view === "tokens") return renderTokens();
   if (view === "audit") return renderAudit();
@@ -580,7 +581,7 @@ function runCard(run, artifacts = []) {
     : "";
   const artifactPreview = !active && artifacts.length
     ? `<ul class="artifact-list">
-        ${artifacts.slice(0, 3).map((a) => `<li><a href="${esc(deepLinks.artifact(a.id))}">${esc(artifactDisplayName(a))}</a> <a class="muted artifact-dl" href="/api/artifacts/${esc(a.id)}/download" target="_blank">download</a> <span class="muted">${esc(formatBytes(a.sizeBytes))}</span></li>`).join("")}
+        ${artifacts.slice(0, 3).map((a) => `<li><a href="${esc(deepLinks.artifact(a))}">${esc(artifactDisplayName(a))}</a> <a class="muted artifact-dl" href="/api/artifacts/${esc(a.id)}/download" target="_blank">download</a> <span class="muted">${esc(formatBytes(a.sizeBytes))}</span></li>`).join("")}
         ${artifacts.length > 3 ? `<li class="muted"><a href="${esc(deepLinks.runArtifacts(run.id))}">+${artifacts.length - 3} more</a></li>` : ""}
       </ul>`
     : "";
@@ -921,7 +922,7 @@ async function editCapability(slug = "") {
   });
 }
 
-async function renderRunDetail(runId, { focus = "" } = {}) {
+async function renderRunDetail(runId, { focus = "", focusId = "" } = {}) {
   const data = await api(`/api/runs/${runId}`);
   const run = data.run;
   const folder = runFolderLabel(run);
@@ -977,17 +978,18 @@ async function renderRunDetail(runId, { focus = "" } = {}) {
     </section>`;
   $("#cancel-run").addEventListener("click", async () => {
     await api(`/api/runs/${run.id}/cancel`, { method: "POST", body: { reason: "Cancelled from Web Hub" } });
-    await renderRunDetail(run.id, { focus });
+    await renderRunDetail(run.id, { focus, focusId });
   });
   bindCopy();
   // Honor the sub-route by bringing the relevant panel into view.
   if (focus === "logs") $("#panel-logs")?.scrollIntoView({ behavior: "smooth", block: "start" });
   if (focus === "artifacts") $("#panel-artifacts")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  if (focus === "artifacts" && focusId) focusElement(`artifact-${focusId}`);
 }
 
 function artifactList(artifacts) {
   if (!artifacts.length) return `<p class="muted">No artifacts.</p>`;
-  return `<ul class="artifact-list">${artifacts.map((artifact) => `<li id="artifact-${esc(artifact.id)}"><a href="/api/artifacts/${esc(artifact.id)}/download" target="_blank">${esc(artifactDisplayName(artifact))}</a> ${shareButton(deepLinks.artifact(artifact.id), "Copy share link to this artifact")} <span class="muted">${esc(formatBytes(artifact.sizeBytes))}${artifact.mimeType ? ` · ${esc(artifact.mimeType)}` : ""}</span></li>`).join("")}</ul>`;
+  return `<ul class="artifact-list">${artifacts.map((artifact) => `<li id="artifact-${esc(artifact.id)}"><a href="/api/artifacts/${esc(artifact.id)}/download" target="_blank">${esc(artifactDisplayName(artifact))}</a> ${shareButton(deepLinks.artifact(artifact), "Copy share link to this artifact in its run")} <span class="muted">${esc(formatBytes(artifact.sizeBytes))}${artifact.mimeType ? ` · ${esc(artifact.mimeType)}` : ""}</span></li>`).join("")}</ul>`;
 }
 
 function approvalContext(approval) {
@@ -1142,13 +1144,6 @@ async function resolveApproval(id, decision, { rerender = "list" } = {}) {
   if (rerender === "detail") return renderApprovalDetail(id);
   if (rerender === "none") return null;
   return renderApprovals();
-}
-
-async function renderArtifacts(focusId = "") {
-  const data = await api("/api/artifacts");
-  content.innerHTML = `${toolbar("Artifacts", "", deepLinks.artifacts())}<section class="panel">${artifactList(data.artifacts)}</section>`;
-  bindCopy();
-  if (focusId) focusElement(`artifact-${focusId}`);
 }
 
 // Scroll a deep-linked item into view and briefly highlight it so the user

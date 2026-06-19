@@ -184,6 +184,11 @@ describe("Smithers Hub API", () => {
     assert.equal(detail.run.status, "succeeded");
     assert.equal(detail.artifacts.length, 1);
     assert.equal(readFileSync(detail.artifacts[0].path, "utf8"), "# result");
+    assert.ok(detail.artifacts[0].path.includes(path.join("artifacts", "runs", "hello", detail.run.createdAt.slice(0, 10), created.run.id)));
+    assert.equal(detail.artifacts[0].deepLink, `/app#runs/${created.run.id}/artifacts/${detail.artifacts[0].id}`);
+    assert.equal(detail.artifacts[0].deepLinkRun, `/app#runs/${created.run.id}`);
+    const runArtifacts = await api(`/api/runs/${created.run.id}/artifacts`);
+    assert.equal(runArtifacts.artifacts[0].deepLink, `/app#runs/${created.run.id}/artifacts/${runArtifacts.artifacts[0].id}`);
   });
 
   it("starts implement workflows without a run-start approval", async () => {
