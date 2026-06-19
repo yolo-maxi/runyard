@@ -132,11 +132,40 @@ code {
   flex-wrap: wrap;
 }
 
+.mobile-primary-nav {
+  display: none;
+}
+
+.mobile-primary-nav a {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  border-radius: 6px;
+  min-height: 44px;
+  padding: 8px 12px;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.mobile-primary-nav a.active {
+  border-color: var(--brand);
+  color: var(--brand);
+  background: #e5fbf6;
+}
+
 .nav button,
 .nav a {
   min-height: 32px;
   padding: 6px 9px;
   font-size: 14px;
+}
+
+.admin-label-short,
+.mobile-menu-only {
+  display: none;
 }
 
 .shell {
@@ -243,6 +272,8 @@ code {
 .toolbar h1 {
   margin: 0;
   font-size: 28px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .toolbar-actions {
@@ -250,6 +281,64 @@ code {
   gap: 8px;
   align-items: center;
   flex-wrap: wrap;
+}
+
+.breadcrumbs {
+  margin: -4px 0 12px;
+  font-size: 13px;
+  min-width: 0;
+}
+
+.breadcrumbs ol {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.breadcrumbs li {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  color: var(--muted);
+}
+
+.breadcrumbs li:first-child {
+  flex: 0 0 auto;
+}
+
+.breadcrumbs li + li::before {
+  content: "/";
+  color: var(--muted);
+  margin: 0 7px;
+  flex: 0 0 auto;
+}
+
+.breadcrumbs a,
+.breadcrumbs span {
+  color: var(--muted);
+  display: inline-block;
+  max-width: min(30vw, 260px);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.breadcrumbs a:hover {
+  color: var(--brand);
+  text-decoration: underline;
+}
+
+.breadcrumbs [aria-current="page"] {
+  color: var(--ink);
+  font-weight: 600;
+  max-width: min(42vw, 420px);
 }
 
 .stats {
@@ -609,15 +698,21 @@ details.advanced[open] summary {
   z-index: 30;
 }
 
-.admin-menu-list button {
+.admin-menu-list button,
+.admin-menu-list a {
   width: 100%;
   justify-content: flex-start;
   border-color: transparent;
   background: transparent;
   min-height: 34px;
+  color: var(--ink);
+  text-decoration: none;
+  border-radius: 6px;
+  padding: 8px 10px;
 }
 
-.admin-menu-list button:hover {
+.admin-menu-list button:hover,
+.admin-menu-list a:hover {
   background: var(--soft);
   border-color: var(--line);
 }
@@ -1027,6 +1122,7 @@ details.advanced[open] summary {
 }
 
 .run-id-mono {
+  display: inline-block;
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 12px;
   background: var(--soft);
@@ -1034,6 +1130,8 @@ details.advanced[open] summary {
   border-radius: 6px;
   padding: 1px 6px;
   color: var(--muted);
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 /* ---- Workflow card (list) + detail page ---- */
@@ -1224,6 +1322,19 @@ details.advanced[open] summary {
 
 /* ---- Mobile tweaks for the new dense layouts ---- */
 @media (max-width: 640px) {
+  .breadcrumbs li + li::before {
+    margin: 0 5px;
+  }
+
+  .breadcrumbs a,
+  .breadcrumbs span {
+    max-width: 28vw;
+  }
+
+  .breadcrumbs [aria-current="page"] {
+    max-width: 38vw;
+  }
+
   .pill-label {
     min-width: 56px;
   }
@@ -1243,7 +1354,7 @@ details.advanced[open] summary {
   }
 }
 
-/* ---- Tablet / phone: stack the console, turn the sidebar into a compact scroll nav ---- */
+/* ---- Tablet / phone: stack the console and move primary nav into the topbar ---- */
 @media (max-width: 850px) {
   .shell,
   .split,
@@ -1251,26 +1362,8 @@ details.advanced[open] summary {
     grid-template-columns: 1fr;
   }
 
-  /* Sidebar becomes a horizontal, swipeable nav strip under the sticky topbar. */
   .sidebar {
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
-    display: flex;
-    flex-direction: row;
-    gap: 6px;
-    padding: 8px 12px;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    position: sticky;
-    top: 58px;
-    z-index: 5;
-  }
-
-  .sidebar button {
-    width: auto;
-    margin-bottom: 0;
-    flex: 0 0 auto;
-    white-space: nowrap;
+    display: none;
   }
 
   .content {
@@ -1279,10 +1372,49 @@ details.advanced[open] summary {
 
   /* Topbar may need to breathe; let it grow rather than clip. */
   .topbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
     height: auto;
     min-height: 58px;
     padding: 8px 16px;
-    flex-wrap: wrap;
+    gap: 8px 10px;
+  }
+
+  .brand {
+    min-width: 0;
+  }
+
+  .nav {
+    justify-self: end;
+    flex-wrap: nowrap;
+    gap: 6px;
+  }
+
+  .nav .support-link {
+    display: none;
+  }
+
+  .admin-label-full {
+    display: none;
+  }
+
+  .admin-label-short,
+  .mobile-menu-only {
+    display: inline-flex;
+  }
+
+  .mobile-primary-nav {
+    display: flex;
+    grid-column: 1 / -1;
+    gap: 6px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 2px;
+  }
+
+  .mobile-primary-nav a {
+    flex: 1 0 auto;
+    min-width: 96px;
   }
 
   /* Touch-friendly targets. */
@@ -1290,6 +1422,7 @@ details.advanced[open] summary {
   .button,
   .nav button,
   .nav a,
+  .mobile-primary-nav a,
   input,
   select {
     min-height: 44px;
@@ -1299,6 +1432,10 @@ details.advanced[open] summary {
     font-size: 22px;
     overflow-wrap: anywhere;
     min-width: 0;
+  }
+
+  .toolbar-actions {
+    width: 100%;
   }
 
   /* Landing: dial the marketing hero down to phone scale. */

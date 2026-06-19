@@ -10,12 +10,19 @@
   <body>
     <header class="topbar">
       <div class="brand"><span class="brand-mark"></span> Smithers Hub</div>
-      <nav class="nav">
-        <a class="button" href="/docs#deep-links" title="Every URL in the Hub is shareable — see Docs.">Docs</a>
-        <a class="button" href="/llms.txt">llms.txt</a>
+      <nav class="mobile-primary-nav" aria-label="Primary navigation">
+        <a href="#runs" data-primary-view="home">Runs</a>
+        <a href="#workflows" data-primary-view="workflows">Workflows</a>
+        <a href="#agents/agents" data-primary-view="agents">Agents</a>
+      </nav>
+      <nav class="nav" aria-label="Support and admin">
+        <a class="button support-link" href="/docs#deep-links" title="Every URL in the Hub is shareable — see Docs.">Docs</a>
+        <a class="button support-link" href="/llms.txt">llms.txt</a>
         <details class="admin-menu" id="admin-menu">
-          <summary class="button" aria-haspopup="true">Admin <span aria-hidden="true">▾</span></summary>
+          <summary class="button" aria-haspopup="true"><span class="admin-label-full">Admin</span><span class="admin-label-short">More</span> <span aria-hidden="true">▾</span></summary>
           <div class="admin-menu-list" role="menu">
+            <a class="mobile-menu-only" href="/docs#deep-links" role="menuitem">Docs</a>
+            <a class="mobile-menu-only" href="/llms.txt" role="menuitem">llms.txt</a>
             <button data-view="connect" type="button">Connect</button>
             <button data-view="approvals" type="button">Approvals</button>
             <button data-view="artifacts" type="button">Artifacts</button>
@@ -39,11 +46,11 @@
       </section>
     </main>
     <main id="app" class="shell hidden">
-      <aside class="sidebar">
+      <nav class="sidebar" aria-label="Primary navigation">
         <button data-view="home" class="active">Runs</button>
         <button data-view="workflows">Workflows</button>
         <button data-view="agents">Agents</button>
-      </aside>
+      </nav>
       <section id="content" class="content"></section>
     </main>
     <script type="module" src="/public/app.js"></script>

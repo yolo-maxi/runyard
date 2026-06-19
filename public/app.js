@@ -193,6 +193,21 @@ function toolbar(title, actions = "", hashForShare = "") {
   return `<div class="toolbar"><h1>${esc(title)}${share}</h1><div class="toolbar-actions">${actions}</div></div>`;
 }
 
+function breadcrumbs(items) {
+  const visible = (items || []).filter((item) => item?.label);
+  if (!visible.length) return "";
+  return `<nav class="breadcrumbs" aria-label="Breadcrumb"><ol>
+    ${visible.map((item) => {
+      const label = esc(item.label);
+      const title = item.title || item.label;
+      const current = item.current ? ' aria-current="page"' : "";
+      return `<li>${item.href
+        ? `<a href="${esc(item.href)}" title="${esc(title)}"${current}>${label}</a>`
+        : `<span title="${esc(title)}"${current}>${label}</span>`}</li>`;
+    }).join("")}
+  </ol></nav>`;
+}
+
 // --- Routing: which sidebar item highlights for a given view ---------------
 // home is the new app-home (Runs). Workflows = capabilities. Agents folds in
 // the old Skills + Knowledge sections as sub-tabs. Other views live in the
@@ -210,9 +225,18 @@ const PRIMARY_VIEWS = new Map([
 
 function highlightSidebar(view) {
   const primary = PRIMARY_VIEWS.get(view) || "";
-  document.querySelectorAll(".sidebar button").forEach((button) =>
-    button.classList.toggle("active", button.dataset.view === primary)
-  );
+  document.querySelectorAll(".sidebar button").forEach((button) => {
+    const active = button.dataset.view === primary;
+    button.classList.toggle("active", active);
+    if (active) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  });
+  document.querySelectorAll(".mobile-primary-nav a").forEach((link) => {
+    const active = link.dataset.primaryView === primary;
+    link.classList.toggle("active", active);
+    if (active) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  });
 }
 
 function closeAdminMenu() {
@@ -684,7 +708,10 @@ async function renderWorkflowDetail(slug, { sub = "" } = {}) {
     const data = await api(`/api/capabilities/${slug}`);
     cap = data.capability;
   } catch (error) {
-    content.innerHTML = `${toolbar("Workflow", "", deepLinks.workflow(slug))}<section class="panel"><p class="muted">${esc(error.message)}</p><p><a href="${esc(deepLinks.workflows())}">Back to workflows</a></p></section>`;
+    content.innerHTML = `${breadcrumbs([
+      { label: "Workflows", href: deepLinks.workflows() },
+      { label: slug, href: deepLinks.workflow(slug), current: true }
+    ])}${toolbar("Workflow", "", deepLinks.workflow(slug))}<section class="panel"><p class="muted">${esc(error.message)}</p><p><a href="${esc(deepLinks.workflows())}">Back to workflows</a></p></section>`;
     return;
   }
   let runs = [];
@@ -705,7 +732,11 @@ async function renderWorkflowDetail(slug, { sub = "" } = {}) {
     <button id="wf-edit">Edit</button>
     <a class="button" href="${esc(deepLinks.workflows())}">All workflows</a>
   `;
-  content.innerHTML = `${toolbar(cap.name, headerActions, deepLinks.workflow(slug))}
+  const crumbNav = breadcrumbs([
+    { label: "Workflows", href: deepLinks.workflows() },
+    { label: cap.name || slug, href: deepLinks.workflow(slug), current: true }
+  ]);
+  content.innerHTML = `${crumbNav}${toolbar(cap.name, headerActions, deepLinks.workflow(slug))}
     <p class="muted workflow-detail-desc">${esc(cap.description || "No description.")}</p>
     <p class="workflow-meta-row muted">
       <span>${esc(cap.category || "General")}</span>
@@ -911,7 +942,12 @@ async function renderRunDetail(runId, { focus = "" } = {}) {
   if (branch) chips.push(`<span class="chip chip-branch">🌿 ${esc(branch)}</span>`);
   if (run.workflowVersion) chips.push(`<span class="chip chip-version">workflow v${esc(run.workflowVersion)}</span>`);
   if (run.runnerId) chips.push(`<span class="chip chip-runner">🛠 ${esc(run.runnerId)}</span>`);
-  content.innerHTML = `${toolbar(title, `<a class="button" href="${esc(slug ? deepLinks.workflow(slug) : deepLinks.workflows())}">Workflow</a>
+  const crumbNav = breadcrumbs([
+    { label: "Runs", href: deepLinks.runs() },
+    { label: run.capabilityName || slug || "Workflow", href: slug ? deepLinks.workflow(slug) : deepLinks.workflows() },
+    { label: run.id, href: deepLinks.run(run.id), title: `Run ${run.id}`, current: true }
+  ]);
+  content.innerHTML = `${crumbNav}${toolbar(title, `<a class="button" href="${esc(slug ? deepLinks.workflow(slug) : deepLinks.workflows())}">Workflow</a>
       <a class="button" href="${esc(deepLinks.runLogs(run.id))}">Run log</a>
       <a class="button" href="${esc(deepLinks.runArtifacts(run.id))}">Artifacts</a>
       <button id="cancel-run" class="danger">Cancel</button>`, deepLinks.run(run.id))}
@@ -1023,7 +1059,10 @@ async function renderApprovalDetail(id) {
   try {
     approval = (await api(`/api/approvals/${encodeURIComponent(id)}`)).approval;
   } catch (error) {
-    content.innerHTML = `${toolbar("Approval", `<a class="button" href="${esc(deepLinks.approvals())}">All approvals</a>`, deepLinks.approval(id))}
+    content.innerHTML = `${breadcrumbs([
+      { label: "Approvals", href: deepLinks.approvals() },
+      { label: id, href: deepLinks.approval(id), title: `Approval ${id}`, current: true }
+    ])}${toolbar("Approval", `<a class="button" href="${esc(deepLinks.approvals())}">All approvals</a>`, deepLinks.approval(id))}
       <section class="panel"><p class="muted">${esc(error.message)}</p></section>`;
     return;
   }
@@ -1033,7 +1072,12 @@ async function renderApprovalDetail(id) {
   const project = context.project || {};
   const canResolve = approval.status === "pending";
   const actions = `<a class="button" href="${esc(deepLinks.approvals())}">All approvals</a>${run ? ` <a class="button" href="${esc(run.deepLink)}">Open run</a>` : ""}`;
-  content.innerHTML = `${toolbar(approval.title, actions, deepLinks.approval(approval.id))}
+  const crumbNav = breadcrumbs([
+    { label: "Approvals", href: deepLinks.approvals() },
+    workflow?.deepLink ? { label: approvalWorkflowLabel(approval), href: workflow.deepLink } : null,
+    { label: approval.id, href: deepLinks.approval(approval.id), title: approval.title || `Approval ${approval.id}`, current: true }
+  ]);
+  content.innerHTML = `${crumbNav}${toolbar(approval.title, actions, deepLinks.approval(approval.id))}
     <p class="approval-detail-sub">
       ${status(approval.status)}
       <span class="run-id-mono">${esc(approval.id)}</span>
