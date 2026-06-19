@@ -1317,3 +1317,141 @@ describe("Run log usability", () => {
     assert.match(code, /\/log-summary/);
   });
 });
+
+// --- Runner pool & queue visibility -----------------------------------------
+// Smithers Hub supports a multi-slot runner pool (typically 4 on a dedicated
+// VPS host) while keeping a single centralized queue on the Hub. These tests
+// pin the contract: capacity is honoured, slots are released on terminal
+// transitions, queued runs carry a position, and the UI surfaces both.
+describe("Runner pool capacity & queue visibility", () => {
+  it("registers a runner with a capacity and exposes pool stats", async () => {
+    const reg = await api("/api/runners/register", {
+      method: "POST",
+      body: { name: "pool-host", hostname: "pool-host", tags: ["smithers", "node"], capacity: 4 }
+    });
+    assert.equal(reg.runner.capacity, 4);
+    assert.equal(reg.runner.activeRuns, 0);
+    assert.equal(reg.runner.availableSlots, 4);
+
+    const list = await api("/api/runners");
+    assert.ok(list.pool, "runner list should include pool stats");
+    assert.ok(list.pool.totalCapacity >= 4, "pool total capacity should include the new runner");
+    assert.ok(typeof list.pool.queued === "number");
+  });
+
+  it("preserves single-slot behavior when no capacity is provided", async () => {
+    const reg = await api("/api/runners/register", {
+      method: "POST",
+      body: { name: "legacy-runner", hostname: "legacy", tags: ["smithers", "node"] }
+    });
+    assert.equal(reg.runner.capacity, 1);
+    assert.equal(reg.runner.availableSlots, 1);
+  });
+
+  it("claims multiple runs in parallel up to the runner's capacity", async () => {
+    const reg = await api("/api/runners/register", {
+      method: "POST",
+      body: { name: "fleet-runner", hostname: "fleet", tags: ["smithers", "node"], capacity: 3 }
+    });
+    const runs = [];
+    for (let i = 0; i < 5; i += 1) {
+      const created = await api("/api/capabilities/hello/run", {
+        method: "POST",
+        body: { input: { goal: `capacity-${i}` } }
+      });
+      runs.push(created.run.id);
+    }
+    const claims = [];
+    for (let i = 0; i < 4; i += 1) {
+      claims.push(await api(`/api/runners/${reg.runner.id}/next-run`));
+    }
+    const claimed = claims.filter((c) => c?.run).map((c) => c.run.id);
+    // First three slots get filled; the fourth claim is blocked by capacity.
+    assert.equal(claimed.length, 3);
+    assert.equal(claims[3].run, undefined);
+
+    // The runner record now reflects the saturated pool.
+    const runners = (await api("/api/runners")).runners;
+    const updated = runners.find((r) => r.id === reg.runner.id);
+    assert.equal(updated.capacity, 3);
+    assert.equal(updated.activeRuns, 3);
+    assert.equal(updated.availableSlots, 0);
+  });
+
+  it("releases a runner slot when a claimed run reaches a terminal state", async () => {
+    const reg = await api("/api/runners/register", {
+      method: "POST",
+      body: { name: "release-runner", hostname: "release", tags: ["smithers", "node"], capacity: 2 }
+    });
+    const created = await api("/api/capabilities/hello/run", {
+      method: "POST",
+      body: { input: { goal: "release a slot" } }
+    });
+    const claim = await api(`/api/runners/${reg.runner.id}/next-run`);
+    assert.equal(claim.run.id, created.run.id);
+    let runners = (await api("/api/runners")).runners;
+    let updated = runners.find((r) => r.id === reg.runner.id);
+    assert.equal(updated.activeRuns, 1);
+
+    await api(`/api/runs/${created.run.id}/start`, { method: "POST", body: {} });
+    await api(`/api/runs/${created.run.id}/complete`, { method: "POST", body: { output: { ok: true } } });
+
+    runners = (await api("/api/runners")).runners;
+    updated = runners.find((r) => r.id === reg.runner.id);
+    assert.equal(updated.activeRuns, 0, "terminal transition must release the slot");
+    assert.equal(updated.availableSlots, 2);
+  });
+
+  it("updates capacity through heartbeats so a runner restart with a new size takes effect", async () => {
+    const reg = await api("/api/runners/register", {
+      method: "POST",
+      body: { name: "rescale-runner", hostname: "rescale", tags: ["smithers", "node"], capacity: 1 }
+    });
+    assert.equal(reg.runner.capacity, 1);
+    const beat = await api(`/api/runners/${reg.runner.id}/heartbeat`, {
+      method: "POST",
+      body: { tags: ["smithers", "node"], capacity: 4, activeRuns: 0 }
+    });
+    assert.equal(beat.runner.capacity, 4);
+    assert.equal(beat.runner.availableSlots, 4);
+  });
+
+  it("surfaces a queue position on queued runs", async () => {
+    const created = await api("/api/capabilities/hello/run", {
+      method: "POST",
+      body: { input: { goal: "queue position" } }
+    });
+    const detail = await api(`/api/runs/${created.run.id}`);
+    assert.equal(detail.run.status, "queued");
+    assert.ok(detail.run.queue, "queued run detail should include a queue payload");
+    assert.ok(detail.run.queue.position >= 1);
+    assert.ok(detail.run.queue.total >= 1);
+
+    const list = await api("/api/runs?status=queued&limit=200");
+    const row = list.runs.find((r) => r.id === created.run.id);
+    assert.ok(row.queue, "queued run row should include queue payload");
+    assert.ok(typeof list.pool.queued === "number");
+  });
+
+  it("includes queue + capacity stats in the dashboard payload", async () => {
+    const dash = await api("/api/dashboard");
+    assert.ok(dash.stats);
+    assert.equal(typeof dash.stats.queuedRuns, "number");
+    assert.equal(typeof dash.stats.runnerCapacity, "number");
+    assert.equal(typeof dash.stats.runnerAvailableSlots, "number");
+    assert.ok(dash.pool, "dashboard should include a pool object");
+    assert.equal(typeof dash.pool.queued, "number");
+  });
+
+  it("ships queue + pool UI helpers in app.js so the console can render them", async () => {
+    const response = await raw("/public/app.js");
+    assert.equal(response.status, 200);
+    const code = response.data;
+    assert.match(code, /renderQueueBanner/);
+    assert.match(code, /run-queue-banner/);
+    assert.match(code, /runnerCapacityCell/);
+    assert.match(code, /renderRunnerPoolSummary/);
+    assert.match(code, /chip-queue/);
+    assert.match(code, /SMITHERS_RUNNER_CONCURRENCY/);
+  });
+});

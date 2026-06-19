@@ -34,6 +34,7 @@ import {
   resolveApproval,
   revokeAccessToken,
   runOwnerTokenId,
+  runnerPoolStats,
   transitionRun,
   upsertAgent,
   upsertCapability,
@@ -641,10 +642,25 @@ function quickReasonHint(run) {
   return "";
 }
 
-function withRunLinks(run) {
+// Caller-side helper so we can pre-compute a queue index once per response
+// and avoid an N+1 DB scan when rendering a long list of runs. `queueIndex`
+// is a Map of runId -> 1-based position in the FIFO of currently-queued runs.
+function buildQueueIndex(runs) {
+  const queued = (runs || [])
+    .filter((r) => r && r.status === "queued")
+    .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+  const map = new Map();
+  queued.forEach((run, i) => map.set(run.id, i + 1));
+  return { map, total: queued.length };
+}
+
+function withRunLinks(run, queueIndex = null) {
   if (!run || typeof run !== "object") return run;
   const origin = runOrigin(run);
   const reasonHint = quickReasonHint(run);
+  const queue = run.status === "queued" && queueIndex
+    ? { position: queueIndex.map.get(run.id) || null, total: queueIndex.total }
+    : null;
   return {
     ...run,
     title: deriveRunTitle(run),
@@ -655,11 +671,21 @@ function withRunLinks(run) {
     originLabel: origin?.label || "",
     durationMs: runDurationMs(run),
     reasonHint,
+    ...(queue ? { queue } : {}),
     deepLink: deepLinks.run(run.id),
     deepLinkLogs: deepLinks.runLogs(run.id),
     deepLinkArtifacts: deepLinks.runArtifacts(run.id),
     ...(run.capabilitySlug ? { deepLinkWorkflow: deepLinks.workflow(run.capabilitySlug) } : {})
   };
+}
+
+// When we have a single run (not a list), compute its queue position on the
+// fly from the live queued backlog.
+function decorateSingleRun(run) {
+  if (!run) return run;
+  if (run.status !== "queued") return withRunLinks(run);
+  const queueIndex = buildQueueIndex(listRuns({ status: "queued", limit: 500 }));
+  return withRunLinks(run, queueIndex);
 }
 
 function withCapabilityLinks(cap) {
@@ -1513,9 +1539,12 @@ app.delete("/api/tokens/:id", requireAuth, requireScopes("admin"), (req, res) =>
 });
 
 app.get("/api/dashboard", requireAuth, (_req, res) => {
+  const recent = listRuns({ limit: 8 });
+  const queueIndex = buildQueueIndex(listRuns({ status: "queued", limit: 500 }));
   res.json({
     stats: dashboardStats(),
-    recentRuns: listRuns({ limit: 8 }).map(withRunLinks),
+    pool: runnerPoolStats(),
+    recentRuns: recent.map((run) => withRunLinks(run, queueIndex)),
     pendingApprovals: listApprovals("pending").map(withApprovalLinks)
   });
 });
@@ -1985,10 +2014,15 @@ app.get("/api/runs", requireAuth, (req, res) => {
   const capability = req.query.capability || req.query.capabilitySlug || "";
   let rows = listRuns({ status, limit: capability ? Math.max(limit, 200) : limit });
   if (capability) rows = rows.filter((r) => r.capabilitySlug === capability).slice(0, limit);
+  // Queue position is computed against the global queued backlog (not the
+  // filtered page) so the chip "in queue · 3 of 7" stays accurate regardless
+  // of how the caller slices the list.
+  const queueIndex = buildQueueIndex(status === "queued" ? rows : listRuns({ status: "queued", limit: 500 }));
   res.json({
-    runs: rows.map(withRunLinks),
+    runs: rows.map((run) => withRunLinks(run, queueIndex)),
     total: capability ? rows.length : countRuns({ status }),
     limit,
+    pool: runnerPoolStats(),
     ...(capability ? { capability } : {})
   });
 });
@@ -1998,11 +2032,12 @@ app.get("/api/runs/:id", requireAuth, (req, res) => {
   const events = listRunEvents(run.id);
   const artifacts = listArtifacts({ runId: run.id }).map(withArtifactLinks);
   res.json({
-    run: withRunLinks(run),
+    run: decorateSingleRun(run),
     events,
     artifacts,
     diagnostics: runDiagnostics(run, events, artifacts),
-    logSummary: summarizeRunEvents(events)
+    logSummary: summarizeRunEvents(events),
+    pool: runnerPoolStats()
   });
 });
 app.get("/api/runs/:id/events", requireAuth, (req, res) => res.json({ events: listRunEvents(req.params.id) }));
@@ -2215,7 +2250,9 @@ app.post("/api/runners/register", requireAuth, requireScopes("runner"), (req, re
   const runner = registerRunner(req.body, req.token.id);
   res.json({ runner });
 });
-app.get("/api/runners", requireAuth, (_req, res) => res.json({ runners: listRunners() }));
+app.get("/api/runners", requireAuth, (_req, res) => {
+  res.json({ runners: listRunners(), pool: runnerPoolStats() });
+});
 app.post("/api/runners/:id/heartbeat", requireAuth, requireScopes("runner"), (req, res) => res.json({ runner: heartbeatRunner(req.params.id, req.body) }));
 app.get("/api/runners/:id/next-run", requireAuth, requireScopes("runner"), async (req, res) => {
   const { claimNextRun } = await import("./db.js");

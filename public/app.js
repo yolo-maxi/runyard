@@ -584,6 +584,22 @@ function pills(items, { kind = "pill", link = null } = {}) {
     .join("")}</ul>`;
 }
 
+// Queued runs get a prominent banner so the home grid + workflow detail can
+// answer "is this just sitting in the queue?" at a glance. The position +
+// total come from the server-side queue index when available.
+function renderQueueBanner(run) {
+  const position = run?.queue?.position;
+  const total = run?.queue?.total;
+  const detail = position
+    ? `#${esc(position)}${total ? ` of ${esc(total)}` : ""} · waiting for a runner slot`
+    : `waiting for a runner slot`;
+  return `<p class="run-queue-banner" title="This run is queued — a runner with matching tags will pick it up next.">
+    <span class="run-queue-icon" aria-hidden="true">⏳</span>
+    <span class="run-queue-text">In queue</span>
+    <span class="run-queue-detail muted">${detail}</span>
+  </p>`;
+}
+
 function runCard(run, artifacts = []) {
   const active = isActiveRun(run);
   const folder = runFolderLabel(run);
@@ -615,6 +631,10 @@ function runCard(run, artifacts = []) {
   const reasonHintHtml = reasonHint
     ? `<p class="run-reason-hint" title="${esc(reasonHint)}">⚠ <span>${esc(truncate(reasonHint, 140))}</span></p>`
     : "";
+  // Queue banner — runs in `queued` state are waiting for a runner slot.
+  // The position chip ("#3 of 7") lands when the API ships queue metadata;
+  // we degrade to the plain banner when it isn't available (older clients).
+  const queueBannerHtml = run.status === "queued" ? renderQueueBanner(run) : "";
   return `<article class="run-card ${active ? "active" : "done"} ${esc(run.status)}" id="run-${esc(run.id)}">
     <header class="run-card-head">
       <div class="run-card-status">${active ? '<span class="run-pulse" aria-hidden="true"></span>' : ""}${status(run.status)}</div>
@@ -626,6 +646,7 @@ function runCard(run, artifacts = []) {
       <span class="run-origin" title="Origin">${esc(origin)}</span>
     </p>
     <p class="muted run-desc">${esc(description)}</p>
+    ${queueBannerHtml}
     ${chipsHtml}
     ${reasonHintHtml}
     <p class="muted run-meta">
@@ -663,14 +684,24 @@ async function renderHome() {
     // non-fatal
   }
   const stats = dash.stats || {};
+  const pool = dash.pool || null;
   const pending = dash.pendingApprovals || [];
   const gettingStarted = (runs.length === 0) && !active.length;
+  // Queue + runner pool stats appear inline with the existing home stat strip
+  // so the operator sees backlog and capacity without leaving the page.
+  const queued = stats.queuedRuns != null ? stats.queuedRuns : runs.filter((r) => r.status === "queued").length;
+  const capacityLabel = pool && pool.totalCapacity
+    ? `${pool.totalActive}/${pool.totalCapacity} slots`
+    : `${stats.runnerActiveSlots ?? 0}/${stats.runnerCapacity ?? 0} slots`;
   content.innerHTML = `${toolbar("Runs", `<button id="home-new-run">Run a workflow</button>`, deepLinks.home())}
     <p class="muted deep-link-hint">Every page, run, workflow, and artifact has a stable URL — click 🔗 to copy a shareable link.</p>
     ${gettingStarted ? empty("No runs yet.", "Pick a workflow and run it, or start a runner to execute work. Head to Workflows to begin.") : ""}
+    ${renderRunnerPoolSummary(pool)}
     <section class="stats home-stats">
       ${Object.entries({
         "Active runs": active.length,
+        Queued: queued,
+        "Runner capacity": capacityLabel,
         Workflows: stats.capabilities ?? 0,
         "Total runs": stats.runs ?? runs.length,
         Artifacts: stats.artifacts ?? 0,
@@ -696,8 +727,14 @@ async function renderHome() {
 
 function runsTable(runs) {
   if (!runs.length) return `<p class="muted">No runs yet.</p>`;
+  const queueChip = (run) => {
+    if (run.status !== "queued") return "";
+    const pos = run.queue?.position;
+    const total = run.queue?.total;
+    return ` <span class="chip chip-queue" title="Position in queue">⏳ ${pos ? `#${esc(pos)}${total ? ` / ${esc(total)}` : ""}` : "queued"}</span>`;
+  };
   return `<table class="table"><thead><tr><th>Run</th><th>Workflow</th><th>Status</th><th>Step</th><th>Created</th></tr></thead><tbody>
-    ${runs.map((run) => `<tr><td data-label="Run"><a href="${esc(deepLinks.run(run.id))}" data-run="${esc(run.id)}">${esc(run.id)}</a></td><td data-label="Workflow">${esc(run.capabilityName)}</td><td data-label="Status">${status(run.status)}</td><td data-label="Step">${esc(run.currentStep)}</td><td data-label="Created">${esc(run.createdAt)}</td></tr>`).join("")}
+    ${runs.map((run) => `<tr class="${esc(run.status)}"><td data-label="Run"><a href="${esc(deepLinks.run(run.id))}" data-run="${esc(run.id)}">${esc(run.id)}</a></td><td data-label="Workflow">${esc(run.capabilityName)}</td><td data-label="Status">${status(run.status)}${queueChip(run)}</td><td data-label="Step">${esc(run.currentStep)}</td><td data-label="Created">${esc(run.createdAt)}</td></tr>`).join("")}
   </tbody></table>`;
 }
 
@@ -1779,6 +1816,7 @@ async function renderRunDetail(runId, { focus = "", focusId = "" } = {}) {
     <p class="run-origin-detail"><strong>Origin</strong> ${esc(origin)}</p>
     <p class="run-detail-desc">${esc(description)}</p>
     ${chips.length ? `<p class="run-detail-chips">${chips.join("")}</p>` : ""}
+    ${run.status === "queued" ? renderQueueBanner(run) : ""}
     <p class="run-folder-banner"><span class="run-folder">📁 ${esc(folder)}</span> <span class="muted">— display-only grouping for this run's artifacts &amp; logs</span></p>
     ${focusHint}
     ${renderRunDiagnostics(diagnostics)}
@@ -1985,12 +2023,46 @@ function focusElement(id) {
   setTimeout(() => el.classList.remove("link-focus"), 2200);
 }
 
+// Render a "3 / 4" style capacity badge plus a small slot row showing
+// filled vs free job slots — gives the operator an at-a-glance read of
+// whether the VPS pool is saturated.
+function runnerCapacityCell(runner) {
+  const capacity = Number(runner.capacity || 1);
+  const active = Number(runner.activeRuns || 0);
+  const slots = [];
+  for (let i = 0; i < capacity; i += 1) {
+    slots.push(`<span class="runner-slot ${i < active ? "filled" : "free"}" aria-hidden="true"></span>`);
+  }
+  const saturated = capacity > 0 && active >= capacity;
+  return `<span class="runner-capacity ${saturated ? "saturated" : ""}" title="${active} active of ${capacity} slots">
+    <span class="runner-capacity-count">${esc(active)} / ${esc(capacity)}</span>
+    <span class="runner-slots" aria-label="${active} of ${capacity} slots filled">${slots.join("")}</span>
+  </span>`;
+}
+
+function renderRunnerPoolSummary(pool) {
+  if (!pool) return "";
+  const queued = pool.queued || 0;
+  const capacity = pool.totalCapacity || 0;
+  const active = pool.totalActive || 0;
+  const available = pool.availableSlots != null ? pool.availableSlots : Math.max(0, capacity - active);
+  const queueChip = queued
+    ? `<span class="chip chip-queue" title="Runs waiting for a free runner slot">⏳ ${esc(queued)} queued</span>`
+    : `<span class="chip chip-queue empty" title="Queue is empty">⏳ queue empty</span>`;
+  const capacityChip = `<span class="chip chip-runner" title="Active slots / total capacity across online runners">🛠 ${esc(active)} / ${esc(capacity)} slots</span>`;
+  const availableChip = `<span class="chip ${available ? "chip-branch" : "chip-version"}" title="Free slots across the pool">🟢 ${esc(available)} free</span>`;
+  return `<p class="runner-pool-summary">${queueChip}${capacityChip}${availableChip}</p>`;
+}
+
 async function renderRunners() {
   const data = await api("/api/runners");
+  const pool = data.pool || null;
+  const summary = renderRunnerPoolSummary(pool);
   content.innerHTML = `${toolbar("Runners", "", deepLinks.runners())}<section class="panel">
-    ${data.runners.length ? `<table class="table"><thead><tr><th>Name</th><th>Status</th><th>Tags</th><th>Last heartbeat</th></tr></thead><tbody>
-      ${data.runners.map((runner) => `<tr><td data-label="Name">${esc(runner.name)}<br><span class="muted">${esc(runner.id)}</span></td><td data-label="Status">${status(runner.online ? "online" : "offline")}</td><td data-label="Tags">${esc((runner.tags || []).join(", "))}</td><td data-label="Last heartbeat">${esc(runner.lastHeartbeatAt || "never")}</td></tr>`).join("")}
-    </tbody></table>` : empty("No runners connected.", "Start one with <code>smithers-hub-runner</code> using a token that has the runner scope.")}
+    ${summary}
+    ${data.runners.length ? `<table class="table"><thead><tr><th>Name</th><th>Status</th><th>Capacity</th><th>Tags</th><th>Last heartbeat</th></tr></thead><tbody>
+      ${data.runners.map((runner) => `<tr><td data-label="Name">${esc(runner.name)}<br><span class="muted">${esc(runner.id)}</span></td><td data-label="Status">${status(runner.online ? "online" : "offline")}</td><td data-label="Capacity">${runnerCapacityCell(runner)}</td><td data-label="Tags">${esc((runner.tags || []).join(", "))}</td><td data-label="Last heartbeat">${esc(runner.lastHeartbeatAt || "never")}</td></tr>`).join("")}
+    </tbody></table>` : empty("No runners connected.", "Start one with <code>smithers-hub-runner</code> using a token that has the runner scope. Set <code>SMITHERS_RUNNER_CONCURRENCY=4</code> on a dedicated pool host for ~4 concurrent jobs.")}
   </section>`;
   bindCopy();
 }

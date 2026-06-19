@@ -28,6 +28,16 @@ const intervalMs = Number(process.env.SMITHERS_RUNNER_INTERVAL_MS || 2500);
 const pollMs = Number(process.env.SMITHERS_POLL_MS || 2000);
 const maxRunMs = Number(process.env.SMITHERS_MAX_RUN_MS || 30 * 60_000);
 
+// Concurrency controls how many Smithers runs this single runner process
+// may execute in parallel. Defaults to 1 to keep existing single-runner
+// deployments behaving exactly as before. A VPS pool host can set
+// SMITHERS_RUNNER_CONCURRENCY=4 for a safe target of ~4 concurrent jobs.
+// The cap (16) is a defense against typos like "40" overloading the box.
+const concurrency = Math.max(
+  1,
+  Math.min(16, Math.floor(Number(process.env.SMITHERS_RUNNER_CONCURRENCY || 1)))
+);
+
 if (!token) {
   console.error("SMITHERS_HUB_TOKEN is required for the runner.");
   process.exit(1);
@@ -35,7 +45,10 @@ if (!token) {
 
 const client = new HubClient({ baseUrl, token });
 let runnerId = process.env.SMITHERS_RUNNER_ID || "";
-let busy = false;
+// Active run IDs the runner is currently executing. Capacity is checked
+// against this set instead of a single `busy` flag so multiple runs can
+// progress in parallel.
+const activeRuns = new Set();
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const stripAnsi = (s) => String(s).replace(/\[[0-9;]*m/g, "");
@@ -59,10 +72,13 @@ async function register() {
     hostname: os.hostname(),
     platform: `${os.platform()} ${os.release()}`,
     version: "0.2.0",
-    tags
+    tags,
+    capacity: concurrency
   });
   runnerId = res.runner.id;
-  console.log(`Registered Smithers runner ${runnerId} (${name}) tags=[${tags}] workspace=${workspace}`);
+  console.log(
+    `Registered Smithers runner ${runnerId} (${name}) tags=[${tags}] workspace=${workspace} capacity=${concurrency}`
+  );
 }
 
 // Launch `smithers up` detached and return the Smithers runId.
@@ -108,7 +124,7 @@ const TERMINAL = new Set(["succeeded", "failed", "cancelled", "errored"]);
 async function executeAssignment(assignment) {
   const { run, capability } = assignment;
   const entry = capability.workflow?.entry || capability.workflow?.file;
-  busy = true;
+  activeRuns.add(run.id);
   try {
     await client.post(`/api/runs/${run.id}/start`, {});
     if (!entry) throw new Error(`capability ${capability.slug} has no workflow.entry`);
@@ -186,15 +202,41 @@ async function executeAssignment(assignment) {
     await client.post(`/api/runs/${run.id}/fail`, { error: error.stack || error.message }).catch(() => {});
     console.error(`Run ${run.id} failed:`, error.message);
   } finally {
-    busy = false;
+    activeRuns.delete(run.id);
   }
 }
 
+let tickInFlight = false;
 async function tick() {
-  if (!runnerId || busy) return;
-  await client.post(`/api/runners/${runnerId}/heartbeat`, { tags, currentRunId: busy ? "busy" : null }).catch(() => {});
-  const assignment = await client.get(`/api/runners/${runnerId}/next-run`).catch(() => ({}));
-  if (assignment?.run) await executeAssignment(assignment);
+  if (!runnerId) return;
+  // setInterval doesn't wait for the previous tick to finish — guard against
+  // two overlapping pollers racing each other to claim the same slot.
+  if (tickInFlight) return;
+  tickInFlight = true;
+  try {
+    // Heartbeat first so the Hub UI sees the capacity / active-slot update
+    // even on a tick where we have no spare capacity to claim more work.
+    await client
+      .post(`/api/runners/${runnerId}/heartbeat`, {
+        tags,
+        capacity: concurrency,
+        activeRuns: activeRuns.size,
+        currentRunId: activeRuns.size ? [...activeRuns][0] : null
+      })
+      .catch(() => {});
+    // Fill every empty slot in this tick so a fast-arriving backlog drains as
+    // quickly as the runner can poll. Each executeAssignment runs as its own
+    // async task; we don't await them so multiple runs progress concurrently.
+    while (activeRuns.size < concurrency) {
+      const assignment = await client.get(`/api/runners/${runnerId}/next-run`).catch(() => ({}));
+      if (!assignment?.run) break;
+      // Fire-and-forget — executeAssignment manages the activeRuns slot in
+      // its own try/finally so an unexpected throw can't leak a slot.
+      executeAssignment(assignment).catch((error) => console.error("executeAssignment failed:", error.message));
+    }
+  } finally {
+    tickInFlight = false;
+  }
 }
 
 async function main() {

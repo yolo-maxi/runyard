@@ -133,6 +133,8 @@ export function initDb() {
       status TEXT NOT NULL DEFAULT 'offline',
       current_run_id TEXT,
       token_id TEXT,
+      capacity INTEGER NOT NULL DEFAULT 1,
+      active_runs INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       last_heartbeat_at TEXT
     );
@@ -209,10 +211,24 @@ export function initDb() {
     CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status);
   `);
 
+  migrateRunnersPoolColumns();
   setSettingDefault("instance_name", env.instanceName);
   seedAll();
   autoQueueLegacyRunStartApprovals();
   ensureBootstrapToken();
+}
+
+// Capacity / active_runs were added after the initial schema shipped. Existing
+// installs may already have a runners table without these columns — the CREATE
+// TABLE IF NOT EXISTS above is a no-op there, so we add the columns manually.
+function migrateRunnersPoolColumns() {
+  const columns = all("PRAGMA table_info(runners)").map((row) => row.name);
+  if (!columns.includes("capacity")) {
+    db.exec("ALTER TABLE runners ADD COLUMN capacity INTEGER NOT NULL DEFAULT 1");
+  }
+  if (!columns.includes("active_runs")) {
+    db.exec("ALTER TABLE runners ADD COLUMN active_runs INTEGER NOT NULL DEFAULT 0");
+  }
 }
 
 function setSettingDefault(key, value) {
@@ -734,7 +750,19 @@ export function transitionRun(runId, toStatus, updates = {}) {
   if (!canTransitionRun(current.status, toStatus)) {
     return { ok: false, code: 409, error: `cannot transition run from '${current.status}' to '${toStatus}'`, run: current };
   }
-  return { ok: true, run: updateRun(runId, { status: toStatus, ...updates }) };
+  const updated = updateRun(runId, { status: toStatus, ...updates });
+  // Release the runner slot exactly once per run when it leaves the active
+  // set. We use the pre-transition state to know whether the slot was
+  // actually reserved (waiting_approval / queued never reserve, but an
+  // assigned/running run did).
+  if (
+    RUN_TERMINAL.has(toStatus)
+    && current.runnerId
+    && (current.status === "assigned" || current.status === "running")
+  ) {
+    adjustRunnerActiveRuns(current.runnerId, -1);
+  }
+  return { ok: true, run: updated };
 }
 
 export function addRunEvent(runId, type, message = "", data = {}) {
@@ -757,12 +785,26 @@ export function listRunEvents(runId) {
   }));
 }
 
+// Capacity clamp keeps a misconfigured runner from advertising thousands of
+// slots and starving the queue logic. The cap is intentionally generous; a
+// single VPS host is expected to be in the 1–8 range.
+const MAX_RUNNER_CAPACITY = 32;
+
+function normalizeCapacity(value, fallback = 1) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 1) return fallback;
+  return Math.min(Math.floor(parsed), MAX_RUNNER_CAPACITY);
+}
+
 export function registerRunner(input, tokenId = null) {
   // Only allow updating an existing runner record if the caller's token owns it; otherwise mint a fresh id.
   // This prevents one runner token from hijacking another runner's record by guessing its id.
   const candidate = input.id ? one("SELECT * FROM runners WHERE id = ?", [input.id]) : null;
   const existing = candidate && candidate.token_id && candidate.token_id === tokenId ? candidate : null;
   const timestamp = now();
+  // A runner that doesn't advertise capacity stays at 1 — preserves the
+  // pre-pool behavior where a single host ran a single concurrent job.
+  const capacity = normalizeCapacity(input.capacity, existing?.capacity || 1);
   const payload = {
     id: existing ? existing.id : id("runner"),
     name: input.name || input.hostname || "runner",
@@ -772,19 +814,20 @@ export function registerRunner(input, tokenId = null) {
     tags: json(input.tags, []),
     status: "online",
     token_id: tokenId,
+    capacity,
     created_at: timestamp,
     last_heartbeat_at: timestamp
   };
   if (existing) {
     run(
       `UPDATE runners SET name=$name, hostname=$hostname, platform=$platform, version=$version,
-       tags=$tags, status='online', last_heartbeat_at=$last_heartbeat_at WHERE id=$id`,
+       tags=$tags, status='online', capacity=$capacity, last_heartbeat_at=$last_heartbeat_at WHERE id=$id`,
       payload
     );
   } else {
     run(
-      `INSERT INTO runners (id, name, hostname, platform, version, tags, status, token_id, created_at, last_heartbeat_at)
-       VALUES ($id, $name, $hostname, $platform, $version, $tags, $status, $token_id, $created_at, $last_heartbeat_at)`,
+      `INSERT INTO runners (id, name, hostname, platform, version, tags, status, token_id, capacity, active_runs, created_at, last_heartbeat_at)
+       VALUES ($id, $name, $hostname, $platform, $version, $tags, $status, $token_id, $capacity, 0, $created_at, $last_heartbeat_at)`,
       payload
     );
   }
@@ -803,6 +846,11 @@ export function getRunner(runnerId) {
   if (!row) return null;
   // Heartbeat-derived liveness: a runner that stopped reporting is offline regardless of its stored status.
   const live = runnerIsLive(row.last_heartbeat_at);
+  const capacity = normalizeCapacity(row.capacity, 1);
+  // active_runs is clamped to [0, capacity] for display so a stale counter
+  // (e.g. a runner that crashed without releasing a slot) never reads as
+  // "negative free slots" in the UI.
+  const activeRuns = Math.min(Math.max(Number(row.active_runs) || 0, 0), capacity);
   return {
     id: row.id,
     name: row.name,
@@ -813,6 +861,9 @@ export function getRunner(runnerId) {
     status: live ? row.status === "offline" ? "online" : row.status : "offline",
     online: live,
     currentRunId: row.current_run_id,
+    capacity,
+    activeRuns,
+    availableSlots: Math.max(0, capacity - activeRuns),
     createdAt: row.created_at,
     lastHeartbeatAt: row.last_heartbeat_at
   };
@@ -824,13 +875,45 @@ export function listRunners() {
 
 export function heartbeatRunner(runnerId, input = {}) {
   const timestamp = now();
-  run("UPDATE runners SET status='online', last_heartbeat_at=?, tags=COALESCE(?, tags), current_run_id=? WHERE id=?", [
-    timestamp,
-    input.tags ? json(input.tags, []) : null,
-    input.currentRunId || null,
-    runnerId
-  ]);
+  // Capacity / activeRuns ride along on each heartbeat so the Hub UI sees a
+  // running pool size update even when the runner restarts with a different
+  // SMITHERS_RUNNER_CONCURRENCY. Both are optional — a legacy runner that
+  // doesn't send them keeps its stored values, which preserves the
+  // single-slot behavior for unchanged deployments.
+  const capacityProvided = input.capacity != null;
+  const activeProvided = input.activeRuns != null;
+  const capacity = capacityProvided ? normalizeCapacity(input.capacity, 1) : null;
+  const active = activeProvided ? Math.max(0, Math.floor(Number(input.activeRuns) || 0)) : null;
+  run(
+    `UPDATE runners SET status='online',
+       last_heartbeat_at=?,
+       tags=COALESCE(?, tags),
+       current_run_id=?,
+       capacity=COALESCE(?, capacity),
+       active_runs=COALESCE(?, active_runs)
+     WHERE id=?`,
+    [
+      timestamp,
+      input.tags ? json(input.tags, []) : null,
+      input.currentRunId || null,
+      capacity,
+      active,
+      runnerId
+    ]
+  );
   return getRunner(runnerId);
+}
+
+// Internal helper — adjust a runner's active-run counter atomically. Used by
+// claimNextRun (when a slot is taken) and by terminal run transitions (when a
+// slot is released). Clamped to >= 0 so a double-release never produces a
+// negative counter.
+function adjustRunnerActiveRuns(runnerId, delta) {
+  if (!runnerId) return;
+  run(
+    `UPDATE runners SET active_runs = MAX(0, COALESCE(active_runs, 0) + ?) WHERE id = ?`,
+    [delta, runnerId]
+  );
 }
 
 function runnerMatches(capability, runner) {
@@ -842,6 +925,11 @@ function runnerMatches(capability, runner) {
 export function claimNextRun(runnerId) {
   const runner = getRunner(runnerId);
   if (!runner || !runner.online) return null;
+  // Capacity gate: a runner that already has `capacity` jobs in flight gets
+  // no new work until one of them releases a slot. This keeps the centralized
+  // Hub queue and lets a 4-slot VPS runner sit alongside a 1-slot laptop
+  // runner without the bigger pool starving the smaller one mid-cycle.
+  if (runner.availableSlots <= 0) return null;
   const queued = listRuns({ status: "queued", limit: 200 });
   for (const candidate of queued) {
     // Targeting: a run pre-assigned to a specific runner (e.g. "run on my laptop" vs "run on the VPS")
@@ -856,10 +944,36 @@ export function claimNextRun(runnerId) {
       [runnerId, timestamp, timestamp, candidate.id, runnerId]
     );
     if (!result.changes) continue;
+    // Reserve the runner slot before anyone reads its capacity again.
+    adjustRunnerActiveRuns(runnerId, 1);
     addRunEvent(candidate.id, "run.assigned", `Assigned to ${runner.name}`, { runnerId });
     return { run: getRun(candidate.id), capability };
   }
   return null;
+}
+
+// Counts queued / assigned / running runs — exposed so the Hub UI can render
+// a "queue depth" stat without scanning the whole run list.
+export function runnerPoolStats() {
+  const queued = one("SELECT COUNT(*) AS count FROM runs WHERE status = 'queued'").count;
+  const assigned = one("SELECT COUNT(*) AS count FROM runs WHERE status = 'assigned'").count;
+  const running = one("SELECT COUNT(*) AS count FROM runs WHERE status = 'running'").count;
+  const waitingApproval = one("SELECT COUNT(*) AS count FROM runs WHERE status = 'waiting_approval'").count;
+  const runners = listRunners();
+  const live = runners.filter((r) => r.online);
+  const totalCapacity = live.reduce((sum, r) => sum + (r.capacity || 0), 0);
+  const totalActive = live.reduce((sum, r) => sum + (r.activeRuns || 0), 0);
+  return {
+    queued,
+    assigned,
+    running,
+    waitingApproval,
+    totalCapacity,
+    totalActive,
+    availableSlots: Math.max(0, totalCapacity - totalActive),
+    onlineRunners: live.length,
+    runners: runners.length
+  };
 }
 
 export function createArtifact({ runId, name, kind = "file", mimeType = "application/octet-stream", sizeBytes = 0, path: filePath, metadata = {} }) {
@@ -1029,6 +1143,17 @@ export function dashboardStats() {
   }
   counts.pendingApprovals = one("SELECT COUNT(*) AS count FROM approvals WHERE status='pending'").count;
   counts.runningRuns = one("SELECT COUNT(*) AS count FROM runs WHERE status IN ('queued', 'assigned', 'running', 'waiting_approval')").count;
+  // Pool / queue breakdown so the UI can render runner capacity and a
+  // queue-depth chip without having to fan-out to /api/runners + /api/runs.
+  const pool = runnerPoolStats();
+  counts.queuedRuns = pool.queued;
+  counts.assignedRuns = pool.assigned;
+  counts.activeRuns = pool.running;
+  counts.waitingApprovalRuns = pool.waitingApproval;
+  counts.onlineRunners = pool.onlineRunners;
+  counts.runnerCapacity = pool.totalCapacity;
+  counts.runnerActiveSlots = pool.totalActive;
+  counts.runnerAvailableSlots = pool.availableSlots;
   return counts;
 }
 

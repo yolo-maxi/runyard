@@ -177,6 +177,20 @@ Reasoning:
 - The product should work immediately after deployment.
 - A user should be able to run seed capabilities before installing a separate local runner.
 
+### Decision: Runner pool capacity is advertised per-runner; the queue stays centralized
+
+Each runner advertises a `capacity` (concurrent-slot count) via register + heartbeat, and the Hub honours it on `/next-run`. Single-runner deployments default to `capacity=1` (no behavior change). A dedicated VPS pool host can set `SMITHERS_RUNNER_CONCURRENCY=4` to drain backlog faster without overloading the box.
+
+Reasoning:
+
+- The Hub remains the single queue. Runners don't make scheduling decisions; they just advertise free slots.
+- One process with N slots beats N runner processes for a small VPS: less memory overhead, one heartbeat to inspect.
+- Saturated runners get visibly flagged in the Web Hub (capacity badge + slot row) and queued runs render a position chip ("In queue · #3 of 7") so operators can see backlog at a glance.
+
+Caveat:
+
+- `repo.box` should not be used as a build/runner host. The systemd unit shipped in `deploy/` exists for first-boot convenience but stays at `capacity=1` unless explicitly overridden. Pool capacity should target a separate VPS so deploying the Hub never competes with running builds on the same machine.
+
 ### Decision: Built-in workflow adapters for seed capabilities
 
 Seed capabilities use built-in workflow handlers that create useful durable artifacts.
