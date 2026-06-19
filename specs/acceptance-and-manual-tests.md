@@ -133,7 +133,7 @@ Covered by the current automated tests:
 1. Open `https://hub.repo.box/app`.
 2. Log in with the deployment bootstrap token.
 3. Open the Capability Catalog.
-4. Run `Prepare Spec` with a short goal.
+4. Run `hello` with a short topic and either `--where local` or `--where remote`.
 5. Open the run detail page.
 6. Confirm the run succeeds.
 7. Download `implementation-spec.md`.

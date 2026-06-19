@@ -215,7 +215,7 @@ pnpm test
 Manual checks:
 
 1. Log in to `/app` with the bootstrap token.
-2. Run `Prepare Spec`.
+2. Run `hello` with `--where local` or `--where remote`.
 3. Start a runner and confirm the run succeeds.
 4. Open the run detail page and download the generated artifact.
 5. Run `Implement`; approve it through Web or MCP; confirm it queues and executes.
