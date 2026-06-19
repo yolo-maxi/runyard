@@ -211,6 +211,7 @@ export function initDb() {
 
   setSettingDefault("instance_name", env.instanceName);
   seedAll();
+  autoQueueLegacyRunStartApprovals();
   ensureBootstrapToken();
 }
 
@@ -532,9 +533,44 @@ export function approvalPolicyNotifiesTelegram(policy = {}) {
   return Array.isArray(channels) && channels.some((item) => String(item).toLowerCase() === "telegram");
 }
 
+function approvalPolicyRequiresRunStartApproval(policy = {}) {
+  if (!policy || typeof policy !== "object") return false;
+  return policy.runStartApproval === true || policy.requireRunStartApproval === true || policy.workflowStartApproval === true;
+}
+
+export function autoQueueLegacyRunStartApprovals() {
+  const approvals = all(
+    `SELECT approvals.*, runs.status AS run_status
+       FROM approvals
+       JOIN runs ON runs.id = approvals.run_id
+      WHERE approvals.status = 'pending'
+        AND runs.status = 'waiting_approval'`
+  );
+  let queued = 0;
+  for (const approval of approvals) {
+    const payload = parseJson(approval.payload, {});
+    const kind = String(payload.approvalKind || payload.kind || "").toLowerCase();
+    const scope = String(payload.approvalScope || payload.scope || "").toLowerCase();
+    if (kind !== "run_start" && scope !== "workflow_start") continue;
+
+    const timestamp = now();
+    run(
+      "UPDATE approvals SET status='approved', decision='approved', resolved_by='system:auto-queue', comment=?, resolved_at=? WHERE id=? AND status='pending'",
+      ["Workflow-start approvals no longer block runs by default.", timestamp, approval.id]
+    );
+    run(
+      "UPDATE runs SET status='queued', current_step='queued', updated_at=? WHERE id=? AND status='waiting_approval'",
+      [timestamp, approval.run_id]
+    );
+    addRunEvent(approval.run_id, "approval.auto_queued", "Workflow start approval auto-queued", { approvalId: approval.id });
+    queued += 1;
+  }
+  return queued;
+}
+
 export function createRun(capability, input, options = {}) {
   const timestamp = now();
-  const approvalRequired = Boolean(capability.approvalPolicy?.required);
+  const approvalRequired = approvalPolicyRequiresRunStartApproval(capability.approvalPolicy);
   const status = approvalRequired ? "waiting_approval" : "queued";
   const runId = id("run");
   run(

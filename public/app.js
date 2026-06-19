@@ -744,7 +744,7 @@ async function renderWorkflowDetail(slug, { sub = "" } = {}) {
       <span>v${esc(cap.version)}</span>
       <span>·</span>
       <span>${cap.enabled ? "enabled" : "disabled"}</span>
-      ${approval.required ? `<span>·</span><span class="status waiting_approval">needs approval</span>` : ""}
+      ${approval.required ? `<span>·</span><span class="status waiting_approval">has approval checkpoints</span>` : ""}
     </p>
     <section class="split">
       <div class="panel" id="panel-wf-detail">
@@ -753,7 +753,7 @@ async function renderWorkflowDetail(slug, { sub = "" } = {}) {
         ${tags.length ? `<h3>Runner tags</h3>${pills(tags, { kind: "pill tag" })}` : ""}
         <h3>Approval policy</h3>
         ${approval.required
-          ? `<p class="notice">Approval required before each run.${approval.reason ? ` ${esc(approval.reason)}` : ""}</p>`
+          ? `<p class="notice">This workflow can ask for approval at checkpoints while it runs.${approval.reason ? ` ${esc(approval.reason)}` : ""}</p>`
           : `<p class="muted">No approval required — runs start as soon as a matching runner picks them up.</p>`}
         <h3>Workflow entry</h3>
         ${entryLabel
@@ -814,7 +814,7 @@ async function showRunForm(slug) {
   editor.innerHTML = `<h2>Run ${esc(cap.name)} ${shareButton(deepLinks.workflow(slug), `Copy share link to ${cap.name}`)}</h2>
     <p class="muted">${esc(cap.description || "")}</p>
     <p class="muted"><span class="kbd">${esc(deepLinks.abs(deepLinks.workflow(slug)))}</span></p>
-    ${approval ? `<p class="notice">This workflow requires approval before it runs.${cap.approvalPolicy?.reason ? ` ${esc(cap.approvalPolicy.reason)}` : ""}</p>` : ""}
+    ${approval ? `<p class="notice">This workflow may ask for approval at checkpoints while it runs.${cap.approvalPolicy?.reason ? ` ${esc(cap.approvalPolicy.reason)}` : ""}</p>` : ""}
     <form id="run-form" class="form-grid">
       ${hasFields ? schemaForm(schema) : `<label>Input JSON<textarea data-field="__raw" data-ftype="json" placeholder="{}">{}</textarea><span class="field-hint">This workflow has no declared input schema. Provide raw JSON.</span><span class="field-error" data-error-for="__raw"></span></label>`}
       ${hasFields ? `<details class="advanced"><summary>Edit as raw JSON instead</summary><label><textarea id="run-raw" data-ftype="json" placeholder="{}">${esc(JSON.stringify(sample, null, 2))}</textarea></label></details>` : ""}
@@ -844,7 +844,7 @@ async function showRunForm(slug) {
     }
     try {
       const result = await api(`/api/capabilities/${slug}/run`, { method: "POST", body: { input } });
-      toast(`Run created${approval ? " — pending approval" : ""}`, "ok");
+      toast("Run created", "ok");
       location.hash = deepLinks.run(result.run.id).slice(1);
       state.view = `runs/${result.run.id}`;
       await render();

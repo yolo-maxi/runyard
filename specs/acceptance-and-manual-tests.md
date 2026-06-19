@@ -53,7 +53,7 @@ This file captures user-facing acceptance criteria and manual tests for Smithers
 
 ### Approvals
 
-- Capabilities that require approval enter `waiting_approval`.
+- Capabilities with approval policies start normally; only explicit in-workflow approval checkpoints enter `waiting_approval`.
 - Pending approvals appear in the Web approval inbox.
 - Approval can be resolved through Web/API/CLI/MCP.
 - Approved runs move back to `queued`.
@@ -126,7 +126,7 @@ Covered by the current automated tests:
 ### Approval Smoke
 
 1. Run the `Implement` capability.
-2. Confirm the run enters `waiting_approval`.
+2. Confirm the run starts as `queued` or is picked up by a matching runner.
 3. Open Approvals.
 4. Approve the request.
 5. Confirm the run moves to `queued`.
@@ -169,4 +169,3 @@ Expected result:
 - Runner registers.
 - Runner appears online in the Web Hub.
 - Runner claims matching queued runs.
-

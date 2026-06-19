@@ -205,7 +205,7 @@ Reasoning:
 
 ### Decision: `Implement` requires approval by default
 
-The seed `Implement` capability starts in `waiting_approval`.
+Capabilities that need human checkpoints are marked in their approval policy, but workflow starts do not block by default. Workflows should ask for approval only at the specific in-workflow decision point that needs it.
 
 Reasoning:
 

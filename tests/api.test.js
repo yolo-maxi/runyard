@@ -14,7 +14,7 @@ process.env.SMITHERS_HUB_BOOTSTRAP_TOKEN = "shub_test_token";
 
 const { app, notifyTelegram } = await import("../src/server.js");
 const { env } = await import("../src/env.js");
-const { createApproval } = await import("../src/db.js");
+const { autoQueueLegacyRunStartApprovals, createApproval, updateRun } = await import("../src/db.js");
 
 let server;
 let baseUrl;
@@ -109,6 +109,28 @@ function firstCookie(setCookie) {
   return String(setCookie || "").split(";")[0];
 }
 
+async function createCheckpointApproval(capabilitySlug, input = {}) {
+  const created = await api(`/api/capabilities/${capabilitySlug}/run`, {
+    method: "POST",
+    body: { input }
+  });
+  updateRun(created.run.id, { status: "waiting_approval", current_step: "waiting for checkpoint approval" });
+  const approval = createApproval({
+    runId: created.run.id,
+    title: `Approve checkpoint for ${capabilitySlug}`,
+    description: "Workflow checkpoint approval.",
+    requestedBy: "token: bootstrap-admin",
+    payload: {
+      kind: "checkpoint",
+      approvalKind: "checkpoint",
+      approvalScope: "workflow_checkpoint",
+      capability: capabilitySlug,
+      input
+    }
+  });
+  return { created, approval };
+}
+
 before(async () => {
   await new Promise((resolve) => {
     server = app.listen(0, "127.0.0.1", () => {
@@ -164,18 +186,15 @@ describe("Smithers Hub API", () => {
     assert.equal(readFileSync(detail.artifacts[0].path, "utf8"), "# result");
   });
 
-  it("requires approval for implement and resolves through API", async () => {
+  it("starts implement workflows without a run-start approval", async () => {
     const created = await api("/api/capabilities/implement/run", {
       method: "POST",
       body: { input: { repo: "/tmp", task: "test" } }
     });
-    assert.equal(created.run.status, "waiting_approval");
+    assert.equal(created.run.status, "queued");
     const approvals = await api("/api/approvals?status=pending");
     const approval = approvals.approvals.find((item) => item.runId === created.run.id);
-    assert.ok(approval);
-    await api(`/api/approvals/${approval.id}/approve`, { method: "POST", body: { comment: "ok" } });
-    const detail = await api(`/api/runs/${created.run.id}`);
-    assert.equal(detail.run.status, "queued");
+    assert.equal(approval, undefined);
   });
 });
 
@@ -291,12 +310,10 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
       telegramApprovalUserIds: "475212779"
     });
     try {
-      const created = await api("/api/capabilities/implement-change-gated/run", {
-        method: "POST",
-        body: { input: { workPrompt: "Telegram WebApp auth valid", deploy: false } }
+      const { created, approval } = await createCheckpointApproval("implement-change-gated", {
+        workPrompt: "Telegram WebApp auth valid",
+        deploy: false
       });
-      const approval = (await api("/api/approvals?status=pending")).approvals.find((item) => item.runId === created.run.id);
-      assert.ok(approval);
 
       const initData = signedTelegramInitData({ botToken, userId: 475212779 });
       const auth = await raw("/api/auth/telegram-webapp", { method: "POST", body: { initData } }, null);
@@ -379,7 +396,7 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
     }
   });
 
-  it("keeps workflow-start approvals in the Hub but suppresses Telegram by default", async () => {
+  it("does not create or notify workflow-start approvals by default", async () => {
     const calls = [];
     const restoreFetch = captureTelegramFetch(calls);
     const restoreEnv = withTelegramEnv({
@@ -394,20 +411,37 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
         method: "POST",
         body: { input: { workPrompt: "No noisy run-start DM", repo: "/home/xiko/smithers-hub", targetBranch: "main", deploy: true } }
       });
-      assert.equal(created.run.status, "waiting_approval");
+      assert.equal(created.run.status, "queued");
       const approval = (await api("/api/approvals?status=pending")).approvals.find((item) => item.runId === created.run.id);
-      assert.ok(approval);
-      assert.equal(approval.payload.kind, "run_start");
-      assert.equal(approval.payload.approvalKind, "run_start");
-      assert.equal(approval.payload.approvalScope, "workflow_start");
-      assert.equal(approval.payload.notifyTelegram, false);
-      assert.equal(approval.context.workflow.slug, "implement-change-gated");
-      assert.equal(approval.context.requestedBy, "token: bootstrap-admin");
+      assert.equal(approval, undefined);
       assert.equal(calls.filter((call) => call.url.endsWith("/sendMessage")).length, 0);
     } finally {
       restoreEnv();
       restoreFetch();
     }
+  });
+
+  it("auto-queues legacy pending workflow-start approvals", async () => {
+    const created = await api("/api/capabilities/hello/run", {
+      method: "POST",
+      body: { input: { name: "legacy" } }
+    });
+    updateRun(created.run.id, { status: "waiting_approval", current_step: "waiting for approval" });
+    createApproval({
+      runId: created.run.id,
+      title: "Approve legacy workflow start",
+      description: "Legacy workflow-start gate.",
+      requestedBy: "test",
+      payload: { kind: "run_start", approvalKind: "run_start", approvalScope: "workflow_start" }
+    });
+
+    assert.equal(autoQueueLegacyRunStartApprovals(), 1);
+    const detail = await api(`/api/runs/${created.run.id}`);
+    assert.equal(detail.run.status, "queued");
+    assert.equal(detail.run.currentStep, "queued");
+    const approval = (await api("/api/approvals")).approvals.find((item) => item.runId === created.run.id);
+    assert.equal(approval.status, "approved");
+    assert.equal(approval.resolvedBy, "system:auto-queue");
   });
 
   it("sends structured private Telegram checkpoint approvals with a miniapp open button", async () => {
@@ -514,12 +548,10 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
       baseUrl: "https://hub.example"
     });
     try {
-      const approveRun = await api("/api/capabilities/implement-change-gated/run", {
-        method: "POST",
-        body: { input: { workPrompt: "Approve from Telegram", deploy: false } }
+      const { created: approveRun, approval: approveApproval } = await createCheckpointApproval("implement-change-gated", {
+        workPrompt: "Approve from Telegram",
+        deploy: false
       });
-      const approveApproval = (await api("/api/approvals?status=pending")).approvals.find((item) => item.runId === approveRun.run.id);
-      assert.ok(approveApproval);
       const approved = await raw(
         "/api/telegram/webhook",
         {
@@ -565,12 +597,10 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
       baseUrl: "https://hub.example"
     });
     try {
-      const rejectRun = await api("/api/capabilities/implement-change-gated/run", {
-        method: "POST",
-        body: { input: { workPrompt: "Reject from Telegram", deploy: false } }
+      const { created: rejectRun, approval: rejectApproval } = await createCheckpointApproval("implement-change-gated", {
+        workPrompt: "Reject from Telegram",
+        deploy: false
       });
-      const rejectApproval = (await api("/api/approvals?status=pending")).approvals.find((item) => item.runId === rejectRun.run.id);
-      assert.ok(rejectApproval);
       const rejected = await raw(
         "/api/telegram/webhook",
         {
@@ -615,12 +645,10 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
       baseUrl: "https://hub.example"
     });
     try {
-      const changesRun = await api("/api/capabilities/implement-change-gated/run", {
-        method: "POST",
-        body: { input: { workPrompt: "Change this from Telegram", deploy: false } }
+      const { created: changesRun, approval: changesApproval } = await createCheckpointApproval("implement-change-gated", {
+        workPrompt: "Change this from Telegram",
+        deploy: false
       });
-      const changesApproval = (await api("/api/approvals?status=pending")).approvals.find((item) => item.runId === changesRun.run.id);
-      assert.ok(changesApproval);
       const changed = await raw(
         "/api/telegram/webhook",
         {
@@ -684,12 +712,9 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
   });
 
   it("keeps approval API and detail deep links available", async () => {
-    const created = await api("/api/capabilities/idea-to-product/run", {
-      method: "POST",
-      body: { input: { idea: "Deep link approval test", deploy: false } }
-    });
-    const approval = (await api("/api/approvals?status=pending")).approvals.find((item) => item.runId === created.run.id);
-    assert.ok(approval);
+    const checkpoint = await createCheckpointApproval("idea-to-product", { idea: "Deep link approval test", deploy: false });
+    const created = checkpoint.created;
+    const approval = (await api(`/api/approvals/${checkpoint.approval.id}`)).approval;
     assert.equal(approval.deepLink, `/app#approvals/${approval.id}`);
     assert.equal(approval.deepLinkRun, `/app#runs/${created.run.id}`);
     assert.equal(approval.context.run.id, created.run.id);
@@ -705,12 +730,10 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
   });
 
   it("resolves web/API request-changes decisions with a comment", async () => {
-    const created = await api("/api/capabilities/implement-change-gated/run", {
-      method: "POST",
-      body: { input: { workPrompt: "Needs more detail", deploy: false } }
+    const { created, approval } = await createCheckpointApproval("implement-change-gated", {
+      workPrompt: "Needs more detail",
+      deploy: false
     });
-    const approval = (await api("/api/approvals?status=pending")).approvals.find((item) => item.runId === created.run.id);
-    assert.ok(approval);
     const resolved = await api(`/api/approvals/${approval.id}/request-changes`, {
       method: "POST",
       body: { comment: "Please include the target branch and rollout plan." }
@@ -795,12 +818,14 @@ describe("Gated implement-change capability", () => {
     assert.equal(cap.approvalPolicy.required, true);
   });
 
-  it("requires approval before it can run", async () => {
+  it("queues immediately and relies on in-workflow approvals", async () => {
     const created = await api("/api/capabilities/implement-change-gated/run", {
       method: "POST",
       body: { input: { workPrompt: "noop", deploy: false } }
     });
-    assert.equal(created.run.status, "waiting_approval");
+    assert.equal(created.run.status, "queued");
+    const approval = (await api("/api/approvals?status=pending")).approvals.find((item) => item.runId === created.run.id);
+    assert.equal(approval, undefined);
   });
 
   it("ships the gated workflow template in the runner bundle", () => {
@@ -826,13 +851,15 @@ describe("Idea to Product capability", () => {
     assert.equal(cap.approvalPolicy.required, true);
   });
 
-  it("requires approval before it can run", async () => {
+  it("queues immediately and relies on in-workflow approvals", async () => {
     const created = await api("/api/capabilities/idea-to-product/run", {
       method: "POST",
       body: { input: { idea: "A tiny dashboard for tracking launch chores", deploy: false } }
     });
-    assert.equal(created.run.status, "waiting_approval");
+    assert.equal(created.run.status, "queued");
     assert.equal(created.run.capabilitySlug, "idea-to-product");
+    const approval = (await api("/api/approvals?status=pending")).approvals.find((item) => item.runId === created.run.id);
+    assert.equal(approval, undefined);
   });
 
   it("ships the idea-to-product workflow template in the runner bundle", () => {
