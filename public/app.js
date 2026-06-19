@@ -28,7 +28,24 @@ function esc(value) {
 }
 
 function status(value) {
-  return `<span class="status ${esc(value)}">${esc(value)}</span>`;
+  const icons = {
+    succeeded: "✅",
+    failed: "❌",
+    error: "❌",
+    cancelled: "🛑",
+    rejected: "⛔",
+    running: "▶",
+    assigned: "🧭",
+    queued: "⏳",
+    pending: "⏳",
+    waiting_approval: "✋",
+    approved: "✅",
+    online: "●",
+    offline: "○"
+  };
+  const key = String(value || "").toLowerCase();
+  const icon = icons[key] || "•";
+  return `<span class="status ${esc(key)}"><span aria-hidden="true">${esc(icon)}</span> ${esc(value)}</span>`;
 }
 
 function json(value) {
@@ -569,6 +586,7 @@ function runCard(run, artifacts = []) {
   const description = runDescription(run);
   const project = runProject(run);
   const branch = runBranch(run);
+  const origin = run.originLabel || run.origin?.label || "unknown origin";
   const dur = runDurationMs(run);
   const durStr = formatDuration(dur);
   const created = relativeTime(run.createdAt);
@@ -587,13 +605,14 @@ function runCard(run, artifacts = []) {
     : "";
   return `<article class="run-card ${active ? "active" : "done"} ${esc(run.status)}" id="run-${esc(run.id)}">
     <header class="run-card-head">
-      ${active ? '<span class="run-pulse" aria-hidden="true"></span>' : '<span class="run-folder-icon" aria-hidden="true">📁</span>'}
-      ${status(run.status)}
-      ${slug ? `<a class="run-cap-link" href="${esc(deepLinks.workflow(slug))}" title="Open this workflow">${esc(run.capabilityName || slug)}</a>` : ""}
-      <span class="run-folder" title="Display-only grouping">${esc(folder)}</span>
+      <div class="run-card-status">${active ? '<span class="run-pulse" aria-hidden="true"></span>' : ""}${status(run.status)}</div>
       ${shareButton(deepLinks.run(run.id), "Copy share link to this run")}
     </header>
     <h3 class="run-card-title"><a href="${esc(deepLinks.run(run.id))}">${esc(title)}</a></h3>
+    <p class="run-card-sub">
+      ${slug ? `<a class="run-cap-link" href="${esc(deepLinks.workflow(slug))}" title="Open this workflow">${esc(run.capabilityName || slug)}</a>` : ""}
+      <span class="run-origin" title="Origin">${esc(origin)}</span>
+    </p>
     <p class="muted run-desc">${esc(description)}</p>
     ${chipsHtml}
     <p class="muted run-meta">
@@ -605,6 +624,7 @@ function runCard(run, artifacts = []) {
       <a class="button" href="${esc(slug ? deepLinks.workflow(slug) : deepLinks.workflows())}">Workflow</a>
       <a class="button" href="${esc(deepLinks.runLogs(run.id))}">Run log</a>
       <a class="button" href="${esc(deepLinks.runArtifacts(run.id))}">Artifacts</a>
+      <button data-rerun="${esc(run.id)}">Re-run</button>
     </footer>
   </article>`;
 }
@@ -657,6 +677,7 @@ async function renderHome() {
   $("#home-new-run").addEventListener("click", () => setView("workflows"));
   document.querySelectorAll("[data-approve]").forEach((button) => button.addEventListener("click", () => resolveApproval(button.dataset.approve, "approve", { rerender: "none" }).then(() => render().catch(showError))));
   document.querySelectorAll("[data-reject]").forEach((button) => button.addEventListener("click", () => resolveApproval(button.dataset.reject, "reject", { rerender: "none" }).then(() => render().catch(showError))));
+  document.querySelectorAll("[data-rerun]").forEach((button) => button.addEventListener("click", () => rerunRun(button.dataset.rerun).catch(showError)));
   bindCopy();
 }
 
@@ -931,6 +952,7 @@ async function renderRunDetail(runId, { focus = "", focusId = "" } = {}) {
   const description = runDescription(run);
   const project = runProject(run);
   const branch = runBranch(run);
+  const origin = run.originLabel || run.origin?.label || "unknown origin";
   const dur = runDurationMs(run);
   const durStr = formatDuration(dur);
   const focusHint = focus === "logs"
@@ -951,6 +973,7 @@ async function renderRunDetail(runId, { focus = "", focusId = "" } = {}) {
   content.innerHTML = `${crumbNav}${toolbar(title, `<a class="button" href="${esc(slug ? deepLinks.workflow(slug) : deepLinks.workflows())}">Workflow</a>
       <a class="button" href="${esc(deepLinks.runLogs(run.id))}">Run log</a>
       <a class="button" href="${esc(deepLinks.runArtifacts(run.id))}">Artifacts</a>
+      <button id="rerun-run">Re-run</button>
       <button id="cancel-run" class="danger">Cancel</button>`, deepLinks.run(run.id))}
     <p class="run-detail-sub">
       ${status(run.status)}
@@ -958,6 +981,7 @@ async function renderRunDetail(runId, { focus = "", focusId = "" } = {}) {
       <span class="run-id-mono" title="Run id">${esc(run.id)}</span>
       <span class="muted">${esc(relativeTime(run.createdAt))}${durStr ? ` · ${esc(durStr)}` : ""}</span>
     </p>
+    <p class="run-origin-detail"><strong>Origin</strong> ${esc(origin)}</p>
     <p class="run-detail-desc">${esc(description)}</p>
     ${chips.length ? `<p class="run-detail-chips">${chips.join("")}</p>` : ""}
     <p class="run-folder-banner"><span class="run-folder">📁 ${esc(folder)}</span> <span class="muted">— display-only grouping for this run's artifacts &amp; logs</span></p>
@@ -980,6 +1004,7 @@ async function renderRunDetail(runId, { focus = "", focusId = "" } = {}) {
     await api(`/api/runs/${run.id}/cancel`, { method: "POST", body: { reason: "Cancelled from Web Hub" } });
     await renderRunDetail(run.id, { focus, focusId });
   });
+  $("#rerun-run").addEventListener("click", () => rerunRun(run.id).catch(showError));
   bindCopy();
   // Honor the sub-route by bringing the relevant panel into view.
   if (focus === "logs") $("#panel-logs")?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -1144,6 +1169,14 @@ async function resolveApproval(id, decision, { rerender = "list" } = {}) {
   if (rerender === "detail") return renderApprovalDetail(id);
   if (rerender === "none") return null;
   return renderApprovals();
+}
+
+async function rerunRun(id) {
+  const result = await api(`/api/runs/${id}/rerun`, { method: "POST", body: {} });
+  toast("Re-run queued", "ok");
+  location.hash = deepLinks.run(result.run.id).slice(1);
+  state.view = `runs/${result.run.id}`;
+  await render();
 }
 
 // Scroll a deep-linked item into view and briefly highlight it so the user

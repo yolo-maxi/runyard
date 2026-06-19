@@ -573,6 +573,13 @@ export function createRun(capability, input, options = {}) {
   const approvalRequired = approvalPolicyRequiresRunStartApproval(capability.approvalPolicy);
   const status = approvalRequired ? "waiting_approval" : "queued";
   const runId = id("run");
+  const storedInput = input && typeof input === "object" && !Array.isArray(input) ? { ...input } : {};
+  if (options.origin) {
+    storedInput.__origin = {
+      ...(storedInput.__origin && typeof storedInput.__origin === "object" ? storedInput.__origin : {}),
+      ...options.origin
+    };
+  }
   run(
     `INSERT INTO runs (id, capability_id, capability_slug, capability_name, workflow_version, runner_id, status,
       current_step, input, created_at, updated_at)
@@ -586,7 +593,7 @@ export function createRun(capability, input, options = {}) {
       options.runnerId || null,
       status,
       approvalRequired ? "waiting for approval" : "queued",
-      json(input, {}),
+      json(storedInput, {}),
       timestamp,
       timestamp
     ]
@@ -609,7 +616,7 @@ export function createRun(capability, input, options = {}) {
       },
       requestedBy,
       notifyTelegram: approvalPolicyNotifiesTelegram(capability.approvalPolicy),
-      input
+      input: storedInput
     };
     if (options.origin) payload.origin = options.origin;
     createApproval({

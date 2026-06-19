@@ -201,6 +201,36 @@ describe("Smithers Hub API", () => {
     const approval = approvals.approvals.find((item) => item.runId === created.run.id);
     assert.equal(approval, undefined);
   });
+
+  it("records explicit command origin on runs", async () => {
+    const created = await api("/api/capabilities/hello/run", {
+      method: "POST",
+      headers: {
+        "x-smithers-origin": "telegram group 'Smithers Hub'",
+        "x-smithers-origin-message-id": "28334"
+      },
+      body: { input: { goal: "origin test" } }
+    });
+    assert.equal(created.run.originLabel, "telegram group 'Smithers Hub'");
+    assert.equal(created.run.origin.messageId, "28334");
+    const detail = await api(`/api/runs/${created.run.id}`);
+    assert.equal(detail.run.originLabel, "telegram group 'Smithers Hub'");
+    assert.equal(detail.run.input.__origin.label, "telegram group 'Smithers Hub'");
+  });
+
+  it("can rerun a previous run with a new linked run", async () => {
+    const created = await api("/api/capabilities/hello/run", {
+      method: "POST",
+      body: { input: { goal: "rerun me" } }
+    });
+    const rerun = await api(`/api/runs/${created.run.id}/rerun`, { method: "POST", body: {} });
+    assert.equal(rerun.run.status, "queued");
+    assert.equal(rerun.run.input.goal, "rerun me");
+    assert.equal(rerun.run.input.rerunOf, created.run.id);
+    assert.equal(rerun.run.origin.type, "hub-rerun");
+    assert.equal(rerun.run.origin.previousRunId, created.run.id);
+    assert.notEqual(rerun.run.id, created.run.id);
+  });
 });
 
 describe("Hardening: scopes, tokens, run state, webhook, health", () => {

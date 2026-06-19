@@ -165,6 +165,37 @@ function deriveRunDescription(run) {
   return truncate(parts.join(" — "), 240);
 }
 
+function normalizeOrigin(value) {
+  if (!value) return null;
+  if (typeof value === "string") return { label: value };
+  if (typeof value !== "object" || Array.isArray(value)) return null;
+  const cleaned = Object.fromEntries(Object.entries(value).filter(([, item]) => item !== "" && item != null));
+  if (!Object.keys(cleaned).length) return null;
+  const label = cleaned.label || cleaned.name || cleaned.source || cleaned.from || cleaned.chat || cleaned.thread || "";
+  return { ...cleaned, ...(label ? { label } : {}) };
+}
+
+function runOrigin(run) {
+  const input = run?.input || {};
+  const candidates = [
+    normalizeOrigin(input.__origin),
+    normalizeOrigin(input.origin),
+    normalizeOrigin(input.source),
+    normalizeOrigin(input.context?.origin),
+    normalizeOrigin(input.metadata?.origin)
+  ].filter(Boolean);
+  const origin = candidates[0] || null;
+  if (!origin) {
+    const text = firstContextString(input, ORIGIN_INPUT_KEYS);
+    return text ? { label: text } : null;
+  }
+  if (!origin.label) {
+    const bits = uniqueNonempty([origin.type, origin.name, origin.chat, origin.thread, origin.messageId]);
+    origin.label = bits.join(": ");
+  }
+  return origin.label ? origin : null;
+}
+
 function runDurationMs(run) {
   if (!run?.createdAt) return null;
   const start = Date.parse(run.startedAt || run.createdAt);
@@ -175,12 +206,15 @@ function runDurationMs(run) {
 
 function withRunLinks(run) {
   if (!run || typeof run !== "object") return run;
+  const origin = runOrigin(run);
   return {
     ...run,
     title: deriveRunTitle(run),
     description: deriveRunDescription(run),
     project: firstContextString(run.input, PROJECT_INPUT_KEYS),
     branch: firstContextString(run.input, BRANCH_INPUT_KEYS),
+    origin,
+    originLabel: origin?.label || "",
     durationMs: runDurationMs(run),
     deepLink: deepLinks.run(run.id),
     deepLinkLogs: deepLinks.runLogs(run.id),
@@ -517,16 +551,27 @@ function requireScopes(...needed) {
   };
 }
 
-function requestOrigin(req) {
+function requestOrigin(req, input = {}) {
   const token = req.token || {};
   const scopes = token.scopes || [];
   const via = scopes.includes("mcp") && !scopes.includes("api") ? "mcp" : scopes.includes("runner") && !scopes.includes("api") ? "runner" : "token";
+  const explicit = normalizeOrigin(req.body?.origin) || normalizeOrigin(input?.origin) || normalizeOrigin(input?.source) || normalizeOrigin(input?.context?.origin);
+  const headerOrigin = normalizeOrigin({
+    label: req.headers["x-smithers-origin"] || "",
+    url: req.headers["x-smithers-origin-url"] || "",
+    chat: req.headers["x-smithers-origin-chat"] || "",
+    thread: req.headers["x-smithers-origin-thread"] || "",
+    messageId: req.headers["x-smithers-origin-message-id"] || ""
+  });
   return {
     requestedBy: `${via}: ${token.name || token.id || "unknown"}`,
     origin: {
+      label: `${via}: ${token.name || token.id || "unknown"}`,
       type: via,
       name: token.name || "",
-      scopes
+      scopes,
+      ...(headerOrigin || {}),
+      ...(explicit || {})
     }
   };
 }
@@ -1062,8 +1107,9 @@ app.patch("/api/capabilities/:id", requireAuth, requireScopes("admin"), (req, re
 app.post("/api/capabilities/:id/run", requireAuth, requireScopes("api", "mcp"), async (req, res) => {
   const capability = getCapability(req.params.id);
   if (!capability || !capability.enabled) return res.status(404).json({ error: "capability not found" });
-  const origin = requestOrigin(req);
-  const run = createRun(capability, req.body.input || req.body || {}, {
+  const input = req.body.input || req.body || {};
+  const origin = requestOrigin(req, input);
+  const run = createRun(capability, input, {
     runnerId: req.body.runnerId,
     requestedBy: origin.requestedBy,
     origin: origin.origin
@@ -1155,6 +1201,39 @@ app.post("/api/runs/:id/cancel", requireAuth, requireScopes("api", "mcp", "runne
   if (!result.ok) return res.status(result.code).json({ error: result.error });
   if (!result.idempotent) addRunEvent(req.params.id, "run.cancelled", req.body.reason || "Run cancelled");
   res.json({ run: result.run });
+});
+
+app.post("/api/runs/:id/rerun", requireAuth, requireScopes("api", "mcp"), async (req, res) => {
+  const previous = getRun(req.params.id);
+  if (!previous) return res.status(404).json({ error: "run not found" });
+  const capability = getCapability(previous.capabilitySlug);
+  if (!capability || !capability.enabled) return res.status(404).json({ error: "capability not found" });
+  const input = previous.input && typeof previous.input === "object" && !Array.isArray(previous.input) ? { ...previous.input } : {};
+  delete input.__origin;
+  input.rerunOf = previous.id;
+  const origin = requestOrigin(req, {
+    ...input,
+    origin: {
+      label: `Re-run from Hub of ${previous.id}`,
+      type: "hub-rerun",
+      previousRunId: previous.id
+    }
+  });
+  const run = createRun(capability, input, {
+    requestedBy: origin.requestedBy,
+    origin: origin.origin
+  });
+  addRunEvent(previous.id, "run.rerun_requested", `Re-run requested as ${run.id}`, { runId: run.id });
+  addRunEvent(run.id, "run.rerun_of", `Re-run of ${previous.id}`, { previousRunId: previous.id });
+  const pending = listApprovals("pending").find((approval) => approval.runId === run.id);
+  if (pending) await notifyTelegram(pending);
+  res.status(202).json({
+    run: withRunLinks(run),
+    previousRun: withRunLinks(previous),
+    statusUrl: `/api/runs/${run.id}`,
+    webUrl: `/app#runs/${run.id}`,
+    deepLink: deepLinks.run(run.id)
+  });
 });
 
 app.get("/api/runs/:id/artifacts", requireAuth, (req, res) => res.json({ artifacts: listArtifacts({ runId: req.params.id }).map(withArtifactLinks) }));

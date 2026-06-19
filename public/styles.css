@@ -401,6 +401,7 @@ code {
 }
 
 .status.failed,
+.status.error,
 .status.rejected,
 .status.cancelled {
   color: var(--danger);
@@ -797,6 +798,7 @@ details.advanced[open] summary {
 .run-card {
   background: var(--panel);
   border: 1px solid var(--line);
+  border-top: 4px solid var(--line);
   border-radius: 10px;
   padding: 14px;
   display: grid;
@@ -812,13 +814,21 @@ details.advanced[open] summary {
 .run-card-head {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
   flex-wrap: wrap;
 }
 
+.run-card-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .run-card-title {
   margin: 0;
-  font-size: 16px;
+  font-size: 17px;
+  line-height: 1.25;
   overflow-wrap: anywhere;
 }
 
@@ -830,6 +840,27 @@ details.advanced[open] summary {
   color: var(--brand);
 }
 
+.run-card-sub,
+.run-origin-detail {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.run-origin,
+.run-origin-detail strong {
+  color: #475569;
+}
+
+.run-origin::before {
+  content: "from ";
+  color: var(--muted);
+}
+
 .run-step {
   margin: 0;
   font-size: 13px;
@@ -838,12 +869,14 @@ details.advanced[open] summary {
 
 .run-card.active {
   border-color: #fed7aa;
+  border-top-color: var(--warn);
   background: linear-gradient(180deg, #fffbeb, #ffffff 70%);
   box-shadow: 0 4px 16px rgba(245, 158, 11, 0.10);
 }
 
 .run-card.active.running {
   border-color: #bbf7d0;
+  border-top-color: var(--ok);
   background: linear-gradient(180deg, #ecfdf5, #ffffff 70%);
   box-shadow: 0 4px 16px rgba(21, 128, 61, 0.10);
 }
@@ -858,9 +891,12 @@ details.advanced[open] summary {
 }
 
 .run-card.done.failed,
+.run-card.done.error,
 .run-card.done.cancelled,
 .run-card.done.rejected {
   border-color: #fecaca;
+  border-top-color: var(--danger);
+  background: linear-gradient(180deg, #fef2f2, #ffffff 64%);
 }
 
 .run-pulse {
