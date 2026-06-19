@@ -68,6 +68,32 @@ function publicUrl(req) {
   return `${req.protocol}://${req.get("host")}`;
 }
 
+function normalizeChainSteps(value) {
+  const raw = Array.isArray(value) ? value : [];
+  return raw
+    .map((step) => {
+      if (typeof step === "string") return { capability: step, input: {} };
+      if (!step || typeof step !== "object") return null;
+      const capability = String(step.capability || step.capabilitySlug || step.slug || "").trim();
+      if (!capability) return null;
+      const input = step.input && typeof step.input === "object" && !Array.isArray(step.input) ? step.input : {};
+      return {
+        capability,
+        input,
+        title: step.title ? String(step.title) : "",
+        passPreviousOutput: step.passPreviousOutput !== false
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 20);
+}
+
+function chainMetadata(input = {}) {
+  const chain = normalizeChainSteps(input.__chain || input.chain);
+  const index = Number.isFinite(Number(input.__chainIndex)) ? Number(input.__chainIndex) : 0;
+  return { chain, index: Math.max(0, index) };
+}
+
 // --- Deep-link helpers -------------------------------------------------------
 // Stable hash routes consumed by the web app (and by anyone who pastes the
 // link into chat). These are added to API responses as a non-breaking
@@ -204,9 +230,238 @@ function runDurationMs(run) {
   return Math.max(0, end - start);
 }
 
+// --- Failure / cancellation diagnostics -------------------------------------
+// When a run lands in failed / error / cancelled / waiting_approval we expose a
+// structured diagnostics object so the web app can show "why" up-front instead
+// of forcing operators to scrape the raw log timeline. The same object backs
+// the short reason hint on run cards.
+const DIAGNOSTIC_STATUSES = new Set(["failed", "error", "cancelled", "rejected", "waiting_approval"]);
+
+const FOCUS_EVENT_PATTERNS = [
+  /^run\.(?:failed|cancelled|errored|started|succeeded|created)$/i,
+  /^(?:node|task|step|workflow)\.(?:started|finished|completed|failed|errored|cancelled)$/i,
+  /^approval\.(?:requested|resolved|approved|rejected|changes_requested|auto_queued)$/i,
+  /^Node(?:Started|Finished|Failed|Cancelled)$/,
+  /^Run(?:Started|Cancelled|Failed|Succeeded)$/,
+  /^Approval(?:Requested|Resolved|Approved|Rejected|ChangesRequested)$/
+];
+
+function isFocusEvent(event) {
+  const type = String(event?.type || "");
+  return FOCUS_EVENT_PATTERNS.some((re) => re.test(type));
+}
+
+const LOG_EVENT_TYPES = new Set(["log", "stdout", "stderr", "workflow.log", "runner.log", "workflow.step"]);
+
+function isLogEvent(event) {
+  const type = String(event?.type || "");
+  if (LOG_EVENT_TYPES.has(type)) return true;
+  return /\.(?:log|stderr|stdout)$/i.test(type);
+}
+
+// Best-effort redaction so any log/event text we surface in the UI doesn't
+// leak the obvious shapes of bearer tokens, API keys, JWTs, or session cookies.
+const LOG_REDACTION_RULES = [
+  { re: /(authorization\s*[:=]\s*)(?:Bearer\s+)?[^\s,"'`]+/gi, replace: "$1[redacted]" },
+  { re: /(x-api-key\s*[:=]\s*)[^\s,"'`]+/gi, replace: "$1[redacted]" },
+  { re: /(api[_-]?key\s*[:=]\s*)[^\s,"'`]+/gi, replace: "$1[redacted]" },
+  { re: /(password\s*[:=]\s*)[^\s,"'`]+/gi, replace: "$1[redacted]" },
+  { re: /(secret\s*[:=]\s*)[^\s,"'`]+/gi, replace: "$1[redacted]" },
+  { re: /(token\s*[:=]\s*)[^\s,"'`]+/gi, replace: "$1[redacted]" },
+  { re: /\bshub_[A-Za-z0-9]+\b/g, replace: "shub_[redacted]" },
+  { re: /\bsk-[A-Za-z0-9_-]{12,}\b/g, replace: "sk-[redacted]" },
+  { re: /\bghp_[A-Za-z0-9]{20,}\b/g, replace: "ghp_[redacted]" },
+  { re: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_.-]+\b/g, replace: "[redacted-jwt]" }
+];
+
+function redactSnippet(value, max = 600) {
+  let text = String(value ?? "");
+  for (const { re, replace } of LOG_REDACTION_RULES) text = text.replace(re, replace);
+  return truncate(text, max);
+}
+
+function reverseFind(list, predicate) {
+  for (let i = list.length - 1; i >= 0; i -= 1) if (predicate(list[i])) return list[i];
+  return null;
+}
+
+function findFailureEvent(events) {
+  return reverseFind(events, (event) => {
+    const type = String(event?.type || "");
+    if (/^run\.(?:failed|cancelled|errored)$/i.test(type)) return true;
+    if (/^(?:node|task|step|workflow)\.(?:failed|errored|cancelled)$/i.test(type)) return true;
+    if (/^Node(?:Failed|Cancelled)$/.test(type)) return true;
+    if (/^Run(?:Failed|Cancelled)$/.test(type)) return true;
+    return false;
+  });
+}
+
+function failureStep(run, events, failureEvent) {
+  const data = failureEvent?.data;
+  if (data && typeof data === "object") {
+    const field = data.step || data.node || data.taskId || data.task || data.nodeId;
+    if (field) return String(field);
+  }
+  if (run?.currentStep) return run.currentStep;
+  const lastStep = reverseFind(events, (event) => /^workflow\.step$/i.test(event.type));
+  return lastStep?.message || "";
+}
+
+function focusedTimeline(events, failureEvent) {
+  if (!events?.length) return [];
+  const failureIndex = failureEvent ? events.findIndex((e) => e.id === failureEvent.id) : events.length - 1;
+  const anchor = failureIndex < 0 ? events.length - 1 : failureIndex;
+  const window = events.slice(Math.max(0, anchor - 12), Math.min(events.length, anchor + 4));
+  return window.filter(isFocusEvent).map((event) => ({
+    id: event.id,
+    type: event.type,
+    message: redactSnippet(event.message, 320),
+    createdAt: event.createdAt,
+    data: sanitizeForDisplay(event.data || {})
+  }));
+}
+
+function logExcerpts(events, failureEvent) {
+  if (!events?.length) return [];
+  const failureIndex = failureEvent ? events.findIndex((e) => e.id === failureEvent.id) : events.length - 1;
+  const end = failureIndex < 0 ? events.length : failureIndex + 1;
+  const window = events.slice(Math.max(0, end - 30), end);
+  const logs = window.filter(isLogEvent);
+  return logs.slice(-12).map((event) => ({
+    id: event.id,
+    type: event.type,
+    createdAt: event.createdAt,
+    message: redactSnippet(event.message, 600)
+  }));
+}
+
+function diagnosticArtifactScore(artifact) {
+  const name = String(artifact?.name || "").toLowerCase();
+  const mime = String(artifact?.mimeType || "").toLowerCase();
+  let score = 0;
+  if (/error|failure|stderr|stdout|trace|diagnostic|panic|crash|core\b/.test(name)) score += 3;
+  if (/\.(?:log|txt)$/.test(name)) score += 1;
+  if (mime === "text/x-log") score += 2;
+  if (mime.startsWith("text/")) score += 1;
+  return score;
+}
+
+function diagnosticArtifacts(artifacts) {
+  return (artifacts || [])
+    .map((artifact) => ({ artifact, score: diagnosticArtifactScore(artifact) }))
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) =>
+      b.score - a.score
+      || String(b.artifact.createdAt || "").localeCompare(String(a.artifact.createdAt || ""))
+    )
+    .slice(0, 6)
+    .map((entry) => withArtifactLinks(entry.artifact));
+}
+
+function relevantApproval(runId) {
+  if (!runId) return null;
+  const approvals = listApprovals().filter((a) => a.runId === runId);
+  if (!approvals.length) return null;
+  return (
+    approvals.find((a) => a.status === "pending")
+    || approvals.find((a) => a.decision === "changes_requested")
+    || approvals.find((a) => a.decision === "rejected")
+    || approvals[0]
+  );
+}
+
+function approvalSummaryForDiagnostics(approval) {
+  if (!approval) return null;
+  return {
+    id: approval.id,
+    status: approval.status,
+    decision: approval.decision || "",
+    title: approval.title || "",
+    comment: approval.comment ? truncate(approval.comment, 600) : "",
+    requestedBy: approval.requestedBy || "",
+    resolvedBy: approval.resolvedBy || "",
+    resolvedAt: approval.resolvedAt || "",
+    deepLink: deepLinks.approval(approval.id)
+  };
+}
+
+function runDiagnostics(run, events = [], artifacts = []) {
+  if (!run || !DIAGNOSTIC_STATUSES.has(run.status)) return null;
+  const sortedEvents = [...events].sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+  const failureEvent = findFailureEvent(sortedEvents);
+  const approval = relevantApproval(run.id);
+  const cancelEvent = reverseFind(sortedEvents, (event) => /^run\.cancelled$/i.test(event.type));
+  // Only treat the approval comment as the cancellation reason when the
+  // approval actually drove the cancellation. Otherwise prefer the run-level
+  // event/error so we don't surface a stale "Approved from Web/API" comment
+  // on an unrelated cancel.
+  const approvalCausedCancel = Boolean(
+    approval
+    && (approval.decision === "changes_requested"
+      || approval.decision === "rejected"
+      || approval.status === "rejected")
+  );
+  let headline;
+  if (run.status === "failed" || run.status === "error") {
+    headline = redactSnippet(run.error || failureEvent?.message || run.currentStep || "Run failed", 200);
+  } else if (run.status === "cancelled" || run.status === "rejected") {
+    headline = redactSnippet(
+      (approvalCausedCancel && approval?.comment)
+      || cancelEvent?.message
+      || failureEvent?.message
+      || (approval?.comment)
+      || run.currentStep
+      || "Run cancelled",
+      200
+    );
+  } else if (run.status === "waiting_approval") {
+    headline = truncate(approval?.title || run.currentStep || "Waiting for approval", 200);
+  } else {
+    headline = truncate(run.currentStep || run.status, 200);
+  }
+  const step = failureStep(run, sortedEvents, failureEvent);
+  return {
+    status: run.status,
+    headline,
+    reason: redactSnippet(run.error || failureEvent?.message || headline, 600),
+    failedStep: step || "",
+    failureType: failureEvent?.type || (cancelEvent ? cancelEvent.type : ""),
+    failedAt: failureEvent?.createdAt || cancelEvent?.createdAt || run.completedAt || null,
+    cancelledBy:
+      run.status === "cancelled" || run.status === "rejected"
+        ? approval?.resolvedBy
+          || (cancelEvent?.data && (cancelEvent.data.cancelledBy || cancelEvent.data.actor)) || ""
+        : "",
+    approval: approvalSummaryForDiagnostics(approval),
+    timeline: focusedTimeline(sortedEvents, failureEvent || cancelEvent || null),
+    logExcerpts: logExcerpts(sortedEvents, failureEvent || cancelEvent || null),
+    artifacts: diagnosticArtifacts(artifacts),
+    createdAt: run.createdAt,
+    completedAt: run.completedAt
+  };
+}
+
+// Cheap short hint for run cards — does not run extra DB queries; built only
+// from the fields already in the run row. The detail page enriches this with
+// the structured diagnostics object instead.
+function quickReasonHint(run) {
+  if (!run || !DIAGNOSTIC_STATUSES.has(run.status)) return "";
+  if (run.status === "failed" || run.status === "error") {
+    return truncate(run.error || run.currentStep || "Run failed", 140);
+  }
+  if (run.status === "cancelled" || run.status === "rejected") {
+    return truncate(run.error || run.currentStep || "Run cancelled", 140);
+  }
+  if (run.status === "waiting_approval") {
+    return truncate(run.currentStep || "Waiting for approval", 140);
+  }
+  return "";
+}
+
 function withRunLinks(run) {
   if (!run || typeof run !== "object") return run;
   const origin = runOrigin(run);
+  const reasonHint = quickReasonHint(run);
   return {
     ...run,
     title: deriveRunTitle(run),
@@ -216,6 +471,7 @@ function withRunLinks(run) {
     origin,
     originLabel: origin?.label || "",
     durationMs: runDurationMs(run),
+    reasonHint,
     deepLink: deepLinks.run(run.id),
     deepLinkLogs: deepLinks.runLogs(run.id),
     deepLinkArtifacts: deepLinks.runArtifacts(run.id),
@@ -1500,6 +1756,10 @@ app.post("/api/capabilities/:id/run", requireAuth, requireScopes("api", "mcp"), 
   const capability = getCapability(req.params.id);
   if (!capability || !capability.enabled) return res.status(404).json({ error: "capability not found" });
   const input = req.body.input || req.body || {};
+  if (Array.isArray(req.body.chain) && input && typeof input === "object" && !Array.isArray(input)) {
+    input.__chain = normalizeChainSteps(req.body.chain);
+    input.__chainIndex = 0;
+  }
   const origin = requestOrigin(req, input);
   const run = createRun(capability, input, {
     runnerId: req.body.runnerId,
@@ -1552,16 +1812,31 @@ app.get("/api/runs", requireAuth, (req, res) => {
 app.get("/api/runs/:id", requireAuth, (req, res) => {
   const run = getRun(req.params.id);
   if (!run) return res.status(404).json({ error: "run not found" });
+  const events = listRunEvents(run.id);
+  const artifacts = listArtifacts({ runId: run.id }).map(withArtifactLinks);
   res.json({
     run: withRunLinks(run),
-    events: listRunEvents(run.id),
-    artifacts: listArtifacts({ runId: run.id }).map(withArtifactLinks)
+    events,
+    artifacts,
+    diagnostics: runDiagnostics(run, events, artifacts)
   });
 });
 app.get("/api/runs/:id/events", requireAuth, (req, res) => res.json({ events: listRunEvents(req.params.id) }));
+app.get("/api/runs/:id/diagnostics", requireAuth, (req, res) => {
+  const run = getRun(req.params.id);
+  if (!run) return res.status(404).json({ error: "run not found" });
+  const events = listRunEvents(run.id);
+  const artifacts = listArtifacts({ runId: run.id }).map(withArtifactLinks);
+  res.json({
+    run: withRunLinks(run),
+    diagnostics: runDiagnostics(run, events, artifacts)
+  });
+});
 app.get("/api/runs/:id/logs", requireAuth, (req, res) => {
+  // Apply the same redaction pass we use for diagnostics so any token-shaped
+  // payload that leaked into a log message stays redacted on the wire too.
   const logs = listRunEvents(req.params.id)
-    .map((event) => `[${event.createdAt}] ${event.type}: ${event.message}`)
+    .map((event) => `[${event.createdAt}] ${event.type}: ${redactSnippet(event.message, 4000)}`)
     .join("\n");
   res.type("text/plain").send(logs);
 });
@@ -1576,11 +1851,67 @@ app.post("/api/runs/:id/start", requireAuth, requireScopes("runner"), requireRun
   if (!result.idempotent) addRunEvent(req.params.id, "run.started", "Run started");
   res.json({ run: result.run });
 });
+
+function queueNextChainedRun(parentRun, output, req) {
+  const { chain, index } = chainMetadata(parentRun.input || {});
+  const next = chain[index];
+  if (!next) {
+    if (chain.length > 0) addRunEvent(parentRun.id, "run.chain.completed", "Workflow chain completed", { chainLength: chain.length });
+    return null;
+  }
+  const capability = getCapability(next.capability);
+  if (!capability || !capability.enabled) {
+    addRunEvent(parentRun.id, "run.chain.failed", `Next chained capability not found: ${next.capability}`, { capability: next.capability, index });
+    return null;
+  }
+  const nextInput = {
+    ...(next.input || {}),
+    __chain: chain,
+    __chainIndex: index + 1,
+    previousRun: {
+      id: parentRun.id,
+      capabilitySlug: parentRun.capabilitySlug,
+      capabilityName: parentRun.capabilityName,
+      status: parentRun.status,
+      deepLink: deepLinks.run(parentRun.id)
+    }
+  };
+  if (next.passPreviousOutput !== false) nextInput.previousOutput = output || parentRun.output || null;
+  const origin = requestOrigin(req, {
+    origin: {
+      label: `Chained from ${parentRun.capabilitySlug} ${parentRun.id}`,
+      type: "workflow-chain",
+      parentRunId: parentRun.id,
+      chainIndex: index + 1,
+      chainLength: chain.length
+    }
+  });
+  const child = createRun(capability, nextInput, {
+    requestedBy: origin.requestedBy || "workflow-chain",
+    origin: origin.origin
+  });
+  addRunEvent(parentRun.id, "run.chain.queued", `Queued chained run ${child.id} for ${capability.name}`, {
+    childRunId: child.id,
+    capability: capability.slug,
+    index: index + 1,
+    deepLink: deepLinks.run(child.id)
+  });
+  addRunEvent(child.id, "run.chain.parent", `Created from parent run ${parentRun.id}`, {
+    parentRunId: parentRun.id,
+    parentCapability: parentRun.capabilitySlug,
+    index: index + 1,
+    deepLink: deepLinks.run(parentRun.id)
+  });
+  return child;
+}
+
 app.post("/api/runs/:id/complete", requireAuth, requireScopes("runner"), requireRunOwnerOrAdmin, (req, res) => {
-  const result = transitionRun(req.params.id, "succeeded", { current_step: "completed", output: req.body.output || {}, completed_at: now() });
+  const output = req.body.output || {};
+  const result = transitionRun(req.params.id, "succeeded", { current_step: "completed", output, completed_at: now() });
   if (!result.ok) return res.status(result.code).json({ error: result.error });
   if (!result.idempotent) addRunEvent(req.params.id, "run.succeeded", "Run completed");
-  res.json({ run: result.run });
+  const chainedRun = result.idempotent ? null : queueNextChainedRun(result.run, output, req);
+  res.json({ run: result.run, chainedRun: chainedRun ? withRunLinks(chainedRun) : null });
 });
 app.post("/api/runs/:id/fail", requireAuth, requireScopes("runner"), requireRunOwnerOrAdmin, (req, res) => {
   const result = transitionRun(req.params.id, "failed", { current_step: "failed", error: req.body.error || "failed", completed_at: now() });

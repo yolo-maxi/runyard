@@ -14,7 +14,7 @@ process.env.SMITHERS_HUB_BOOTSTRAP_TOKEN = "shub_test_token";
 
 const { app, notifyTelegram } = await import("../src/server.js");
 const { env } = await import("../src/env.js");
-const { autoQueueLegacyRunStartApprovals, createApproval, updateRun } = await import("../src/db.js");
+const { addRunEvent, autoQueueLegacyRunStartApprovals, createApproval, transitionRun, updateRun } = await import("../src/db.js");
 
 let server;
 let baseUrl;
@@ -189,6 +189,34 @@ describe("Smithers Hub API", () => {
     assert.equal(detail.artifacts[0].deepLinkRun, `/app#runs/${created.run.id}`);
     const runArtifacts = await api(`/api/runs/${created.run.id}/artifacts`);
     assert.equal(runArtifacts.artifacts[0].deepLink, `/app#runs/${created.run.id}/artifacts/${runArtifacts.artifacts[0].id}`);
+  });
+
+  it("queues the next chained workflow when a run completes", async () => {
+    const created = await api("/api/capabilities/hello/run", {
+      method: "POST",
+      body: {
+        input: { goal: "first step" },
+        chain: [{ capability: "hello", input: { goal: "second step" } }]
+      }
+    });
+    await api(`/api/runs/${created.run.id}/start`, { method: "POST", body: {} });
+    const completed = await api(`/api/runs/${created.run.id}/complete`, {
+      method: "POST",
+      body: { output: { answer: 42 } }
+    });
+    assert.equal(completed.run.status, "succeeded");
+    assert.ok(completed.chainedRun, "completion should queue the next chained run");
+    assert.equal(completed.chainedRun.capabilitySlug, "hello");
+    assert.equal(completed.chainedRun.status, "queued");
+
+    const child = await api(`/api/runs/${completed.chainedRun.id}`);
+    assert.equal(child.run.input.goal, "second step");
+    assert.equal(child.run.input.__chainIndex, 1);
+    assert.equal(child.run.input.previousRun.id, created.run.id);
+    assert.equal(child.run.input.previousOutput.answer, 42);
+    assert.equal(child.run.origin.type, "workflow-chain");
+    const parentEvents = await api(`/api/runs/${created.run.id}/events`);
+    assert.ok(parentEvents.events.find((event) => event.type === "run.chain.queued"));
   });
 
   it("starts implement workflows without a run-start approval", async () => {
@@ -809,6 +837,156 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
     // A different token (admin) tries to register using my runner id -> must NOT overwrite mine.
     const other = await api("/api/runners/register", { method: "POST", body: { id: myId, name: "hijack", tags: ["smithers", "node"] } });
     assert.notEqual(other.runner.id, myId);
+  });
+});
+
+describe("Failure / cancellation diagnostics", () => {
+  it("attaches a structured diagnostics payload to failed runs", async () => {
+    const created = await api("/api/capabilities/hello/run", {
+      method: "POST",
+      body: { input: { goal: "diagnostic failure" } }
+    });
+    const runId = created.run.id;
+    addRunEvent(runId, "workflow.step", "build started", { step: "build" });
+    addRunEvent(runId, "stderr", "fatal: pnpm install exited 1", {});
+    addRunEvent(runId, "node.failed", "build node failed", { node: "build", step: "build" });
+    transitionRun(runId, "failed", { error: "pnpm install exited 1", current_step: "build", completed_at: new Date().toISOString() });
+
+    const detail = await api(`/api/runs/${runId}`);
+    assert.ok(detail.diagnostics, "diagnostics object should be present for failed runs");
+    assert.equal(detail.diagnostics.status, "failed");
+    assert.match(detail.diagnostics.headline, /pnpm install/);
+    assert.equal(detail.diagnostics.failedStep, "build");
+    assert.match(detail.diagnostics.failureType, /node\.failed|run\.failed/);
+    assert.ok(detail.diagnostics.timeline.length, "focused timeline should include surrounding events");
+    assert.ok(detail.diagnostics.logExcerpts.length, "log excerpts should be returned");
+    assert.equal(detail.run.reasonHint, "pnpm install exited 1");
+  });
+
+  it("redacts secret-looking values from log excerpts and the logs endpoint", async () => {
+    const created = await api("/api/capabilities/hello/run", {
+      method: "POST",
+      body: { input: { goal: "redaction" } }
+    });
+    const runId = created.run.id;
+    addRunEvent(runId, "stderr", "request failed: authorization=Bearer shub_AAAABBBBCCCCDDDDEEEE token=shub_secretvalue123", {});
+    addRunEvent(runId, "run.failed", "leak attempt", {});
+    transitionRun(runId, "failed", { error: "leak attempt", completed_at: new Date().toISOString() });
+
+    const detail = await api(`/api/runs/${runId}`);
+    const log = detail.diagnostics.logExcerpts.find((entry) => entry.type === "stderr");
+    assert.ok(log, "stderr entry should be retained in excerpts");
+    assert.doesNotMatch(log.message, /shub_AAAABBBBCCCCDDDDEEEE/);
+    assert.doesNotMatch(log.message, /shub_secretvalue123/);
+    assert.match(log.message, /\[redacted\]/);
+
+    const logsResponse = await fetch(`${baseUrl}/api/runs/${runId}/logs`, {
+      headers: { authorization: `Bearer ${token}` }
+    });
+    const text = await logsResponse.text();
+    assert.doesNotMatch(text, /shub_AAAABBBBCCCCDDDDEEEE/);
+  });
+
+  it("surfaces approval comments as the cancellation reason when an approval rejected the run", async () => {
+    const { created, approval } = await createCheckpointApproval("implement-change-gated", {
+      workPrompt: "diagnostics for changes_requested",
+      deploy: false
+    });
+    await api(`/api/approvals/${approval.id}/request-changes`, {
+      method: "POST",
+      body: { comment: "Please add the rollout plan before deploying." }
+    });
+
+    const detail = await api(`/api/runs/${created.run.id}`);
+    assert.equal(detail.run.status, "cancelled");
+    assert.ok(detail.diagnostics);
+    assert.equal(detail.diagnostics.status, "cancelled");
+    assert.ok(detail.diagnostics.approval, "approval summary should be linked from diagnostics");
+    assert.equal(detail.diagnostics.approval.decision, "changes_requested");
+    assert.match(detail.diagnostics.approval.comment, /rollout plan/);
+    assert.match(detail.diagnostics.headline, /rollout plan/);
+    assert.ok(detail.diagnostics.timeline.some((event) => /approval\.changes_requested|approval\.rejected/.test(event.type)));
+  });
+
+  it("returns waiting_approval diagnostics so paused runs show why up-front", async () => {
+    const created = await api("/api/capabilities/hello/run", {
+      method: "POST",
+      body: { input: { goal: "pause" } }
+    });
+    updateRun(created.run.id, { status: "waiting_approval", current_step: "needs approval" });
+    createApproval({
+      runId: created.run.id,
+      title: "Approve diagnostics pause",
+      description: "Waiting on operator decision.",
+      requestedBy: "workflow",
+      payload: { kind: "checkpoint", approvalKind: "checkpoint", approvalScope: "workflow_checkpoint", capability: "hello", input: {} }
+    });
+
+    const detail = await api(`/api/runs/${created.run.id}`);
+    assert.ok(detail.diagnostics, "waiting_approval runs should still expose diagnostics");
+    assert.equal(detail.diagnostics.status, "waiting_approval");
+    assert.match(detail.diagnostics.headline, /Approve diagnostics pause|approval/i);
+    assert.ok(detail.diagnostics.approval);
+    assert.equal(detail.diagnostics.approval.status, "pending");
+  });
+
+  it("does not attach diagnostics to runs that succeeded", async () => {
+    const created = await api("/api/capabilities/hello/run", {
+      method: "POST",
+      body: { input: { goal: "happy path" } }
+    });
+    const runner = await api("/api/runners/register", {
+      method: "POST",
+      body: { name: "diagnostics-success", hostname: "diag", tags: ["smithers", "node"] }
+    });
+    await api(`/api/runners/${runner.runner.id}/next-run`);
+    await api(`/api/runs/${created.run.id}/start`, { method: "POST", body: {} });
+    await api(`/api/runs/${created.run.id}/complete`, { method: "POST", body: { output: { ok: true } } });
+
+    const detail = await api(`/api/runs/${created.run.id}`);
+    assert.equal(detail.run.status, "succeeded");
+    assert.equal(detail.diagnostics, null);
+    assert.equal(detail.run.reasonHint, "");
+  });
+
+  it("exposes diagnostics through the dedicated endpoint and includes diagnostic artifacts", async () => {
+    const created = await api("/api/capabilities/hello/run", {
+      method: "POST",
+      body: { input: { goal: "diagnostic artifacts" } }
+    });
+    const runId = created.run.id;
+    const runner = await api("/api/runners/register", {
+      method: "POST",
+      body: { name: "diagnostics-runner", hostname: "diag2", tags: ["smithers", "node"] }
+    });
+    await api(`/api/runners/${runner.runner.id}/next-run`);
+    await api(`/api/runs/${runId}/start`, { method: "POST", body: {} });
+    await api(`/api/runs/${runId}/artifacts`, {
+      method: "POST",
+      body: { name: "stderr.log", mimeType: "text/plain", contentBase64: Buffer.from("boom").toString("base64") }
+    });
+    await api(`/api/runs/${runId}/fail`, { method: "POST", body: { error: "explosion in build" } });
+
+    const direct = await api(`/api/runs/${runId}/diagnostics`);
+    assert.ok(direct.diagnostics);
+    assert.equal(direct.diagnostics.status, "failed");
+    assert.match(direct.diagnostics.headline, /explosion/);
+    assert.ok(direct.diagnostics.artifacts.length, "diagnostic artifacts should be linked");
+    assert.equal(direct.diagnostics.artifacts[0].name, "stderr.log");
+  });
+
+  it("surfaces a short reasonHint on the runs list for failed runs", async () => {
+    const created = await api("/api/capabilities/hello/run", {
+      method: "POST",
+      body: { input: { goal: "list reason hint" } }
+    });
+    transitionRun(created.run.id, "failed", { error: "compile error: missing semicolon", completed_at: new Date().toISOString() });
+
+    const list = await api("/api/runs?limit=200");
+    const row = list.runs.find((entry) => entry.id === created.run.id);
+    assert.ok(row, "failed run should still appear in list");
+    assert.equal(row.status, "failed");
+    assert.match(row.reasonHint, /compile error/);
   });
 });
 

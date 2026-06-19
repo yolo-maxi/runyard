@@ -144,9 +144,12 @@ program
   .command("run <capability>")
   .description("Run a capability with JSON input")
   .option("-i, --input <json>", "JSON input", "{}")
+  .option("--chain <json>", "JSON array of next capability steps to queue after each run succeeds")
   .action(async (capability, opts) => {
     const input = JSON.parse(opts.input);
-    print(await client(program.opts()).post(`/api/capabilities/${capability}/run`, { input }), program.opts().json);
+    const body = { input };
+    if (opts.chain) body.chain = JSON.parse(opts.chain);
+    print(await client(program.opts()).post(`/api/capabilities/${capability}/run`, body), program.opts().json);
   });
 
 program.command("runs").description("List runs").option("-s, --status <status>").action(async (opts) => {

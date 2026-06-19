@@ -481,6 +481,12 @@ function isActiveRun(run) {
   return ACTIVE_STATUSES.has(run.status);
 }
 
+const DIAGNOSTIC_STATUSES = new Set(["failed", "error", "cancelled", "rejected", "waiting_approval"]);
+
+function isDiagnosticRun(run) {
+  return run && DIAGNOSTIC_STATUSES.has(run.status);
+}
+
 // --- Run summary fallbacks (client-side mirror of server.js helpers) --------
 // The API now sends derived `title` / `description` / `project` / `branch`
 // fields, but we keep these locally too so cards rendered from stale clients
@@ -603,6 +609,12 @@ function runCard(run, artifacts = []) {
         ${artifacts.length > 3 ? `<li class="muted"><a href="${esc(deepLinks.runArtifacts(run.id))}">+${artifacts.length - 3} more</a></li>` : ""}
       </ul>`
     : "";
+  // Surface a short reason hint on failed/cancelled cards so the list stays
+  // scannable but the operator knows why something stopped.
+  const reasonHint = isDiagnosticRun(run) ? (run.reasonHint || "") : "";
+  const reasonHintHtml = reasonHint
+    ? `<p class="run-reason-hint" title="${esc(reasonHint)}">⚠ <span>${esc(truncate(reasonHint, 140))}</span></p>`
+    : "";
   return `<article class="run-card ${active ? "active" : "done"} ${esc(run.status)}" id="run-${esc(run.id)}">
     <header class="run-card-head">
       <div class="run-card-status">${active ? '<span class="run-pulse" aria-hidden="true"></span>' : ""}${status(run.status)}</div>
@@ -615,6 +627,7 @@ function runCard(run, artifacts = []) {
     </p>
     <p class="muted run-desc">${esc(description)}</p>
     ${chipsHtml}
+    ${reasonHintHtml}
     <p class="muted run-meta">
       <span class="run-step">${esc(run.currentStep || (active ? "starting…" : "—"))}</span>
       <span class="run-timing">${esc(created)}${durStr ? ` · ${esc(durStr)}` : ""}</span>
@@ -1376,9 +1389,103 @@ async function editCapability(slug = "") {
   });
 }
 
+function formatTimestamp(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toISOString().replace("T", " ").replace(/\.\d+Z$/, "Z");
+}
+
+// --- Diagnostic panel for failed/cancelled/error/waiting_approval runs -----
+// Surfaces the *why* up-front: short reason, who/what cancelled, the failed
+// step, an approval-comment quote if that was the cause, a focused timeline,
+// a recent stderr/stdout window, and any diagnostic-looking artifacts.
+function renderRunDiagnostics(diagnostics) {
+  if (!diagnostics) return "";
+  const statusKey = diagnostics.status || "";
+  const intro =
+    statusKey === "waiting_approval"
+      ? "This run is paused waiting for an approval decision."
+      : statusKey === "failed" || statusKey === "error"
+        ? "This run failed. Diagnostic details below."
+        : "This run was cancelled. Diagnostic details below.";
+  const headline = diagnostics.headline ? `<p class="diagnostics-headline">${esc(diagnostics.headline)}</p>` : "";
+  const facts = [
+    diagnostics.failedStep ? `<dt>Failed step</dt><dd>${esc(diagnostics.failedStep)}</dd>` : "",
+    diagnostics.failureType ? `<dt>Failure event</dt><dd><code>${esc(diagnostics.failureType)}</code></dd>` : "",
+    diagnostics.failedAt ? `<dt>When</dt><dd>${esc(formatTimestamp(diagnostics.failedAt))}</dd>` : "",
+    diagnostics.cancelledBy ? `<dt>Cancelled by</dt><dd>${esc(diagnostics.cancelledBy)}</dd>` : "",
+    diagnostics.approval
+      ? `<dt>Linked approval</dt><dd><a href="${esc(diagnostics.approval.deepLink)}">${esc(diagnostics.approval.title || diagnostics.approval.id)}</a> <span class="muted">${esc(diagnostics.approval.decision || diagnostics.approval.status || "")}</span></dd>`
+      : ""
+  ].filter(Boolean).join("");
+  const reasonBlock = diagnostics.reason && diagnostics.reason !== diagnostics.headline
+    ? `<details class="diagnostics-reason" open><summary>Reason</summary>
+        <pre class="diagnostics-pre"><code>${esc(diagnostics.reason)}</code></pre>
+        <button type="button" class="button copy-btn" data-copy="${esc(diagnostics.reason)}" title="Copy reason">Copy reason</button>
+      </details>`
+    : "";
+  const approvalQuote = diagnostics.approval?.comment
+    ? `<div class="diagnostics-approval-quote">
+        <h4>Approval comment</h4>
+        <blockquote>${esc(diagnostics.approval.comment)}</blockquote>
+        <p class="muted">${esc(diagnostics.approval.resolvedBy || diagnostics.approval.requestedBy || "approval")}${diagnostics.approval.resolvedAt ? ` · ${esc(formatTimestamp(diagnostics.approval.resolvedAt))}` : ""}</p>
+        <button type="button" class="button copy-btn" data-copy="${esc(diagnostics.approval.comment)}" title="Copy approval comment">Copy comment</button>
+      </div>`
+    : "";
+  const timeline = Array.isArray(diagnostics.timeline) ? diagnostics.timeline : [];
+  const timelineHtml = timeline.length
+    ? `<div class="diagnostics-timeline">
+        <h4>Events around the failure</h4>
+        <ol class="diagnostics-event-list">
+          ${timeline.map((event) => `<li>
+            <time>${esc(formatTimestamp(event.createdAt))}</time>
+            <code class="diagnostics-event-type">${esc(event.type)}</code>
+            <span class="diagnostics-event-msg">${esc(event.message || "")}</span>
+          </li>`).join("")}
+        </ol>
+      </div>`
+    : "";
+  const logs = Array.isArray(diagnostics.logExcerpts) ? diagnostics.logExcerpts : [];
+  const logsHtml = logs.length
+    ? `<div class="diagnostics-logs">
+        <div class="diagnostics-logs-head">
+          <h4>Recent log excerpts</h4>
+          <button type="button" class="button copy-btn" data-copy="${esc(logs.map((entry) => `[${entry.createdAt}] ${entry.type}: ${entry.message}`).join("\n"))}" title="Copy log excerpt">Copy log</button>
+        </div>
+        <pre class="diagnostics-pre"><code>${esc(logs.map((entry) => `[${entry.createdAt}] ${entry.type}: ${entry.message}`).join("\n"))}</code></pre>
+        <p class="muted">Token/secret-shaped strings are redacted in this excerpt.</p>
+      </div>`
+    : "";
+  const arts = Array.isArray(diagnostics.artifacts) ? diagnostics.artifacts : [];
+  const artifactsHtml = arts.length
+    ? `<div class="diagnostics-artifacts">
+        <h4>Diagnostic artifacts</h4>
+        <ul class="artifact-list">
+          ${arts.map((artifact) => `<li><a href="${esc(deepLinks.artifact(artifact))}">${esc(artifactDisplayName(artifact))}</a> <a class="muted artifact-dl" href="/api/artifacts/${esc(artifact.id)}/download" target="_blank">download</a> <span class="muted">${esc(formatBytes(artifact.sizeBytes))}</span></li>`).join("")}
+        </ul>
+      </div>`
+    : "";
+  return `<section class="panel diagnostics-panel diagnostics-${esc(statusKey)}" aria-label="Run diagnostics">
+    <header class="diagnostics-head">
+      <h2>Why this run ${statusKey === "waiting_approval" ? "is paused" : statusKey === "failed" || statusKey === "error" ? "failed" : "was cancelled"}</h2>
+      ${status(statusKey)}
+    </header>
+    <p class="muted diagnostics-intro">${esc(intro)}</p>
+    ${headline}
+    ${facts ? `<dl class="diagnostics-facts">${facts}</dl>` : ""}
+    ${approvalQuote}
+    ${reasonBlock}
+    ${timelineHtml}
+    ${logsHtml}
+    ${artifactsHtml}
+  </section>`;
+}
+
 async function renderRunDetail(runId, { focus = "", focusId = "" } = {}) {
   const data = await api(`/api/runs/${runId}`);
   const run = data.run;
+  const diagnostics = data.diagnostics || null;
   const folder = runFolderLabel(run);
   const slug = run.capabilitySlug || "";
   const title = runTitle(run);
@@ -1419,6 +1526,7 @@ async function renderRunDetail(runId, { focus = "", focusId = "" } = {}) {
     ${chips.length ? `<p class="run-detail-chips">${chips.join("")}</p>` : ""}
     <p class="run-folder-banner"><span class="run-folder">📁 ${esc(folder)}</span> <span class="muted">— display-only grouping for this run's artifacts &amp; logs</span></p>
     ${focusHint}
+    ${renderRunDiagnostics(diagnostics)}
     <section class="split">
       <div class="panel" id="panel-logs">
         <h2>Run log ${shareButton(deepLinks.runLogs(run.id), "Copy share link to this run's log")}</h2>
