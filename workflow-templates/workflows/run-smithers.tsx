@@ -2,7 +2,7 @@
 // smithers-display-name: run-smithers (supervising wrapper)
 // smithers-description: Supervising wrapper around a wrapped capability run. Records child lineage, retries recoverable failures, and requests approval after three identical normalized error fingerprints.
 /** @jsxImportSource smithers-orchestrator */
-import { createSmithers, Sequence, ClaudeCodeAgent } from "smithers-orchestrator";
+import { createSmithers, Sequence } from "smithers-orchestrator";
 import { z } from "zod/v4";
 import {
   RUN_SMITHERS_DEFAULT_MAX_ATTEMPTS,
@@ -39,16 +39,6 @@ const superviseOut = z.looseObject({
 const { Workflow, Task, smithers, outputs } = createSmithers({
   input: inputSchema,
   supervise: superviseOut
-});
-
-const supervisor = new ClaudeCodeAgent({
-  model: "claude-sonnet-4-6",
-  cwd: "/tmp",
-  systemPrompt:
-    "You are the run-smithers supervising watcher. You wrap exactly one child capability. " +
-    "Record child run id, capability, current/failed step, checkpoint, retry count, and normalized error fingerprint for every terminal child transition. " +
-    "Never mark the wrapped goal a success unless the child workflow reaches a terminal `succeeded` state. " +
-    "After three identical normalized error fingerprints, stop autonomous retry and request operator approval with concrete options."
 });
 
 async function hubJson(pathname: string, options: { method?: string; body?: unknown } = {}) {
@@ -124,7 +114,7 @@ async function requestApprovalCheckpoint(state: ReturnType<typeof createWatcherS
 export default smithers((ctx) => (
   <Workflow name="run-smithers">
     <Sequence>
-      <Task id="supervise" output={outputs.supervise} agent={supervisor} retries={0} timeoutMs={POLL_DEADLINE_MS + 60_000}>
+      <Task id="supervise" output={outputs.supervise} retries={0} timeoutMs={POLL_DEADLINE_MS + 60_000}>
         {async () => {
           const state = createWatcherState({
             goal: ctx.input.goal,
