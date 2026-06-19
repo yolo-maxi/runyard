@@ -16,6 +16,7 @@ const CADDYFILE = process.env.REPOBOX_CADDYFILE || "/etc/caddy/Caddyfile";
 const PUBLIC_SUFFIX = process.env.REPOBOX_PUBLIC_SUFFIX || "repo.box";
 const REPOBOX_HOST = process.env.REPOBOX_HOST || "fran@204.168.190.248";
 const REPOBOX_SSH_KEY = process.env.REPOBOX_SSH_KEY || path.join(os.homedir(), ".ssh/id_ed25519");
+const REPOBOX_DEPLOY_MODE = process.env.REPOBOX_DEPLOY_MODE || "ssh";
 const AGENT_PATH_PREFIX = [
   path.join(os.homedir(), ".npm-global/bin"),
   path.join(os.homedir(), ".bun/bin"),
@@ -154,7 +155,7 @@ ${subdomain}.${PUBLIC_SUFFIX} {
 
 function installCaddyBlock(block: string, subdomain: string, target: string) {
   const routePattern = `^${subdomain.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")}\\.${PUBLIC_SUFFIX.replace(/\./g, "\\.")} {`;
-  if (existsSync(CADDYFILE)) {
+  if (REPOBOX_DEPLOY_MODE === "local" && existsSync(CADDYFILE)) {
     mkdirSync(target, { recursive: true });
     const escapedBlock = JSON.stringify(block);
     shell(
@@ -166,21 +167,29 @@ function installCaddyBlock(block: string, subdomain: string, target: string) {
   }
   const remoteTarget = target;
   const remoteCmd =
-    `mkdir -p ${remoteQuote(remoteTarget)}; ` +
+    `sudo mkdir -p ${remoteQuote(remoteTarget)}; ` +
     `if ! grep -q '${routePattern}' ${remoteQuote(CADDYFILE)}; then cat <<'CADDY_BLOCK' | sudo tee -a ${remoteQuote(CADDYFILE)} >/dev/null\n${block}\nCADDY_BLOCK\nfi; ` +
     `sudo caddy validate --config ${remoteQuote(CADDYFILE)} >/dev/null; sudo systemctl reload caddy`;
   shell(`ssh -i ${JSON.stringify(REPOBOX_SSH_KEY)} -o BatchMode=yes -o StrictHostKeyChecking=accept-new ${JSON.stringify(REPOBOX_HOST)} ${JSON.stringify(remoteCmd)}`);
 }
 
 function copyDist(dist: string, target: string) {
-  if (existsSync(CADDYFILE)) {
+  if (REPOBOX_DEPLOY_MODE === "local" && existsSync(CADDYFILE)) {
     mkdirSync(target, { recursive: true });
     shell(`rsync -a --delete ${JSON.stringify(dist + "/")} ${JSON.stringify(target + "/")}`);
     return;
   }
+  const staging = `/tmp/smithers-deploy-${path.basename(target)}-${Date.now()}`;
   shell(
-    `ssh -i ${JSON.stringify(REPOBOX_SSH_KEY)} -o BatchMode=yes -o StrictHostKeyChecking=accept-new ${JSON.stringify(REPOBOX_HOST)} ${JSON.stringify(`mkdir -p ${remoteQuote(target)}`)}; ` +
-      `rsync -a --delete -e ${JSON.stringify(`ssh -i ${REPOBOX_SSH_KEY} -o BatchMode=yes -o StrictHostKeyChecking=accept-new`)} ${JSON.stringify(dist + "/")} ${JSON.stringify(`${REPOBOX_HOST}:${target}/`)}`
+    `ssh -i ${JSON.stringify(REPOBOX_SSH_KEY)} -o BatchMode=yes -o StrictHostKeyChecking=accept-new ${JSON.stringify(REPOBOX_HOST)} ${JSON.stringify(`rm -rf ${remoteQuote(staging)}; mkdir -p ${remoteQuote(staging)}`)}; ` +
+      `rsync -a --delete -e ${JSON.stringify(`ssh -i ${REPOBOX_SSH_KEY} -o BatchMode=yes -o StrictHostKeyChecking=accept-new`)} ${JSON.stringify(dist + "/")} ${JSON.stringify(`${REPOBOX_HOST}:${staging}/`)}; ` +
+      `ssh -i ${JSON.stringify(REPOBOX_SSH_KEY)} -o BatchMode=yes -o StrictHostKeyChecking=accept-new ${JSON.stringify(REPOBOX_HOST)} ` +
+      JSON.stringify(
+        `sudo mkdir -p ${remoteQuote(target)}; ` +
+          `sudo rsync -a --delete ${remoteQuote(staging + "/")} ${remoteQuote(target + "/")}; ` +
+          `sudo chown -R caddy:caddy ${remoteQuote(target)}; ` +
+          `rm -rf ${remoteQuote(staging)}`
+      )
   );
 }
 
