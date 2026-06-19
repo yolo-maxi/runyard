@@ -30,7 +30,7 @@ const tags = normalizeRunnerTags(
 );
 const intervalMs = Number(process.env.SMITHERS_RUNNER_INTERVAL_MS || 2500);
 const pollMs = Number(process.env.SMITHERS_POLL_MS || 2000);
-const maxRunMs = Number(process.env.SMITHERS_MAX_RUN_MS || 30 * 60_000);
+const maxRunMs = Number(process.env.SMITHERS_MAX_RUN_MS || 2 * 60 * 60_000);
 
 // Concurrency controls how many Smithers runs this single runner process
 // may execute in parallel. Defaults to 1 to keep existing single-runner
@@ -59,6 +59,17 @@ const stripAnsi = (s) => String(s).replace(/\[[0-9;]*m/g, "");
 
 async function smithers(args, opts = {}) {
   return execFileAsync("smithers", args, { cwd: workspace, timeout: opts.timeout || 60_000, maxBuffer: 1024 * 1024 * 32 });
+}
+
+async function cancelSmithersRun(sid, reason = "") {
+  if (!sid) return false;
+  try {
+    await smithers(["cancel", sid], { timeout: 30_000 });
+    return true;
+  } catch (error) {
+    console.error(`failed to cancel Smithers run ${sid}:`, error.message);
+    return false;
+  }
 }
 
 async function event(runId, type, message, data = {}) {
@@ -141,6 +152,7 @@ async function executeAssignment(assignment) {
     let posted = 0;
     let state = "running";
     const deadline = Date.now() + maxRunMs;
+    let deadlineExceeded = false;
     while (Date.now() < deadline) {
       const lines = await fetchEvents(sid);
       for (let i = posted; i < lines.length; i++) {
@@ -162,6 +174,18 @@ async function executeAssignment(assignment) {
       }
       if (TERMINAL.has(state)) break;
       await sleep(pollMs);
+    }
+
+    if (!TERMINAL.has(state)) {
+      deadlineExceeded = true;
+      await event(
+        run.id,
+        "runner.deadline_exceeded",
+        `Smithers run ${sid} exceeded runner deadline after ${maxRunMs}ms; cancelling detached workflow.`,
+        { smithersRunId: sid, maxRunMs }
+      );
+      await cancelSmithersRun(sid, "runner deadline exceeded");
+      state = "cancelled";
     }
 
     // Collect outputs per node + the full event trace, upload as artifacts.
@@ -199,7 +223,10 @@ async function executeAssignment(assignment) {
       await client.post(`/api/runs/${run.id}/complete`, { output: { smithersRunId: sid, outputs } });
       console.log(`Completed ${run.id} via smithers ${sid}`);
     } else {
-      await client.post(`/api/runs/${run.id}/fail`, { error: `smithers run ${sid} ended in state '${state}'` });
+      const error = deadlineExceeded
+        ? `smithers run ${sid} exceeded runner deadline (${maxRunMs}ms) and was cancelled`
+        : `smithers run ${sid} ended in state '${state}'`;
+      await client.post(`/api/runs/${run.id}/fail`, { error });
       console.log(`Run ${run.id} ended '${state}' (smithers ${sid})`);
     }
   } catch (error) {
