@@ -43,7 +43,7 @@ function ask(query, { hidden = false } = {}) {
 }
 
 const program = new Command();
-program.name("smithers-hub").description("CLI for Smithers Hub").version("0.1.0");
+program.name("smithers-hub").description("Runyard CLI (smithers-hub) — self-hosted control plane for agent runs").version("0.1.0");
 program
   .option("--url <url>", "Hub URL")
   .option("--token <token>", "Hub access token")

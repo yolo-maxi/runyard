@@ -1,4 +1,4 @@
-# Smithers Hub Spec
+# Runyard Spec (codebase: smithers-hub)
 
 For the expanded decision record, user intent, expectations, and acceptance checks, see the `specs/` folder:
 
@@ -6,9 +6,15 @@ For the expanded decision record, user intent, expectations, and acceptance chec
 - `specs/implementation-decisions.md`
 - `specs/acceptance-and-manual-tests.md`
 
+## Naming
+
+**Runyard** is the public product name. The codebase, package, bin names, env vars, and tokens keep the `smithers-hub` prefix for backwards compatibility. Treat "Runyard" and "Smithers Hub" as synonyms in docs; prefer "Runyard" for new user-facing copy.
+
+Tagline: **Self-hosted control plane for agent runs.**
+
 ## Summary
 
-Smithers Hub is a private, self-hosted company capability platform. Agents discover capabilities through MCP and CLI. Humans supervise through Web, Telegram, CLI, API, and MCP approvals. Runners execute work on the Hub VPS or local machines while the Hub stores the durable record.
+Runyard is a private, self-hosted company capability platform. Agents discover capabilities through MCP and CLI. Humans supervise through Web, Telegram, CLI, API, and MCP approvals. Runners execute work on the Hub VPS or local machines while the Hub stores the durable record.
 
 ## Product Objects
 
@@ -49,4 +55,12 @@ data/
 
 ## Non-SaaS Model
 
-Smithers Hub is productized for installable private deployments. It is not multi-tenant SaaS in this version. Each company deploys its own Hub on its own domain.
+Runyard is productized for installable private deployments. It is not multi-tenant SaaS in this version. Each company deploys its own Hub on its own domain.
+
+## Brand System
+
+- Public name: **Runyard**. Internal codebase / package / bin: `smithers-hub`.
+- Palette: ink (`#15191f`), off-white (`#f6f5ef`), signal green (`#1f6f4a` brand / `#15803d` ok), signal amber (`#b45309`), signal red (`#b91c1c`), one blue accent (`#2563eb`).
+- Status colors align with run states: green = succeeded/approved/online, amber = running/queued/waiting_approval, red = failed/error/rejected/cancelled.
+- Brand mark and logotype live in `public/styles.css` as pure CSS — no external image dependency.
+- Telegram-facing summaries must not render HTML tables.

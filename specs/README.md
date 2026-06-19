@@ -1,6 +1,6 @@
-# Smithers Hub Specs
+# Runyard Specs (codebase: smithers-hub)
 
-This folder is the durable product and architecture record for Smithers Hub.
+This folder is the durable product and architecture record for Runyard (public name) / Smithers Hub (codebase name).
 
 Read in this order:
 

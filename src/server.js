@@ -1402,14 +1402,19 @@ app.get("/docs", (_req, res) => res.sendFile(path.join(env.root, "public", "docs
 app.use("/public", express.static(path.join(env.root, "public")));
 
 app.get("/llms.txt", (req, res) => {
-  res.type("text/plain").send(`# Smithers Hub
+  res.type("text/plain").send(`# Runyard (codebase: smithers-hub)
 
-Smithers Hub is a self-hosted capability platform for company agents.
+Runyard is a self-hosted control plane for agent runs. Agents discover
+capabilities over MCP/CLI/HTTP, runners execute them, and the Hub stores
+the durable record of logs, events, artifacts, approvals, skills, agents,
+and knowledge. One private deployment per company/org.
 
 Primary agent interface:
 - MCP server: smithers-hub-mcp
 - HTTP API: ${publicUrl(req)}/api
+- OpenAPI: ${publicUrl(req)}/openapi.json
 - Capability catalog: ${publicUrl(req)}/api/capabilities
+- Setup docs: ${publicUrl(req)}/docs
 
 Core tools:
 - list_capabilities
@@ -1430,14 +1435,16 @@ Core tools:
 - list_skills
 - search_knowledge
 
-Authenticate with a Hub access token using Bearer auth.
+Authenticate with a Hub access token using Bearer auth. Tokens can be
+scoped (api, mcp, approvals); the first one is written to
+data/bootstrap-token.txt on the server's machine on first boot.
 `);
 });
 
 app.get("/openapi.json", (req, res) => {
   res.json({
     openapi: "3.1.0",
-    info: { title: "Smithers Hub API", version: "0.1.0" },
+    info: { title: "Runyard API (smithers-hub)", version: "0.1.0" },
     servers: [{ url: `${publicUrl(req)}/api` }],
     security: [{ bearerAuth: [] }],
     components: { securitySchemes: { bearerAuth: { type: "http", scheme: "bearer" } } },

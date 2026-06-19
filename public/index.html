@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Smithers Hub Console</title>
+    <title>Runyard Console</title>
     <link rel="stylesheet" href="/public/styles.css" />
     <link rel="stylesheet" href="/public/vendor/highlight.css" />
     <link rel="stylesheet" href="/public/vendor/reactflow.css" />
@@ -11,7 +11,7 @@
   </head>
   <body>
     <header class="topbar">
-      <div class="brand"><span class="brand-mark"></span> Smithers Hub</div>
+      <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Runyard</span><span class="brand-pill" title="Public name for Smithers Hub">Hub</span></div>
       <nav class="mobile-primary-nav" aria-label="Primary navigation">
         <a href="#runs" data-primary-view="home">Runs</a>
         <a href="#workflows" data-primary-view="workflows">Workflows</a>
@@ -39,7 +39,7 @@
     <main id="login" class="login hidden">
       <section class="panel">
         <h1>Access Token</h1>
-        <p class="muted">Use a Hub token issued by this machine. The first token is written to <code>data/bootstrap-token.txt</code> on server start.</p>
+        <p class="muted">Use a Runyard access token issued by this machine. The first token is written to <code>data/bootstrap-token.txt</code> on server start.</p>
         <form id="login-form" class="form-grid">
           <label>Token <input id="token" autocomplete="current-password" type="password" /></label>
           <button class="primary" type="submit">Login</button>

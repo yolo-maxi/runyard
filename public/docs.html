@@ -3,29 +3,88 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Smithers Hub Docs</title>
+    <title>Runyard Setup &amp; Docs</title>
+    <meta name="description" content="Install, run, deploy, and operate Runyard (Smithers Hub). CLI, MCP, runner pool, security model, environment variables, and open-source readiness." />
     <link rel="stylesheet" href="/public/styles.css" />
   </head>
   <body>
     <header class="topbar">
-      <div class="brand"><span class="brand-mark"></span> Smithers Hub Docs</div>
-      <nav class="nav"><a class="button" href="/">Landing</a><a class="button primary" href="/app">Open Hub</a></nav>
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-name">Runyard</span>
+        <span class="brand-pill">Setup</span>
+      </div>
+      <nav class="nav">
+        <a class="button" href="/">Landing</a>
+        <a class="button" href="/llms.txt">llms.txt</a>
+        <a class="button primary" href="/app">Open Hub</a>
+      </nav>
     </header>
-    <main class="band">
+    <main class="band band-docs">
       <div class="band-inner">
-        <h1>Install</h1>
-        <pre class="json">pnpm install
-PORT=43117 BASE_URL=https://hub.repo.box pnpm start</pre>
-        <h2>Authentication</h2>
-        <p>Smithers Hub uses access tokens. The first server start creates <code>data/bootstrap-token.txt</code>. Use that token for Web login, CLI, MCP, API, and runners.</p>
-        <h2>CLI</h2>
+        <nav class="docs-toc" aria-label="Docs table of contents">
+          <strong>Jump to:</strong>
+          <a href="#what">What is Runyard</a>
+          <a href="#install">Install</a>
+          <a href="#run-local">Run locally</a>
+          <a href="#deploy">Deploy</a>
+          <a href="#auth">Auth tokens</a>
+          <a href="#cli">CLI</a>
+          <a href="#mcp">MCP</a>
+          <a href="#runners">Runner pool</a>
+          <a href="#telegram">Telegram</a>
+          <a href="#env">Environment variables</a>
+          <a href="#security">Security model</a>
+          <a href="#verification">Verification</a>
+          <a href="#oss">Open source &amp; contributions</a>
+          <a href="#deep-links">Deep links</a>
+        </nav>
+
+        <h1 id="what">What is Runyard</h1>
+        <p>Runyard is a self-hosted control plane for agent runs. It exposes a capability catalog over MCP, CLI, HTTP API, and a Web Hub; dispatches work to local or remote runners; and stores logs, events, artifacts, approvals, skills, agents, and knowledge centrally. The codebase ships as the <code>smithers-hub</code> package; Runyard is the public product name and the names compose without breakage.</p>
+
+        <h2 id="install">Install</h2>
+        <p>Requirements: Node.js 22.5+ (the server uses <code>--experimental-sqlite</code>), <code>pnpm</code>, and a writable <code>data/</code> directory.</p>
+        <pre class="json">git clone https://github.com/&lt;org&gt;/runyard
+cd runyard
+pnpm install
+pnpm build:vendor   # vendors highlight.js + react-flow for the workflow viewer</pre>
+        <p class="muted">Public clients can also install the CLI from a running hub with <code>bash &lt;(curl -fsSL https://hub.repo.box/install.sh)</code>. <code>hub.repo.box</code> is just an example domain — use whatever you host on.</p>
+
+        <h2 id="run-local">Run locally</h2>
+        <pre class="json">PORT=43117 BASE_URL=http://127.0.0.1:43117 pnpm start
+# server writes data/bootstrap-token.txt on first boot
+open http://127.0.0.1:43117/app</pre>
+
+        <h2 id="deploy">Deploy</h2>
+        <ul>
+          <li>Node + SQLite single-process server. No external database.</li>
+          <li>Artifacts on local disk under <code>data/artifacts/</code>. Back up by copying the <code>data/</code> directory.</li>
+          <li>Bearer-token authentication only — no SaaS user database.</li>
+          <li>One private deployment per company/org. Each gets its own domain &amp; bootstrap token.</li>
+          <li>Reverse-proxy with TLS in front (Caddy, nginx, Traefik). The Hub does not terminate TLS itself.</li>
+          <li>Runners may live on the same box or on remote VPSes, Linux workstations, or macOS laptops.</li>
+        </ul>
+
+        <h2 id="auth">Auth tokens</h2>
+        <p>Runyard uses long-lived access tokens. On first boot the server writes <code>data/bootstrap-token.txt</code> — that becomes the operator key for Web login, CLI, MCP, API, and runner registration. Issue additional tokens from the <strong>Connect</strong> tab inside the Hub.</p>
+
+        <h2 id="cli">CLI</h2>
         <pre class="json">smithers-hub login --url https://hub.repo.box --token shub_...
 smithers-hub capabilities
-smithers-hub run prepare-spec --input '{"goal":"Write a launch spec"}'
+smithers-hub capability prepare-spec
+smithers-hub run prepare-spec --input '{"goal":"Prepare a rollout spec"}'
 smithers-hub runs
+smithers-hub runners
 smithers-hub approvals
 smithers-hub approve appr_...</pre>
-        <h2>MCP</h2>
+        <p class="muted">Multiple orgs work like git remotes:</p>
+        <pre class="json">smithers-hub login --remote acme --url https://acme-hub.example
+smithers-hub mcp install --all --remote acme   # installs as smithers-hub-acme
+smithers-hub remote use acme
+smithers-hub remotes</pre>
+
+        <h2 id="mcp">MCP config</h2>
         <pre class="json">{
   "command": "smithers-hub-mcp",
   "env": {
@@ -33,15 +92,83 @@ smithers-hub approve appr_...</pre>
     "SMITHERS_HUB_TOKEN": "shub_..."
   }
 }</pre>
-        <h2>Runner</h2>
+        <p class="muted">From a running Hub, <code>smithers-hub mcp install --all</code> writes this config into every detected agent — Claude Code/Desktop, Codex, Cursor, Windsurf, Gemini, VS Code.</p>
+
+        <h2 id="runners">Runner pool</h2>
+        <p>Runners are stateless processes that poll the Hub for queued work. Each runner advertises a tag set and an optional capacity:</p>
         <pre class="json">SMITHERS_HUB_URL=https://hub.repo.box \
 SMITHERS_HUB_TOKEN=shub_... \
+SMITHERS_RUNNER_NAME=hetzner-vps-runner \
+SMITHERS_RUNNER_LOCATION=vps \
 SMITHERS_RUNNER_TAGS=linux,node,git,shell,web,smithers \
+SMITHERS_RUNNER_CAPACITY=4 \
 smithers-hub-runner</pre>
-        <h2>Agent Discovery</h2>
-        <p><a href="/llms.txt">/llms.txt</a> and <a href="/openapi.json">/openapi.json</a> describe the agent-facing surface.</p>
-        <h2>Telegram approvals</h2>
-        <p>Approval notifications are meant for a private operator DM. Configure <code>TELEGRAM_BOT_TOKEN</code> plus <code>TELEGRAM_APPROVAL_CHAT_ID</code> or <code>SMITHERS_TELEGRAM_APPROVAL_CHAT_ID</code>. Legacy <code>TELEGRAM_CHAT_ID</code>/<code>TELEGRAM_THREAD_ID</code> remains a fallback when no private approval chat is set.</p>
+        <ul>
+          <li><strong>Tag match.</strong> The Hub only schedules a run on a runner that advertises every required tag.</li>
+          <li><strong>Capacity.</strong> A pool runner with <code>capacity=4</code> can hold four concurrent slots; the Web Hub shows the slot grid live.</li>
+          <li><strong>No double-claim.</strong> Two runners polling for the same queued run can never both pick it up — the Hub atomically assigns one and rejects the other.</li>
+          <li><strong>Disposable.</strong> Restart freely; the Hub keeps the durable record.</li>
+        </ul>
+
+        <h2 id="telegram">Telegram approvals</h2>
+        <p>Approval notifications are designed for a private operator DM. Configure <code>TELEGRAM_BOT_TOKEN</code> plus <code>TELEGRAM_APPROVAL_CHAT_ID</code> or <code>SMITHERS_TELEGRAM_APPROVAL_CHAT_ID</code>. Legacy <code>TELEGRAM_CHAT_ID</code>/<code>TELEGRAM_THREAD_ID</code> remains a fallback when no private approval chat is set. Approve/reject/request-changes from Web, API, CLI, MCP, or the Telegram buttons; the decision is recorded once in the Hub regardless of surface.</p>
+
+        <h2 id="env">Environment variables</h2>
+        <p>Required for production:</p>
+        <ul>
+          <li><code>BASE_URL</code> — the public origin (e.g. <code>https://hub.repo.box</code>).</li>
+          <li><code>PORT</code> — port the server binds to.</li>
+          <li><code>SMITHERS_HUB_SESSION_SECRET</code> — long random string. Sessions and CSRF derive from it.</li>
+          <li><code>SMITHERS_HUB_BOOTSTRAP_TOKEN</code> or read access to <code>data/bootstrap-token.txt</code>.</li>
+        </ul>
+        <p>Optional:</p>
+        <ul>
+          <li><code>TELEGRAM_BOT_TOKEN</code>, <code>TELEGRAM_APPROVAL_CHAT_ID</code> (or <code>SMITHERS_TELEGRAM_APPROVAL_CHAT_ID</code>) for approval DMs.</li>
+          <li><code>TELEGRAM_CHAT_ID</code> / <code>TELEGRAM_THREAD_ID</code> as a backward-compatible fallback.</li>
+          <li><code>SMITHERS_HUB_INSTANCE_NAME</code> to label a deployment in <code>/api/version</code>.</li>
+        </ul>
+        <p>Runner-side variables (used by <code>smithers-hub-runner</code>):</p>
+        <ul>
+          <li><code>SMITHERS_HUB_URL</code>, <code>SMITHERS_HUB_TOKEN</code> — connection &amp; auth.</li>
+          <li><code>SMITHERS_RUNNER_NAME</code>, <code>SMITHERS_RUNNER_LOCATION</code>, <code>SMITHERS_RUNNER_TAGS</code>, <code>SMITHERS_RUNNER_CAPACITY</code>.</li>
+          <li><code>SMITHERS_WORKSPACE</code> — directory the runner uses as scratch space for Smithers workflows.</li>
+        </ul>
+
+        <h2 id="security">Security model</h2>
+        <ul>
+          <li><strong>Single auth primitive.</strong> Every surface (Web, API, CLI, MCP, runner) authenticates with a Hub access token.</li>
+          <li><strong>Private deployment.</strong> Runyard is meant for one org per deployment behind a domain you control. There is no multi-tenant SaaS database.</li>
+          <li><strong>Bootstrap token.</strong> The first token is written to <code>data/bootstrap-token.txt</code>; rotate it via the Connect tab once you are logged in.</li>
+          <li><strong>Scopes.</strong> API tokens can be scoped (<code>api</code>, <code>mcp</code>, <code>approvals</code>) so approvers can be issued narrower keys.</li>
+          <li><strong>Permissive runners.</strong> Runners execute work on behalf of authenticated requests. Treat the runner host as if it has the privileges of any operator who can submit a capability run; isolate sensitive runners with restricted tag sets.</li>
+          <li><strong>Headers.</strong> The server sets strict <code>content-security-policy</code>, <code>x-content-type-options</code>, <code>referrer-policy</code>, and <code>strict-transport-security</code> (when served over HTTPS).</li>
+          <li><strong>Rate limiting.</strong> Login and general API buckets are enforced to discourage credential stuffing and scraping.</li>
+        </ul>
+
+        <h2 id="verification">Verification</h2>
+        <pre class="json">pnpm test                       # full Node test runner
+curl -s http://127.0.0.1:43117/healthz   # liveness
+curl -s http://127.0.0.1:43117/readyz    # DB warm
+curl -s http://127.0.0.1:43117/llms.txt  # agent discovery copy
+curl -s http://127.0.0.1:43117/openapi.json | head</pre>
+        <p>Manual checks after install:</p>
+        <ol>
+          <li>Log in to <code>/app</code> with the bootstrap token.</li>
+          <li>Run <strong>Prepare Spec</strong>.</li>
+          <li>Start a runner and confirm the run succeeds.</li>
+          <li>Open the run detail page and download the generated artifact.</li>
+          <li>Run <strong>Implement</strong>; approve it via Web or MCP; confirm it queues and executes.</li>
+          <li>Configure a local MCP client with <code>smithers-hub-mcp</code> and call <code>list_capabilities</code>.</li>
+        </ol>
+
+        <h2 id="oss">Open source &amp; contributions</h2>
+        <ul>
+          <li>The repo is structured for open-source release: <code>bin/</code>, <code>src/</code>, <code>public/</code>, <code>specs/</code>, <code>workflow-templates/</code>, <code>tests/</code>.</li>
+          <li>Specs live under <code>specs/</code>. Read them before changing product behaviour — they describe intent, expectations, decisions, and acceptance checks.</li>
+          <li>The gated pipeline runs <code>pnpm test</code>, <code>git diff --check</code>, and smoke-checks <code>/healthz</code>, <code>/app</code>, <code>/docs</code>, <code>/llms.txt</code> before deploy.</li>
+          <li>File issues and PRs against the public Runyard repo. Keep <code>hub.repo.box</code> references in examples only — do not hard-code private hostnames in new code or docs.</li>
+        </ul>
+
         <h2 id="deep-links">Deep links</h2>
         <p>Every console page, run, workflow, agent, skill, knowledge entry, run artifact, and approval has a stable URL — paste it into chat or docs and it survives reload. Each card and detail view shows a 🔗 button to copy that link to your clipboard. Examples:</p>
         <pre class="json">/app#runs                                 # all runs (home)

@@ -1,8 +1,12 @@
 # Product Intent and User Expectations
 
+## Naming
+
+The product is published as **Runyard** ("self-hosted control plane for agent runs"). The codebase, package, bin names, and environment variables keep the `smithers-hub` prefix. In this document the terms are interchangeable; new user-facing copy should prefer "Runyard".
+
 ## Product Intent
 
-Smithers Hub is a private, self-hosted capability operating system for company agents.
+Runyard is a private, self-hosted capability operating system for company agents.
 
 The product exists to centralize the work that usually gets scattered across local agent sessions: available workflows, team skills, agent roles, knowledge, run history, logs, artifacts, and human approvals. The Hub should make it obvious what agents can do, what inputs each action needs, where work ran, what happened, what was produced, and what still needs a human decision.
 

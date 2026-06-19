@@ -1,14 +1,23 @@
+/* ---- Runyard brand system ----
+ * Public product name: Runyard
+ * Tagline: Self-hosted control plane for agent runs
+ * Palette: ink + off-white, signal green/amber/red for run states, one blue accent.
+ * Internal package/bin names keep the `smithers-hub` prefix for backwards compatibility.
+ */
 :root {
   --ink: #15191f;
+  --ink-soft: #1f2630;
+  --off-white: #f6f5ef;
   --muted: #637083;
   --line: #d9e0ea;
   --panel: #ffffff;
   --soft: #f4f7fb;
-  --brand: #0f766e;
-  --brand-2: #2563eb;
-  --warn: #b45309;
-  --danger: #b91c1c;
-  --ok: #15803d;
+  --brand: #1f6f4a;          /* Runyard signal green (primary action) */
+  --brand-2: #2563eb;        /* Single blue accent for links/highlights */
+  --warn: #b45309;           /* Signal amber */
+  --danger: #b91c1c;         /* Signal red */
+  --ok: #15803d;             /* Signal green for status pills */
+  --brand-tint: #e7f6ef;     /* Soft tint for hover/active states */
 }
 
 * {
@@ -18,7 +27,7 @@
 body {
   margin: 0;
   color: var(--ink);
-  background: #f7f8f5;
+  background: var(--off-white);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
@@ -116,13 +125,45 @@ code {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
 }
 
+/* Runyard brand mark — pure CSS, no image dependency.
+ * A rounded ink tile with two signal stripes (green + amber) reading
+ * as a stylised "R" without a glyph. Scales with font-size. */
 .brand-mark {
   width: 28px;
   height: 28px;
-  border-radius: 6px;
-  background: linear-gradient(135deg, var(--brand), #f59e0b);
+  border-radius: 7px;
+  background:
+    linear-gradient(180deg, transparent 0 40%, var(--brand) 40% 58%, transparent 58% 70%, var(--warn) 70% 86%, transparent 86%) center/76% 100% no-repeat,
+    var(--ink);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  flex: 0 0 auto;
+}
+
+.brand-name {
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 18px;
+  font-weight: 760;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+  text-transform: lowercase;
+  white-space: nowrap;
+}
+
+.brand-pill {
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 8px;
+  background: var(--soft);
+  white-space: nowrap;
 }
 
 .nav {
@@ -153,7 +194,7 @@ code {
 .mobile-primary-nav a.active {
   border-color: var(--brand);
   color: var(--brand);
-  background: #e5fbf6;
+  background: var(--brand-tint);
 }
 
 .nav button,
@@ -176,7 +217,7 @@ code {
 
 .sidebar {
   border-right: 1px solid var(--line);
-  background: #eef3f2;
+  background: #eaf1ed;
   padding: 16px;
 }
 
@@ -189,7 +230,7 @@ code {
 .sidebar button.active {
   border-color: var(--brand);
   color: var(--brand);
-  background: #e5fbf6;
+  background: var(--brand-tint);
 }
 
 .content {
@@ -630,7 +671,7 @@ details.advanced[open] summary {
 .share-link:hover {
   color: var(--brand);
   border-color: var(--brand);
-  background: #e5fbf6;
+  background: var(--brand-tint);
 }
 
 .deep-link-hint {
@@ -681,7 +722,7 @@ details.advanced[open] summary {
 .admin-menu[open] > summary {
   border-color: var(--brand);
   color: var(--brand);
-  background: #e5fbf6;
+  background: var(--brand-tint);
 }
 
 .admin-menu-list {
@@ -1147,7 +1188,7 @@ details.advanced[open] summary {
 }
 
 .pills .pill {
-  background: #e5fbf6;
+  background: var(--brand-tint);
   border: 1px solid #b7e7df;
   color: var(--brand);
   border-radius: 999px;
@@ -1363,7 +1404,7 @@ details.advanced[open] summary {
   font-size: 12px;
   color: var(--brand);
   text-decoration: none;
-  background: #e5fbf6;
+  background: var(--brand-tint);
   border: 1px solid #b7e7df;
   border-radius: 6px;
   padding: 1px 6px;
@@ -2241,5 +2282,179 @@ details.advanced[open] summary {
 @media (max-width: 720px) {
   .run-log-list li.run-log-event {
     grid-template-columns: 1fr;
+  }
+}
+
+/* ---- Public landing & docs: Runyard brand surface ---------------------- */
+.hero-eyebrow {
+  display: inline-block;
+  margin: 0 0 18px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #f1f5f9;
+}
+
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0 0 18px;
+}
+
+.hero-foot {
+  margin: 0;
+  color: #cbd5e1;
+  font-size: 13px;
+}
+
+.hero-foot code {
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  padding: 1px 6px;
+  color: #f8fafc;
+}
+
+.band-setup {
+  background: var(--off-white);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.band-foot {
+  padding-top: 28px;
+  padding-bottom: 36px;
+}
+
+.setup-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.setup-step {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px;
+  display: grid;
+  gap: 8px;
+}
+
+.setup-step h3 {
+  margin: 0 0 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+}
+
+.setup-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--brand);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.setup-step pre.json {
+  margin: 0;
+  max-height: none;
+}
+
+.status-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-right: 8px;
+  vertical-align: middle;
+  background: var(--muted);
+}
+
+.status-dot-ok { background: var(--ok); }
+.status-dot-warn { background: var(--warn); }
+.status-dot-danger { background: var(--danger); }
+.status-dot-info { background: var(--brand-2); }
+
+.band-docs h1 {
+  margin-top: 28px;
+}
+
+.band-docs h1:first-of-type {
+  margin-top: 8px;
+}
+
+.band-docs h2 {
+  margin-top: 28px;
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+}
+
+.band-docs ul,
+.band-docs ol {
+  padding-left: 22px;
+  line-height: 1.55;
+}
+
+.band-docs li + li {
+  margin-top: 4px;
+}
+
+.docs-toc {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: center;
+  margin: 0 0 24px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--soft);
+  font-size: 13px;
+}
+
+.docs-toc strong {
+  color: var(--muted);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-size: 11px;
+}
+
+.docs-toc a {
+  color: var(--brand-2);
+  text-decoration: none;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+
+.docs-toc a:hover {
+  background: var(--brand-tint);
+  color: var(--brand);
+}
+
+@media (max-width: 640px) {
+  .hero-actions {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .hero-actions .button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .band-docs h2 {
+    padding-top: 14px;
   }
 }
