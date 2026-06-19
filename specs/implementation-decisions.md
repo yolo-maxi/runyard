@@ -276,6 +276,16 @@ Reasoning:
 - The existing schema already allows metadata in the run input envelope, so this avoids a risky migration before the CLI/MCP test.
 - Runner tags are already the routing primitive; location intent is a small extension of that model.
 
+### Decision: Improve can target allowlisted runner-local repos
+
+The Improve workflow accepts `repoDir` as an absolute runner-local git repo path. Runners may also expose friendly `repo` or `project` keys through JSON env maps. The selected repo controls the PM cwd, builder cwd, baseline, tests, commit, push, and deploy; the Hub remains the source of truth for logs, outputs, and artifacts.
+
+Reasoning:
+
+- Improve should not be tied to the Runyard/Hub repo when the operator wants to improve another project.
+- Repository paths are execution authority, so runners enforce an allowlist rooted at the default repo plus `IMPROVE_ALLOWED_REPO_ROOTS`.
+- Keeping logs and artifacts in the Hub preserves the product's control-plane model even when edits happen elsewhere on the runner.
+
 ### Decision: CLI mirrors operational concepts
 
 The CLI supports login, menu discovery, run control, local/remote execution intent, logs, artifacts, approvals, token creation, runner registration/start, and MCP install config.

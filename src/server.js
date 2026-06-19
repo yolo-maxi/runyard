@@ -742,7 +742,7 @@ function hubMenuPayload(req) {
       status: `${publicUrl(req)}/api/runs/{runId}`,
       logs: `${publicUrl(req)}/api/runs/{runId}/logs`,
       artifacts: `${publicUrl(req)}/api/runs/{runId}/artifacts`,
-      note: "Runs, outputs, logs, and artifacts are recorded in the Hub even when execution happens on a local runner."
+      note: "Runs, outputs, logs, and artifacts are recorded in the Hub even when execution happens on a local runner. For improve, repoDir selects the allowlisted runner-local git repo to edit; the Hub remains the source of truth for logs and artifacts."
     },
     discovery: [
       { surface: "MCP", action: "Call get_menu, then list_capabilities or describe_capability." },
@@ -1533,7 +1533,7 @@ app.get("/openapi.json", (req, res) => {
     paths: {
       "/capabilities": { get: { summary: "List capabilities" }, post: { summary: "Create/update capability" } },
       "/capabilities/{id}": { get: { summary: "Describe capability" }, patch: { summary: "Update capability" } },
-      "/capabilities/{id}/run": { post: { summary: "Run capability with optional executionMode local|remote" } },
+      "/capabilities/{id}/run": { post: { summary: "Run capability with optional executionMode local|remote; improve.repoDir selects an allowlisted runner-local repo while logs/artifacts stay in the Hub" } },
       "/menu": { get: { summary: "Discover the Runyard MCP/CLI menu and local/remote run path" } },
       "/runs": { get: { summary: "List runs" } },
       "/runs/{id}": { get: { summary: "Get run" } },

@@ -18,7 +18,7 @@ const tools = [
   { name: "describe_capability", description: "Describe a capability, schemas, permissions, skills, agents, and workflow.", inputSchema: { type: "object", required: ["id"], properties: { id: { type: "string" } } } },
   {
     name: "run_capability",
-    description: "Run a capability with JSON input. Pass executionMode 'local' to target a local runner or 'remote' to target the shared remote/VPS runner pool. Outputs and artifacts are fetched from the Hub.",
+    description: "Run a capability with JSON input. Pass executionMode 'local' to target a local runner or 'remote' to target the shared remote/VPS runner pool. Outputs and artifacts are fetched from the Hub. For improve, input.repoDir selects an allowlisted runner-local git repo to edit.",
     inputSchema: {
       type: "object",
       required: ["id"],

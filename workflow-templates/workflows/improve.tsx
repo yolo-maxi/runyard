@@ -5,9 +5,9 @@
 import { createSmithers, Sequence, ClaudeCodeAgent } from "smithers-orchestrator";
 import { existsSync } from "node:fs";
 import { z } from "zod/v4";
+import { resolveImproveRepo } from "./improve-repo.js";
 
 // Repo + deploy target are deployment-specific; set env vars on your runner.
-const REPO = process.env.IMPROVE_REPO_DIR || process.env.GATED_REPO_DIR || process.cwd();
 const PROD_REMOTE = process.env.GATED_PROD_REMOTE || "prod";
 const PROD_HOST = process.env.GATED_PROD_HOST || "";
 const PROD_DIR = process.env.GATED_PROD_DIR || "";
@@ -34,7 +34,7 @@ const TOOL_PATH = [
 ].filter(Boolean).join(":");
 const TOOL_ENV = { ...process.env, PATH: TOOL_PATH };
 
-const baselineOut = z.looseObject({ startHead: z.string() });
+const baselineOut = z.looseObject({ startHead: z.string(), repoDir: z.string().default("") });
 const reviewOut = z.looseObject({
   summary: z.string().default(""),
   userPain: z.array(z.string()).default([]),
@@ -61,6 +61,18 @@ const deployOut = z.looseObject({ deployed: z.boolean(), wouldDeploy: z.boolean(
 const inputSchema = z.object({
   target: z.string().describe("What to improve — a feature, UI, workflow slug, file path, or short description the PM should inspect."),
   context: z.string().default("").describe("Optional product context, user complaints, links, or constraints."),
+  repoDir: z
+    .string()
+    .default("")
+    .describe("Absolute runner-local git repo path to inspect/edit. Must be inside the default repo root or IMPROVE_ALLOWED_REPO_ROOTS."),
+  repo: z
+    .string()
+    .default("")
+    .describe("Optional friendly repo key resolved from the runner's IMPROVE_REPO_MAP JSON object."),
+  project: z
+    .string()
+    .default("")
+    .describe("Optional friendly project key resolved from IMPROVE_PROJECT_MAP or IMPROVE_REPO_MAP."),
   maxImprovements: z.number().int().min(1).max(6).default(3),
   deploy: z.boolean().default(false).describe("If true, deploy to prod after gates pass."),
   targetBranch: z.string().default("main")
@@ -77,32 +89,39 @@ const { Workflow, Task, smithers, outputs } = createSmithers({
   deploy: deployOut
 });
 
-const productManager = new ClaudeCodeAgent({
-  model: "claude-opus-4-7",
-  cwd: REPO,
-  allowedTools: ["Read", "Grep", "Glob", "Bash"],
-  timeoutMs: 20 * 60 * 1000,
-  systemPrompt:
-    "You are a Product Manager with taste, reviewing an existing feature inside this repository. " +
-    "Inspect the actual current behavior (read code, configs, prompts, UI, copy) before passing judgment. " +
-    "Lead with the user's real experience: what is confusing, slow, ugly, surprising, or broken? " +
-    "Name concrete frictions in plain language and rank improvements by user impact, then effort. " +
-    "For each improvement write a one-sentence rationale, a concrete change a builder can act on, and a verifiable acceptance check. " +
-    "Cut anything you cannot defend as user-visible value. Do NOT modify files; you are reviewing only. Return only the requested JSON."
-});
+function createProductManager(repoDir) {
+  return new ClaudeCodeAgent({
+    model: "claude-opus-4-7",
+    cwd: repoDir,
+    allowedTools: ["Read", "Grep", "Glob", "Bash"],
+    timeoutMs: 20 * 60 * 1000,
+    systemPrompt:
+      "You are a Product Manager with taste, reviewing an existing feature inside this repository. " +
+      "Inspect the actual current behavior (read code, configs, prompts, UI, copy) before passing judgment. " +
+      "Lead with the user's real experience: what is confusing, slow, ugly, surprising, or broken? " +
+      "Name concrete frictions in plain language and rank improvements by user impact, then effort. " +
+      "For each improvement write a one-sentence rationale, a concrete change a builder can act on, and a verifiable acceptance check. " +
+      "Cut anything you cannot defend as user-visible value. Do NOT modify files; you are reviewing only. Return only the requested JSON."
+  });
+}
 
-const builder = new ClaudeCodeAgent({
-  model: "claude-opus-4-7",
-  cwd: REPO,
-  dangerouslySkipPermissions: true,
-  timeoutMs: 45 * 60 * 1000,
-  systemPrompt:
-    "You are an implementation agent working inside a git repository. Apply the Product Manager's prioritized improvements with tight, idiomatic edits that match the surrounding code. " +
-    "Do NOT git commit, git push, or deploy, and do NOT run the test suite — a separate gated pipeline runs tests, commits, pushes, and deploys. " +
-    "Treat each acceptance check as a definition of done. Keep changes scoped to the listed improvements; do not touch unrelated files."
-});
+function createBuilder(repoDir) {
+  return new ClaudeCodeAgent({
+    model: "claude-opus-4-7",
+    cwd: repoDir,
+    dangerouslySkipPermissions: true,
+    timeoutMs: 45 * 60 * 1000,
+    systemPrompt:
+      "You are an implementation agent working inside a git repository. Apply the Product Manager's prioritized improvements with tight, idiomatic edits that match the surrounding code. " +
+      "Do NOT git commit, git push, or deploy, and do NOT run the test suite — a separate gated pipeline runs tests, commits, pushes, and deploys. " +
+      "Treat each acceptance check as a definition of done. Keep changes scoped to the listed improvements; do not touch unrelated files."
+  });
+}
 
 export default smithers((ctx) => {
+  const repoDir = resolveImproveRepo(ctx.input, { env: process.env, cwd: process.cwd(), gitBin: GIT, gitEnv: TOOL_ENV });
+  const productManager = createProductManager(repoDir);
+  const builder = createBuilder(repoDir);
   const baseline = ctx.outputMaybe("baseline", { nodeId: "baseline" });
   const review = ctx.outputMaybe("review", { nodeId: "review" });
   const impl = ctx.outputMaybe("implement", { nodeId: "implement" });
@@ -117,15 +136,15 @@ export default smithers((ctx) => {
         <Task id="baseline" output={outputs.baseline} retries={0}>
           {async () => {
             const { execFileSync } = await import("node:child_process");
-            const startHead = execFileSync(GIT, ["rev-parse", "HEAD"], { cwd: REPO, encoding: "utf8", env: TOOL_ENV }).trim();
-            return { startHead };
+            const startHead = execFileSync(GIT, ["rev-parse", "HEAD"], { cwd: repoDir, encoding: "utf8", env: TOOL_ENV }).trim();
+            return { startHead, repoDir };
           }}
         </Task>
 
         {/* 1. Product Manager (with taste) inspects the target and proposes prioritized improvements. */}
         {baseline && (
           <Task id="review" output={outputs.review} agent={productManager} timeoutMs={20 * 60 * 1000}>
-            {`You are inspecting an existing feature inside the repository at ${REPO}.\n\n` +
+            {`You are inspecting an existing feature inside the repository at ${repoDir}.\n\n` +
               `=== WHAT TO REVIEW ===\n${ctx.input.target}\n=== END ===\n\n` +
               (ctx.input.context ? `=== PRODUCT CONTEXT / USER NOTES ===\n${ctx.input.context}\n=== END ===\n\n` : "") +
               `Propose at most ${ctx.input.maxImprovements} prioritized improvements. Rank by user impact, then effort. ` +
@@ -139,7 +158,7 @@ export default smithers((ctx) => {
         {/* 2. Builder applies the PM's prioritized improvements (edits only). */}
         {review && (
           <Task id="implement" output={outputs.implement} agent={builder} timeoutMs={45 * 60 * 1000}>
-            {`Apply these prioritized improvements to the repository at ${REPO}. Edit files only — do not commit, push, deploy, or run tests.\n\n` +
+            {`Apply these prioritized improvements to the repository at ${repoDir}. Edit files only — do not commit, push, deploy, or run tests.\n\n` +
               `=== PM SUMMARY ===\n${review.summary || "(no summary)"}\n\n` +
               `=== USER PAIN ===\n${(review.userPain || []).map((line, i) => `${i + 1}. ${line}`).join("\n") || "(none)"}\n\n` +
               `=== IMPROVEMENTS TO IMPLEMENT ===\n${
@@ -163,7 +182,7 @@ export default smithers((ctx) => {
               let out = "";
               let passed = false;
               try {
-                out = execFileSync(PNPM, ["test"], { cwd: REPO, encoding: "utf8", env: TOOL_ENV, maxBuffer: 1024 * 1024 * 64 });
+                out = execFileSync(PNPM, ["test"], { cwd: repoDir, encoding: "utf8", env: TOOL_ENV, maxBuffer: 1024 * 1024 * 64 });
                 passed = true;
               } catch (e) {
                 out = `${e.stdout || ""}${e.stderr || ""}${e.message || ""}`;
@@ -181,7 +200,7 @@ export default smithers((ctx) => {
           <Task id="commit" output={outputs.commit} retries={0}>
             {async () => {
               const { execFileSync } = await import("node:child_process");
-              const run = (args) => execFileSync(GIT, args, { cwd: REPO, encoding: "utf8", env: TOOL_ENV });
+              const run = (args) => execFileSync(GIT, args, { cwd: repoDir, encoding: "utf8", env: TOOL_ENV });
               run(["add", "-A"]);
               const staged = run(["diff", "--cached", "--name-only"]).split("\n").map((s) => s.trim()).filter(Boolean);
               const stat = run(["diff", "--cached", "--stat"]).trim();
@@ -210,7 +229,7 @@ export default smithers((ctx) => {
               const branch = ctx.input.targetBranch || "main";
               let detail = "";
               try {
-                detail = execFileSync(GIT, ["push", "origin", `HEAD:${branch}`], { cwd: REPO, encoding: "utf8", env: TOOL_ENV, stdio: ["ignore", "pipe", "pipe"] });
+                detail = execFileSync(GIT, ["push", "origin", `HEAD:${branch}`], { cwd: repoDir, encoding: "utf8", env: TOOL_ENV, stdio: ["ignore", "pipe", "pipe"] });
               } catch (e) {
                 detail = `${e.stdout || ""}${e.stderr || ""}`;
                 throw new Error(`GATE FAILED: git push origin failed.\n${detail.slice(0, 800)}`);
@@ -233,7 +252,7 @@ export default smithers((ctx) => {
                 throw new Error("GATE FAILED: deploy=true requires GATED_PROD_HOST, GATED_PROD_DIR, and GATED_DEPLOY_KEY on the runner.");
               }
               const env = { ...TOOL_ENV, GIT_SSH_COMMAND: `${SSH} -i ${DEPLOY_KEY} -o BatchMode=yes -o StrictHostKeyChecking=accept-new` };
-              execFileSync(GIT, ["push", PROD_REMOTE, `${commit.commit}:refs/heads/sync-tmp`], { cwd: REPO, encoding: "utf8", env });
+              execFileSync(GIT, ["push", PROD_REMOTE, `${commit.commit}:refs/heads/sync-tmp`], { cwd: repoDir, encoding: "utf8", env });
               const remoteCmd = `cd ${PROD_DIR} && git checkout -q main && git reset --hard sync-tmp && git branch -D sync-tmp; rm -f data/cli.tgz && systemctl --user restart smithers-hub.service && sleep 2 && git log --oneline -1`;
               const remoteOut = execFileSync(
                 SSH,

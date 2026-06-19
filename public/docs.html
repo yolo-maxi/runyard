@@ -153,7 +153,14 @@ smithers-hub-runner</pre>
           <li><code>SMITHERS_HUB_URL</code>, <code>SMITHERS_HUB_TOKEN</code> — connection &amp; auth.</li>
           <li><code>SMITHERS_RUNNER_NAME</code>, <code>SMITHERS_RUNNER_LOCATION</code>, <code>SMITHERS_RUNNER_TAGS</code>, <code>SMITHERS_RUNNER_CONCURRENCY</code>.</li>
           <li><code>SMITHERS_WORKSPACE</code> — directory the runner uses as scratch space for Smithers workflows.</li>
+          <li><code>IMPROVE_REPO_DIR</code> or <code>GATED_REPO_DIR</code> — default git repo for the <strong>Improve</strong> workflow.</li>
+          <li><code>IMPROVE_ALLOWED_REPO_ROOTS</code> — comma-separated or JSON array of extra absolute roots that <strong>Improve</strong> may edit via <code>repoDir</code>.</li>
+          <li><code>IMPROVE_REPO_MAP</code>, <code>IMPROVE_PROJECT_MAP</code> — JSON objects mapping friendly <code>repo</code>/<code>project</code> input keys to absolute runner-local git repo paths.</li>
         </ul>
+        <p class="muted">For <strong>Improve</strong>, <code>repoDir</code> selects the allowlisted runner-local repository to inspect, test, commit, push, and optionally deploy. The Hub still stores the run status, logs, outputs, and artifacts.</p>
+        <pre class="json">IMPROVE_ALLOWED_REPO_ROOTS='["/srv/repos"]'
+IMPROVE_REPO_MAP='{"website":"/srv/repos/website"}'
+smithers-hub run improve --where remote --input '{"target":"pricing page","repo":"website"}'</pre>
 
         <h2 id="security">Security model</h2>
         <ul>

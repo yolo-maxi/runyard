@@ -355,7 +355,7 @@ export const seedCapabilities = [
     slug: "improve",
     name: "Improve",
     description:
-      "Inspects an existing feature, UI, or workflow with a taste-led Product Manager, identifies prioritized improvements with acceptance checks, then dispatches an implementation agent to apply them through the gated test/commit/push/deploy pipeline.",
+      "Inspects an existing feature, UI, or workflow with a taste-led Product Manager, identifies prioritized improvements with acceptance checks, then dispatches an implementation agent to apply them through the gated test/commit/push/deploy pipeline. By default it edits the runner's configured repo; repoDir or a mapped repo/project key can select another allowlisted runner-local git repo while the Hub remains the source of truth for logs and artifacts.",
     category: "Product",
     keywords: ["improve", "product", "manager", "review", "taste", "polish", "feature", "smithers"],
     inputSchema: {
@@ -369,6 +369,18 @@ export const seedCapabilities = [
         context: {
           type: "string",
           description: "Optional product context, user complaints, links, screenshots, or constraints."
+        },
+        repoDir: {
+          type: "string",
+          description: "Absolute runner-local git repo path to inspect/edit. Must be inside the default repo root or IMPROVE_ALLOWED_REPO_ROOTS."
+        },
+        repo: {
+          type: "string",
+          description: "Optional friendly repo key resolved on the runner from IMPROVE_REPO_MAP JSON."
+        },
+        project: {
+          type: "string",
+          description: "Optional friendly project key resolved on the runner from IMPROVE_PROJECT_MAP or IMPROVE_REPO_MAP JSON."
         },
         maxImprovements: {
           type: "number",

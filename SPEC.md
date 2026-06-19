@@ -41,6 +41,8 @@ Runyard is a private, self-hosted company capability platform. Agents discover c
 
 The Hub is the source of truth. Local runners poll for work, execute matching queued runs, stream events, upload artifacts, and mark runs complete or failed. Runs that require approval enter `waiting_approval` until approved through Web/API/CLI/MCP/Telegram.
 
+Repository-editing workflows may select an allowlisted runner-local git repo, but the Hub remains the durable record for status, logs, outputs, approvals, and artifacts.
+
 ## Storage
 
 SQLite and local disk are the production default for a private per-company deployment.

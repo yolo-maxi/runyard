@@ -57,6 +57,10 @@ function printRunCreated(data, json) {
   console.log(`Hub status: smithers-hub run-status ${run.id}`);
   console.log(`Hub logs: smithers-hub logs ${run.id}`);
   console.log(`Hub artifacts and outputs: smithers-hub artifacts ${run.id}`);
+  const improveRepoSelector = run.input?.repoDir || run.input?.repo || run.input?.project || "";
+  if (run.capabilitySlug === "improve" && improveRepoSelector) {
+    console.log(`Edited repo requested on runner: ${improveRepoSelector}`);
+  }
 }
 
 function ask(query, { hidden = false } = {}) {

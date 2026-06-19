@@ -81,6 +81,7 @@ Expected behavior:
 - A runner streams events/logs back to the Hub.
 - A runner uploads artifacts back to the Hub.
 - A runner marks runs as succeeded or failed.
+- For repository-editing workflows such as Improve, a run may select an allowlisted runner-local git repo to edit while still reporting logs and artifacts to the Hub.
 
 The Hub remains the source of truth even when execution happens on a local machine.
 

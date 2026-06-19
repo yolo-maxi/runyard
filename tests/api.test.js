@@ -1491,6 +1491,10 @@ describe("Improve capability", () => {
     assert.equal(cap.workflow.engine, "smithers");
     assert.equal(cap.workflow.entry, ".smithers/workflows/improve.tsx");
     assert.ok(cap.inputSchema.required.includes("target"));
+    assert.equal(cap.inputSchema.properties.repoDir.type, "string");
+    assert.match(cap.inputSchema.properties.repoDir.description, /runner-local git repo path/);
+    assert.equal(cap.inputSchema.properties.repo.type, "string");
+    assert.equal(cap.inputSchema.properties.project.type, "string");
     assert.ok(cap.requiredAgents.includes("product-manager"), "improve must require the product-manager agent");
     assert.ok(cap.requiredAgents.includes("implementation-agent"), "improve must dispatch the implementation agent");
     assert.ok(cap.requiredSkills.includes("product-review"));
@@ -1530,6 +1534,9 @@ describe("Improve capability", () => {
     assert.match(src, /id="deploy"/);
     assert.match(src, /improvements/);
     assert.match(src, /acceptanceCheck/);
+    assert.match(src, /resolveImproveRepo\(ctx\.input/);
+    assert.match(src, /cwd: repoDir/);
+    assert.doesNotMatch(src, /const REPO =/);
     assert.match(src, /ClaudeCodeAgent/);
   });
 
