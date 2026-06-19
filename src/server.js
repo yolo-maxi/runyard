@@ -6,6 +6,7 @@ import express from "express";
 import {
   addRunEvent,
   authenticateToken,
+  approvalPolicyNotifiesTelegram,
   createAccessToken,
   createArtifact,
   createRun,
@@ -592,25 +593,55 @@ function telegramApprovalTarget() {
   return null;
 }
 
+function htmlEscape(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char];
+  });
+}
+
+function telegramCode(value) {
+  return `<code>${htmlEscape(value)}</code>`;
+}
+
+function telegramLabeledLine(label, value) {
+  if (value == null || value === "") return "";
+  return `<b>${htmlEscape(label)}:</b> ${htmlEscape(value)}`;
+}
+
 function telegramApprovalText(approval) {
   const context = approvalContext(approval);
   const workflow = context.workflow?.name
     ? `${context.workflow.name}${context.workflow.slug ? ` (${context.workflow.slug})` : ""}`
     : "Unknown workflow";
+  const proposedChange = truncate(context.proposedChange || approval?.title || approval?.description || "Approval request", 900);
+  const proposedAction = truncate(context.proposedAction || "Resolve this approval.", 320);
+  const branchLine = context.targetBranch ? telegramLabeledLine("Target branch", context.targetBranch) : telegramLabeledLine("Branch", context.branch);
+  const runLine = approval.runId
+    ? `${telegramCode(approval.runId)}${context.run?.status ? ` (${htmlEscape(context.run.status)})` : ""}`
+    : "No run attached";
   return [
-    `${env.instanceName} approval requested`,
+    `<b>${htmlEscape(env.instanceName)} approval requested</b>`,
     "",
-    `Requested by: ${context.requestedBy}`,
-    `Workflow: ${workflow}`,
-    context.project?.display ? `Project: ${truncate(context.project.display, 180)}` : "",
-    context.targetBranch ? `Target branch: ${context.targetBranch}` : context.branch ? `Branch: ${context.branch}` : "",
-    context.deploy == null ? "" : `Deploy: ${context.deploy ? "true" : "false"}`,
-    approval.runId ? `Run: ${approval.runId}${context.run?.status ? ` (${context.run.status})` : ""}` : "",
-    `Approval: ${approval.id}`,
-    context.proposedChange ? `Working on: ${truncate(context.proposedChange, 700)}` : "",
-    `Proposed action: ${truncate(context.proposedAction || "Resolve this approval.", 320)}`,
+    "<b>Thing being approved</b>",
+    "<b>Proposed change</b>",
+    `<pre>${htmlEscape(proposedChange)}</pre>`,
     "",
-    "Open the approval with the button below."
+    "<b>Decision / action</b>",
+    htmlEscape(proposedAction),
+    "",
+    "<b>Workflow</b>",
+    htmlEscape(workflow),
+    "",
+    telegramLabeledLine("Originator", context.requestedBy || "unknown"),
+    context.project?.display ? telegramLabeledLine("Project / repo / path", truncate(context.project.display, 180)) : "",
+    branchLine,
+    context.deploy == null ? "" : telegramLabeledLine("Deploy", context.deploy ? "yes" : "no"),
+    "",
+    "<b>Run</b>",
+    runLine,
+    telegramLabeledLine("Approval", approval.id),
+    "",
+    "Use the buttons below to decide."
   ]
     .filter(Boolean)
     .join("\n");
@@ -621,9 +652,32 @@ function telegramApprovalOpenButton(target, approvalUrl) {
   return { text: "Open approval", url: approvalUrl };
 }
 
+function isRunStartApproval(approval) {
+  const payload = approval?.payload || {};
+  const kind = String(payload.approvalKind || payload.kind || "").toLowerCase();
+  const scope = String(payload.approvalScope || payload.scope || "").toLowerCase();
+  if (kind || scope) return kind === "run_start" || scope === "workflow_start";
+
+  return Boolean(approval?.runId && payload.capability && payload.input && /^Approve\b/.test(approval.title || ""));
+}
+
+function runStartApprovalPolicy(approval) {
+  const payload = approval?.payload || {};
+  const run = approval?.runId ? getRun(approval.runId) : null;
+  const capabilitySlug = payload.capability || run?.capabilitySlug || "";
+  return capabilitySlug ? getCapability(capabilitySlug)?.approvalPolicy || {} : {};
+}
+
+function shouldNotifyTelegram(approval) {
+  if (!approval) return false;
+  if (!isRunStartApproval(approval)) return true;
+  return approvalPolicyNotifiesTelegram(runStartApprovalPolicy(approval));
+}
+
 async function notifyTelegram(approval) {
   const target = telegramApprovalTarget();
   if (!env.telegramBotToken || !target) return;
+  if (!shouldNotifyTelegram(approval)) return;
   const approvalUrl = absoluteDeepLink(deepLinks.approval(approval.id));
   try {
     const response = await fetch(`https://api.telegram.org/bot${env.telegramBotToken}/sendMessage`, {
@@ -633,6 +687,7 @@ async function notifyTelegram(approval) {
         chat_id: target.chatId,
         ...(target.threadId ? { message_thread_id: target.threadId } : {}),
         text: telegramApprovalText(approval),
+        parse_mode: "HTML",
         reply_markup: {
           inline_keyboard: [
             [telegramApprovalOpenButton(target, approvalUrl)],
@@ -1226,4 +1281,4 @@ if (process.argv[1]?.endsWith("server.js")) {
   reaper.unref?.();
 }
 
-export { app, parseTelegramApprovalCallback, telegramApprovalTarget };
+export { app, notifyTelegram, parseTelegramApprovalCallback, telegramApprovalTarget, telegramApprovalText };

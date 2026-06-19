@@ -520,6 +520,18 @@ export function upsertKnowledge(input) {
   return listKnowledge(input.slug)[0];
 }
 
+export function approvalPolicyNotifiesTelegram(policy = {}) {
+  if (!policy || typeof policy !== "object") return false;
+  if (policy.notifyTelegram === true || policy.telegramNotify === true) return true;
+  if (policy.notifications?.telegram === true || policy.notify?.telegram === true) return true;
+
+  const channel = String(policy.notificationChannel || policy.notifyChannel || "").toLowerCase();
+  if (channel === "telegram") return true;
+
+  const channels = policy.notificationChannels || policy.notifyChannels || [];
+  return Array.isArray(channels) && channels.some((item) => String(item).toLowerCase() === "telegram");
+}
+
 export function createRun(capability, input, options = {}) {
   const timestamp = now();
   const approvalRequired = Boolean(capability.approvalPolicy?.required);
@@ -545,13 +557,30 @@ export function createRun(capability, input, options = {}) {
   );
   addRunEvent(runId, "run.created", `Run created for ${capability.name}`, { capability: capability.slug });
   if (approvalRequired) {
-    const payload = { capability: capability.slug, input };
+    const requestedBy = options.requestedBy || "workflow";
+    const payload = {
+      kind: "run_start",
+      approvalKind: "run_start",
+      approvalScope: "workflow_start",
+      capability: capability.slug,
+      capabilityName: capability.name,
+      workflow: {
+        slug: capability.slug,
+        name: capability.name,
+        version: capability.version,
+        engine: capability.workflow?.engine || "",
+        entry: capability.workflow?.entry || ""
+      },
+      requestedBy,
+      notifyTelegram: approvalPolicyNotifiesTelegram(capability.approvalPolicy),
+      input
+    };
     if (options.origin) payload.origin = options.origin;
     createApproval({
       runId,
       title: `Approve ${capability.name}`,
       description: capability.approvalPolicy?.reason || "This capability requires approval before execution.",
-      requestedBy: options.requestedBy || "workflow",
+      requestedBy,
       payload
     });
   }

@@ -12,8 +12,9 @@ process.env.SMITHERS_HUB_DB = path.join(temp, "test.sqlite");
 process.env.SMITHERS_HUB_SESSION_SECRET = "test-secret";
 process.env.SMITHERS_HUB_BOOTSTRAP_TOKEN = "shub_test_token";
 
-const { app } = await import("../src/server.js");
+const { app, notifyTelegram } = await import("../src/server.js");
 const { env } = await import("../src/env.js");
+const { createApproval } = await import("../src/db.js");
 
 let server;
 let baseUrl;
@@ -378,7 +379,7 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
     }
   });
 
-  it("sends readable private Telegram approvals with a miniapp open button", async () => {
+  it("keeps workflow-start approvals in the Hub but suppresses Telegram by default", async () => {
     const calls = [];
     const restoreFetch = captureTelegramFetch(calls);
     const restoreEnv = withTelegramEnv({
@@ -391,29 +392,110 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
     try {
       const created = await api("/api/capabilities/implement-change-gated/run", {
         method: "POST",
-        body: { input: { workPrompt: "Private approval notification", repo: "/home/xiko/smithers-hub", targetBranch: "main", deploy: true } }
+        body: { input: { workPrompt: "No noisy run-start DM", repo: "/home/xiko/smithers-hub", targetBranch: "main", deploy: true } }
       });
       assert.equal(created.run.status, "waiting_approval");
+      const approval = (await api("/api/approvals?status=pending")).approvals.find((item) => item.runId === created.run.id);
+      assert.ok(approval);
+      assert.equal(approval.payload.kind, "run_start");
+      assert.equal(approval.payload.approvalKind, "run_start");
+      assert.equal(approval.payload.approvalScope, "workflow_start");
+      assert.equal(approval.payload.notifyTelegram, false);
+      assert.equal(approval.context.workflow.slug, "implement-change-gated");
+      assert.equal(approval.context.requestedBy, "token: bootstrap-admin");
+      assert.equal(calls.filter((call) => call.url.endsWith("/sendMessage")).length, 0);
+    } finally {
+      restoreEnv();
+      restoreFetch();
+    }
+  });
+
+  it("sends structured private Telegram checkpoint approvals with a miniapp open button", async () => {
+    const calls = [];
+    const restoreFetch = captureTelegramFetch(calls);
+    const restoreEnv = withTelegramEnv({
+      telegramBotToken: "test-bot-token",
+      telegramApprovalChatId: "12345",
+      telegramChatId: "-100999",
+      telegramThreadId: "77",
+      telegramWebhookSecret: "telegram-test-secret",
+      baseUrl: "https://hub.example"
+    });
+    try {
+      const created = await api("/api/capabilities/hello/run", {
+        method: "POST",
+        body: { input: { goal: "Checkpoint Telegram notification" } }
+      });
+      const approval = createApproval({
+        runId: created.run.id,
+        title: "Approve production checkpoint",
+        description: "A workflow checkpoint needs an operator decision.",
+        requestedBy: "workflow: hello",
+        payload: {
+          kind: "approval_checkpoint",
+          approvalKind: "checkpoint",
+          approvalScope: "workflow_checkpoint",
+          capability: "hello",
+          input: {
+            requestedBy: "Fran <ops>",
+            proposedAction: "Approve the deploy checkpoint after tests pass.",
+            change: "Ship <b>approval</b> DM formatting & keep JSON out",
+            repo: "/home/xiko/smithers-hub",
+            targetBranch: "main",
+            deploy: true
+          }
+        }
+      });
+      await notifyTelegram(approval);
+
       const send = calls.find((call) => call.url.endsWith("/sendMessage"));
       assert.ok(send);
       assert.equal(send.body.chat_id, "12345");
       assert.equal(Object.hasOwn(send.body, "message_thread_id"), false);
-      assert.match(send.body.text, /Requested by: token: bootstrap-admin/);
-      assert.match(send.body.text, /Workflow: Implement Change \(gated\) \(implement-change-gated\)/);
-      assert.match(send.body.text, /Project: \/home\/xiko\/smithers-hub/);
-      assert.match(send.body.text, /Target branch: main/);
-      assert.match(send.body.text, /Deploy: true/);
-      assert.match(send.body.text, /Run: run_[a-f0-9]{20} \(waiting_approval\)/);
-      assert.match(send.body.text, /Approval: appr_[a-f0-9]{20}/);
-      assert.match(send.body.text, /Working on: Private approval notification/);
-      assert.match(send.body.text, /Proposed action: Queue Implement Change \(gated\) for runner execution, with deploy enabled, targeting main\./);
+      assert.equal(send.body.parse_mode, "HTML");
+      assert.match(send.body.text, /<b>Thing being approved<\/b>/);
+      assert.match(send.body.text, /<b>Proposed change<\/b>\n<pre>Ship &lt;b&gt;approval&lt;\/b&gt; DM formatting &amp; keep JSON out<\/pre>/);
+      assert.match(send.body.text, /<b>Decision \/ action<\/b>\nApprove the deploy checkpoint after tests pass\./);
+      assert.match(send.body.text, /<b>Workflow<\/b>\nHello \(Smithers proof\) \(hello\)/);
+      assert.match(send.body.text, /<b>Originator:<\/b> Fran &lt;ops&gt;/);
+      assert.match(send.body.text, /<b>Project \/ repo \/ path:<\/b> \/home\/xiko\/smithers-hub/);
+      assert.match(send.body.text, /<b>Target branch:<\/b> main/);
+      assert.match(send.body.text, /<b>Deploy:<\/b> yes/);
+      assert.match(send.body.text, /<b>Run<\/b>\n<code>run_[a-f0-9]{20}<\/code> \(queued\)/);
+      assert.match(send.body.text, /<b>Approval:<\/b> appr_[a-f0-9]{20}/);
       assert.doesNotMatch(send.body.text, /Approval link:/);
-      assert.doesNotMatch(send.body.text, /"workPrompt"|\{|\}/);
+      assert.doesNotMatch(send.body.text, /"change"|"requestedBy"|\{|\}/);
       const buttons = send.body.reply_markup.inline_keyboard.flat();
       assert.ok(buttons.find((button) => button.text === "Open approval" && button.web_app?.url.includes("/app#approvals/")));
       assert.ok(buttons.find((button) => button.text === "Approve" && /^approval:approve:appr_[a-f0-9]{20}$/.test(button.callback_data)));
       assert.ok(buttons.find((button) => button.text === "Request changes" && /^approval:request_changes:appr_[a-f0-9]{20}$/.test(button.callback_data)));
       assert.ok(buttons.find((button) => button.text === "Reject" && /^approval:reject:appr_[a-f0-9]{20}$/.test(button.callback_data)));
+
+      const approved = await raw(
+        "/api/telegram/webhook",
+        {
+          method: "POST",
+          headers: { "x-telegram-bot-api-secret-token": "telegram-test-secret" },
+          body: {
+            callback_query: {
+              id: "cb-checkpoint-approve",
+              data: `approval:approve:${approval.id}`,
+              from: { id: 42, username: "fran" },
+              message: { message_id: 21, chat: { id: 12345 } }
+            }
+          }
+        },
+        null
+      );
+      assert.equal(approved.status, 200);
+      assert.equal(approved.data.approval.status, "approved");
+      assert.equal(approved.data.approval.decision, "approved");
+      const ack = calls.find((call) => call.url.endsWith("/answerCallbackQuery") && call.body.callback_query_id === "cb-checkpoint-approve");
+      assert.ok(ack);
+      assert.equal(ack.body.text, "Approved.");
+      const edit = calls.find((call) => call.url.endsWith("/editMessageReplyMarkup") && call.body.message_id === 21);
+      assert.ok(edit);
+      assert.deepEqual(edit.body.reply_markup.inline_keyboard, []);
     } finally {
       restoreEnv();
       restoreFetch();
