@@ -1419,6 +1419,7 @@ Core tools:
 - get_run_status
 - get_run_logs
 - get_run_artifacts
+- list_runners
 - list_pending_approvals
 - approve_run
 - reject_run

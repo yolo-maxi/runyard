@@ -64,6 +64,7 @@ smithers-hub capabilities
 smithers-hub capability prepare-spec
 smithers-hub run prepare-spec --input '{"goal":"Prepare a rollout spec"}'
 smithers-hub runs
+smithers-hub runners
 smithers-hub approvals
 smithers-hub approve appr_...
 ```

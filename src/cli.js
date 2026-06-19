@@ -157,6 +157,10 @@ program.command("runs").description("List runs").option("-s, --status <status>")
   print(data.runs, program.opts().json);
 });
 
+program.command("runners").description("List registered runners and pool stats").action(async () => {
+  print(await client(program.opts()).get("/api/runners"), program.opts().json);
+});
+
 program.command("run-status <id>").alias("run-detail").description("Show run detail").action(async (id) => {
   print(await client(program.opts()).get(`/api/runs/${id}`), program.opts().json);
 });
