@@ -134,6 +134,53 @@ function empty(message, hint = "") {
   return `<div class="empty"><p>${esc(message)}</p>${hint ? `<p class="muted">${hint}</p>` : ""}</div>`;
 }
 
+// --- First-run empty-state onboarding card -----------------------------------
+// Shown on the Workflows view when a fresh tenant has zero workflows. Three
+// numbered steps with CTAs that all map to existing endpoints/routes:
+//   1. Browse workflow-templates/  → /workflow-templates static index
+//   2. Run sample                  → seeds + auto-runs the hello-world template
+//   3. Open run detail             → falls through to the auto-opened run page
+// CTA wiring happens in bindOnboardingCard() after innerHTML is set.
+function onboardingCard() {
+  const sample = WORKFLOW_TEMPLATES[0];
+  const steps = [
+    {
+      n: 1,
+      title: "Browse workflow templates",
+      body: "Start from a curated capability. Each one ships with a sample input and a runner profile.",
+      cta: `<a class="button" href="/workflow-templates/" target="_blank" rel="noopener" id="ob-card-browse">Browse templates ↗</a>`
+    },
+    {
+      n: 2,
+      title: "Run a sample",
+      body: `“${sample.name}” seeds in your tenant, queues a run, and opens its detail page automatically.`,
+      cta: `<button class="primary" id="ob-card-run-sample" data-template="${esc(sample.slug)}">Run sample</button>`
+    },
+    {
+      n: 3,
+      title: "Open the run detail",
+      body: "Watch the live progress strip, browse artifacts, and re-run with one click from the deep-linkable URL.",
+      cta: `<a class="button" href="#runs" id="ob-card-open-runs">Open Runs</a>`
+    }
+  ];
+  return `<section class="onboarding-card" role="region" aria-label="Get started in 3 steps">
+    <header class="onboarding-card-head">
+      <h2>Welcome to Runyard</h2>
+      <p class="muted">No workflows yet — follow these three steps to see one running end to end.</p>
+    </header>
+    <ol class="onboarding-card-steps">
+      ${steps.map((step) => `<li class="onboarding-card-step">
+        <span class="onboarding-card-num" aria-hidden="true">${step.n}</span>
+        <div class="onboarding-card-body">
+          <h3>${esc(step.title)}</h3>
+          <p class="muted">${esc(step.body)}</p>
+          <div class="onboarding-card-cta">${step.cta}</div>
+        </div>
+      </li>`).join("")}
+    </ol>
+  </section>`;
+}
+
 // --- Next-best-action card ---------------------------------------------------
 // Picks the single highest-signal next step a fresh tenant should take, based
 // on current state. Returned HTML is injected at the top of the Home view so
@@ -833,6 +880,109 @@ function pills(items, { kind = "pill", link = null } = {}) {
     .join("")}</ul>`;
 }
 
+// --- Live run progress strip -------------------------------------------------
+// Three-phase strip — Queued → Running → Done/Failed — so the operator can
+// read run state at a glance instead of squinting at table rows. Drives off
+// `run.status` + `run.currentStep`; a stale heartbeat flips the active phase
+// to a "stalled" amber tint so killed runners don't masquerade as healthy.
+// The DOM is `data-run-progress` so a polling loop can replace this strip in
+// place without re-rendering the surrounding card.
+const STALL_THRESHOLD_MS = 10_000;
+
+function runPhaseStates(run) {
+  const status = run?.status || "";
+  const lastBeat = Date.parse(run?.lastHeartbeatAt || run?.updatedAt || run?.startedAt || run?.createdAt || "");
+  const stale = Number.isFinite(lastBeat) && (Date.now() - lastBeat) > STALL_THRESHOLD_MS;
+  // queued phase
+  let queued;
+  if (status === "queued") queued = "active";
+  else queued = "done";
+  // running phase
+  let running;
+  if (status === "queued") running = "pending";
+  else if (status === "running" || status === "assigned" || status === "pending") {
+    running = stale ? "stalled" : "active";
+  } else if (status === "waiting_approval") running = "active";
+  else running = "done";
+  // outcome phase
+  let outcome;
+  if (status === "succeeded") outcome = "ok";
+  else if (status === "failed" || status === "error") outcome = "fail";
+  else if (status === "cancelled" || status === "rejected") outcome = "cancel";
+  else outcome = "pending";
+  return { queued, running, outcome };
+}
+
+function runProgressStrip(run) {
+  const phases = runPhaseStates(run);
+  const outcomeLabel = phases.outcome === "ok"
+    ? "Done"
+    : phases.outcome === "fail"
+      ? "Failed"
+      : phases.outcome === "cancel"
+        ? "Cancelled"
+        : "Done";
+  const runningLabel = phases.running === "stalled" ? "Stalled" : "Running";
+  const items = [
+    { key: "queued", label: "Queued", state: phases.queued },
+    { key: "running", label: runningLabel, state: phases.running },
+    { key: "outcome", label: outcomeLabel, state: phases.outcome }
+  ];
+  const currentStep = run?.currentStep ? `<span class="run-progress-step-name muted" title="Current step">${esc(run.currentStep)}</span>` : "";
+  return `<ol class="run-progress-strip" data-run-progress="${esc(run?.id || "")}" aria-label="Run progress">
+    ${items.map((p) => `<li class="run-progress-phase phase-${esc(p.state)}" data-phase="${esc(p.key)}">
+      <span class="run-progress-dot" aria-hidden="true"></span>
+      <span class="run-progress-label">${esc(p.label)}</span>
+    </li>`).join("")}
+    ${currentStep}
+  </ol>`;
+}
+
+// Polls /api/runs/<id> for active runs and replaces the in-place
+// `[data-run-progress=<id>]` strip on each tick. Called from any view that
+// renders progress strips (home cards, workflow runs tab). The token lets the
+// caller cancel when re-rendering, so we don't leak intervals across views.
+let progressPollToken = 0;
+
+function pollActiveRunProgress(runIds, { intervalMs = 4000 } = {}) {
+  const ids = (runIds || []).filter(Boolean);
+  if (!ids.length) return () => {};
+  progressPollToken += 1;
+  const token = progressPollToken;
+  const timer = setInterval(async () => {
+    if (token !== progressPollToken) {
+      clearInterval(timer);
+      return;
+    }
+    await Promise.all(ids.map(async (id) => {
+      try {
+        const data = await api(`/api/runs/${encodeURIComponent(id)}`);
+        const run = data?.run;
+        if (!run) return;
+        const node = document.querySelector(`[data-run-progress="${CSS.escape(id)}"]`);
+        if (!node) return;
+        const tmp = document.createElement("div");
+        tmp.innerHTML = runProgressStrip(run);
+        const fresh = tmp.firstElementChild;
+        if (fresh) node.replaceWith(fresh);
+        // Stop polling once the run is no longer active.
+        if (!isActiveRun(run)) {
+          const remaining = ids.filter((other) => other !== id);
+          progressPollToken += 1;
+          clearInterval(timer);
+          if (remaining.length) pollActiveRunProgress(remaining, { intervalMs });
+        }
+      } catch {
+        // transient network blip — keep polling
+      }
+    }));
+  }, intervalMs);
+  return () => {
+    progressPollToken += 1;
+    clearInterval(timer);
+  };
+}
+
 // Queued runs get a prominent banner so the home grid + workflow detail can
 // answer "is this just sitting in the queue?" at a glance. The position +
 // total come from the server-side queue index when available.
@@ -897,6 +1047,7 @@ function runCard(run, artifacts = []) {
       <span class="run-origin" title="Origin">${esc(origin)}</span>
     </p>
     <p class="muted run-desc">${esc(description)}</p>
+    ${runProgressStrip(run)}
     ${queueBannerHtml}
     ${chipsHtml}
     ${reasonHintHtml}
@@ -1075,6 +1226,10 @@ async function renderHome() {
   document.querySelectorAll("[data-reject]").forEach((button) => button.addEventListener("click", () => resolveApproval(button.dataset.reject, "reject", { rerender: "none" }).then(() => render().catch(showError))));
   document.querySelectorAll("[data-rerun]").forEach((button) => button.addEventListener("click", () => rerunRun(button.dataset.rerun).catch(showError)));
   bindCopy();
+  // Keep the per-card progress strip live for any run still in flight. The
+  // polling loop is cancelled implicitly when a new view re-renders (it
+  // bumps progressPollToken on the next call).
+  pollActiveRunProgress(active.map((r) => r.id));
 }
 
 function runsTable(runs) {
@@ -1142,7 +1297,7 @@ async function renderCapabilities() {
           </div>
         </article>`;
       }).join("")}
-    </div>` : `${empty("No workflows yet.", "Pick a starter below or click New Workflow to define your own.")}
+    </div>` : `${onboardingCard()}
       <h2 class="section-heading">Starter templates</h2>
       <div class="grid template-grid">${WORKFLOW_TEMPLATES.map(templateCard).join("")}</div>`}
     <section id="editor" class="panel hidden"></section>`;
@@ -1151,6 +1306,48 @@ async function renderCapabilities() {
   $("#new-cap").addEventListener("click", () => editCapability());
   bindCopy();
   bindTemplateButtons();
+  bindOnboardingCard();
+}
+
+// Wires the empty-state "Run sample" button: seed the hello-world template if
+// it isn't already there, queue a run, then route to the run detail. We reuse
+// the existing /api/capabilities POST + /api/capabilities/<slug>/run endpoints
+// so no server change is needed.
+function bindOnboardingCard() {
+  const btn = document.getElementById("ob-card-run-sample");
+  if (!btn || btn.dataset.bound === "1") return;
+  btn.dataset.bound = "1";
+  btn.addEventListener("click", async () => {
+    const slug = btn.dataset.template;
+    const template = WORKFLOW_TEMPLATES.find((t) => t.slug === slug) || WORKFLOW_TEMPLATES[0];
+    if (!template) return;
+    btn.disabled = true;
+    const restore = btn.textContent;
+    btn.textContent = "Starting…";
+    try {
+      // Upsert is idempotent on slug, so a second click after a refresh just
+      // re-runs the existing capability.
+      try {
+        await api("/api/capabilities", { method: "POST", body: template });
+      } catch {
+        // Already exists — ignore and continue to the run step.
+      }
+      const result = await api(`/api/capabilities/${encodeURIComponent(template.slug)}/run`, { method: "POST", body: { input: {} } });
+      const runId = result?.run?.id;
+      toast(`Sample run queued`, "ok");
+      if (runId) {
+        location.hash = deepLinks.run(runId).slice(1);
+        state.view = `runs/${runId}`;
+        await render();
+      } else {
+        setView("home");
+      }
+    } catch (error) {
+      toast(error.message || "Could not start sample run", "error");
+      btn.disabled = false;
+      btn.textContent = restore;
+    }
+  });
 }
 
 // --- Workflow detail page ---------------------------------------------------
@@ -1335,6 +1532,13 @@ async function renderWorkflowDetail(slug, { sub = "" } = {}) {
     await renderWorkflowCodeTab(slug, cap);
   } else if (activeTab === "runs") {
     $("#wf-run-2")?.addEventListener("click", () => setView(`workflows/${slug}/run`));
+    // Stream live status onto every active run's progress strip until the
+    // user navigates away (re-render bumps progressPollToken).
+    pollActiveRunProgress(runs.filter(isActiveRun).map((r) => r.id));
+  } else if (activeTab === "overview") {
+    // The overview also surfaces "Latest runs" on the side rail — keep those
+    // strips ticking so a fresh user sees their sample run finish in place.
+    pollActiveRunProgress(runs.slice(0, 8).filter(isActiveRun).map((r) => r.id));
   }
 
   if (sub === "run") {
@@ -1680,12 +1884,23 @@ function workflowRunsList(runs) {
     const dur = formatDuration(runDurationMs(run));
     const project = runProject(run);
     const branch = runBranch(run);
+    const active = isActiveRun(run);
+    // Active runs default to expanded so users see the progress strip
+    // immediately; completed runs collapse to a one-liner that the user can
+    // expand to inspect after the fact.
     return `<li class="wf-run-row">
-      <a href="${esc(deepLinks.run(run.id))}" class="wf-run-title">${esc(title)}</a>
-      <span class="wf-run-status">${status(run.status)}</span>
-      <span class="muted wf-run-when">${esc(relativeTime(run.createdAt))}${dur ? ` · ${esc(dur)}` : ""}</span>
-      ${project ? `<span class="chip chip-project">📦 ${esc(project)}</span>` : ""}
-      ${branch ? `<span class="chip chip-branch">🌿 ${esc(branch)}</span>` : ""}
+      <details class="wf-run-progress-details" ${active ? "open" : ""}>
+        <summary class="wf-run-progress-summary">
+          <a href="${esc(deepLinks.run(run.id))}" class="wf-run-title">${esc(title)}</a>
+          <span class="wf-run-status">${status(run.status)}</span>
+          <span class="muted wf-run-when">${esc(relativeTime(run.createdAt))}${dur ? ` · ${esc(dur)}` : ""}</span>
+          ${project ? `<span class="chip chip-project">📦 ${esc(project)}</span>` : ""}
+          ${branch ? `<span class="chip chip-branch">🌿 ${esc(branch)}</span>` : ""}
+        </summary>
+        <div class="wf-run-progress-body">
+          ${runProgressStrip(run)}
+        </div>
+      </details>
     </li>`;
   }).join("")}</ul>`;
 }

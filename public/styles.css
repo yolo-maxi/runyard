@@ -1817,15 +1817,27 @@ details.advanced[open] summary {
   }
 }
 
-/* ---- Phone: data tables become stacked, labeled cards (no horizontal overflow) ---- */
+/* ---- Phone: data tables become stacked, labeled cards (no horizontal overflow) ----
+   The column header is kept as an inline label on the LEFT of each value so
+   the user never loses the meaning of a cell. Visually-hide thead (don't
+   `display:none` it) so screen readers still announce row context. */
 @media (max-width: 640px) {
   .table {
     border: 0;
     background: transparent;
   }
 
+  /* Visually hide the header row but keep it in the accessibility tree. */
   .table thead {
-    display: none;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 
   .table,
@@ -1844,9 +1856,11 @@ details.advanced[open] summary {
   }
 
   .table td {
-    display: block;
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
     border: 0;
-    padding: 6px 12px;
+    padding: 8px 12px;
     overflow-wrap: anywhere;
   }
 
@@ -1854,19 +1868,22 @@ details.advanced[open] summary {
     display: none;
   }
 
+  /* Label sits to the LEFT of the value, capped so long values stay readable. */
   .table td::before {
     content: attr(data-label);
-    display: block;
+    flex: 0 0 38%;
+    max-width: 38%;
     color: var(--muted);
     font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    margin-bottom: 2px;
+    line-height: 1.4;
   }
 
-  /* Cells with no label (action buttons) shouldn't reserve an empty label line. */
+  /* Cells with no label (action buttons) shouldn't reserve an empty label column. */
   .table td:not([data-label])::before {
     content: none;
+    flex: 0;
   }
 }
 
@@ -2672,4 +2689,153 @@ details.advanced[open] summary {
   .sidebar button { width: auto; margin: 0; }
   .nba-card { flex-direction: column; align-items: flex-start; }
   .table { display: block; overflow-x: auto; }
+
+  /* Workflow detail collapses to a tab-only layout: hide the ReactFlow
+     side-rail (its content is repeated in the Code/Overview tabs anyway) and
+     let the four .workflow-tabs scroll horizontally so all of Overview /
+     Graph / Code / Runs stay reachable on a phone without page reflow. */
+  .workflow-graph-side { display: none; }
+  .workflow-tabs {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    flex-wrap: nowrap;
+    white-space: nowrap;
+  }
+  .workflow-tabs .tab { flex: 0 0 auto; }
+  .workflow-graph-tab .workflow-graph-host { min-height: 320px; }
+}
+
+/* ---- Live run progress strip ---- */
+.run-progress-strip {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0;
+  margin: 8px 0 6px;
+  padding: 0;
+}
+.run-progress-phase {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 4px 6px;
+  font-size: 12px;
+  color: var(--muted);
+  position: relative;
+}
+.run-progress-phase + .run-progress-phase::before {
+  content: "";
+  display: inline-block;
+  width: 18px;
+  height: 1px;
+  background: var(--line);
+  margin-right: 4px;
+}
+.run-progress-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid var(--line);
+  background: #fff;
+  display: inline-block;
+  box-sizing: border-box;
+}
+.run-progress-phase.phase-pending .run-progress-dot { background: #fff; border-color: #d9e0ea; }
+.run-progress-phase.phase-pending { color: #98a2b3; }
+.run-progress-phase.phase-active .run-progress-dot {
+  background: #2563eb;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.18);
+  animation: run-progress-pulse 1.4s ease-in-out infinite;
+}
+.run-progress-phase.phase-active { color: #1d4ed8; font-weight: 600; }
+.run-progress-phase.phase-stalled .run-progress-dot {
+  background: #f59e0b;
+  border-color: #f59e0b;
+  box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.18);
+  animation: run-progress-pulse 1.4s ease-in-out infinite;
+}
+.run-progress-phase.phase-stalled { color: #b45309; font-weight: 600; }
+.run-progress-phase.phase-done .run-progress-dot { background: #16a34a; border-color: #16a34a; }
+.run-progress-phase.phase-done { color: #15803d; }
+.run-progress-phase.phase-ok .run-progress-dot { background: #16a34a; border-color: #16a34a; }
+.run-progress-phase.phase-ok { color: #15803d; font-weight: 600; }
+.run-progress-phase.phase-fail .run-progress-dot { background: #dc2626; border-color: #dc2626; }
+.run-progress-phase.phase-fail { color: #b91c1c; font-weight: 600; }
+.run-progress-phase.phase-cancel .run-progress-dot { background: #94a3b8; border-color: #94a3b8; }
+.run-progress-phase.phase-cancel { color: #475569; }
+.run-progress-step-name {
+  margin-left: 8px;
+  font-size: 12px;
+  max-width: 30ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@keyframes run-progress-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.18); }
+}
+
+/* Expandable run rows in the workflow Runs tab. */
+.wf-run-progress-details { width: 100%; }
+.wf-run-progress-summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  cursor: pointer;
+}
+.wf-run-progress-summary::-webkit-details-marker { display: none; }
+.wf-run-progress-summary::marker { content: ""; }
+.wf-run-progress-body { padding: 4px 0 2px 0; }
+
+/* ---- First-run onboarding card (empty Workflows view) ---- */
+.onboarding-card {
+  background: linear-gradient(180deg, #f8fafc, #ffffff 70%);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 20px 22px;
+  margin: 0 0 18px;
+  box-shadow: 0 6px 22px rgba(15, 25, 35, 0.05);
+}
+.onboarding-card-head h2 { margin: 0 0 4px; }
+.onboarding-card-head p { margin: 0 0 16px; }
+.onboarding-card-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+.onboarding-card-step {
+  display: flex;
+  gap: 12px;
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px 14px 16px;
+}
+.onboarding-card-num {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--ink);
+  color: var(--off-white);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 13px;
+}
+.onboarding-card-body { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.onboarding-card-body h3 { margin: 0; font-size: 15px; }
+.onboarding-card-body p { margin: 0; font-size: 13px; }
+.onboarding-card-cta { margin-top: auto; padding-top: 6px; }
+@media (max-width: 900px) {
+  .onboarding-card-steps { grid-template-columns: 1fr; }
 }
