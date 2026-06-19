@@ -57,6 +57,19 @@ export const seedAgents = [
     skillSlugs: ["visual-design", "brand-strategy"]
   },
   {
+    slug: "smithers-watcher",
+    name: "Smithers Watcher",
+    description:
+      "Supervises a child workflow inside the run-smithers wrapper: records lineage, recovers interrupted/failed runs where the platform supports it, and requests approval after the same normalized error fingerprint appears three times.",
+    instructions:
+      "Wrap exactly one wrapped capability request at a time. Record the child run id, capability, failed/current step, recovery attempts, normalized error fingerprint, and final outcome. " +
+      "Retry from a recorded checkpoint where the runner exposes one; otherwise re-queue the child run with the same input. " +
+      "Never mark the supervising run a success unless the child workflow reaches a terminal promoted/succeeded state. " +
+      "After three identical normalized error fingerprints in a row, stop autonomous retry and request operator approval with concrete options (retry, edit input, abandon).",
+    tools: ["hub-api", "files"],
+    skillSlugs: ["smithers-supervision"]
+  },
+  {
     slug: "product-manager",
     name: "Product Manager (with taste)",
     description:
@@ -115,6 +128,17 @@ export const seedSkills = [
     body: "Tie the skin to audience, category, emotion, and shareability. Avoid generic polish. Surface copyright, cultural, safety, and asset-production implications before build."
   },
   {
+    slug: "smithers-supervision",
+    name: "Smithers Supervision",
+    description:
+      "How the run-smithers watcher should wrap and supervise a child workflow without silently masking failure.",
+    body:
+      "Treat every wrapped workflow as one supervised attempt. Record child run id, capability, current/failed step, checkpoint when available, retry attempts, and the normalized error fingerprint for every terminal child transition. " +
+      "Only promote the supervising run to success when the child workflow itself reaches a terminal `succeeded` state with output. " +
+      "Resume from a checkpoint when the child run carries one; otherwise re-queue the child with the same input. " +
+      "After three identical normalized error fingerprints, stop autonomous retry and create an approval with three concrete options: retry with the same input, approve a revised input/recovery plan, or abandon the wrapped goal."
+  },
+  {
     slug: "product-review",
     name: "Product Review Rubric",
     description: "How a Product Manager should inspect a feature and propose improvements.",
@@ -139,6 +163,54 @@ export const seedKnowledge = [
 // runner's .smithers workspace); the runner executes `smithers up <entry>` so the local
 // Claude Code / Codex CLI does the real work and the Hub records events, traces, and outputs.
 export const seedCapabilities = [
+  {
+    slug: "run-smithers",
+    name: "run-smithers (supervising wrapper)",
+    description:
+      "Core supervising wrapper. Wraps a child capability/workflow request inside a Smithers-managed run, records child lineage (run id, capability, checkpoints, retry attempts, normalized error fingerprints, final outcome), recovers interrupted/failed child runs where the runner supports it, and requests approval with concrete options after the same normalized error fingerprint repeats three times. Existing user-facing workflows are migrating to run behind run-smithers.",
+    category: "Orchestration",
+    keywords: ["run-smithers", "watcher", "supervisor", "wrapper", "recovery", "lineage", "core", "smithers"],
+    inputSchema: {
+      type: "object",
+      required: ["wrappedCapability"],
+      properties: {
+        wrappedCapability: {
+          type: "string",
+          description: "Slug of the child capability/workflow to wrap (e.g. 'implement', 'research')."
+        },
+        wrappedInput: {
+          type: "object",
+          description: "Input object forwarded to the wrapped capability. Schema depends on the wrapped capability."
+        },
+        goal: {
+          type: "string",
+          description: "Plain-language description of the outcome the watcher is trying to finish."
+        },
+        maxAttempts: {
+          type: "number",
+          description: "Max child-run attempts before requesting approval (default 8, hard ceiling)."
+        },
+        fingerprintThreshold: {
+          type: "number",
+          description: "Number of identical normalized error fingerprints before requesting approval (default 3)."
+        }
+      }
+    },
+    outputSchema: {
+      type: "object",
+      properties: {
+        outcome: { type: "string", description: "succeeded | needs_recovery | abandoned" },
+        wrappedRunId: { type: "string", description: "The child run id that produced the final outcome." },
+        lineage: { type: "array", description: "Ordered child-run attempts the watcher recorded." },
+        approval: { type: "object", description: "Approval request payload when the watcher escalated." }
+      }
+    },
+    requiredRunnerTags: ["smithers"],
+    requiredSkills: ["smithers-supervision"],
+    requiredAgents: ["smithers-watcher"],
+    approvalPolicy: { required: false },
+    workflow: { engine: "smithers", entry: ".smithers/workflows/run-smithers.tsx" }
+  },
   {
     slug: "hello",
     name: "Hello (Smithers proof)",

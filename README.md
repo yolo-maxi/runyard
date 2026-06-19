@@ -6,6 +6,17 @@ Runyard (codebase: `smithers-hub`) is a capability operating system you run on a
 
 One private deployment per company/org — no SaaS dependency, no shared database. The package, bin names (`smithers-hub`, `smithers-hub-mcp`, `smithers-hub-runner`), and `SMITHERS_HUB_*` env vars all keep their existing prefix, so deployments and tokens carry over.
 
+## run-smithers (supervising wrapper)
+
+`run-smithers` is the core Orchestration capability that wraps any other capability/workflow request inside a Smithers-managed supervising run. The watcher:
+
+- Records child lineage: child run id, capability, current/failed step, checkpoint when present, recovery attempts, and normalized error fingerprint counts.
+- Retries recoverable failures and re-queues child runs whose state was interrupted.
+- Pauses autonomous retry and requests an approval (with concrete options: retry as-is, approve a revised input, or abandon) once the same normalized error fingerprint repeats three times.
+- Never marks the supervising run a success unless the child workflow reaches a terminal `succeeded` state.
+
+Existing user-facing workflows are migrating to run behind `run-smithers` so every long-running goal carries the same lineage and recovery semantics. The pure watcher decision logic lives in `src/runSmithersWatcher.js` and is covered by `tests/run-smithers-watcher.test.js`.
+
 ## Workflow hardening
 
 Runyard workflows are meant to harden over time. Early runs can be agentic: agents explore the repo, write shell snippets, try commands, and discover what works. Runyard should capture that knowledge, split it into smaller deliverable steps, and progressively replace repeatable agent work with scripts, tested code, and automated machine steps.

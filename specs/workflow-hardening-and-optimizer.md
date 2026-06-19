@@ -2,6 +2,32 @@
 
 Runyard should not only run agent workflows. It should improve them until repeated parts become deterministic software.
 
+## run-smithers: the supervising wrapper
+
+The core process direction is that every user-facing workflow runs inside a
+higher-level Smithers process called `run-smithers`. The wrapper is a normal
+Runyard capability (slug `run-smithers`, category Orchestration) that wraps a
+single child capability/workflow request. The watcher:
+
+- Records child lineage: child run id, wrapped capability slug, current/failed
+  step, checkpoint when the child carries one, recovery attempt count, the
+  normalized error fingerprint per attempt, and the final outcome.
+- Re-queues the child run on transient failure and resumes from the recorded
+  checkpoint when the runner exposes one.
+- Stops autonomous retry and creates an approval with three concrete options
+  (retry as-is, approve a revised input/recovery plan, abandon the goal) once
+  the same normalized error fingerprint appears three times.
+- Never marks the supervising run a success unless the child workflow itself
+  reaches a terminal `succeeded` state. Any other outcome is `needs_recovery`
+  or `abandoned` — failure is never silently masked.
+
+The watcher's pure decision logic lives in `src/runSmithersWatcher.js`. The
+runtime contract (state shape, classification, three-strike rule) is covered
+by `tests/run-smithers-watcher.test.js`. Existing capabilities continue to
+work standalone and are migrating to run behind `run-smithers` so every
+long-running goal carries the same lineage and recovery semantics.
+
+
 The guiding process order is:
 
 1. Question requirements.
