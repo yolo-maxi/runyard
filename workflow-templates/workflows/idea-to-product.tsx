@@ -100,7 +100,8 @@ const builder = new ClaudeCodeAgent({
   systemPrompt:
     "You are a senior product engineer. Build a small but polished product from the approved spec. " +
     "Use pnpm only. Keep the app self-contained, production-buildable, responsive, and free of secrets. " +
-    "Do not deploy, do not edit Caddy, and do not touch files outside the assigned product directory."
+    "Do not deploy, do not edit Caddy, and do not touch files outside the assigned product directory. " +
+    "Do not inspect, copy, or reuse sibling product directories under the products root; they are unrelated."
 });
 
 function slugify(input: string) {
@@ -135,10 +136,10 @@ ${subdomain}.${PUBLIC_SUFFIX} {
 }
 ` : `
 ${subdomain}.${PUBLIC_SUFFIX} {
-  @token query token ${token}
+  @token query token=${token}
   handle @token {
     header Set-Cookie "${cookie}=${token}; Path=/; Max-Age=2592000; Secure; HttpOnly; SameSite=Lax"
-    redir / 302
+    redir * / 302
   }
 
   @authed header Cookie *${cookie}=${token}*
@@ -225,6 +226,8 @@ export default smithers((ctx) => {
               `SPEC:\n${JSON.stringify(spec, null, 2)}\n\n` +
               `Requirements:\n` +
               `- Use pnpm only.\n` +
+              `- Start from the assigned product directory only; do not read, copy, or infer from sibling product folders.\n` +
+              `- Prefer exact, stable dependency versions instead of latest/caret ranges. If using Vite/esbuild, include pnpm settings that allow required build scripts and avoid very-new transitive releases.\n` +
               `- Create a real app, not a landing placeholder.\n` +
               `- Include responsive UI, empty/error states where relevant, and polished copy.\n` +
               `- Include package.json scripts for build and at least one verification command (test or lint) when practical.\n` +
