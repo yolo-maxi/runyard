@@ -1090,6 +1090,8 @@ describe("Idea to Product capability", () => {
 describe("App Skinner capability", () => {
   it("is seeded as an approval-checkpoint Smithers workflow", async () => {
     const { capabilities } = await api("/api/capabilities");
+    const { agents } = await api("/api/agents");
+    const { skills } = await api("/api/skills");
     const cap = capabilities.find((c) => c.slug === "app-skinner");
     assert.ok(cap, "app-skinner capability should be in the catalog");
     assert.equal(cap.workflow.engine, "smithers");
@@ -1097,6 +1099,8 @@ describe("App Skinner capability", () => {
     assert.ok(cap.inputSchema.required.includes("appIdea"));
     assert.equal(cap.inputSchema.properties.skinCount.type, "number");
     assert.deepEqual(cap.requiredRunnerTags, ["smithers", "vps"]);
+    for (const slug of cap.requiredAgents) assert.ok(agents.find((agent) => agent.slug === slug), `missing agent card: ${slug}`);
+    for (const slug of cap.requiredSkills) assert.ok(skills.find((skill) => skill.slug === slug), `missing skill card: ${slug}`);
     assert.equal(cap.approvalPolicy.required, true);
   });
 

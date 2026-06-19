@@ -30,6 +30,22 @@ export const seedAgents = [
     instructions: "Inspect the existing codebase first, keep edits scoped, run tests, and preserve unrelated user changes.",
     tools: ["git", "shell", "tests", "files"],
     skillSlugs: ["implementation"]
+  },
+  {
+    slug: "taste-agent",
+    name: "Taste Agent",
+    description: "Explores distinct product skins and surfaces taste, tone, and asset-direction choices before implementation.",
+    instructions: "Generate sharp visual directions with rationale and risks. Make aesthetic tradeoffs explicit instead of silently defaulting.",
+    tools: ["files", "design-references"],
+    skillSlugs: ["visual-design", "brand-strategy"]
+  },
+  {
+    slug: "design-director",
+    name: "Design Director",
+    description: "Turns an approved skin into a production-ready visual brief, design tokens, asset list, and implementation prompt.",
+    instructions: "Convert approved visual direction into concrete UI guidance: hierarchy, palette, type, motion, assets, copy voice, and implementation notes.",
+    tools: ["files", "design-references"],
+    skillSlugs: ["visual-design", "brand-strategy"]
   }
 ];
 
@@ -57,6 +73,18 @@ export const seedSkills = [
     name: "Implementation Discipline",
     description: "Company implementation standards for local and remote coding agents.",
     body: "Read the codebase before changing it. Prefer existing patterns. Keep scope aligned with the requested outcome. Verify with tests and runtime checks. Never overwrite unrelated work."
+  },
+  {
+    slug: "visual-design",
+    name: "Visual Design Direction",
+    description: "How agents should propose and critique visual/UI skins.",
+    body: "Offer distinct, nameable directions with concrete layout, type, color, motion, asset, and interaction choices. Explain why each direction fits the product and what tradeoffs or risks it carries."
+  },
+  {
+    slug: "brand-strategy",
+    name: "Brand Strategy",
+    description: "How agents should connect product intent to a memorable brand and skin.",
+    body: "Tie the skin to audience, category, emotion, and shareability. Avoid generic polish. Surface copyright, cultural, safety, and asset-production implications before build."
   }
 ];
 
