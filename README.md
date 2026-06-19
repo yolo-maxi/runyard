@@ -6,6 +6,20 @@ Runyard (codebase: `smithers-hub`) is a capability operating system you run on a
 
 One private deployment per company/org — no SaaS dependency, no shared database. The package, bin names (`smithers-hub`, `smithers-hub-mcp`, `smithers-hub-runner`), and `SMITHERS_HUB_*` env vars all keep their existing prefix, so deployments and tokens carry over.
 
+## Workflow hardening
+
+Runyard workflows are meant to harden over time. Early runs can be agentic: agents explore the repo, write shell snippets, try commands, and discover what works. Runyard should capture that knowledge, split it into smaller deliverable steps, and progressively replace repeatable agent work with scripts, tested code, and automated machine steps.
+
+The gradient is:
+
+```text
+agentic -> constrained agentic -> script-backed -> deterministic code -> automated machine step
+```
+
+Nightly optimizer runs should replay workflows, diff outputs, measure variance/failure/cost, delete unnecessary steps, and propose hardened replacements. Creative and taste-heavy steps may remain agentic; engineering plumbing should become deterministic wherever possible.
+
+See `specs/workflow-hardening-and-optimizer.md`.
+
 ## Get started
 
 ```bash
@@ -36,6 +50,7 @@ The durable product/spec record lives in `specs/`:
 - `specs/product-intent-and-user-expectations.md`
 - `specs/implementation-decisions.md`
 - `specs/acceptance-and-manual-tests.md`
+- `specs/workflow-hardening-and-optimizer.md`
 
 ## License
 

@@ -148,6 +148,23 @@ Reasoning:
 
 ## Execution Model
 
+### Decision: workflows should harden from agentic steps into code
+
+Runyard should treat workflows as processes that can be simplified and compiled over time.
+
+Reasoning:
+
+- Agents already discover deterministic process while working: shell snippets, setup commands, verification scripts, deploy checks, and recovery routines.
+- Those discoveries should become durable workflow assets instead of staying buried in logs.
+- The process order is to question requirements, delete unnecessary steps, simplify, accelerate, and only then automate.
+- In this product, automation means moving from agent judgment to machine-checkable scripts/code when a step has stable inputs, outputs, and evals.
+
+Expectation:
+
+- Workflow steps can declare a hardening level from raw agentic to automated machine step.
+- Nightly optimizer runs replay workflows, diff outputs, measure variance/failure/cost, and propose deletions, splits, scripts, or code replacements.
+- Creative or ambiguous steps may remain agentic; engineering plumbing should harden aggressively.
+
 ### Decision: Polling runners
 
 Runners register and poll for matching queued runs.

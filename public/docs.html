@@ -34,6 +34,7 @@
           <a href="#cli">CLI</a>
           <a href="#mcp">MCP</a>
           <a href="#runners">Runner pool</a>
+          <a href="#hardening">Workflow hardening</a>
           <a href="#telegram">Telegram</a>
           <a href="#env">Environment variables</a>
           <a href="#security">Security model</a>
@@ -161,6 +162,20 @@ smithers-hub-runner</pre>
         <pre class="json">IMPROVE_ALLOWED_REPO_ROOTS='["/srv/repos"]'
 IMPROVE_REPO_MAP='{"website":"/srv/repos/website"}'
 smithers-hub run improve --where remote --input '{"target":"pricing page","repo":"website"}'</pre>
+
+        <h2 id="hardening">Workflow hardening</h2>
+        <p>Runyard is designed to move workflows from agentic exploration toward deterministic code. The operating philosophy follows the process order: question requirements, delete unnecessary steps, simplify, accelerate, then automate. In Runyard terms, automation means moving from agent judgment to machine-checkable scripts and code where the work has become repeatable.</p>
+        <p>Agents often write shell scripts, one-off commands, data extractors, and verification snippets while completing work. Runyard treats those as process discoveries. The long-term goal is to extract that knowledge, turn it into named workflow steps, and replace agent discretion with tested code when the output contract is stable.</p>
+        <ul>
+          <li><strong>L0 raw agentic.</strong> A prompt asks an agent to figure the work out. High variance is expected.</li>
+          <li><strong>L1 constrained agentic.</strong> Inputs, outputs, and evals are explicit, but the step is still mostly agent judgment.</li>
+          <li><strong>L2 checkpointed.</strong> The step writes a resumable checkpoint and recovery instructions.</li>
+          <li><strong>L3 script-backed.</strong> The common path is a script; an agent supervises exceptions.</li>
+          <li><strong>L4 deterministic code.</strong> The step is code with tests and typed inputs/outputs.</li>
+          <li><strong>L5 automated machine step.</strong> The step runs without an agent unless anomaly detection asks for one.</li>
+        </ul>
+        <p>The nightly optimizer loop should replay representative workflow fixtures, diff outputs, measure variance/failure/cost, and open improvements that delete, split, simplify, or harden steps. Creative and taste-heavy work may remain agentic; engineering plumbing should harden aggressively.</p>
+        <p>See <code>specs/workflow-hardening-and-optimizer.md</code> for the durable product spec.</p>
 
         <h2 id="security">Security model</h2>
         <ul>

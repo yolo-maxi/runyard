@@ -14,6 +14,7 @@ This file captures user-facing acceptance criteria and manual tests for Runyard.
 - `https://hub.repo.box/openapi.json` describes the HTTP API.
 - `smithers-hub.service` is active on repo.box.
 - Higher-capacity runners are active on worker machines, not on the serving box.
+- The landing page, docs, README, and specs explain workflow hardening: agentic workflows should progressively split into smaller steps, extract repeatable scripts, and harden into deterministic code where appropriate.
 
 ### Authentication
 

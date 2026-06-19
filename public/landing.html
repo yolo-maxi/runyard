@@ -144,6 +144,29 @@ smithers-hub-runner</pre>
           </div>
         </div>
       </section>
+      <section class="band">
+        <div class="band-inner">
+          <div class="toolbar"><h1>Workflow hardening</h1></div>
+          <p class="muted">Runyard treats agent workflows as processes to improve, not just prompts to rerun. Inspired by the process order “question, delete, simplify, accelerate, automate,” workflows start agentic, then harden into smaller scripted and coded steps wherever outcomes become repeatable.</p>
+          <div class="grid">
+            <article class="item">
+              <span class="status-dot status-dot-info" aria-hidden="true"></span>
+              <h3>Discover with agents</h3>
+              <p class="muted">Early runs keep agents close to the work so they can explore, write throwaway scripts, learn edge cases, and produce the first useful deliverables.</p>
+            </article>
+            <article class="item">
+              <span class="status-dot status-dot-warn" aria-hidden="true"></span>
+              <h3>Extract the repeatable bits</h3>
+              <p class="muted">Runyard keeps the scripts, commands, evals, and artifacts agents create, then turns stable patterns into explicit workflow steps with inputs, outputs, and checks.</p>
+            </article>
+            <article class="item">
+              <span class="status-dot status-dot-ok" aria-hidden="true"></span>
+              <h3>Compile toward code</h3>
+              <p class="muted">Nightly optimizer runs replay workflows, diff outcomes, delete unnecessary steps, and propose deterministic code paths for the parts that no longer need agent judgment.</p>
+            </article>
+          </div>
+        </div>
+      </section>
       <section class="band band-foot">
         <div class="band-inner">
           <p class="muted">Runyard is the public name for the project formerly called Smithers Hub. Package, bin, and env names keep the <code>smithers-hub</code> prefix so existing deployments and tokens keep working.</p>

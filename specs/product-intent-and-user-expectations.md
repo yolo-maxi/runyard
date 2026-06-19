@@ -10,6 +10,8 @@ Runyard is a private, self-hosted capability operating system for company agents
 
 The product exists to centralize the work that usually gets scattered across local agent sessions: available workflows, team skills, agent roles, knowledge, run history, logs, artifacts, and human approvals. The Hub should make it obvious what agents can do, what inputs each action needs, where work ran, what happened, what was produced, and what still needs a human decision.
 
+Runyard should also improve the workflows themselves. Agents are expected to discover repeatable process while they work: shell scripts, command sequences, checks, parsers, deployment gates, and recovery routines. The product should preserve that knowledge and progressively harden workflows from agentic steps into smaller scripted and coded steps where outcomes become repeatable.
+
 The core mental model is:
 
 - Agents consume capabilities.
@@ -17,6 +19,7 @@ The core mental model is:
 - Workflows execute through local or remote runners.
 - Humans supervise runs, artifacts, and approvals.
 - The Hub keeps the durable company record.
+- The optimizer turns repeated agent behavior into deterministic workflow infrastructure.
 
 The product is intentionally not a public SaaS in this version. It is productized for private installation: each company deploys its own Hub on its own domain and controls access tokens on its own machine.
 
@@ -55,6 +58,8 @@ Expected behavior:
 - A human can create access tokens for local agents, runners, and CLI usage.
 
 The Web Hub should feel like an internal operations console, not a marketing-first workflow builder.
+
+Humans should be able to see which workflow steps are still agentic and which have hardened into scripts or code. This makes variance, recovery risk, and determinism visible instead of hiding them behind a single "run" button.
 
 ### Developers and Operators
 
@@ -164,3 +169,4 @@ The product is behaving correctly when:
 - Approvals can be resolved through shared Hub channels.
 - Skills, agents, and knowledge are centrally editable.
 - Run history remains visible after execution is complete.
+- Workflow hardening progress is visible: repeated agent behavior can be extracted, tested, and promoted into deterministic scripts/code over time.
