@@ -663,17 +663,51 @@ export function getRun(runId) {
   return normalizeRun(row);
 }
 
-export function listRuns({ status = "", limit = 100 } = {}) {
-  const rows = status
-    ? all("SELECT * FROM runs WHERE status = ? ORDER BY created_at DESC LIMIT ?", [status, limit])
-    : all("SELECT * FROM runs ORDER BY created_at DESC LIMIT ?", [limit]);
+// Build the WHERE clause shared by listRuns / countRuns so search/time/cursor
+// filters stay aligned. Returns SQL fragment + bound positional params. Cursor
+// is the createdAt of the last row from the previous page (exclusive bound).
+function buildRunFilterClause({ status = "", q = "", since = "", until = "", cursor = "" } = {}) {
+  const where = [];
+  const params = [];
+  if (status) {
+    where.push("status = ?");
+    params.push(status);
+  }
+  if (since) {
+    where.push("created_at >= ?");
+    params.push(since);
+  }
+  if (until) {
+    where.push("created_at <= ?");
+    params.push(until);
+  }
+  if (cursor) {
+    where.push("created_at < ?");
+    params.push(cursor);
+  }
+  if (q) {
+    // Plain substring match across the columns operators search by. We strip
+    // `%`/`_` to avoid accidental wildcard injection — typing `%` should not
+    // change the meaning of the search.
+    where.push("(capability_name LIKE ? OR capability_slug LIKE ? OR id LIKE ? OR current_step LIKE ? OR COALESCE(error,'') LIKE ?)");
+    const like = `%${q.replace(/[%_]/g, "")}%`;
+    params.push(like, like, like, like, like);
+  }
+  const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  return { clause, params };
+}
+
+export function listRuns({ status = "", limit = 100, q = "", since = "", until = "", cursor = "" } = {}) {
+  const { clause, params } = buildRunFilterClause({ status, q, since, until, cursor });
+  const sql = `SELECT * FROM runs ${clause} ORDER BY created_at DESC LIMIT ?`;
+  const rows = all(sql, [...params, limit]);
   return rows.map(normalizeRun);
 }
 
-export function countRuns({ status = "" } = {}) {
-  return status
-    ? one("SELECT COUNT(*) AS count FROM runs WHERE status = ?", [status]).count
-    : one("SELECT COUNT(*) AS count FROM runs").count;
+export function countRuns({ status = "", q = "", since = "", until = "" } = {}) {
+  const { clause, params } = buildRunFilterClause({ status, q, since, until });
+  const sql = `SELECT COUNT(*) AS count FROM runs ${clause}`;
+  return one(sql, params).count;
 }
 
 // Token id that owns a run, via the runner it was assigned to. Null if unassigned.

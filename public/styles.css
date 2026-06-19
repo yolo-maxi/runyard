@@ -166,6 +166,69 @@ code {
   white-space: nowrap;
 }
 
+/* ---- Environment chip (which hub am I on?) ----
+ * Sourced from /api/setup so the header always tells operators whether they
+ * are pointed at prod, staging, dev, or local. Color encodes severity:
+ * prod = green ink, staging = amber, dev = blue, local = grey.
+ */
+.env-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 8px 2px 6px;
+  background: var(--panel);
+  white-space: nowrap;
+  max-width: 36ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.env-chip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex: 0 0 auto;
+}
+
+.env-chip-host {
+  font-weight: 600;
+}
+
+.env-chip-tag {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+.env-chip[data-env="prod"] { border-color: #bbf7d0; background: #f0fdf4; }
+.env-chip[data-env="prod"] .env-chip-dot { background: var(--ok); }
+.env-chip[data-env="prod"] .env-chip-tag { color: var(--ok); }
+
+.env-chip[data-env="staging"] { border-color: #fde68a; background: #fffbeb; }
+.env-chip[data-env="staging"] .env-chip-dot { background: var(--warn); }
+.env-chip[data-env="staging"] .env-chip-tag { color: var(--warn); }
+
+.env-chip[data-env="dev"] { border-color: #bfdbfe; background: #eff6ff; }
+.env-chip[data-env="dev"] .env-chip-dot { background: #2563eb; }
+.env-chip[data-env="dev"] .env-chip-tag { color: #2563eb; }
+
+.env-chip[data-env="local"] { border-style: dashed; }
+.env-chip[data-env="local"] .env-chip-dot { background: var(--muted); }
+
+.env-chip-loading {
+  opacity: 0.6;
+}
+
 .nav {
   display: flex;
   align-items: center;
@@ -2296,6 +2359,18 @@ details.advanced[open] summary {
   background: #f1f5f9;
 }
 
+/* Emphasised events (errors, approvals, obstruction analysis) stand out in
+ * the now-default-open full timeline so investigators don't lose them in the
+ * heartbeat stream. */
+.run-log-event.run-log-emphasised {
+  font-weight: 600;
+  box-shadow: inset 2px 0 0 var(--danger);
+}
+
+.run-log-event.run-log-emphasised.run-log-cat-approval {
+  box-shadow: inset 2px 0 0 var(--warn);
+}
+
 @media (max-width: 720px) {
   .run-log-list li.run-log-event {
     grid-template-columns: 1fr;
@@ -2475,6 +2550,237 @@ details.advanced[open] summary {
     padding-top: 14px;
   }
 }
+
+/* ---- Primary action bar (Runs / Dashboard, sticky at top of view) ----
+ * Replaces the conditional next-best-action card. Always renders three CTAs
+ * (Trigger run / Open last failed run / View runners) so a primary path is
+ * visible above the fold in every dashboard state (empty, healthy, failing).
+ * Buttons are disabled-but-present when state would otherwise hide them.
+ */
+.primary-action-bar {
+  position: sticky;
+  top: 58px;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  margin: 0 0 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 6px 20px rgba(15, 25, 35, 0.06);
+}
+
+.primary-action-bar[data-tone="danger"] {
+  border-left: 4px solid var(--danger);
+  background: #fef2f2;
+}
+
+.primary-action-bar[data-tone="warn"] {
+  border-left: 4px solid var(--warn);
+  background: #fffbeb;
+}
+
+.primary-action-bar[data-tone="ok"] {
+  border-left: 4px solid var(--ok);
+  background: #f0fdf4;
+}
+
+.primary-action-bar[data-tone="primary"] {
+  border-left: 4px solid var(--brand);
+}
+
+.primary-action-headline {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--ink);
+  margin-right: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.primary-action-headline small {
+  font-weight: 400;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.primary-action-bar .primary-action-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.primary-action-bar a.button,
+.primary-action-bar button {
+  min-height: 32px;
+}
+
+.primary-action-bar a.button[aria-disabled="true"] {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+/* ---- Failure banner above the run grid ---- */
+.failure-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid #fecaca;
+  border-left: 4px solid var(--danger);
+  background: #fef2f2;
+  border-radius: 10px;
+  margin: 0 0 16px;
+}
+
+.failure-banner-body {
+  flex: 1 1 320px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.failure-banner-title {
+  font-weight: 700;
+  color: var(--danger);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.failure-banner-step {
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  background: rgba(220, 38, 38, 0.08);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+.failure-banner-cause {
+  color: var(--ink);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.failure-banner-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* ---- Per-run-card failure detail (step + cause snippet + timeline link) ---- */
+.run-card-failure {
+  border-top: 1px dashed #fecaca;
+  margin-top: 8px;
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.run-card-failure-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: baseline;
+}
+
+.run-card-failure-step {
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 11px;
+  background: rgba(220, 38, 38, 0.08);
+  color: var(--danger);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+.run-card-failure-cause {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.run-card-failure-link {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* ---- Runs filter bar (Home: search + status + time range) ---- */
+.runs-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  margin: 0 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.runs-filter-bar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.runs-filter-bar input[type="search"] {
+  min-width: 220px;
+  padding: 6px 10px;
+}
+
+.runs-filter-bar select {
+  padding: 6px 10px;
+}
+
+.runs-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.runs-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--soft);
+  border: 1px solid var(--line);
+}
+
+.runs-filter-chip button {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 0 0 0 2px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.runs-pagination {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 12px 0;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.runs-pagination .muted { margin: 0; }
 
 /* ---- Next-best-action (Home hero card) ---- */
 .nba-card {

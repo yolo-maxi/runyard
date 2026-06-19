@@ -181,55 +181,86 @@ function onboardingCard() {
   </section>`;
 }
 
-// --- Next-best-action card ---------------------------------------------------
-// Picks the single highest-signal next step a fresh tenant should take, based
-// on current state. Returned HTML is injected at the top of the Home view so
-// the empty-zero metric tiles stop being the first thing a new user sees.
-function nextBestActionCard({ runners = [], capabilities = [], stats = {}, failed24h = 0 }) {
-  const offline = runners.filter((r) => !r.online).length;
-  const onlineRunners = runners.length - offline;
-  // Priority: connect a runner → publish a workflow → investigate failures →
-  // celebrate (no action). The button always deep-links to the action surface.
-  let title;
-  let body;
-  let actionHref;
-  let actionLabel;
+// --- Primary action bar ------------------------------------------------------
+// Pinned at the top of the dashboard in every state (empty, healthy, failing).
+// Three CTAs that adapt label/route but never disappear:
+//   - Trigger run        → workflows (or onboarding if zero workflows)
+//   - Open last failed   → last failed run detail (disabled-but-visible if none)
+//   - View runners       → runners admin (or onboarding if zero runners)
+// Replaces the older conditional "next best action" card so the operator
+// always sees a primary path above the fold.
+function primaryActionBar({ runners = [], capabilities = [], lastFailedRun = null, failed24h = 0 } = {}) {
+  const offlineRunners = runners.filter((r) => !r.online).length;
+  const onlineRunners = runners.length - offlineRunners;
   let tone = "primary";
+  let headline = "Ready to run";
+  let sub = "Everything is wired up — trigger a run, or check on the fleet.";
   if (!runners.length) {
-    title = "Connect your first runner";
-    body = "A runner executes workflows on a machine you control. Set one up in under a minute and we'll auto-detect it here.";
-    actionHref = "#onboarding";
-    actionLabel = "Start onboarding";
-  } else if (!capabilities.length) {
-    title = "Publish your first workflow";
-    body = "Workflows are the actions agents and humans can trigger. Start from a template or paste your own.";
-    actionHref = "#workflows";
-    actionLabel = "Browse templates";
-  } else if (failed24h > 0) {
-    title = `Investigate ${failed24h} failed run${failed24h === 1 ? "" : "s"}`;
-    body = "Recent runs ended in failure. Open them to read the diagnostic timeline and re-run.";
-    actionHref = "#runs";
-    actionLabel = "Open failed runs";
-    tone = "danger";
-  } else if (onlineRunners === 0) {
-    title = "All runners are offline";
-    body = "No runner has heartbeated recently. Start a runner process to begin executing queued work.";
-    actionHref = "#runners";
-    actionLabel = "View runners";
     tone = "warn";
-  } else {
-    title = "Everything looks healthy";
-    body = "Your runners are online, workflows are published, and no recent failures. Trigger a run to keep the pace.";
-    actionHref = "#workflows";
-    actionLabel = "Run a workflow";
-    tone = "ok";
+    headline = "Connect your first runner";
+    sub = "A runner executes workflows on a machine you control. Without one, queued work can't move.";
+  } else if (!capabilities.length) {
+    tone = "primary";
+    headline = "Publish your first workflow";
+    sub = "Workflows are the actions agents and humans can trigger. Start from a template.";
+  } else if (failed24h > 0) {
+    tone = "danger";
+    headline = `${failed24h} failed run${failed24h === 1 ? "" : "s"} in the last 24h`;
+    sub = "Open the most recent failure to read the diagnostic timeline and re-run.";
+  } else if (onlineRunners === 0) {
+    tone = "warn";
+    headline = "All runners are offline";
+    sub = "No runner has heartbeated recently. Start a runner process to begin executing queued work.";
   }
-  return `<section class="nba-card nba-${esc(tone)}" role="region" aria-label="Next best action">
-    <div class="nba-body">
-      <h2 class="nba-title">${esc(title)}</h2>
-      <p class="nba-text">${esc(body)}</p>
+  const triggerHref = capabilities.length ? "#workflows" : "#onboarding";
+  const triggerLabel = capabilities.length ? "Trigger run" : "Publish a workflow";
+  const runnersHref = runners.length ? "#runners" : "#onboarding";
+  const runnersLabel = runners.length ? `View runners${offlineRunners ? ` (${offlineRunners} offline)` : ""}` : "Connect a runner";
+  // "Open last failed run" is the disabled-but-visible CTA when nothing has
+  // failed yet — important for the acceptance check that the bar never
+  // collapses on healthy state.
+  const failedHref = lastFailedRun ? deepLinks.run(lastFailedRun.id) : "#runs";
+  const failedLabel = lastFailedRun
+    ? `Open last failed run${failed24h > 0 ? ` · ${failed24h}` : ""}`
+    : "No failed runs";
+  const failedDisabled = lastFailedRun ? "" : ' aria-disabled="true" tabindex="-1"';
+  return `<section class="primary-action-bar" data-tone="${esc(tone)}" role="region" aria-label="Primary actions">
+    <div class="primary-action-headline">
+      <span>${esc(headline)}</span>
+      <small>${esc(sub)}</small>
     </div>
-    <div class="nba-actions"><a class="button primary nba-cta" href="${esc(actionHref)}">${esc(actionLabel)}</a></div>
+    <div class="primary-action-actions">
+      <a class="button primary" href="${esc(triggerHref)}" id="pab-trigger">${esc(triggerLabel)}</a>
+      <a class="button${lastFailedRun ? " danger" : ""}" href="${esc(failedHref)}"${failedDisabled}>${esc(failedLabel)}</a>
+      <a class="button" href="${esc(runnersHref)}">${esc(runnersLabel)}</a>
+    </div>
+  </section>`;
+}
+
+// --- Failure banner ----------------------------------------------------------
+// Renders directly above the run grid when the dashboard has a recent failed
+// run. Surfaces the failing step name, exit category, and first ~140 chars of
+// the root cause with a deep link straight to the run's timeline anchor — so
+// the operator never has to click into a run just to learn "what broke and
+// where". Empty when there are no failures.
+function failureBanner(lastFailedRun) {
+  if (!lastFailedRun) return "";
+  const step = lastFailedRun.failedStep || lastFailedRun.currentStep || "";
+  const cause = truncate(lastFailedRun.reasonHint || lastFailedRun.error || "", 140);
+  const failureType = lastFailedRun.failureType || "";
+  return `<section class="failure-banner" role="alert" aria-label="Most recent failure">
+    <div class="failure-banner-body">
+      <div class="failure-banner-title">
+        <span>Last failure</span>
+        ${step ? `<span class="failure-banner-step">step ${esc(step)}</span>` : ""}
+        ${failureType ? `<code class="diagnostics-event-type">${esc(failureType)}</code>` : ""}
+      </div>
+      ${cause ? `<p class="failure-banner-cause">${esc(cause)}</p>` : `<p class="failure-banner-cause muted">No root-cause snippet yet — open the timeline to read the failing events.</p>`}
+    </div>
+    <div class="failure-banner-actions">
+      <a class="button danger" href="${esc(deepLinks.runLogs(lastFailedRun.id))}">Open timeline →</a>
+      <a class="button" href="${esc(deepLinks.run(lastFailedRun.id))}">Open run</a>
+    </div>
   </section>`;
 }
 
@@ -601,10 +632,37 @@ function showAuthFallback() {
   $("#app").classList.add("hidden");
 }
 
+// --- Header env chip --------------------------------------------------------
+// Sourced from the unauthenticated /api/setup endpoint so operators can tell
+// at a glance which hub they're pointed at. We re-render the page title too
+// (`<host> · prod — Runyard`) so the browser tab disambiguates between hubs.
+async function refreshEnvChip() {
+  const chip = document.getElementById("env-chip");
+  if (!chip) return;
+  let setup = {};
+  try {
+    setup = await api("/api/setup");
+  } catch {
+    chip.classList.remove("env-chip-loading");
+    chip.querySelector(".env-chip-host").textContent = "unknown";
+    chip.querySelector(".env-chip-tag").textContent = "";
+    return;
+  }
+  const env = String(setup.environment || "local").toLowerCase();
+  const host = setup.hostname || (setup.baseUrl ? new URL(setup.baseUrl).hostname : "local");
+  chip.classList.remove("env-chip-loading");
+  chip.dataset.env = env;
+  chip.querySelector(".env-chip-host").textContent = host;
+  chip.querySelector(".env-chip-tag").textContent = env;
+  chip.title = `Connected to ${host} (${env})`;
+  document.title = `${host} · ${env} — ${setup.instanceName || "Runyard"}`;
+}
+
 async function bootAuthenticated(data) {
   state.me = data.token;
   $("#login").classList.add("hidden");
   $("#app").classList.remove("hidden");
+  refreshEnvChip();
   state.view = location.hash.slice(1) || "home";
   // Bind every nav button (sidebar + admin dropdown) that declares a view.
   document.querySelectorAll("[data-view]").forEach((button) =>
@@ -1032,6 +1090,20 @@ function runCard(run, artifacts = []) {
   const reasonHintHtml = reasonHint
     ? `<p class="run-reason-hint" title="${esc(reasonHint)}">⚠ <span>${esc(truncate(reasonHint, 140))}</span></p>`
     : "";
+  // For terminally-failed runs, surface the failing step + cause snippet on
+  // the card itself so the operator doesn't have to navigate to learn what
+  // went wrong. The "Open timeline" link jumps to the run-log details so they
+  // land directly on the event that explains it.
+  const failureBlockHtml = (run.status === "failed" || run.status === "error") && (reasonHint || run.failedStep)
+    ? `<div class="run-card-failure" aria-label="Failure detail">
+        <div class="run-card-failure-row">
+          ${run.failedStep ? `<span class="run-card-failure-step" title="Failing step">step ${esc(run.failedStep)}</span>` : ""}
+          ${run.failureType ? `<code class="diagnostics-event-type">${esc(run.failureType)}</code>` : ""}
+        </div>
+        ${reasonHint ? `<div class="run-card-failure-cause">${esc(truncate(reasonHint, 140))}</div>` : ""}
+        <a class="run-card-failure-link" href="${esc(deepLinks.runLogs(run.id))}">Open timeline →</a>
+      </div>`
+    : "";
   // Queue banner — runs in `queued` state are waiting for a runner slot.
   // The position chip ("#3 of 7") lands when the API ships queue metadata;
   // we degrade to the plain banner when it isn't available (older clients).
@@ -1051,6 +1123,7 @@ function runCard(run, artifacts = []) {
     ${queueBannerHtml}
     ${chipsHtml}
     ${reasonHintHtml}
+    ${failureBlockHtml}
     <p class="muted run-meta">
       <span class="run-step">${esc(run.currentStep || (active ? "starting…" : "—"))}</span>
       <span class="run-timing">${esc(created)}${durStr ? ` · ${esc(durStr)}` : ""}</span>
@@ -1147,33 +1220,165 @@ async function renderOnboarding() {
 }
 
 // --- Home: active runs up top, completed below ------------------------------
+// Decode the current home view's filter state from the URL hash query string.
+// Recognised params: q (text), status, range ("24h" | "7d" | "30d" | "1h"),
+// cursor. URL is the source of truth so deep-linked filter views are
+// shareable. `range` is the preset key — we expand it to an ISO `since` only
+// at the API call site so the URL stays human-readable.
+function homeFiltersFromRoute() {
+  const params = deepLinks.parse().params;
+  return {
+    q: params.get("q") || "",
+    status: params.get("status") || "",
+    range: params.get("range") || "",
+    cursor: params.get("cursor") || ""
+  };
+}
+
+const RUN_STATUS_OPTIONS = [
+  { value: "", label: "All statuses" },
+  { value: "queued", label: "Queued" },
+  { value: "running", label: "Running" },
+  { value: "succeeded", label: "Succeeded" },
+  { value: "failed", label: "Failed" },
+  { value: "cancelled", label: "Cancelled" },
+  { value: "waiting_approval", label: "Waiting approval" }
+];
+
+const TIME_RANGE_OPTIONS = [
+  { value: "", label: "Any time" },
+  { value: "1h", label: "Last hour" },
+  { value: "24h", label: "Last 24h" },
+  { value: "7d", label: "Last 7 days" },
+  { value: "30d", label: "Last 30 days" }
+];
+
+function timeRangeToSinceISO(value) {
+  if (!value) return "";
+  const m = /^(\d+)([hd])$/.exec(value);
+  if (!m) return "";
+  const n = Number(m[1]);
+  const unit = m[2] === "h" ? 3600_000 : 86_400_000;
+  return new Date(Date.now() - n * unit).toISOString();
+}
+
+function filtersToQuery(filters) {
+  const params = new URLSearchParams();
+  if (filters.q) params.set("q", filters.q);
+  if (filters.status) params.set("status", filters.status);
+  if (filters.range) params.set("range", filters.range);
+  if (filters.cursor) params.set("cursor", filters.cursor);
+  return params.toString();
+}
+
+function setHomeFilters(updates) {
+  const current = homeFiltersFromRoute();
+  const next = { ...current, ...updates };
+  // Any filter change resets pagination.
+  if (Object.keys(updates).some((k) => k !== "cursor")) next.cursor = "";
+  const query = filtersToQuery(next);
+  state.view = `runs${query ? `?${query}` : ""}`;
+  location.hash = state.view;
+  render().catch(showError);
+}
+
+function renderHomeFilterBar(filters) {
+  const statusOptions = RUN_STATUS_OPTIONS.map(
+    (opt) => `<option value="${esc(opt.value)}"${opt.value === filters.status ? " selected" : ""}>${esc(opt.label)}</option>`
+  ).join("");
+  const rangeOptions = TIME_RANGE_OPTIONS.map(
+    (opt) => `<option value="${esc(opt.value)}"${opt.value === filters.range ? " selected" : ""}>${esc(opt.label)}</option>`
+  ).join("");
+  const rangeLabel = (TIME_RANGE_OPTIONS.find((o) => o.value === filters.range) || {}).label || filters.range;
+  const activeChips = [];
+  if (filters.q) activeChips.push({ kind: "q", label: `“${truncate(filters.q, 24)}”` });
+  if (filters.status) activeChips.push({ kind: "status", label: `status: ${filters.status}` });
+  if (filters.range) activeChips.push({ kind: "range", label: rangeLabel });
+  const chipsHtml = activeChips.length
+    ? `<div class="runs-filter-chips" aria-label="Active filters">${activeChips
+      .map((c) => `<span class="runs-filter-chip" data-filter-chip="${esc(c.kind)}">${esc(c.label)} <button type="button" aria-label="Clear ${esc(c.kind)} filter" data-clear-filter="${esc(c.kind)}">×</button></span>`)
+      .join("")}</div>`
+    : "";
+  return `<form class="runs-filter-bar" id="runs-filter-bar" role="search" aria-label="Filter runs">
+    <label><span class="muted">Search</span>
+      <input type="search" id="runs-filter-q" name="q" value="${esc(filters.q)}" placeholder="workflow, step, error, run id" autocomplete="off" />
+    </label>
+    <label><span class="muted">Status</span>
+      <select id="runs-filter-status" name="status">${statusOptions}</select>
+    </label>
+    <label><span class="muted">Time</span>
+      <select id="runs-filter-range" name="range">${rangeOptions}</select>
+    </label>
+    <button type="submit" class="button">Apply</button>
+    ${activeChips.length ? `<button type="button" class="button" id="runs-filter-clear">Clear filters</button>` : ""}
+    ${chipsHtml}
+  </form>`;
+}
+
+function bindHomeFilterBar() {
+  const form = document.getElementById("runs-filter-bar");
+  if (!form) return;
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const q = (document.getElementById("runs-filter-q")?.value || "").trim();
+    const status = document.getElementById("runs-filter-status")?.value || "";
+    const range = document.getElementById("runs-filter-range")?.value || "";
+    setHomeFilters({ q, status, range });
+  });
+  document.getElementById("runs-filter-clear")?.addEventListener("click", () => setHomeFilters({ q: "", status: "", range: "", cursor: "" }));
+  document.querySelectorAll("[data-clear-filter]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const kind = btn.dataset.clearFilter;
+      setHomeFilters({ [kind]: "" });
+    });
+  });
+}
+
 async function renderHome() {
+  const filters = homeFiltersFromRoute();
+  const filtersActive = Boolean(filters.q || filters.status || filters.range || filters.cursor);
+  const runsLimit = filtersActive ? 30 : 100;
+  const runsQuery = new URLSearchParams();
+  runsQuery.set("limit", String(runsLimit));
+  if (filters.q) runsQuery.set("q", filters.q);
+  if (filters.status) runsQuery.set("status", filters.status);
+  // Resolve the range preset to an ISO `since` only at the API boundary so
+  // the URL stays human-readable (e.g. ?range=24h instead of an ISO blob).
+  const sinceIso = timeRangeToSinceISO(filters.range);
+  if (sinceIso) runsQuery.set("since", sinceIso);
+  if (filters.cursor) runsQuery.set("cursor", filters.cursor);
   const [runsData, dash, runnersData, capabilitiesData] = await Promise.all([
-    api("/api/runs?limit=100"),
+    api(`/api/runs?${runsQuery.toString()}`),
     api("/api/dashboard").catch(() => ({ stats: {}, pendingApprovals: [] })),
     api("/api/runners").catch(() => ({ runners: [] })),
     api("/api/capabilities").catch(() => ({ capabilities: [] }))
   ]);
   const runs = runsData.runs || [];
+  const totalMatching = typeof runsData.total === "number" ? runsData.total : runs.length;
+  const nextCursor = runsData.nextCursor || "";
   const runners = runnersData.runners || [];
   const capabilities = capabilitiesData.capabilities || [];
   // First-run gate: a fresh tenant with no runners and no runs is redirected
   // into the guided onboarding wizard once per session. We honor an explicit
   // hash so dismissing the wizard ("Skip" → location.hash="#runs") sticks.
-  if (!runners.length && !runs.length && !sessionStorage.getItem("onboardingSkipped") && location.hash !== "#runs" && location.hash !== "#home") {
+  if (!runners.length && !runs.length && !filtersActive && !sessionStorage.getItem("onboardingSkipped") && location.hash !== "#runs" && location.hash !== "#home") {
     setView("onboarding");
     return;
   }
   const active = runs.filter(isActiveRun);
   const completed = runs.filter((r) => !isActiveRun(r));
-  // Compute the failed-in-24h count once so both the NBA card and sidebar
+  // Compute the failed-in-24h count once so both the action bar and sidebar
   // badge agree on what "needs attention".
   const cutoff = Date.now() - 24 * 3600 * 1000;
-  const failed24h = runs.filter((r) => {
+  const recentlyFailed = runs.filter((r) => {
     if (!["failed", "error"].includes(r.status)) return false;
     const t = Date.parse(r.completedAt || r.createdAt || "");
     return Number.isNaN(t) ? true : t >= cutoff;
-  }).length;
+  });
+  const failed24h = recentlyFailed.length;
+  const lastFailedRun = recentlyFailed[0]
+    || runs.find((r) => ["failed", "error"].includes(r.status))
+    || null;
   // Best-effort artifact bucket — if the call fails we just skip the preview.
   const artifactsByRun = new Map();
   try {
@@ -1188,16 +1393,27 @@ async function renderHome() {
   const stats = dash.stats || {};
   const pool = dash.pool || null;
   const pending = dash.pendingApprovals || [];
-  const gettingStarted = (runs.length === 0) && !active.length;
+  const gettingStarted = !filtersActive && (runs.length === 0) && !active.length;
   // Queue + runner pool stats appear inline with the existing home stat strip
   // so the operator sees backlog and capacity without leaving the page.
   const queued = stats.queuedRuns != null ? stats.queuedRuns : runs.filter((r) => r.status === "queued").length;
   const capacityLabel = pool && pool.totalCapacity
     ? `${pool.totalActive}/${pool.totalCapacity} slots`
     : `${stats.runnerActiveSlots ?? 0}/${stats.runnerCapacity ?? 0} slots`;
+  const paginationHtml = filtersActive
+    ? `<nav class="runs-pagination" aria-label="Run history pagination">
+        <p class="muted">${esc(`Showing ${runs.length} of ${totalMatching} matching run${totalMatching === 1 ? "" : "s"}`)}</p>
+        <div class="toolbar-actions">
+          ${filters.cursor ? `<a class="button" href="#${esc(`runs?${filtersToQuery({ ...filters, cursor: "" })}`)}">First page</a>` : ""}
+          ${nextCursor ? `<a class="button primary" href="#${esc(`runs?${filtersToQuery({ ...filters, cursor: nextCursor })}`)}">Next page →</a>` : ""}
+        </div>
+      </nav>`
+    : "";
   content.innerHTML = `${toolbar("Runs", `<button id="home-new-run">Run a workflow</button>`, deepLinks.home())}
+    ${primaryActionBar({ runners, capabilities, lastFailedRun, failed24h })}
+    ${failureBanner(lastFailedRun)}
     <p class="muted deep-link-hint">Every page, run, workflow, and artifact has a stable URL — click 🔗 to copy a shareable link.</p>
-    ${nextBestActionCard({ runners, capabilities, stats, failed24h })}
+    ${renderHomeFilterBar(filters)}
     ${gettingStarted ? empty("No runs yet.", "Pick a workflow and run it, or start a runner to execute work. Head to Workflows to begin.") : ""}
     ${renderRunnerPoolSummary(pool)}
     <section class="stats home-stats">
@@ -1211,14 +1427,20 @@ async function renderHome() {
         "Pending approvals": pending.length
       }).map(([label, value]) => `<div class="stat"><strong>${esc(String(value))}</strong><span class="muted">${esc(label)}</span></div>`).join("")}
     </section>
-    <h2 class="section-heading">Active <span class="muted">${active.length} live</span></h2>
-    ${active.length
-      ? `<section class="run-grid live">${active.map((run) => runCard(run, artifactsByRun.get(run.id) || [])).join("")}</section>`
-      : `<p class="muted run-empty">No active runs right now. Start one from <a href="${esc(deepLinks.workflows())}">Workflows</a>.</p>`}
-    <h2 class="section-heading">Recent &amp; completed</h2>
-    ${completed.length
-      ? `<section class="run-grid">${completed.slice(0, 30).map((run) => runCard(run, artifactsByRun.get(run.id) || [])).join("")}</section>`
-      : `<p class="muted">Completed runs and their artifacts will appear here.</p>`}
+    ${filtersActive
+      ? `<h2 class="section-heading">Matching runs <span class="muted">${esc(totalMatching)} total</span></h2>
+         ${runs.length
+           ? `<section class="run-grid">${runs.map((run) => runCard(run, artifactsByRun.get(run.id) || [])).join("")}</section>`
+           : `<p class="muted">No runs match the current filters. <a href="#runs">Clear filters</a> to see everything.</p>`}
+         ${paginationHtml}`
+      : `<h2 class="section-heading">Active <span class="muted">${active.length} live</span></h2>
+         ${active.length
+           ? `<section class="run-grid live">${active.map((run) => runCard(run, artifactsByRun.get(run.id) || [])).join("")}</section>`
+           : `<p class="muted run-empty">No active runs right now. Start one from <a href="${esc(deepLinks.workflows())}">Workflows</a>.</p>`}
+         <h2 class="section-heading">Recent &amp; completed</h2>
+         ${completed.length
+           ? `<section class="run-grid">${completed.slice(0, 30).map((run) => runCard(run, artifactsByRun.get(run.id) || [])).join("")}</section>`
+           : `<p class="muted">Completed runs and their artifacts will appear here.</p>`}`}
     ${pending.length ? `<h2 class="section-heading">Pending approvals</h2>
       <section class="panel">${approvalList(pending)}</section>` : ""}`;
   $("#home-new-run").addEventListener("click", () => setView("workflows"));
@@ -1226,6 +1448,7 @@ async function renderHome() {
   document.querySelectorAll("[data-reject]").forEach((button) => button.addEventListener("click", () => resolveApproval(button.dataset.reject, "reject", { rerender: "none" }).then(() => render().catch(showError))));
   document.querySelectorAll("[data-rerun]").forEach((button) => button.addEventListener("click", () => rerunRun(button.dataset.rerun).catch(showError)));
   bindCopy();
+  bindHomeFilterBar();
   // Keep the per-card progress strip live for any run still in flight. The
   // polling loop is cancelled implicitly when a new view re-renders (it
   // bumps progressPollToken on the next call).
@@ -2272,9 +2495,19 @@ function renderRunLog(run, events, summary) {
     };
   });
   const noisyCount = fullEvents.filter((e) => e.noisy).length;
+  // Visually weight events that explain a failure or pause: errors, approval
+  // gates, and the obstruction-analysis events the retrospective pipeline
+  // emits. These get a `run-log-emphasised` class so they stand out against
+  // the routine info/heartbeat stream — important now that the timeline is
+  // expanded by default.
+  function isEmphasised(entry) {
+    if (entry.severity === "error" || entry.severity === "warn") return true;
+    if (entry.category === "approval") return true;
+    return /(obstruct|retrospect|failure|cancel)/i.test(entry.type);
+  }
   const fullList = fullEvents
     .map(
-      (entry) => `<li class="run-log-event run-log-sev-${esc(entry.severity)} run-log-cat-${esc(entry.category)}${entry.noisy ? " run-log-noisy" : ""}" data-category="${esc(entry.category)}" data-severity="${esc(entry.severity)}" data-node="${esc(entry.node || "")}" data-noisy="${entry.noisy ? "1" : "0"}">
+      (entry) => `<li class="run-log-event run-log-sev-${esc(entry.severity)} run-log-cat-${esc(entry.category)}${entry.noisy ? " run-log-noisy" : ""}${isEmphasised(entry) ? " run-log-emphasised" : ""}" data-category="${esc(entry.category)}" data-severity="${esc(entry.severity)}" data-node="${esc(entry.node || "")}" data-noisy="${entry.noisy ? "1" : "0"}">
         <time>${esc(formatTimestamp(entry.createdAt))}</time>
         <code class="run-log-type">${esc(entry.type)}</code>
         ${entry.node ? `<span class="run-log-node-chip" title="node">${esc(entry.node)}</span>` : ""}
@@ -2286,10 +2519,17 @@ function renderRunLog(run, events, summary) {
     <span class="muted">Search</span>
     <input type="search" id="run-log-search-input" placeholder="filter by text, type, or node" autocomplete="off" />
   </label>`;
+  // We now default to "show everything relevant" — the full timeline is open
+  // and routine events render alongside the rest. A persisted "Hide routine
+  // events" preference (localStorage key `runLogHideRoutine`) lets the user
+  // collapse heartbeat/trace categories without losing the rest of the log.
+  const hideRoutineStored = (() => {
+    try { return localStorage.getItem("runLogHideRoutine") === "1"; } catch { return false; }
+  })();
   const noisyToggle = noisyCount
     ? `<label class="run-log-noisy-toggle">
-        <input type="checkbox" id="run-log-show-noisy" />
-        Show ${esc(noisyCount)} collapsed heartbeat/trace event${noisyCount === 1 ? "" : "s"}
+        <input type="checkbox" id="run-log-hide-routine"${hideRoutineStored ? " checked" : ""} />
+        Hide ${esc(noisyCount)} routine event${noisyCount === 1 ? "" : "s"} <span class="muted">(heartbeats &amp; traces)</span>
       </label>`
     : "";
   return `<div class="run-log-toolbar">
@@ -2313,8 +2553,8 @@ function renderRunLog(run, events, summary) {
       ${highlightsHtml}
     </section>
     <section class="run-log-section" data-section="full">
-      <details class="run-log-full" id="run-log-full">
-        <summary>Full timeline <span class="muted">(${esc(totalEvents)} events; noisy categories collapsed by default)</span></summary>
+      <details class="run-log-full" id="run-log-full" open>
+        <summary>Full timeline <span class="muted">(${esc(totalEvents)} events; error &amp; approval events highlighted)</span></summary>
         ${noisyToggle}
         <ol class="run-log-list run-log-full-list" id="run-log-full-list">${fullList}</ol>
       </details>
@@ -2324,7 +2564,11 @@ function renderRunLog(run, events, summary) {
 function bindRunLogFilters(panel) {
   if (!panel) return;
   const list = panel.querySelector("#run-log-full-list");
-  const noisyToggle = panel.querySelector("#run-log-show-noisy");
+  // The toggle now means "Hide routine events" — semantically inverted from
+  // the previous "Show collapsed" toggle. The default is OFF (show
+  // everything) and the choice persists in localStorage so an operator's
+  // preference sticks across runs.
+  const hideRoutineToggle = panel.querySelector("#run-log-hide-routine");
   const searchInput = panel.querySelector("#run-log-search-input");
   const clearBtn = panel.querySelector("#run-log-clear");
   const filters = { categories: new Set(), severities: new Set(), nodes: new Set() };
@@ -2332,7 +2576,7 @@ function bindRunLogFilters(panel) {
   const fullDetails = panel.querySelector("#run-log-full");
   const reapply = () => {
     if (!list) return;
-    const showNoisy = Boolean(noisyToggle?.checked);
+    const hideRoutine = Boolean(hideRoutineToggle?.checked);
     const query = (searchInput?.value || "").trim().toLowerCase();
     const items = list.querySelectorAll("li.run-log-event");
     items.forEach((li) => {
@@ -2344,7 +2588,9 @@ function bindRunLogFilters(panel) {
       if (filters.categories.size && !filters.categories.has(category)) visible = false;
       if (visible && filters.severities.size && !filters.severities.has(severity)) visible = false;
       if (visible && filters.nodes.size && !filters.nodes.has(node)) visible = false;
-      if (visible && !showNoisy && noisy && !filters.categories.has(category)) visible = false;
+      // Routine (heartbeat/trace) events only hide when the user opts in, and
+      // an explicit category filter still wins so users can drill into them.
+      if (visible && hideRoutine && noisy && !filters.categories.has(category)) visible = false;
       if (visible && query) {
         const blob = (li.textContent || "").toLowerCase();
         if (!blob.includes(query)) visible = false;
@@ -2371,7 +2617,15 @@ function bindRunLogFilters(panel) {
       reapply();
     });
   });
-  noisyToggle?.addEventListener("change", reapply);
+  hideRoutineToggle?.addEventListener("change", () => {
+    try {
+      localStorage.setItem("runLogHideRoutine", hideRoutineToggle.checked ? "1" : "0");
+    } catch {
+      // localStorage may be disabled (private mode, quota); the toggle still
+      // works for the current page load.
+    }
+    reapply();
+  });
   searchInput?.addEventListener("input", reapply);
   clearBtn?.addEventListener("click", () => {
     filters.categories.clear();
@@ -2379,7 +2633,8 @@ function bindRunLogFilters(panel) {
     filters.nodes.clear();
     panel.querySelectorAll(".run-log-chip").forEach((chip) => chip.setAttribute("aria-pressed", "false"));
     if (searchInput) searchInput.value = "";
-    if (noisyToggle) noisyToggle.checked = false;
+    // Clearing filters doesn't override the persisted "hide routine" choice
+    // — that's a separate preference, not a transient filter.
     reapply();
   });
   reapply();
@@ -3040,5 +3295,10 @@ window.addEventListener("hashchange", () => {
   state.view = location.hash.slice(1) || "home";
   render().catch(showError);
 });
+
+// Surface the connected hub/environment chip ASAP — it lives in the topbar
+// which is visible on the login screen too, so operators see which hub they
+// just hit before they even authenticate.
+refreshEnvChip().catch(() => { /* best-effort header decoration */ });
 
 boot();

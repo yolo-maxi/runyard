@@ -1,5 +1,6 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
+import os from "node:os";
 import path from "node:path";
 
 const root = process.env.SMITHERS_HUB_ROOT || process.cwd();
@@ -12,6 +13,39 @@ const DEV_SECRET = "dev-smithers-hub-session-secret";
 const baseUrl = process.env.BASE_URL || `http://127.0.0.1:${process.env.PORT || 43117}`;
 // Treat an explicit production flag or an https base URL as a production deployment.
 const isProduction = process.env.NODE_ENV === "production" || baseUrl.startsWith("https://");
+
+// Operator-visible environment label sourced from config, with a sensible
+// derivation from the base URL when nothing is set. Surfaced in the header so
+// operators bouncing between hubs (.248 vs Hetzner) know which one they're on.
+function deriveEnvironmentLabel() {
+  const explicit = process.env.SMITHERS_HUB_ENVIRONMENT || process.env.SMITHERS_HUB_ENV || "";
+  if (explicit) return explicit.toLowerCase();
+  if (!isProduction) return "local";
+  try {
+    const host = new URL(baseUrl).hostname.toLowerCase();
+    if (/(^|[.-])(stage|staging|preprod)([.-]|$)/.test(host)) return "staging";
+    if (/(^|[.-])(dev|test)([.-]|$)/.test(host)) return "dev";
+    return "prod";
+  } catch {
+    return "prod";
+  }
+}
+
+function deriveHostnameLabel() {
+  const explicit = process.env.SMITHERS_HUB_HOSTNAME || "";
+  if (explicit) return explicit;
+  try {
+    const host = new URL(baseUrl).hostname;
+    if (host && host !== "127.0.0.1" && host !== "localhost") return host;
+  } catch {
+    /* fall through */
+  }
+  try {
+    return os.hostname() || "local";
+  } catch {
+    return "local";
+  }
+}
 
 function resolveSessionSecret() {
   const provided = process.env.SMITHERS_HUB_SESSION_SECRET;
@@ -64,7 +98,11 @@ export const env = {
   port: Number(process.env.PORT || 43117),
   baseUrl,
   isProduction,
-  instanceName: process.env.SMITHERS_HUB_INSTANCE_NAME || "Smithers Hub",
+  // Public product name. The codebase keeps the smithers-hub prefix for back-
+  // compat, but every user-visible surface defaults to "Runyard".
+  instanceName: process.env.SMITHERS_HUB_INSTANCE_NAME || "Runyard",
+  environment: deriveEnvironmentLabel(),
+  hostname: deriveHostnameLabel(),
   sessionSecret: resolveSessionSecret(),
   bootstrapToken: process.env.SMITHERS_HUB_BOOTSTRAP_TOKEN || "",
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || process.env.SMITHERS_TELEGRAM_BOT_TOKEN || "",

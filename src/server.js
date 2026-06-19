@@ -651,6 +651,16 @@ function quickReasonHint(run) {
   return "";
 }
 
+// The step name that was current when a diagnostic run stopped. Cheap (no DB
+// scan) — falls back to `currentStep`, which the executor updates as the run
+// progresses, so a failed run row can show "step build · cause snippet" with
+// no extra query. The detail page still computes the richer event-derived step
+// via `failureStep()`.
+function quickFailedStep(run) {
+  if (!run || !DIAGNOSTIC_STATUSES.has(run.status)) return "";
+  return String(run.currentStep || "").slice(0, 80);
+}
+
 // Caller-side helper so we can pre-compute a queue index once per response
 // and avoid an N+1 DB scan when rendering a long list of runs. `queueIndex`
 // is a Map of runId -> 1-based position in the FIFO of currently-queued runs.
@@ -668,6 +678,7 @@ function withRunLinks(run, queueIndex = null) {
   const origin = runOrigin(run);
   const execution = executionIntentFromInput(run.input || {});
   const reasonHint = quickReasonHint(run);
+  const failedStep = quickFailedStep(run);
   const queue = run.status === "queued" && queueIndex
     ? { position: queueIndex.map.get(run.id) || null, total: queueIndex.total }
     : null;
@@ -682,6 +693,7 @@ function withRunLinks(run, queueIndex = null) {
     execution,
     durationMs: runDurationMs(run),
     reasonHint,
+    failedStep,
     ...(queue ? { queue } : {}),
     deepLink: deepLinks.run(run.id),
     deepLinkLogs: deepLinks.runLogs(run.id),
@@ -1557,6 +1569,8 @@ app.get("/api/setup", (_req, res) => {
   const telegramTarget = telegramApprovalTarget();
   res.json({
     instanceName: env.instanceName,
+    environment: env.environment,
+    hostname: env.hostname,
     baseUrl: env.baseUrl,
     auth: "access-token",
     telegramConfigured: Boolean(env.telegramBotToken && telegramTarget),
@@ -2113,18 +2127,48 @@ app.get("/api/runs", requireAuth, (req, res) => {
   // recent runs for a single workflow. We filter in memory (run volumes are
   // already capped by the DB layer) to keep the SQL surface small.
   const capability = req.query.capability || req.query.capabilitySlug || "";
-  let rows = listRuns({ status, limit: capability ? Math.max(limit, 200) : limit });
-  if (capability) rows = rows.filter((r) => r.capabilitySlug === capability).slice(0, limit);
+  // Optional text query (matches workflow name/slug, run id, step, error) and
+  // ISO time range. Cursor pagination is the createdAt of the last row from
+  // the previous page; clients pass it back verbatim to fetch the next slice.
+  const q = String(req.query.q || "").trim();
+  const since = String(req.query.since || "").trim();
+  const until = String(req.query.until || "").trim();
+  const cursor = String(req.query.cursor || "").trim();
+  const filters = { status, q, since, until };
+  const filtered = !capability && (q || since || until || cursor);
+  let rows;
+  let total;
+  let nextCursor = null;
+  if (capability) {
+    rows = listRuns({ status, limit: Math.max(limit, 200) });
+    rows = rows.filter((r) => r.capabilitySlug === capability).slice(0, limit);
+    total = rows.length;
+  } else if (filtered) {
+    // Over-fetch by one to detect whether another page exists.
+    const page = listRuns({ ...filters, cursor, limit: limit + 1 });
+    if (page.length > limit) {
+      rows = page.slice(0, limit);
+      nextCursor = rows[rows.length - 1].createdAt;
+    } else {
+      rows = page;
+    }
+    total = countRuns(filters);
+  } else {
+    rows = listRuns({ status, limit });
+    total = countRuns({ status });
+  }
   // Queue position is computed against the global queued backlog (not the
   // filtered page) so the chip "in queue · 3 of 7" stays accurate regardless
   // of how the caller slices the list.
-  const queueIndex = buildQueueIndex(status === "queued" ? rows : listRuns({ status: "queued", limit: 500 }));
+  const queueIndex = buildQueueIndex(status === "queued" && !filtered ? rows : listRuns({ status: "queued", limit: 500 }));
   res.json({
     runs: rows.map((run) => withRunLinks(run, queueIndex)),
-    total: capability ? rows.length : countRuns({ status }),
+    total,
     limit,
+    nextCursor,
     pool: runnerPoolStats(),
-    ...(capability ? { capability } : {})
+    ...(capability ? { capability } : {}),
+    ...(filtered ? { filters: { q, status, since, until, cursor } } : {})
   });
 });
 app.get("/api/runs/:id", requireAuth, (req, res) => {
