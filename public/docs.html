@@ -82,13 +82,16 @@ open http://127.0.0.1:43117/app</pre>
 
         <h2 id="cli">CLI</h2>
         <pre class="json">smithers-hub login --url https://hub.example.com --token shub_...
+smithers-hub menu
 smithers-hub capabilities
-smithers-hub capability prepare-spec
-smithers-hub run prepare-spec --input '{"goal":"Prepare a rollout spec"}'
+smithers-hub capability hello
+smithers-hub run hello --where local --input '{"topic":"Prepare a rollout spec"}'
+smithers-hub run hello --where remote --input '{"topic":"Prepare a rollout spec"}'
 smithers-hub runs
 smithers-hub runners
 smithers-hub approvals
 smithers-hub approve appr_...</pre>
+        <p class="muted">Use <code>--where local</code> for a laptop/workstation runner and <code>--where remote</code> for the VPS runner pool. The Hub records the run, logs, outputs, and artifacts either way.</p>
         <p class="muted">Multiple orgs work like git remotes:</p>
         <pre class="json">smithers-hub login --remote acme --url https://acme-hub.example
 smithers-hub mcp install --all --remote acme   # installs as smithers-hub-acme
@@ -104,6 +107,7 @@ smithers-hub remotes</pre>
   }
 }</pre>
         <p class="muted">From a running Hub, <code>smithers-hub mcp install --all</code> writes this config into every detected agent — Claude Code/Desktop, Codex, Cursor, Windsurf, Gemini, VS Code.</p>
+        <p class="muted">MCP agents should call <code>get_menu</code>, choose <code>executionMode: "local"</code> or <code>"remote"</code> on <code>run_capability</code>, then fetch status, logs, and artifacts from the Hub tools.</p>
 
         <h2 id="runners">Runner pool</h2>
         <p>Runners are stateless processes that poll the Hub for queued work. Each runner advertises a tag set and an optional capacity:</p>
@@ -112,11 +116,12 @@ SMITHERS_HUB_TOKEN=shub_... \
 SMITHERS_RUNNER_NAME=hetzner-vps-runner \
 SMITHERS_RUNNER_LOCATION=vps \
 SMITHERS_RUNNER_TAGS=linux,node,git,shell,web,smithers \
-SMITHERS_RUNNER_CAPACITY=4 \
+SMITHERS_RUNNER_CONCURRENCY=4 \
 smithers-hub-runner</pre>
         <ul>
           <li><strong>Tag match.</strong> The Hub only schedules a run on a runner that advertises every required tag.</li>
-          <li><strong>Capacity.</strong> A pool runner with <code>capacity=4</code> can hold four concurrent slots; the Web Hub shows the slot grid live.</li>
+          <li><strong>Location match.</strong> Local runs target runners tagged <code>local</code>; remote runs target runners tagged <code>vps</code> or <code>remote</code>.</li>
+          <li><strong>Capacity.</strong> A pool runner with <code>SMITHERS_RUNNER_CONCURRENCY=4</code> can hold four concurrent slots; the Web Hub shows the slot grid live.</li>
           <li><strong>No double-claim.</strong> Two runners polling for the same queued run can never both pick it up — the Hub atomically assigns one and rejects the other.</li>
           <li><strong>Disposable.</strong> Restart freely; the Hub keeps the durable record.</li>
         </ul>
@@ -141,7 +146,7 @@ smithers-hub-runner</pre>
         <p>Runner-side variables (used by <code>smithers-hub-runner</code>):</p>
         <ul>
           <li><code>SMITHERS_HUB_URL</code>, <code>SMITHERS_HUB_TOKEN</code> — connection &amp; auth.</li>
-          <li><code>SMITHERS_RUNNER_NAME</code>, <code>SMITHERS_RUNNER_LOCATION</code>, <code>SMITHERS_RUNNER_TAGS</code>, <code>SMITHERS_RUNNER_CAPACITY</code>.</li>
+          <li><code>SMITHERS_RUNNER_NAME</code>, <code>SMITHERS_RUNNER_LOCATION</code>, <code>SMITHERS_RUNNER_TAGS</code>, <code>SMITHERS_RUNNER_CONCURRENCY</code>.</li>
           <li><code>SMITHERS_WORKSPACE</code> — directory the runner uses as scratch space for Smithers workflows.</li>
         </ul>
 

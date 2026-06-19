@@ -3,6 +3,12 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { env } from "./env.js";
 import { id, now } from "./ids.js";
+import {
+  executionIntentFromInput,
+  executionIntentMatchesRunnerTags,
+  normalizeExecutionIntent,
+  storeExecutionIntent
+} from "./runExecution.js";
 import { hashToken, randomToken } from "./security.js";
 import { seedAgents, seedCapabilities, seedKnowledge, seedSkills } from "./seeds.js";
 
@@ -589,7 +595,9 @@ export function createRun(capability, input, options = {}) {
   const approvalRequired = approvalPolicyRequiresRunStartApproval(capability.approvalPolicy);
   const status = approvalRequired ? "waiting_approval" : "queued";
   const runId = id("run");
-  const storedInput = input && typeof input === "object" && !Array.isArray(input) ? { ...input } : {};
+  let storedInput = input && typeof input === "object" && !Array.isArray(input) ? { ...input } : {};
+  const execution = normalizeExecutionIntent(storedInput, options.execution || {});
+  storedInput = storeExecutionIntent(storedInput, execution);
   if (options.origin) {
     storedInput.__origin = {
       ...(storedInput.__origin && typeof storedInput.__origin === "object" ? storedInput.__origin : {}),
@@ -614,7 +622,10 @@ export function createRun(capability, input, options = {}) {
       timestamp
     ]
   );
-  addRunEvent(runId, "run.created", `Run created for ${capability.name}`, { capability: capability.slug });
+  addRunEvent(runId, "run.created", `Run created for ${capability.name}`, {
+    capability: capability.slug,
+    ...(execution.requested ? { execution } : {})
+  });
   if (approvalRequired) {
     const requestedBy = options.requestedBy || "workflow";
     const payload = {
@@ -635,6 +646,7 @@ export function createRun(capability, input, options = {}) {
       input: storedInput
     };
     if (options.origin) payload.origin = options.origin;
+    if (execution.requested) payload.execution = execution;
     createApproval({
       runId,
       title: `Approve ${capability.name}`,
@@ -924,10 +936,11 @@ function adjustRunnerActiveRuns(runnerId, delta) {
   );
 }
 
-function runnerMatches(capability, runner) {
+function runnerMatches(capability, runner, run) {
   if (!runner) return false;
   const tags = new Set(runner.tags || []);
-  return (capability.requiredRunnerTags || []).every((tag) => tags.has(tag));
+  if (!(capability.requiredRunnerTags || []).every((tag) => tags.has(tag))) return false;
+  return executionIntentMatchesRunnerTags(executionIntentFromInput(run?.input || {}), runner.tags || []);
 }
 
 export function claimNextRun(runnerId) {
@@ -944,7 +957,7 @@ export function claimNextRun(runnerId) {
     // is only claimable by that runner. Untargeted runs are claimable by any matching runner.
     if (candidate.runnerId && candidate.runnerId !== runnerId) continue;
     const capability = getCapability(candidate.capabilitySlug);
-    if (!runnerMatches(capability, runner)) continue;
+    if (!runnerMatches(capability, runner, candidate)) continue;
     // Atomic claim: only succeeds if still queued and not targeted away, so two runners never both win it.
     const timestamp = now();
     const result = run(

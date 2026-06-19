@@ -83,17 +83,20 @@ This file captures user-facing acceptance criteria and manual tests for Runyard.
 
 - MCP initializes successfully.
 - `tools/list` returns the Hub tool set.
+- `get_menu` returns the discovery path, local/remote execution choices, and Hub follow-up paths for outputs and artifacts.
 - `list_capabilities` returns seed capabilities.
 - `run_capability` creates a run.
+- `run_capability` accepts `executionMode: "local"` and `executionMode: "remote"` and the run detail records the execution intent.
 - `get_run_status`, `get_run_logs`, and `get_run_artifacts` inspect the run.
 - `list_pending_approvals`, `approve_run`, and `reject_run` operate on centralized approvals.
 
 ### CLI
 
 - `smithers-hub login` stores config.
+- `smithers-hub menu` shows the discovery path and local/remote run choices.
 - `smithers-hub capabilities` lists the catalog.
 - `smithers-hub capability <id>` describes one capability.
-- `smithers-hub run <capability-id>` starts a run.
+- `smithers-hub run <capability-id> --where local|remote` starts a run and records execution intent.
 - `smithers-hub runs` lists runs.
 - `smithers-hub logs <run-id>` prints event logs.
 - `smithers-hub artifacts <run-id>` lists artifacts.
@@ -148,9 +151,11 @@ Covered by the current automated tests:
 
 ```bash
 smithers-hub login --url https://hub.example.com --token shub_...
+smithers-hub menu
 smithers-hub capabilities
-smithers-hub run research-topic --input '{"topic":"Smithers Hub CLI smoke","depth":"quick"}'
+smithers-hub run hello --where local --input '{"topic":"Smithers Hub CLI smoke"}'
 smithers-hub runs
+smithers-hub artifacts <run-id>
 ```
 
 ### MCP Smoke
@@ -159,13 +164,15 @@ Send two JSON-RPC messages to `smithers-hub-mcp`:
 
 ```json
 {"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
-{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_capabilities","arguments":{}}}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_menu","arguments":{}}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"run_capability","arguments":{"id":"hello","input":{"topic":"Smithers Hub MCP smoke"},"executionMode":"remote"}}}
 ```
 
 Expected result:
 
 - Initialize returns server info.
-- `list_capabilities` returns five seed capabilities.
+- `get_menu` explains discovery, local/remote execution, and Hub artifact retrieval.
+- `run_capability` creates a Hub run whose detail includes `execution.mode=remote`.
 
 ### Runner Smoke
 

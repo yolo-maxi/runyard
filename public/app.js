@@ -538,6 +538,14 @@ function runBranch(run) {
   return run?.branch || firstInputString(run?.input, BRANCH_INPUT_KEYS);
 }
 
+function runExecutionLabel(run) {
+  const execution = run?.execution || run?.input?.__execution || {};
+  const mode = execution.mode && execution.mode !== "auto" ? execution.mode : "auto";
+  const location = execution.runnerLocation || "";
+  if (!execution.requested && mode === "auto" && !location) return "";
+  return location && mode !== "auto" ? `${mode} (${location})` : mode;
+}
+
 function formatDuration(ms) {
   if (ms == null || Number.isNaN(ms)) return "";
   if (ms < 1000) return `${ms}ms`;
@@ -609,14 +617,16 @@ function runCard(run, artifacts = []) {
   const project = runProject(run);
   const branch = runBranch(run);
   const origin = run.originLabel || run.origin?.label || "unknown origin";
+  const execution = runExecutionLabel(run);
   const dur = runDurationMs(run);
   const durStr = formatDuration(dur);
   const created = relativeTime(run.createdAt);
-  const chipsHtml = (project || branch || run.workflowVersion)
+  const chipsHtml = (project || branch || run.workflowVersion || execution)
     ? `<div class="run-card-chips">
         ${project ? `<span class="chip chip-project" title="Project / target">📦 ${esc(project)}</span>` : ""}
         ${branch ? `<span class="chip chip-branch" title="Branch">🌿 ${esc(branch)}</span>` : ""}
         ${run.workflowVersion ? `<span class="chip chip-version" title="Workflow version">v${esc(run.workflowVersion)}</span>` : ""}
+        ${execution ? `<span class="chip chip-runner" title="Execution target">${esc(execution)}</span>` : ""}
       </div>`
     : "";
   const artifactPreview = !active && artifacts.length
@@ -1785,6 +1795,7 @@ async function renderRunDetail(runId, { focus = "", focusId = "" } = {}) {
   const project = runProject(run);
   const branch = runBranch(run);
   const origin = run.originLabel || run.origin?.label || "unknown origin";
+  const execution = runExecutionLabel(run);
   const dur = runDurationMs(run);
   const durStr = formatDuration(dur);
   const focusHint = focus === "logs"
@@ -1796,6 +1807,7 @@ async function renderRunDetail(runId, { focus = "", focusId = "" } = {}) {
   if (project) chips.push(`<span class="chip chip-project">📦 ${esc(project)}</span>`);
   if (branch) chips.push(`<span class="chip chip-branch">🌿 ${esc(branch)}</span>`);
   if (run.workflowVersion) chips.push(`<span class="chip chip-version">workflow v${esc(run.workflowVersion)}</span>`);
+  if (execution) chips.push(`<span class="chip chip-runner">execution ${esc(execution)}</span>`);
   if (run.runnerId) chips.push(`<span class="chip chip-runner">🛠 ${esc(run.runnerId)}</span>`);
   const crumbNav = breadcrumbs([
     { label: "Runs", href: deepLinks.runs() },

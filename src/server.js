@@ -45,6 +45,7 @@ import {
 import { env } from "./env.js";
 import { now, slugify } from "./ids.js";
 import { buildRunRetrospectiveArtifact, RUN_RETROSPECTIVE_ARTIFACT_NAME } from "./runRetrospective.js";
+import { executionIntentFromInput, normalizeExecutionIntent } from "./runExecution.js";
 import { parseCookies, sign, timingSafeEqualStr, unsign } from "./security.js";
 
 const app = express();
@@ -658,6 +659,7 @@ function buildQueueIndex(runs) {
 function withRunLinks(run, queueIndex = null) {
   if (!run || typeof run !== "object") return run;
   const origin = runOrigin(run);
+  const execution = executionIntentFromInput(run.input || {});
   const reasonHint = quickReasonHint(run);
   const queue = run.status === "queued" && queueIndex
     ? { position: queueIndex.map.get(run.id) || null, total: queueIndex.total }
@@ -670,6 +672,7 @@ function withRunLinks(run, queueIndex = null) {
     branch: firstContextString(run.input, BRANCH_INPUT_KEYS),
     origin,
     originLabel: origin?.label || "",
+    execution,
     durationMs: runDurationMs(run),
     reasonHint,
     ...(queue ? { queue } : {}),
@@ -708,6 +711,71 @@ function withAgentLinks(agent) {
 function withArtifactLinks(artifact) {
   if (!artifact || typeof artifact !== "object") return artifact;
   return { ...artifact, deepLink: deepLinks.artifact(artifact), deepLinkRun: deepLinks.run(artifact.runId) };
+}
+
+function hubMenuPayload(req) {
+  const capabilities = listCapabilities().map((capability) => {
+    const linked = withCapabilityLinks(capability);
+    return {
+      slug: linked.slug,
+      name: linked.name,
+      description: linked.description,
+      category: linked.category,
+      requiredRunnerTags: linked.requiredRunnerTags,
+      deepLink: linked.deepLink,
+      runWithCli: `smithers-hub run ${linked.slug} --where local --input '{}'`,
+      runWithMcp: { tool: "run_capability", arguments: { id: linked.slug, input: {}, executionMode: "local" } }
+    };
+  });
+  return {
+    product: "Runyard",
+    codebase: "smithers-hub",
+    hub: {
+      sourceOfTruth: true,
+      status: `${publicUrl(req)}/api/runs/{runId}`,
+      logs: `${publicUrl(req)}/api/runs/{runId}/logs`,
+      artifacts: `${publicUrl(req)}/api/runs/{runId}/artifacts`,
+      note: "Runs, outputs, logs, and artifacts are recorded in the Hub even when execution happens on a local runner."
+    },
+    discovery: [
+      { surface: "MCP", action: "Call get_menu, then list_capabilities or describe_capability." },
+      { surface: "CLI", action: "Run smithers-hub menu, then smithers-hub capabilities or smithers-hub capability <slug>." },
+      { surface: "Web", action: "Open /app and use Workflows, Runs, Approvals, and Connect." }
+    ],
+    executionModes: [
+      {
+        id: "local",
+        label: "Run locally",
+        runnerLocation: "local",
+        cli: "smithers-hub run <capability> --where local --input '<json>'",
+        mcp: { tool: "run_capability", arguments: { id: "<capability>", input: {}, executionMode: "local" } },
+        runner: "smithers-hub runner start --location local",
+        result: "The local runner executes the workflow; outputs and artifacts are fetched from the Hub."
+      },
+      {
+        id: "remote",
+        label: "Run remotely",
+        runnerLocation: "vps",
+        cli: "smithers-hub run <capability> --where remote --input '<json>'",
+        mcp: { tool: "run_capability", arguments: { id: "<capability>", input: {}, executionMode: "remote" } },
+        runner: "Use the shared VPS/remote runner pool tagged vps or remote.",
+        result: "A remote runner executes the workflow; outputs and artifacts are fetched from the Hub."
+      }
+    ],
+    tools: [
+      "get_menu",
+      "list_capabilities",
+      "describe_capability",
+      "run_capability",
+      "get_run_status",
+      "get_run_logs",
+      "get_run_artifacts",
+      "list_runners",
+      "list_pending_approvals"
+    ],
+    capabilities,
+    pool: runnerPoolStats()
+  };
 }
 
 function absoluteDeepLink(link) {
@@ -1414,14 +1482,16 @@ Primary agent interface:
 - MCP server: smithers-hub-mcp
 - HTTP API: ${publicUrl(req)}/api
 - OpenAPI: ${publicUrl(req)}/openapi.json
+- Menu: ${publicUrl(req)}/api/menu
 - Capability catalog: ${publicUrl(req)}/api/capabilities
 - Setup docs: ${publicUrl(req)}/docs
 
 Core tools:
+- get_menu
 - list_capabilities
 - search_capabilities
 - describe_capability
-- run_capability
+- run_capability (pass executionMode "local" or "remote")
 - get_run_status
 - get_run_logs
 - get_run_artifacts
@@ -1439,6 +1509,12 @@ Core tools:
 Authenticate with a Hub access token using Bearer auth. Tokens can be
 scoped (api, mcp, approvals); the first one is written to
 data/bootstrap-token.txt on the server's machine on first boot.
+
+Run path:
+1. Discover with get_menu/list_capabilities.
+2. Choose local or remote execution.
+3. Start with run_capability or smithers-hub run --where local|remote.
+4. Fetch status, logs, outputs, and artifacts from the Hub.
 `);
 });
 
@@ -1452,7 +1528,8 @@ app.get("/openapi.json", (req, res) => {
     paths: {
       "/capabilities": { get: { summary: "List capabilities" }, post: { summary: "Create/update capability" } },
       "/capabilities/{id}": { get: { summary: "Describe capability" }, patch: { summary: "Update capability" } },
-      "/capabilities/{id}/run": { post: { summary: "Run capability" } },
+      "/capabilities/{id}/run": { post: { summary: "Run capability with optional executionMode local|remote" } },
+      "/menu": { get: { summary: "Discover the Runyard MCP/CLI menu and local/remote run path" } },
       "/runs": { get: { summary: "List runs" } },
       "/runs/{id}": { get: { summary: "Get run" } },
       "/runs/{id}/events": { get: { summary: "Get run events" }, post: { summary: "Append run event" } },
@@ -1465,6 +1542,10 @@ app.get("/openapi.json", (req, res) => {
       "/runners/{id}/next-run": { get: { summary: "Claim next run for runner" } }
     }
   });
+});
+
+app.get("/api/menu", requireAuth, requireScopes("api", "mcp"), (req, res) => {
+  res.json(hubMenuPayload(req));
 });
 
 app.get("/api/setup", (_req, res) => {
@@ -1981,17 +2062,23 @@ app.post("/api/capabilities/:id/run", requireAuth, requireScopes("api", "mcp"), 
     input.__chain = normalizeChainSteps(req.body.chain);
     input.__chainIndex = 0;
   }
+  const execution = normalizeExecutionIntent(input, req.body || {});
   const origin = requestOrigin(req, input);
   const run = createRun(capability, input, {
     runnerId: req.body.runnerId,
     requestedBy: origin.requestedBy,
-    origin: origin.origin
+    origin: origin.origin,
+    execution
   });
   const pending = listApprovals("pending").find((approval) => approval.runId === run.id);
   if (pending) await notifyTelegram(pending);
   res.status(202).json({
     run: withRunLinks(run),
     statusUrl: `/api/runs/${run.id}`,
+    logsUrl: `/api/runs/${run.id}/logs`,
+    artifactsUrl: `/api/runs/${run.id}/artifacts`,
+    outputsLocation: "hub",
+    artifactsLocation: "hub",
     webUrl: `/app#runs/${run.id}`,
     deepLink: deepLinks.run(run.id),
     deepLinkLogs: deepLinks.runLogs(run.id),
@@ -2122,7 +2209,8 @@ function queueNextChainedRun(parentRun, output, req) {
   });
   const child = createRun(capability, nextInput, {
     requestedBy: origin.requestedBy || "workflow-chain",
-    origin: origin.origin
+    origin: origin.origin,
+    execution: executionIntentFromInput(parentRun.input || {})
   });
   addRunEvent(parentRun.id, "run.chain.queued", `Queued chained run ${child.id} for ${capability.name}`, {
     childRunId: child.id,

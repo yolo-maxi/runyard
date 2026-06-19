@@ -243,6 +243,7 @@ Reasoning:
 
 The MCP server exposes:
 
+- `get_menu`
 - `list_capabilities`
 - `search_capabilities`
 - `describe_capability`
@@ -263,10 +264,21 @@ Reasoning:
 
 - The user said the main consumers are agents and the MCP + CLI combination must be strong.
 - Tool names are purpose-level, not table-level.
+- `get_menu` gives agents a clear first move before they choose local or remote execution.
+
+### Decision: Local/remote execution intent is recorded on the run
+
+CLI and MCP clients can pass `local` or `remote` execution intent. The Hub stores that intent in the run input envelope, exposes it as `run.execution`, and runner claiming honors the requested runner-location tag. `remote` targets runners tagged `vps` or `remote`; `local` targets runners tagged `local`.
+
+Reasoning:
+
+- The Hub remains the source of truth while execution can happen on a laptop or a VPS.
+- The existing schema already allows metadata in the run input envelope, so this avoids a risky migration before the CLI/MCP test.
+- Runner tags are already the routing primitive; location intent is a small extension of that model.
 
 ### Decision: CLI mirrors operational concepts
 
-The CLI supports login, discovery, run control, logs, artifacts, approvals, token creation, runner registration/start, and MCP install config.
+The CLI supports login, menu discovery, run control, local/remote execution intent, logs, artifacts, approvals, token creation, runner registration/start, and MCP install config.
 
 Reasoning:
 
@@ -283,6 +295,22 @@ Reasoning:
 - Existing Springfield had similar discovery patterns worth reusing conceptually.
 
 ## Web Product
+
+### Decision: Defer TanStack DB / Smithers Gateway React migration
+
+The app remains Express plus vanilla JS for this pass, with React limited to the vendored ReactFlow workflow graph. Smithers `0.24.2`, `@smithers-orchestrator/gateway-react`, and TanStack DB are promising for a future normalized client data layer, but adopting them now would mean introducing a second frontend architecture in the middle of the CLI/MCP parity work.
+
+Migration plan:
+
+- First define stable Hub resources for runs, events, artifacts, runners, approvals, and capabilities.
+- Add a small React island only where session/run data extraction is painful, backed by `@smithers-orchestrator/gateway-react` if it can read the same Gateway contracts.
+- Use TanStack DB collections for runs, events, artifacts, and runners after the REST shapes are stable; keep Web/API/CLI/MCP responses backward-compatible.
+- Replace ad hoc vanilla client joins incrementally, starting with run detail and queue/pool views.
+
+Reasoning:
+
+- TanStack DB is useful once the UI needs a reactive local data graph, but the immediate test path is API/CLI/MCP behavior.
+- The current console is not a React app; a wholesale rewrite would be higher risk than the requested compatibility work.
 
 ### Decision: Web Hub is an operations console
 

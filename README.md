@@ -85,7 +85,7 @@ Dedicated runner pool topology:
 
 - Keep the Hub as the lightweight control plane.
 - Run one or more runner processes on worker VPSes.
-- Set `SMITHERS_RUNNER_CAPACITY` / `SMITHERS_RUNNER_CONCURRENCY` according to CPU and memory.
+- Set `SMITHERS_RUNNER_CONCURRENCY` according to CPU and memory.
 - Use runner tags such as `linux`, `browser`, `gpu`, `dangerous`, or `deploy` to route work.
 
 Public docs + private Hub topology:
@@ -114,9 +114,11 @@ CLI:
 
 ```bash
 smithers-hub login --url https://hub.example.com --token shub_...
+smithers-hub menu
 smithers-hub capabilities
-smithers-hub capability prepare-spec
-smithers-hub run prepare-spec --input '{"goal":"Prepare a rollout spec"}'
+smithers-hub capability hello
+smithers-hub run hello --where local --input '{"topic":"Prepare a rollout spec"}'
+smithers-hub run hello --where remote --input '{"topic":"Prepare a rollout spec"}'
 smithers-hub runs
 smithers-hub runners
 smithers-hub approvals
@@ -143,9 +145,18 @@ SMITHERS_HUB_TOKEN=shub_... \
 SMITHERS_RUNNER_NAME=hetzner-vps-runner \
 SMITHERS_RUNNER_LOCATION=vps \
 SMITHERS_RUNNER_TAGS=linux,node,git,shell,web,smithers \
-SMITHERS_RUNNER_CAPACITY=4 \
+SMITHERS_RUNNER_CONCURRENCY=4 \
 smithers-hub-runner
 ```
+
+Agent run path:
+
+1. Discover the menu with `smithers-hub menu` or the MCP `get_menu` tool.
+2. Choose `--where local` / `executionMode: "local"` for a laptop or workstation runner, or `--where remote` / `executionMode: "remote"` for the VPS runner pool.
+3. The Hub records the run, origin, execution intent, runner assignment, logs, outputs, and artifacts.
+4. Fetch results from the Hub with `smithers-hub run-status <run-id>`, `smithers-hub logs <run-id>`, `smithers-hub artifacts <run-id>`, or the matching MCP tools.
+
+Remote execution targets runners tagged `vps` or `remote`; local execution targets runners tagged `local`. `smithers-hub-runner` adds the location tag automatically from `SMITHERS_RUNNER_LOCATION`.
 
 ## Included capabilities
 
@@ -181,7 +192,7 @@ Optional:
 Runner-side variables (used by `smithers-hub-runner`):
 
 - `SMITHERS_HUB_URL`, `SMITHERS_HUB_TOKEN`
-- `SMITHERS_RUNNER_NAME`, `SMITHERS_RUNNER_LOCATION`, `SMITHERS_RUNNER_TAGS`, `SMITHERS_RUNNER_CAPACITY`
+- `SMITHERS_RUNNER_NAME`, `SMITHERS_RUNNER_LOCATION`, `SMITHERS_RUNNER_TAGS`, `SMITHERS_RUNNER_CONCURRENCY`
 - `SMITHERS_WORKSPACE` — scratch directory for Smithers workflows
 
 ## Security model

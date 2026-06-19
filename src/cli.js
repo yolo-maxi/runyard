@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { HubClient } from "./apiClient.js";
 import { readConfig, writeConfig, setRemote, resolveRemote } from "./config.js";
+import { normalizeRunnerTags } from "./runExecution.js";
 
 function client(options = {}) {
   const remoteName = options.remote || program.opts().remote;
@@ -28,6 +29,39 @@ function print(data, json) {
   } else {
     console.log(JSON.stringify(data, null, 2));
   }
+}
+
+function printMenu(data, json) {
+  if (json) return print(data, true);
+  console.log(`${data.product || "Runyard"} menu`);
+  console.log("Hub is the source of truth for runs, logs, outputs, and artifacts.");
+  console.log("\nDiscover:");
+  console.log("  smithers-hub capabilities");
+  console.log("  smithers-hub capability <slug>");
+  console.log("\nChoose execution:");
+  for (const mode of data.executionModes || []) {
+    console.log(`  ${mode.id}: ${mode.cli}`);
+    console.log(`     runner: ${mode.runner}`);
+  }
+  console.log("\nAfter a run:");
+  console.log("  smithers-hub run-status <run-id>");
+  console.log("  smithers-hub logs <run-id>");
+  console.log("  smithers-hub artifacts <run-id>");
+  if (data.capabilities?.length) {
+    console.log("\nCapabilities:");
+    for (const cap of data.capabilities) console.log(`  ${cap.slug}\t${cap.name}`);
+  }
+}
+
+function printRunCreated(data, json) {
+  if (json) return print(data, true);
+  const run = data.run || data;
+  const execution = run.execution || {};
+  console.log(`Run ${run.id} queued for ${run.capabilityName || run.capabilitySlug}.`);
+  console.log(`Execution: ${execution.mode || "auto"}${execution.runnerLocation ? ` (${execution.runnerLocation})` : ""}`);
+  console.log(`Hub status: smithers-hub run-status ${run.id}`);
+  console.log(`Hub logs: smithers-hub logs ${run.id}`);
+  console.log(`Hub artifacts and outputs: smithers-hub artifacts ${run.id}`);
 }
 
 function ask(query, { hidden = false } = {}) {
@@ -131,6 +165,10 @@ program.command("status").description("Show current Hub identity").action(async 
   print(await client(program.opts()).get("/api/me"), program.opts().json);
 });
 
+program.command("menu").alias("discover").description("Show the Hub menu and local/remote run path").action(async () => {
+  printMenu(await client(program.opts()).get("/api/menu"), program.opts().json);
+});
+
 program.command("capabilities").description("List capabilities").option("-q, --query <query>").action(async (opts) => {
   const data = await client(program.opts()).get(`/api/capabilities${opts.query ? `?q=${encodeURIComponent(opts.query)}` : ""}`);
   print(data.capabilities, program.opts().json);
@@ -145,11 +183,25 @@ program
   .description("Run a capability with JSON input")
   .option("-i, --input <json>", "JSON input", "{}")
   .option("--chain <json>", "JSON array of next capability steps to queue after each run succeeds")
+  .option("--where <mode>", "execution mode: local | remote")
+  .option("--execution-mode <mode>", "execution mode alias: local | remote")
+  .option("--runner-location <location>", "specific runner location tag")
   .action(async (capability, opts) => {
     const input = JSON.parse(opts.input);
-    const body = { input };
+    const remote = resolveRemote(program.opts().remote);
+    const body = {
+      input,
+      origin: {
+        type: "cli",
+        label: `CLI${remote.name ? `: ${remote.name}` : ""}`,
+        remote: remote.name || "",
+        command: "smithers-hub run"
+      }
+    };
     if (opts.chain) body.chain = JSON.parse(opts.chain);
-    print(await client(program.opts()).post(`/api/capabilities/${capability}/run`, body), program.opts().json);
+    if (opts.where || opts.executionMode) body.executionMode = opts.where || opts.executionMode;
+    if (opts.runnerLocation) body.runnerLocation = opts.runnerLocation;
+    printRunCreated(await client(program.opts()).post(`/api/capabilities/${capability}/run`, body), program.opts().json);
   });
 
 program.command("runs").description("List runs").option("-s, --status <status>").action(async (opts) => {
@@ -233,12 +285,17 @@ runnerCommand
   .description("Register this machine as a runner")
   .option("--name <name>", os.hostname())
   .option("--tags <tags>", "linux,macos,node,git,shell,web,smithers")
+  .option("--location <loc>", "runner location label: vps | local", "local")
   .action(async (opts) => {
+    const tags = normalizeRunnerTags(
+      opts.tags.split(",").map((tag) => tag.trim()).filter(Boolean),
+      opts.location
+    );
     const data = await client(program.opts()).post("/api/runners/register", {
       name: opts.name,
       hostname: os.hostname(),
       platform: `${os.platform()} ${os.release()}`,
-      tags: opts.tags.split(",").map((tag) => tag.trim()).filter(Boolean)
+      tags
     });
     print(data, program.opts().json);
   });

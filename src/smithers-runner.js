@@ -12,6 +12,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { HubClient } from "./apiClient.js";
 import { markdownArtifactsFromOutputs } from "./runnerArtifacts.js";
+import { normalizeRunnerTags } from "./runExecution.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -20,10 +21,13 @@ const token = process.env.SMITHERS_HUB_TOKEN || process.env.HUB_TOKEN || process
 const workspace = path.resolve(process.env.SMITHERS_WORKSPACE || process.cwd());
 const location = process.env.SMITHERS_RUNNER_LOCATION || "vps"; // "vps" | "local"
 const name = process.env.SMITHERS_RUNNER_NAME || `${os.hostname()} (${location})`;
-const tags = (process.env.SMITHERS_RUNNER_TAGS || `smithers,${location}`)
-  .split(",")
-  .map((t) => t.trim())
-  .filter(Boolean);
+const tags = normalizeRunnerTags(
+  (process.env.SMITHERS_RUNNER_TAGS || `smithers,${location}`)
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean),
+  location
+);
 const intervalMs = Number(process.env.SMITHERS_RUNNER_INTERVAL_MS || 2500);
 const pollMs = Number(process.env.SMITHERS_POLL_MS || 2000);
 const maxRunMs = Number(process.env.SMITHERS_MAX_RUN_MS || 30 * 60_000);
