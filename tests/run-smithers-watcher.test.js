@@ -81,9 +81,11 @@ describe("run-smithers capability", () => {
     assert.ok(skills.find((skill) => skill.slug === "smithers-supervision"));
   });
 
-  it("ships the workflow template in the runner bundle", () => {
+  it("ships the workflow template and watcher helper in the runner bundle", () => {
     const tpl = path.join(process.cwd(), "workflow-templates", "workflows", "run-smithers.tsx");
+    const helper = path.join(process.cwd(), "workflow-templates", "workflows", "run-smithers-watcher.js");
     assert.ok(existsSync(tpl));
+    assert.ok(existsSync(helper));
   });
 
   it("queues immediately and does not block existing capabilities", async () => {

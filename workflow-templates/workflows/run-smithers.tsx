@@ -13,7 +13,7 @@ import {
   normalizeErrorFingerprint,
   recordChildAttempt,
   watcherSummary
-} from "../../src/runSmithersWatcher.js";
+} from "./run-smithers-watcher.js";
 
 const HUB_URL = String(process.env.RUN_SMITHERS_HUB_URL || process.env.SMITHERS_HUB_URL || process.env.HUB_URL || "http://127.0.0.1:43117").replace(/\/$/, "");
 const HUB_TOKEN = process.env.RUN_SMITHERS_HUB_TOKEN || process.env.SMITHERS_HUB_TOKEN || process.env.HUB_TOKEN || "";
