@@ -91,11 +91,14 @@ smithers-hub-runner
 
 ## Included capabilities
 
-- Review Pull Request
-- Research Topic
-- Prepare Spec
+- Hello (Smithers proof)
+- Research
 - Implement
-- Run Smithers Workflow
+- Smart Contract Audit
+- Implement Change (gated)
+- Idea to Product
+- App Skinner
+- Run Knowledge Builder
 
 The seed capabilities are editable from the Web Hub and exposed through MCP, CLI, and HTTP.
 

@@ -11,6 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { HubClient } from "./apiClient.js";
+import { markdownArtifactsFromOutputs } from "./runnerArtifacts.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -157,6 +158,9 @@ async function executeAssignment(assignment) {
       mimeType: "application/json",
       content: JSON.stringify({ smithersRunId: sid, state, outputs }, null, 2)
     });
+    for (const artifact of markdownArtifactsFromOutputs(outputs)) {
+      await client.post(`/api/runs/${run.id}/artifacts`, artifact);
+    }
     await client.post(`/api/runs/${run.id}/artifacts`, {
       name: "smithers-events.ndjson",
       mimeType: "application/x-ndjson",

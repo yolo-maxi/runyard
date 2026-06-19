@@ -32,6 +32,15 @@ export const seedAgents = [
     skillSlugs: ["implementation"]
   },
   {
+    slug: "run-knowledge-analyst",
+    name: "Run Knowledge Analyst",
+    description: "Turns Smithers Hub run evidence into reusable lessons and workflow improvement recommendations.",
+    instructions:
+      "Use only redacted Hub run evidence. Separate observed facts from inference, cite run ids or deep links, avoid generic advice, and recommend changes without mutating skills, agents, or workflows.",
+    tools: ["hub-api", "files"],
+    skillSlugs: ["run-knowledge-loop", "research-method"]
+  },
+  {
     slug: "taste-agent",
     name: "Taste Agent",
     description: "Explores distinct product skins and surfaces taste, tone, and asset-direction choices before implementation.",
@@ -46,6 +55,18 @@ export const seedAgents = [
     instructions: "Convert approved visual direction into concrete UI guidance: hierarchy, palette, type, motion, assets, copy voice, and implementation notes.",
     tools: ["files", "design-references"],
     skillSlugs: ["visual-design", "brand-strategy"]
+  },
+  {
+    slug: "product-manager",
+    name: "Product Manager (with taste)",
+    description:
+      "Inspects a feature, UI, or workflow, finds the real user pain, proposes prioritized improvements, and writes the acceptance checks builders must hit.",
+    instructions:
+      "Lead with the user's actual experience, not the implementer's intent. Audit the current behavior, name the top frictions in plain language, and rank improvements by user impact and effort. " +
+      "For every improvement, write a one-sentence rationale, a concrete change description a builder can act on, and a verifiable acceptance check. " +
+      "Cut anything you cannot defend as user-visible value. Return only the requested JSON.",
+    tools: ["files", "shell", "web"],
+    skillSlugs: ["product-review", "spec-writing"]
   }
 ];
 
@@ -75,6 +96,13 @@ export const seedSkills = [
     body: "Read the codebase before changing it. Prefer existing patterns. Keep scope aligned with the requested outcome. Verify with tests and runtime checks. Never overwrite unrelated work."
   },
   {
+    slug: "run-knowledge-loop",
+    name: "Run Knowledge Loop",
+    description: "How to convert Smithers Hub run evidence into durable improvements.",
+    body:
+      "Sample recent runs, preserve concrete evidence, redact secrets and local paths, distinguish evidence from inference, cluster repeated failure modes, and propose skill, agent, workflow, or knowledge updates only as recommendations unless a human approves a mutation checkpoint."
+  },
+  {
     slug: "visual-design",
     name: "Visual Design Direction",
     description: "How agents should propose and critique visual/UI skins.",
@@ -85,6 +113,15 @@ export const seedSkills = [
     name: "Brand Strategy",
     description: "How agents should connect product intent to a memorable brand and skin.",
     body: "Tie the skin to audience, category, emotion, and shareability. Avoid generic polish. Surface copyright, cultural, safety, and asset-production implications before build."
+  },
+  {
+    slug: "product-review",
+    name: "Product Review Rubric",
+    description: "How a Product Manager should inspect a feature and propose improvements.",
+    body:
+      "Start from the user's real experience: what flow are they in, what just happened, what would a first-time user expect? Name concrete frictions over abstract complaints. " +
+      "Rank improvements by user impact, then by effort. For each improvement write rationale, the concrete change, and a check that proves it landed. " +
+      "Distinguish must-fix (broken, confusing, or unsafe) from polish (would delight). Reject scope creep; prefer one shipped improvement to three half-done ones."
   }
 ];
 
@@ -277,5 +314,94 @@ export const seedCapabilities = [
       reason: "Pauses for human approval before turning a proposed visual skin into an implementation brief."
     },
     workflow: { engine: "smithers", entry: ".smithers/workflows/app-skinner.tsx" }
+  },
+  {
+    slug: "run-knowledge-builder",
+    name: "Run Knowledge Builder",
+    description:
+      "Analyzes recent Smithers Hub runs, separates redacted evidence from inference, and produces a recommendation-only report for improving skills, agents, workflows, templates, and knowledge resources.",
+    category: "Knowledge",
+    keywords: ["runs", "knowledge", "lessons", "diagnostics", "improvement", "smithers"],
+    inputSchema: {
+      type: "object",
+      properties: {
+        capabilitySlug: { type: "string", description: "Optional capability/workflow slug to focus on." },
+        status: { type: "string", description: "Optional comma-separated statuses, e.g. failed,cancelled,waiting_approval,succeeded." },
+        lookbackHours: { type: "number", description: "How far back to sample runs. Default 168." },
+        count: { type: "number", description: "Maximum runs to inspect, 1-50. Default 20." },
+        focusArea: { type: "string", description: "Optional focus such as failures, approvals, artifacts, runner reliability, or prompt quality." }
+      }
+    },
+    outputSchema: {
+      type: "object",
+      properties: {
+        runSampleSummary: { type: "string" },
+        recurringFailureModes: { type: "array" },
+        reusableLessons: { type: "array" },
+        suggestedSkillUpdates: { type: "array" },
+        suggestedAgentInstructionUpdates: { type: "array" },
+        suggestedWorkflowTemplateImprovements: { type: "array" },
+        recommendedNextActions: { type: "array" },
+        report: { type: "string" }
+      }
+    },
+    requiredRunnerTags: ["smithers"],
+    requiredSkills: ["run-knowledge-loop", "research-method"],
+    requiredAgents: ["run-knowledge-analyst"],
+    approvalPolicy: { required: false },
+    workflow: { engine: "smithers", entry: ".smithers/workflows/run-knowledge-builder.tsx" }
+  },
+  {
+    slug: "improve",
+    name: "Improve",
+    description:
+      "Inspects an existing feature, UI, or workflow with a taste-led Product Manager, identifies prioritized improvements with acceptance checks, then dispatches an implementation agent to apply them through the gated test/commit/push/deploy pipeline.",
+    category: "Product",
+    keywords: ["improve", "product", "manager", "review", "taste", "polish", "feature", "smithers"],
+    inputSchema: {
+      type: "object",
+      required: ["target"],
+      properties: {
+        target: {
+          type: "string",
+          description: "What to improve — a feature, UI, workflow slug, file path, or short description the PM should inspect."
+        },
+        context: {
+          type: "string",
+          description: "Optional product context, user complaints, links, screenshots, or constraints."
+        },
+        maxImprovements: {
+          type: "number",
+          description: "Cap on improvements the PM should propose (1-6, default 3)."
+        },
+        deploy: {
+          type: "boolean",
+          description: "If true, deploy after gates pass (default false)."
+        },
+        targetBranch: {
+          type: "string",
+          description: "Branch to push (default main)."
+        }
+      }
+    },
+    outputSchema: {
+      type: "object",
+      properties: {
+        review: { type: "object" },
+        implement: { type: "object" },
+        test: { type: "object" },
+        commit: { type: "object" },
+        push: { type: "object" },
+        deploy: { type: "object" }
+      }
+    },
+    requiredRunnerTags: ["smithers"],
+    requiredSkills: ["product-review", "implementation"],
+    requiredAgents: ["product-manager", "implementation-agent"],
+    approvalPolicy: {
+      required: true,
+      reason: "Runs a Product Manager review then a coding agent that commits, pushes to origin, and can deploy to production."
+    },
+    workflow: { engine: "smithers", entry: ".smithers/workflows/improve.tsx" }
   }
 ];

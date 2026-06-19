@@ -85,7 +85,9 @@ function raw(pathname, options = {}, bearer = token) {
     body: options.body && typeof options.body !== "string" ? JSON.stringify(options.body) : options.body
   }).then(async (response) => {
     const text = await response.text();
-    return { status: response.status, data: text ? JSON.parse(text) : null, headers: response.headers };
+    const contentType = response.headers.get("content-type") || "";
+    const data = text && contentType.includes("application/json") ? JSON.parse(text) : text || null;
+    return { status: response.status, data, headers: response.headers };
   });
 }
 
@@ -1090,8 +1092,6 @@ describe("Idea to Product capability", () => {
 describe("App Skinner capability", () => {
   it("is seeded as an approval-checkpoint Smithers workflow", async () => {
     const { capabilities } = await api("/api/capabilities");
-    const { agents } = await api("/api/agents");
-    const { skills } = await api("/api/skills");
     const cap = capabilities.find((c) => c.slug === "app-skinner");
     assert.ok(cap, "app-skinner capability should be in the catalog");
     assert.equal(cap.workflow.engine, "smithers");
@@ -1099,8 +1099,6 @@ describe("App Skinner capability", () => {
     assert.ok(cap.inputSchema.required.includes("appIdea"));
     assert.equal(cap.inputSchema.properties.skinCount.type, "number");
     assert.deepEqual(cap.requiredRunnerTags, ["smithers", "vps"]);
-    for (const slug of cap.requiredAgents) assert.ok(agents.find((agent) => agent.slug === slug), `missing agent card: ${slug}`);
-    for (const slug of cap.requiredSkills) assert.ok(skills.find((skill) => skill.slug === slug), `missing skill card: ${slug}`);
     assert.equal(cap.approvalPolicy.required, true);
   });
 
@@ -1122,5 +1120,200 @@ describe("App Skinner capability", () => {
     assert.match(src, /Approve app skin direction/);
     assert.match(src, /visual skins/);
     assert.match(src, /ClaudeCodeAgent/);
+  });
+});
+
+describe("Catalog referential integrity", () => {
+  it("resolves every capability and agent catalog reference", async () => {
+    const { capabilities } = await api("/api/capabilities");
+    const { agents } = await api("/api/agents");
+    const { skills } = await api("/api/skills");
+    const agentSlugs = new Set(agents.map((agent) => agent.slug));
+    const skillSlugs = new Set(skills.map((skill) => skill.slug));
+
+    for (const cap of capabilities) {
+      for (const slug of cap.requiredAgents || []) {
+        assert.ok(agentSlugs.has(slug), `${cap.slug} references missing agent card: ${slug}`);
+      }
+      for (const slug of cap.requiredSkills || []) {
+        assert.ok(skillSlugs.has(slug), `${cap.slug} references missing skill card: ${slug}`);
+      }
+      if (cap.workflow?.entry) {
+        const bundledPath = cap.workflow.entry.replace(/^\.smithers\//, "workflow-templates/");
+        assert.ok(existsSync(path.join(process.cwd(), bundledPath)), `${cap.slug} references missing workflow template: ${bundledPath}`);
+      }
+    }
+
+    for (const agent of agents) {
+      for (const slug of agent.skillSlugs || []) {
+        assert.ok(skillSlugs.has(slug), `${agent.slug} references missing skill card: ${slug}`);
+      }
+    }
+  });
+});
+
+describe("Run Knowledge Builder capability", () => {
+  it("is seeded as a recommendation-only Smithers workflow", async () => {
+    const { capabilities } = await api("/api/capabilities");
+    const cap = capabilities.find((c) => c.slug === "run-knowledge-builder");
+    assert.ok(cap, "run-knowledge-builder capability should be in the catalog");
+    assert.equal(cap.workflow.engine, "smithers");
+    assert.equal(cap.workflow.entry, ".smithers/workflows/run-knowledge-builder.tsx");
+    assert.equal(cap.category, "Knowledge");
+    assert.equal(cap.inputSchema.properties.capabilitySlug.type, "string");
+    assert.equal(cap.inputSchema.properties.status.type, "string");
+    assert.equal(cap.inputSchema.properties.lookbackHours.type, "number");
+    assert.equal(cap.inputSchema.properties.count.type, "number");
+    assert.equal(cap.inputSchema.properties.focusArea.type, "string");
+    assert.deepEqual(cap.requiredRunnerTags, ["smithers"]);
+    assert.ok(cap.requiredSkills.includes("run-knowledge-loop"));
+    assert.ok(cap.requiredAgents.includes("run-knowledge-analyst"));
+    assert.equal(cap.approvalPolicy.required, false);
+  });
+
+  it("queues through the API without creating a start approval", async () => {
+    const created = await api("/api/capabilities/run-knowledge-builder/run", {
+      method: "POST",
+      body: { input: { capabilitySlug: "hello", status: "failed,cancelled", count: 5, focusArea: "failure patterns" } }
+    });
+    assert.equal(created.run.status, "queued");
+    assert.equal(created.run.capabilitySlug, "run-knowledge-builder");
+    const approval = (await api("/api/approvals?status=pending")).approvals.find((item) => item.runId === created.run.id);
+    assert.equal(approval, undefined);
+  });
+
+  it("ships the workflow template and report artifact contract", () => {
+    const tpl = path.join(process.cwd(), "workflow-templates", "workflows", "run-knowledge-builder.tsx");
+    assert.ok(existsSync(tpl), "bundled workflow template should exist");
+    const src = readFileSync(tpl, "utf8");
+    assert.match(src, /recurringFailureModes/);
+    assert.match(src, /suggestedSkillUpdates/);
+    assert.match(src, /suggestedAgentInstructionUpdates/);
+    assert.match(src, /suggestedWorkflowTemplateImprovements/);
+    assert.match(src, /recommendedNextActions/);
+    assert.match(src, /\/api\/runs/);
+    assert.match(src, /\/diagnostics/);
+    assert.match(src, /redactText/);
+    assert.match(src, /run-knowledge-report\.md/);
+    assert.match(src, /ClaudeCodeAgent/);
+  });
+});
+
+describe("Improve capability", () => {
+  it("is seeded as an approval-gated PM-led Smithers workflow", async () => {
+    const { capabilities } = await api("/api/capabilities");
+    const cap = capabilities.find((c) => c.slug === "improve");
+    assert.ok(cap, "improve capability should be in the catalog");
+    assert.equal(cap.workflow.engine, "smithers");
+    assert.equal(cap.workflow.entry, ".smithers/workflows/improve.tsx");
+    assert.ok(cap.inputSchema.required.includes("target"));
+    assert.ok(cap.requiredAgents.includes("product-manager"), "improve must require the product-manager agent");
+    assert.ok(cap.requiredAgents.includes("implementation-agent"), "improve must dispatch the implementation agent");
+    assert.ok(cap.requiredSkills.includes("product-review"));
+    assert.equal(cap.approvalPolicy.required, true);
+  });
+
+  it("queues immediately and relies on in-workflow approvals", async () => {
+    const created = await api("/api/capabilities/improve/run", {
+      method: "POST",
+      body: { input: { target: "Run log usability", context: "Logs are too noisy" } }
+    });
+    assert.equal(created.run.status, "queued");
+    assert.equal(created.run.capabilitySlug, "improve");
+    const approval = (await api("/api/approvals?status=pending")).approvals.find((item) => item.runId === created.run.id);
+    assert.equal(approval, undefined);
+  });
+
+  it("seeds the product-manager agent and product-review skill", async () => {
+    const { agents } = await api("/api/agents");
+    const { skills } = await api("/api/skills");
+    const pm = agents.find((agent) => agent.slug === "product-manager");
+    assert.ok(pm, "product-manager agent should be seeded");
+    assert.match(pm.name, /Product Manager/);
+    assert.ok(skills.find((skill) => skill.slug === "product-review"), "product-review skill should be seeded");
+  });
+
+  it("ships the improve workflow template with PM-then-builder structure", () => {
+    const tpl = path.join(process.cwd(), "workflow-templates", "workflows", "improve.tsx");
+    assert.ok(existsSync(tpl), "bundled workflow template should exist");
+    const src = readFileSync(tpl, "utf8");
+    assert.match(src, /Product Manager/);
+    assert.match(src, /id="review"/);
+    assert.match(src, /id="implement"/);
+    assert.match(src, /id="test"/);
+    assert.match(src, /id="commit"/);
+    assert.match(src, /id="push"/);
+    assert.match(src, /id="deploy"/);
+    assert.match(src, /improvements/);
+    assert.match(src, /acceptanceCheck/);
+    assert.match(src, /ClaudeCodeAgent/);
+  });
+
+  it("records origin metadata on improve runs", async () => {
+    const created = await api("/api/capabilities/improve/run", {
+      method: "POST",
+      headers: { "x-smithers-origin": "telegram: improve test" },
+      body: { input: { target: "Improve run log" } }
+    });
+    assert.equal(created.run.originLabel, "telegram: improve test");
+  });
+});
+
+describe("Run log usability", () => {
+  it("returns a structured log summary alongside run detail", async () => {
+    const created = await api("/api/capabilities/hello/run", {
+      method: "POST",
+      body: { input: { goal: "structured log summary" } }
+    });
+    const runId = created.run.id;
+    addRunEvent(runId, "run.started", "Run started", {});
+    addRunEvent(runId, "workflow.step", "review", { step: "review" });
+    addRunEvent(runId, "node.started", "PM review", { node: "review" });
+    addRunEvent(runId, "heartbeat", "still alive", {});
+    addRunEvent(runId, "heartbeat", "still alive", {});
+    addRunEvent(runId, "stderr", "warning: deprecated flag", {});
+    addRunEvent(runId, "node.finished", "PM review done", { node: "review" });
+    addRunEvent(runId, "node.failed", "build node failed", { node: "build" });
+    addRunEvent(runId, "run.failed", "build node failed", {});
+
+    const detail = await api(`/api/runs/${runId}`);
+    assert.ok(detail.logSummary, "logSummary should be returned with run detail");
+    assert.ok(detail.logSummary.totals.events >= 9);
+    assert.ok(detail.logSummary.totals.errors >= 1, "node.failed / run.failed should count as errors");
+    const categoryKeys = detail.logSummary.categories.map((entry) => entry.key);
+    assert.ok(categoryKeys.includes("run"));
+    assert.ok(categoryKeys.includes("node"));
+    assert.ok(categoryKeys.includes("noise"), "heartbeats should be categorised as noise");
+    assert.ok(detail.logSummary.defaultCollapsed.includes("noise"));
+    assert.ok(detail.logSummary.highlights.length, "highlights should include the focus events");
+    assert.ok(detail.logSummary.highlights.every((entry) => entry.category !== "noise"), "noise should not appear in highlights");
+
+    const summaryDirect = await api(`/api/runs/${runId}/log-summary`);
+    assert.equal(summaryDirect.run.id, runId);
+    assert.equal(summaryDirect.logSummary.totals.events, detail.logSummary.totals.events);
+  });
+
+  it("redacts secret-looking strings in highlight messages", async () => {
+    const created = await api("/api/capabilities/hello/run", {
+      method: "POST",
+      body: { input: { goal: "log redaction" } }
+    });
+    addRunEvent(created.run.id, "run.failed", "auth failed authorization=Bearer shub_AAABBBCCCDDDEEE token=shub_secretvalue", {});
+    const summary = await api(`/api/runs/${created.run.id}/log-summary`);
+    const entry = summary.logSummary.highlights.find((item) => item.type === "run.failed");
+    assert.ok(entry, "run.failed should be highlighted");
+    assert.doesNotMatch(entry.message, /shub_AAABBBCCCDDDEEE/);
+    assert.doesNotMatch(entry.message, /shub_secretvalue/);
+    assert.match(entry.message, /\[redacted\]/);
+  });
+
+  it("exposes the structured log summary helper in app.js for the console", async () => {
+    const response = await raw("/public/app.js");
+    assert.equal(response.status, 200);
+    const code = response.data;
+    assert.match(code, /renderRunLog/);
+    assert.match(code, /bindRunLogFilters/);
+    assert.match(code, /run-log-highlights/);
+    assert.match(code, /\/log-summary/);
   });
 });

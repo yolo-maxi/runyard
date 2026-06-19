@@ -1482,6 +1482,261 @@ function renderRunDiagnostics(diagnostics) {
   </section>`;
 }
 
+// --- Structured run-log view ------------------------------------------------
+// The raw firehose of events is unreadable for any non-trivial run. We render
+// a scannable default: a counts strip, category + severity filter chips, a
+// highlights list seeded from the server-side summary, and a collapsible Full
+// timeline that hides noisy categories until the operator asks for them. The
+// raw view is always one click away via copy/download, and the redaction pass
+// already happened on the server.
+const RUN_LOG_NOISY_CATEGORIES = new Set(["noise", "trace"]);
+const RUN_LOG_CATEGORY_LABELS = {
+  run: "Run",
+  node: "Node",
+  approval: "Approval",
+  agent: "Agent",
+  step: "Step",
+  log: "Log",
+  other: "Other",
+  trace: "Trace",
+  noise: "Heartbeat"
+};
+const RUN_LOG_SEVERITY_LABELS = { error: "Errors", warn: "Warnings", info: "Info" };
+
+function runLogTextDump(events) {
+  return (events || [])
+    .map((event) => `[${event.createdAt}] ${event.type}: ${event.message || ""}`)
+    .join("\n");
+}
+
+function eventCategoryClient(event) {
+  const type = String(event?.type || "");
+  if (/(?:^|\.)heartbeat$|^heartbeat$|\.tick$|\.ping$/i.test(type)) return "noise";
+  if (/\.(?:trace|span|delta|chunk|tool_use|tool_result|thinking)$/i.test(type)) return "trace";
+  if (/^approval\./i.test(type)) return "approval";
+  if (/^run\./i.test(type)) return "run";
+  if (/^(?:node|task|step)\./i.test(type)) return "node";
+  if (/^workflow\.step$/i.test(type)) return "step";
+  if (/^(?:agent|claude|codex)\.(?:summary|result|completed|final)$/i.test(type)) return "agent";
+  if (type === "log" || type === "stdout" || type === "stderr" || /\.(?:log|stdout|stderr)$/i.test(type)) return "log";
+  return "other";
+}
+
+function eventSeverityClient(event) {
+  const type = String(event?.type || "");
+  if (/(?:^|\.)(?:failed|errored|fatal|panic)$/i.test(type)) return "error";
+  if (type === "stderr") return "error";
+  if (/(?:^|\.)(?:cancelled|skipped|warn|warning|deprecated)$/i.test(type)) return "warn";
+  const text = String(event?.message || "");
+  if (/(?:^|\s|:)(error|failed|panic|fatal|exception|timeout)\b/i.test(text)) return "error";
+  if (/(?:^|\s|:)(warn(?:ing)?|deprecat|retrying|skipped)\b/i.test(text)) return "warn";
+  return "info";
+}
+
+function eventNodeClient(event) {
+  const data = event?.data;
+  if (data && typeof data === "object" && !Array.isArray(data)) {
+    const field = data.node || data.nodeId || data.taskId || data.task || data.step;
+    if (field) return String(field).slice(0, 80);
+  }
+  return "";
+}
+
+function renderRunLogChips(label, entries) {
+  if (!entries || !entries.length) return "";
+  return `<div class="run-log-chip-row"><span class="muted run-log-chip-label">${esc(label)}</span>${entries
+    .map((entry) => `<button type="button" class="run-log-chip" data-filter-kind="${esc(entry.kind)}" data-filter-value="${esc(entry.value)}" aria-pressed="false">${esc(entry.label)}${entry.count ? ` <span class="run-log-chip-count">${esc(entry.count)}</span>` : ""}</button>`)
+    .join("")}</div>`;
+}
+
+function renderRunLogTotals(totals) {
+  if (!totals) return "";
+  const items = [
+    { label: "events", value: totals.events || 0 },
+    { label: "errors", value: totals.errors || 0, kind: "error" },
+    { label: "warnings", value: totals.warnings || 0, kind: "warn" },
+    { label: "highlights", value: totals.highlights || 0 }
+  ];
+  return `<dl class="run-log-totals">${items
+    .map((item) => `<div class="run-log-total${item.kind ? ` run-log-total-${esc(item.kind)}` : ""}"><dt>${esc(item.label)}</dt><dd>${esc(item.value)}</dd></div>`)
+    .join("")}</dl>`;
+}
+
+function renderRunLogHighlight(entry, { node = false } = {}) {
+  const severity = entry.severity || "info";
+  const category = entry.category || "other";
+  const nodeChip = node && entry.node ? `<span class="run-log-node-chip" title="node">${esc(entry.node)}</span>` : "";
+  return `<li class="run-log-event run-log-sev-${esc(severity)} run-log-cat-${esc(category)}">
+    <time>${esc(formatTimestamp(entry.createdAt))}</time>
+    <code class="run-log-type">${esc(entry.type)}</code>
+    ${nodeChip}
+    <span class="run-log-msg">${esc(entry.message || "")}</span>
+  </li>`;
+}
+
+function renderRunLog(run, events, summary) {
+  const totalEvents = Array.isArray(events) ? events.length : 0;
+  if (!totalEvents) {
+    return `<h3>Timeline</h3><p class="muted">No events yet.</p>`;
+  }
+  const summaryObj = summary || {};
+  const totals = summaryObj.totals || { events: totalEvents, highlights: 0, errors: 0, warnings: 0 };
+  const categories = Array.isArray(summaryObj.categories) ? summaryObj.categories : [];
+  const severities = Array.isArray(summaryObj.severities) ? summaryObj.severities : [];
+  const nodes = Array.isArray(summaryObj.nodes) ? summaryObj.nodes : [];
+  const highlights = Array.isArray(summaryObj.highlights) ? summaryObj.highlights : [];
+  const defaultCollapsed = new Set(summaryObj.defaultCollapsed || ["noise", "trace"]);
+  const categoryChips = categories.map((entry) => ({
+    kind: "category",
+    value: entry.key,
+    label: RUN_LOG_CATEGORY_LABELS[entry.key] || entry.key,
+    count: entry.count
+  }));
+  const severityChips = severities.map((entry) => ({
+    kind: "severity",
+    value: entry.key,
+    label: RUN_LOG_SEVERITY_LABELS[entry.key] || entry.key,
+    count: entry.count
+  }));
+  const nodeChips = nodes.slice(0, 12).map((entry) => ({
+    kind: "node",
+    value: entry.node,
+    label: entry.node,
+    count: entry.total
+  }));
+  const highlightsHtml = highlights.length
+    ? `<ol class="run-log-list run-log-highlights">${highlights.map((entry) => renderRunLogHighlight(entry, { node: true })).join("")}</ol>`
+    : `<p class="muted">No highlight events yet. Run started/finished, node/approval/agent summaries, and errors/warnings will land here as the run progresses.</p>`;
+  const dump = runLogTextDump(events);
+  const fullEvents = events.map((event) => {
+    const category = eventCategoryClient(event);
+    const severity = eventSeverityClient(event);
+    const node = eventNodeClient(event);
+    return {
+      id: event.id,
+      type: event.type,
+      message: event.message,
+      createdAt: event.createdAt,
+      category,
+      severity,
+      node,
+      noisy: defaultCollapsed.has(category)
+    };
+  });
+  const noisyCount = fullEvents.filter((e) => e.noisy).length;
+  const fullList = fullEvents
+    .map(
+      (entry) => `<li class="run-log-event run-log-sev-${esc(entry.severity)} run-log-cat-${esc(entry.category)}${entry.noisy ? " run-log-noisy" : ""}" data-category="${esc(entry.category)}" data-severity="${esc(entry.severity)}" data-node="${esc(entry.node || "")}" data-noisy="${entry.noisy ? "1" : "0"}">
+        <time>${esc(formatTimestamp(entry.createdAt))}</time>
+        <code class="run-log-type">${esc(entry.type)}</code>
+        ${entry.node ? `<span class="run-log-node-chip" title="node">${esc(entry.node)}</span>` : ""}
+        <span class="run-log-msg">${esc(entry.message || "")}</span>
+      </li>`
+    )
+    .join("");
+  const searchControl = `<label class="run-log-search">
+    <span class="muted">Search</span>
+    <input type="search" id="run-log-search-input" placeholder="filter by text, type, or node" autocomplete="off" />
+  </label>`;
+  const noisyToggle = noisyCount
+    ? `<label class="run-log-noisy-toggle">
+        <input type="checkbox" id="run-log-show-noisy" />
+        Show ${esc(noisyCount)} collapsed heartbeat/trace event${noisyCount === 1 ? "" : "s"}
+      </label>`
+    : "";
+  return `<div class="run-log-toolbar">
+      ${renderRunLogTotals(totals)}
+      <div class="run-log-controls">
+        <button type="button" class="button" data-copy="${esc(dump)}" title="Copy redacted run log">Copy log</button>
+        <a class="button" href="/api/runs/${esc(run.id)}/logs" target="_blank" rel="noopener" title="Open redacted plain-text log">Download text</a>
+        <a class="button" href="/api/runs/${esc(run.id)}/log-summary" target="_blank" rel="noopener" title="Open structured log summary JSON">Summary JSON</a>
+      </div>
+    </div>
+    <div class="run-log-filters">
+      ${searchControl}
+      ${renderRunLogChips("Category", categoryChips)}
+      ${renderRunLogChips("Severity", severityChips)}
+      ${nodeChips.length ? renderRunLogChips("Node", nodeChips) : ""}
+      <button type="button" class="button run-log-clear" id="run-log-clear" title="Clear filters">Clear filters</button>
+    </div>
+    <section class="run-log-section" data-section="highlights">
+      <h3>Key events <span class="muted">(${esc(highlights.length)})</span></h3>
+      <p class="muted">Run start/finish, node transitions, approvals, agent summaries, and gate (test/build/commit/push/deploy) markers.</p>
+      ${highlightsHtml}
+    </section>
+    <section class="run-log-section" data-section="full">
+      <details class="run-log-full" id="run-log-full">
+        <summary>Full timeline <span class="muted">(${esc(totalEvents)} events; noisy categories collapsed by default)</span></summary>
+        ${noisyToggle}
+        <ol class="run-log-list run-log-full-list" id="run-log-full-list">${fullList}</ol>
+      </details>
+    </section>`;
+}
+
+function bindRunLogFilters(panel) {
+  if (!panel) return;
+  const list = panel.querySelector("#run-log-full-list");
+  const noisyToggle = panel.querySelector("#run-log-show-noisy");
+  const searchInput = panel.querySelector("#run-log-search-input");
+  const clearBtn = panel.querySelector("#run-log-clear");
+  const filters = { categories: new Set(), severities: new Set(), nodes: new Set() };
+  const chipKindToFilter = { category: filters.categories, severity: filters.severities, node: filters.nodes };
+  const fullDetails = panel.querySelector("#run-log-full");
+  const reapply = () => {
+    if (!list) return;
+    const showNoisy = Boolean(noisyToggle?.checked);
+    const query = (searchInput?.value || "").trim().toLowerCase();
+    const items = list.querySelectorAll("li.run-log-event");
+    items.forEach((li) => {
+      const category = li.dataset.category || "";
+      const severity = li.dataset.severity || "";
+      const node = li.dataset.node || "";
+      const noisy = li.dataset.noisy === "1";
+      let visible = true;
+      if (filters.categories.size && !filters.categories.has(category)) visible = false;
+      if (visible && filters.severities.size && !filters.severities.has(severity)) visible = false;
+      if (visible && filters.nodes.size && !filters.nodes.has(node)) visible = false;
+      if (visible && !showNoisy && noisy && !filters.categories.has(category)) visible = false;
+      if (visible && query) {
+        const blob = (li.textContent || "").toLowerCase();
+        if (!blob.includes(query)) visible = false;
+      }
+      li.classList.toggle("run-log-hidden", !visible);
+    });
+    if ((filters.categories.size || filters.severities.size || filters.nodes.size || query) && fullDetails && !fullDetails.open) {
+      fullDetails.open = true;
+    }
+  };
+  panel.querySelectorAll(".run-log-chip").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      const kind = chip.dataset.filterKind;
+      const value = chip.dataset.filterValue;
+      const set = chipKindToFilter[kind];
+      if (!set) return;
+      if (set.has(value)) {
+        set.delete(value);
+        chip.setAttribute("aria-pressed", "false");
+      } else {
+        set.add(value);
+        chip.setAttribute("aria-pressed", "true");
+      }
+      reapply();
+    });
+  });
+  noisyToggle?.addEventListener("change", reapply);
+  searchInput?.addEventListener("input", reapply);
+  clearBtn?.addEventListener("click", () => {
+    filters.categories.clear();
+    filters.severities.clear();
+    filters.nodes.clear();
+    panel.querySelectorAll(".run-log-chip").forEach((chip) => chip.setAttribute("aria-pressed", "false"));
+    if (searchInput) searchInput.value = "";
+    if (noisyToggle) noisyToggle.checked = false;
+    reapply();
+  });
+  reapply();
+}
+
 async function renderRunDetail(runId, { focus = "", focusId = "" } = {}) {
   const data = await api(`/api/runs/${runId}`);
   const run = data.run;
@@ -1531,8 +1786,7 @@ async function renderRunDetail(runId, { focus = "", focusId = "" } = {}) {
       <div class="panel" id="panel-logs">
         <h2>Run log ${shareButton(deepLinks.runLogs(run.id), "Copy share link to this run's log")}</h2>
         <p class="muted">${esc(run.currentStep || "—")}</p>
-        <h3>Timeline</h3>
-        <div class="timeline">${data.events.map((event) => `<div class="event"><time>${esc(event.createdAt)}</time><strong>${esc(event.type)}</strong><br>${esc(event.message)}</div>`).join("")}</div>
+        ${renderRunLog(run, data.events || [], data.logSummary || null)}
       </div>
       <div class="panel" id="panel-artifacts">
         <h3>Input</h3>${json(run.input)}
@@ -1547,6 +1801,7 @@ async function renderRunDetail(runId, { focus = "", focusId = "" } = {}) {
   });
   $("#rerun-run").addEventListener("click", () => rerunRun(run.id).catch(showError));
   bindCopy();
+  bindRunLogFilters($("#panel-logs"));
   // Honor the sub-route by bringing the relevant panel into view.
   if (focus === "logs") $("#panel-logs")?.scrollIntoView({ behavior: "smooth", block: "start" });
   if (focus === "artifacts") $("#panel-artifacts")?.scrollIntoView({ behavior: "smooth", block: "start" });

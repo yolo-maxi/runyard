@@ -285,6 +285,189 @@ function reverseFind(list, predicate) {
   return null;
 }
 
+// --- Run log usability ------------------------------------------------------
+// The raw run log is a flat firehose of events (heartbeats, traces, step
+// markers, agent chatter). The Hub console needs a scannable default view that
+// surfaces the key transitions and lets operators filter without scraping
+// every line. We classify each event into a small set of categories and a
+// severity, count them, group by node/step, and return a default-collapsed
+// shape the client can render directly. Raw events stay available at
+// /api/runs/:id/events and /logs.
+const NOISY_EVENT_TYPES = new Set([
+  "heartbeat",
+  "runner.heartbeat",
+  "workflow.heartbeat",
+  "trace",
+  "trace.span",
+  "trace.event",
+  "tracer",
+  "claude.tool_use",
+  "claude.tool_result",
+  "claude.message_delta",
+  "claude.content_block_delta",
+  "claude.thinking",
+  "agent.token",
+  "agent.delta"
+]);
+
+const APPROVAL_EVENT_RE = /^approval\./i;
+const NODE_EVENT_RE = /^(?:node|task|step)\.(?:started|finished|completed|failed|errored|cancelled|skipped)$/i;
+const RUN_EVENT_RE = /^run\.(?:created|started|succeeded|failed|cancelled|errored|chain\..*|rerun_.*)$/i;
+const STEP_MARKER_RE = /^workflow\.step$/i;
+const AGENT_SUMMARY_RE = /^(?:agent|claude|codex)\.(?:summary|result|completed|final)$/i;
+const GATE_RE = /(test|build|deploy|commit|push|gate|verify)/i;
+const ERROR_HINT_RE = /(?:^|\s|:)(error|failed|panic|fatal|exception|timeout)\b/i;
+const WARN_HINT_RE = /(?:^|\s|:)(warn(?:ing)?|deprecat|retrying|skipped)\b/i;
+
+function eventCategory(event) {
+  const type = String(event?.type || "");
+  if (NOISY_EVENT_TYPES.has(type) || /\.(?:heartbeat|tick|ping)$/i.test(type)) return "noise";
+  if (/\.(?:trace|span|delta|chunk|tool_use|tool_result|thinking)$/i.test(type)) return "trace";
+  if (APPROVAL_EVENT_RE.test(type)) return "approval";
+  if (RUN_EVENT_RE.test(type)) return "run";
+  if (NODE_EVENT_RE.test(type)) return "node";
+  if (STEP_MARKER_RE.test(type)) return "step";
+  if (AGENT_SUMMARY_RE.test(type)) return "agent";
+  if (isLogEvent(event)) return "log";
+  return "other";
+}
+
+function eventSeverity(event) {
+  const type = String(event?.type || "");
+  if (/(?:^|\.)(?:failed|errored|fatal|panic)$/i.test(type)) return "error";
+  if (type === "stderr") return "error";
+  if (/(?:^|\.)(?:cancelled|skipped|warn|warning|deprecated)$/i.test(type)) return "warn";
+  const text = String(event?.message || "");
+  if (ERROR_HINT_RE.test(text)) return "error";
+  if (WARN_HINT_RE.test(text)) return "warn";
+  return "info";
+}
+
+function eventNode(event) {
+  const data = event?.data;
+  if (data && typeof data === "object" && !Array.isArray(data)) {
+    const field = data.node || data.nodeId || data.taskId || data.task || data.step;
+    if (field) return String(field).slice(0, 80);
+  }
+  const type = String(event?.type || "");
+  const dotted = type.match(/^(?:node|task|step)\.[a-z]+$/i);
+  if (dotted && data?.id) return String(data.id).slice(0, 80);
+  return "";
+}
+
+const HIGHLIGHT_CATEGORIES = new Set(["run", "node", "approval", "agent", "step"]);
+const DEFAULT_COLLAPSED_CATEGORIES = ["noise", "trace"];
+
+function eventTypeLabel(type) {
+  return String(type || "").trim() || "log";
+}
+
+// Sort categories so the most useful chips appear first in the filter bar.
+const CATEGORY_ORDER = ["run", "node", "approval", "agent", "step", "log", "other", "trace", "noise"];
+function sortCategoryEntries(entries) {
+  return entries.sort((a, b) => {
+    const ai = CATEGORY_ORDER.indexOf(a.key);
+    const bi = CATEGORY_ORDER.indexOf(b.key);
+    return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi);
+  });
+}
+
+function summarizeRunEvents(events = [], { highlightCap = 40, perNodeCap = 6 } = {}) {
+  if (!events.length) {
+    return {
+      totals: { events: 0, highlights: 0, errors: 0, warnings: 0 },
+      categories: [],
+      severities: [],
+      types: [],
+      nodes: [],
+      defaultCollapsed: DEFAULT_COLLAPSED_CATEGORIES,
+      highlights: []
+    };
+  }
+  const sorted = [...events].sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+  const categoryCounts = new Map();
+  const severityCounts = new Map();
+  const typeCounts = new Map();
+  const nodeStats = new Map();
+  const highlights = [];
+  const nodeWindow = new Map();
+  let errors = 0;
+  let warnings = 0;
+  for (const event of sorted) {
+    const category = eventCategory(event);
+    const severity = eventSeverity(event);
+    const type = eventTypeLabel(event.type);
+    const node = eventNode(event);
+    categoryCounts.set(category, (categoryCounts.get(category) || 0) + 1);
+    severityCounts.set(severity, (severityCounts.get(severity) || 0) + 1);
+    typeCounts.set(type, (typeCounts.get(type) || 0) + 1);
+    if (severity === "error") errors += 1;
+    if (severity === "warn") warnings += 1;
+    if (node) {
+      const stat = nodeStats.get(node) || { node, total: 0, errors: 0, warnings: 0, lastSeverity: "info", lastCategory: "other", lastAt: event.createdAt, sampleType: type };
+      stat.total += 1;
+      if (severity === "error") stat.errors += 1;
+      if (severity === "warn") stat.warnings += 1;
+      stat.lastSeverity = severity;
+      stat.lastCategory = category;
+      stat.lastAt = event.createdAt;
+      stat.sampleType = type;
+      nodeStats.set(node, stat);
+    }
+    const interesting = HIGHLIGHT_CATEGORIES.has(category) || severity === "error" || severity === "warn" || GATE_RE.test(type);
+    if (!interesting) continue;
+    // Per-node throttle so a single chatty node can't crowd the highlight list.
+    if (node) {
+      const seen = nodeWindow.get(node) || 0;
+      if (seen >= perNodeCap) continue;
+      nodeWindow.set(node, seen + 1);
+    }
+    highlights.push({
+      id: event.id,
+      type,
+      category,
+      severity,
+      node,
+      message: redactSnippet(event.message, 320),
+      createdAt: event.createdAt
+    });
+  }
+  // Keep the highlight feed bounded so the JSON payload stays small even on
+  // very long runs; the raw log endpoint covers the unfiltered case.
+  const trimmedHighlights = highlights.slice(-highlightCap);
+  const categories = sortCategoryEntries(
+    [...categoryCounts.entries()].map(([key, count]) => ({
+      key,
+      count,
+      collapsedByDefault: DEFAULT_COLLAPSED_CATEGORIES.includes(key)
+    }))
+  );
+  const severities = ["error", "warn", "info"]
+    .map((key) => ({ key, count: severityCounts.get(key) || 0 }))
+    .filter((entry) => entry.count > 0);
+  const types = [...typeCounts.entries()]
+    .map(([key, count]) => ({ key, count, category: eventCategory({ type: key }) }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 40);
+  const nodes = [...nodeStats.values()]
+    .sort((a, b) => String(b.lastAt || "").localeCompare(String(a.lastAt || "")))
+    .slice(0, 30);
+  return {
+    totals: {
+      events: sorted.length,
+      highlights: trimmedHighlights.length,
+      errors,
+      warnings
+    },
+    categories,
+    severities,
+    types,
+    nodes,
+    defaultCollapsed: DEFAULT_COLLAPSED_CATEGORIES,
+    highlights: trimmedHighlights
+  };
+}
+
 function findFailureEvent(events) {
   return reverseFind(events, (event) => {
     const type = String(event?.type || "");
@@ -1818,10 +2001,16 @@ app.get("/api/runs/:id", requireAuth, (req, res) => {
     run: withRunLinks(run),
     events,
     artifacts,
-    diagnostics: runDiagnostics(run, events, artifacts)
+    diagnostics: runDiagnostics(run, events, artifacts),
+    logSummary: summarizeRunEvents(events)
   });
 });
 app.get("/api/runs/:id/events", requireAuth, (req, res) => res.json({ events: listRunEvents(req.params.id) }));
+app.get("/api/runs/:id/log-summary", requireAuth, (req, res) => {
+  const run = getRun(req.params.id);
+  if (!run) return res.status(404).json({ error: "run not found" });
+  res.json({ run: withRunLinks(run), logSummary: summarizeRunEvents(listRunEvents(run.id)) });
+});
 app.get("/api/runs/:id/diagnostics", requireAuth, (req, res) => {
   const run = getRun(req.params.id);
   if (!run) return res.status(404).json({ error: "run not found" });
@@ -1829,7 +2018,8 @@ app.get("/api/runs/:id/diagnostics", requireAuth, (req, res) => {
   const artifacts = listArtifacts({ runId: run.id }).map(withArtifactLinks);
   res.json({
     run: withRunLinks(run),
-    diagnostics: runDiagnostics(run, events, artifacts)
+    diagnostics: runDiagnostics(run, events, artifacts),
+    logSummary: summarizeRunEvents(events)
   });
 });
 app.get("/api/runs/:id/logs", requireAuth, (req, res) => {

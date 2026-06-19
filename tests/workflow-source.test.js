@@ -87,6 +87,30 @@ describe("Workflow source + code viewer", () => {
     assert.ok(data.graph.nodes.find((node) => node.kind === "entry"));
   });
 
+  it("returns source and graph metadata for the run knowledge builder workflow", async () => {
+    const data = await api("/api/capabilities/run-knowledge-builder/source");
+    assert.equal(data.available, true);
+    assert.equal(data.slug, "run-knowledge-builder");
+    assert.match(data.path, /workflow-templates\/workflows\/run-knowledge-builder\.tsx$/);
+    assert.equal(data.metadata.displayName, "Run Knowledge Builder");
+    const taskIds = data.graph.nodes.filter((node) => node.kind !== "entry").map((node) => node.id);
+    assert.ok(taskIds.includes("gather"));
+    assert.ok(taskIds.includes("analyze"));
+    assert.ok(taskIds.includes("report"));
+    assert.ok(data.code.includes("run-knowledge-report.md"));
+  });
+
+  it("returns a PM-then-builder graph for the improve workflow", async () => {
+    const data = await api("/api/capabilities/improve/source");
+    assert.equal(data.available, true);
+    assert.equal(data.slug, "improve");
+    assert.equal(data.metadata.displayName, "Improve");
+    const taskIds = data.graph.nodes.filter((node) => node.kind !== "entry").map((node) => node.id);
+    assert.ok(taskIds.includes("review"), "improve should include a PM review node");
+    assert.ok(taskIds.includes("implement"), "improve should dispatch a builder implementation node");
+    assert.ok(taskIds.includes("test") && taskIds.includes("commit") && taskIds.includes("push"));
+  });
+
   it("rejects unknown capabilities with 404", async () => {
     const res = await fetch(`${baseUrl}/api/capabilities/does-not-exist/source`, {
       headers: { authorization: `Bearer ${token}` }
