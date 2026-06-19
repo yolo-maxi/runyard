@@ -14,4 +14,11 @@ describe("Smithers runner deadline containment", () => {
     assert.match(source, /\["cancel", sid\]/);
     assert.match(source, /runner\.deadline_exceeded/);
   });
+
+  it("does not mark run-smithers needs_recovery as successful", () => {
+    assert.match(source, /function runSmithersSupervisionFailure/);
+    assert.match(source, /capability\?\.slug !== "run-smithers"/);
+    assert.match(source, /outputs\?\.supervise\?\.outcome/);
+    assert.match(source, /run-smithers ended with outcome/);
+  });
 });

@@ -136,6 +136,14 @@ async function nodeOutput(sid, nodeId) {
 
 const TERMINAL = new Set(["succeeded", "failed", "cancelled", "errored"]);
 
+function runSmithersSupervisionFailure(capability, outputs) {
+  if (capability?.slug !== "run-smithers") return "";
+  const outcome = outputs?.supervise?.outcome;
+  if (!outcome || outcome === "succeeded") return "";
+  const summary = outputs?.supervise?.summary || "";
+  return `run-smithers ended with outcome '${outcome}'${summary ? `: ${summary}` : ""}`;
+}
+
 async function executeAssignment(assignment) {
   const { run, capability } = assignment;
   const entry = capability.workflow?.entry || capability.workflow?.file;
@@ -219,13 +227,14 @@ async function executeAssignment(assignment) {
         .join("\n")
     });
 
-    if (state === "succeeded") {
+    const supervisionFailure = state === "succeeded" ? runSmithersSupervisionFailure(capability, outputs) : "";
+    if (state === "succeeded" && !supervisionFailure) {
       await client.post(`/api/runs/${run.id}/complete`, { output: { smithersRunId: sid, outputs } });
       console.log(`Completed ${run.id} via smithers ${sid}`);
     } else {
-      const error = deadlineExceeded
+      const error = supervisionFailure || (deadlineExceeded
         ? `smithers run ${sid} exceeded runner deadline (${maxRunMs}ms) and was cancelled`
-        : `smithers run ${sid} ended in state '${state}'`;
+        : `smithers run ${sid} ended in state '${state}'`);
       await client.post(`/api/runs/${run.id}/fail`, { error });
       console.log(`Run ${run.id} ended '${state}' (smithers ${sid})`);
     }
