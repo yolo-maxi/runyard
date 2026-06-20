@@ -2,12 +2,7 @@ const state = {
   me: null,
   view: "home",
   telegramAuthAttempted: false,
-  telegramAuthError: "",
-  // Pending slug-rename undo banner: shown on the workflow detail view for
-  // up to 30s after a save that changes the slug. Clicking Undo PATCHes the
-  // workflow back to its previous slug. Cleared once it expires or the user
-  // dismisses it.
-  slugUndo: null
+  telegramAuthError: ""
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -348,7 +343,7 @@ function bindTemplateButtons() {
 // A tiny pill rendered inside each sidebar button so an operator sees that
 // something needs attention without having to open the tab first. Counts are
 // refreshed every 30s and on every navigation; visiting the tab clears it.
-const SIDEBAR_BADGE_STATE = { runners: 0, runs: 0, approvals: 0 };
+const SIDEBAR_BADGE_STATE = { runners: 0, runs: 0 };
 
 function applySidebarBadges() {
   document.querySelectorAll(".sidebar button").forEach((button) => {
@@ -377,31 +372,13 @@ function applySidebarBadges() {
       button.appendChild(badge);
     }
   });
-  applyMobileNavBadges();
-}
-
-// Mobile primary-nav chips use `<span class="nav-badge" data-badge="...">` slots
-// embedded in index.html. Approvals is the only chip with a live count today;
-// when the count is 0 the slot is hidden so the chip reads as plain text.
-function applyMobileNavBadges() {
-  const approvalsBadge = document.querySelector('.mobile-primary-nav [data-badge="approvals"]');
-  if (!approvalsBadge) return;
-  const count = SIDEBAR_BADGE_STATE.approvals;
-  if (!count) {
-    approvalsBadge.textContent = "";
-    approvalsBadge.hidden = true;
-  } else {
-    approvalsBadge.textContent = String(count);
-    approvalsBadge.hidden = false;
-  }
 }
 
 async function refreshSidebarBadges() {
   try {
-    const [runsData, runnersData, dashData] = await Promise.all([
+    const [runsData, runnersData] = await Promise.all([
       api("/api/runs?limit=50").catch(() => ({ runs: [] })),
-      api("/api/runners").catch(() => ({ runners: [] })),
-      api("/api/dashboard").catch(() => null)
+      api("/api/runners").catch(() => ({ runners: [] }))
     ]);
     const cutoff = Date.now() - 24 * 3600 * 1000;
     SIDEBAR_BADGE_STATE.runs = (runsData.runs || []).filter((r) => {
@@ -410,27 +387,6 @@ async function refreshSidebarBadges() {
       return Number.isNaN(t) ? true : t >= cutoff;
     }).length;
     SIDEBAR_BADGE_STATE.runners = (runnersData.runners || []).filter((r) => !r.online).length;
-    // Approvals badge: prefer the dashboard's cheap aggregate; fall back to a
-    // direct /api/approvals?status=pending count if /api/dashboard is missing
-    // the field (older hubs) or the call failed entirely.
-    let pendingApprovals = null;
-    if (dashData) {
-      const stats = dashData.stats || {};
-      if (typeof stats.pendingApprovals === "number") {
-        pendingApprovals = stats.pendingApprovals;
-      } else if (Array.isArray(dashData.pendingApprovals)) {
-        pendingApprovals = dashData.pendingApprovals.length;
-      }
-    }
-    if (pendingApprovals == null) {
-      try {
-        const list = await api("/api/approvals?status=pending");
-        pendingApprovals = (list.approvals || []).length;
-      } catch {
-        pendingApprovals = SIDEBAR_BADGE_STATE.approvals;
-      }
-    }
-    SIDEBAR_BADGE_STATE.approvals = pendingApprovals || 0;
     applySidebarBadges();
   } catch {
     // best-effort; badges stay as last known
@@ -586,8 +542,7 @@ const PRIMARY_VIEWS = new Map([
   ["capabilities", "workflows"],
   ["agents", "agents"],
   ["skills", "agents"],
-  ["knowledge", "agents"],
-  ["approvals", "approvals"]
+  ["knowledge", "agents"]
 ]);
 
 function highlightSidebar(view) {
@@ -611,137 +566,10 @@ function closeAdminMenu() {
   if (menu) menu.open = false;
 }
 
-// --- Editor dirty-flag guard ------------------------------------------------
-// Any in-page editor (capability editor, item editor, run form) marks
-// editorGuard.dirty = true on user input. The shared confirm helper is then
-// invoked by setView, our hashchange listener (back button + sidebar
-// anchors), and a beforeunload listener so users can't silently drop edits.
-const editorGuard = {
-  dirty: false,
-  lastHash: null,
-  attached: false,
-  beforeUnload: null,
-  hashChange: null
-};
-
-function markEditorDirty() {
-  editorGuard.dirty = true;
-}
-
-function clearEditorDirty() {
-  editorGuard.dirty = false;
-}
-
-function confirmDiscardIfDirty() {
-  if (!editorGuard.dirty) return true;
-  const ok = window.confirm("Discard unsaved changes?");
-  if (ok) clearEditorDirty();
-  return ok;
-}
-
-function attachEditorGuards() {
-  if (editorGuard.attached) return;
-  editorGuard.attached = true;
-  editorGuard.lastHash = location.hash;
-  editorGuard.beforeUnload = (event) => {
-    if (!editorGuard.dirty) return undefined;
-    event.preventDefault();
-    event.returnValue = "";
-    return "";
-  };
-  editorGuard.hashChange = () => {
-    if (!editorGuard.dirty) {
-      editorGuard.lastHash = location.hash;
-      return;
-    }
-    if (location.hash === editorGuard.lastHash) return;
-    if (window.confirm("Discard unsaved changes?")) {
-      clearEditorDirty();
-      editorGuard.lastHash = location.hash;
-    } else {
-      // Roll the hash back without triggering another hashchange-driven
-      // render. The displayed URL returns to the editor; back-button history
-      // gets slightly stale but the user keeps their unsaved values.
-      history.replaceState(null, "", editorGuard.lastHash || location.pathname);
-    }
-  };
-  window.addEventListener("beforeunload", editorGuard.beforeUnload);
-  window.addEventListener("hashchange", editorGuard.hashChange);
-}
-
-function detachEditorGuards() {
-  if (!editorGuard.attached) return;
-  editorGuard.attached = false;
-  if (editorGuard.beforeUnload) window.removeEventListener("beforeunload", editorGuard.beforeUnload);
-  if (editorGuard.hashChange) window.removeEventListener("hashchange", editorGuard.hashChange);
-  editorGuard.beforeUnload = null;
-  editorGuard.hashChange = null;
-}
-
-function wireDirtyTracking(form) {
-  if (!form) return;
-  const flag = () => markEditorDirty();
-  form.addEventListener("input", flag);
-  form.addEventListener("change", flag);
-}
-
-// --- Save-error translation -------------------------------------------------
-// Maps the raw `error.message` thrown by api() to operator-friendly copy. The
-// raw string is still kept around so a "Details" disclosure can surface it
-// without making it the primary message.
-function friendlySaveError(error) {
-  const raw = (error && error.message) ? String(error.message) : String(error || "");
-  const lower = raw.toLowerCase();
-  if (/slug/.test(lower) && /(exists|taken|in use|duplicate|already)/.test(lower)) {
-    return { friendly: "Slug already taken — pick a different title or set a custom slug.", raw };
-  }
-  if (/^http\s*40[13]/.test(lower) || /forbidden|unauthor/.test(lower)) {
-    return { friendly: "You don't have permission to save this workflow.", raw };
-  }
-  if (/^http\s*409/.test(lower) || /conflict/.test(lower)) {
-    return { friendly: "Another change conflicts with this save — reload the workflow and try again.", raw };
-  }
-  if (/^http\s*5\d\d/.test(lower)) {
-    return { friendly: "The hub couldn't save this workflow. Try again in a moment.", raw };
-  }
-  if (/name.*(required|missing)|missing.*name/.test(lower)) {
-    return { friendly: "Name is required.", raw };
-  }
-  if (/(invalid|malformed).*(json|schema)/.test(lower)) {
-    return { friendly: "The advanced JSON block is invalid — check the syntax.", raw };
-  }
-  if (/validation|invalid/.test(lower)) {
-    return { friendly: "That workflow didn't validate. Check the highlighted fields.", raw };
-  }
-  return { friendly: "Couldn't save the workflow.", raw };
-}
-
-function renderEditorError(host, friendly, raw) {
-  if (!host) return;
-  let banner = host.querySelector(".editor-error");
-  if (!banner) {
-    banner = document.createElement("div");
-    banner.className = "editor-error";
-    host.insertBefore(banner, host.firstChild);
-  }
-  banner.innerHTML = `<p><strong>${esc(friendly)}</strong></p>
-    <details><summary>Details</summary><pre>${esc(raw || "(no details)")}</pre></details>`;
-}
-
-function clearEditorError(host) {
-  if (!host) return;
-  const banner = host.querySelector(".editor-error");
-  if (banner) banner.remove();
-}
-
 function setView(view) {
-  if (!confirmDiscardIfDirty()) return;
   state.view = view;
   closeAdminMenu();
   location.hash = view;
-  // Keep the hashchange guard's "last accepted" hash in sync so a subsequent
-  // dirty edit doesn't think this navigation was an unguarded back-button hop.
-  editorGuard.lastHash = location.hash;
   // Visiting Runs / home implies "seen" — drop the runs-failed badge optimistically
   // so the UI feels responsive; the next poll re-derives it from the API.
   if (view === "home" || view === "runs") {
@@ -750,10 +578,6 @@ function setView(view) {
   }
   if (view === "runners") {
     SIDEBAR_BADGE_STATE.runners = 0;
-    applySidebarBadges();
-  }
-  if (view === "approvals" || view.startsWith("approvals/")) {
-    SIDEBAR_BADGE_STATE.approvals = 0;
     applySidebarBadges();
   }
   render().catch(showError);
@@ -1963,22 +1787,7 @@ async function renderWorkflowDetail(slug, { sub = "" } = {}) {
       </div>
     </section>`;
 
-  // Sticky "Slug changed — Undo" banner, shown only on the new slug's detail
-  // page for the 30s window after a rename. Clears itself once expired.
-  const undo = state.slugUndo;
-  const showUndo = undo && undo.newSlug === slug && Date.now() < undo.expiresAt;
-  const undoHtml = showUndo
-    ? `<aside class="slug-undo-banner" id="slug-undo-banner" role="status">
-        <span>Slug changed from <code>${esc(undo.oldSlug)}</code> to <code>${esc(undo.newSlug)}</code>. The old deep link will 404 until you restore it.</span>
-        <span class="slug-undo-actions">
-          <button type="button" class="button" id="slug-undo-btn">Undo</button>
-          <button type="button" class="button slug-undo-dismiss" id="slug-undo-dismiss" aria-label="Dismiss">×</button>
-        </span>
-      </aside>`
-    : "";
-
   content.innerHTML = `${crumbNav}${toolbar(cap.name, headerActions, deepLinks.workflow(slug))}
-    ${undoHtml}
     <p class="muted workflow-detail-desc">${esc(cap.description || "No description.")}</p>
     <p class="workflow-meta-row muted">
       <span>${esc(cap.category || "General")}</span>
@@ -1988,7 +1797,6 @@ async function renderWorkflowDetail(slug, { sub = "" } = {}) {
       <span>${cap.enabled ? "enabled" : "disabled"}</span>
       ${approval.required ? `<span>·</span><span class="status waiting_approval">has approval checkpoints</span>` : ""}
     </p>
-    <section id="inline-editor" class="panel hidden inline-editor" aria-label="Edit workflow"></section>
     <nav class="tabs workflow-tabs" aria-label="Workflow sections">${tabsHtml}</nav>
     <div id="workflow-tab-body">
       ${activeTab === "overview" ? overviewHtml : ""}
@@ -1998,41 +1806,8 @@ async function renderWorkflowDetail(slug, { sub = "" } = {}) {
     </div>
     <section id="editor" class="panel hidden"></section>`;
 
-  if (showUndo) {
-    const banner = document.getElementById("slug-undo-banner");
-    const remove = () => banner && banner.remove();
-    const timeLeft = Math.max(0, undo.expiresAt - Date.now());
-    setTimeout(() => {
-      if (state.slugUndo && Date.now() >= state.slugUndo.expiresAt) {
-        state.slugUndo = null;
-        remove();
-      }
-    }, timeLeft + 50);
-    $("#slug-undo-dismiss")?.addEventListener("click", () => {
-      state.slugUndo = null;
-      remove();
-    });
-    $("#slug-undo-btn")?.addEventListener("click", async () => {
-      const u = state.slugUndo;
-      if (!u) return;
-      try {
-        const restored = await api(`/api/capabilities/${encodeURIComponent(u.newSlug)}`, { method: "PATCH", body: { slug: u.oldSlug } });
-        const back = restored?.capability?.slug || u.oldSlug;
-        state.slugUndo = null;
-        toast(`Slug restored to ${back}`, "ok");
-        state.view = `workflows/${back}`;
-        location.hash = `workflows/${back}`;
-        editorGuard.lastHash = location.hash;
-        await render();
-      } catch (error) {
-        const { friendly } = friendlySaveError(error);
-        toast(friendly, "error");
-      }
-    });
-  }
-
   $("#wf-run").addEventListener("click", () => setView(`workflows/${slug}/run`));
-  $("#wf-edit").addEventListener("click", () => editCapability(slug, { inline: true }));
+  $("#wf-edit").addEventListener("click", () => editCapability(slug));
   document.querySelectorAll("[data-wf-tab]").forEach((anchor) => {
     anchor.addEventListener("click", (event) => {
       event.preventDefault();
@@ -2060,7 +1835,7 @@ async function renderWorkflowDetail(slug, { sub = "" } = {}) {
   if (sub === "run") {
     await showRunForm(slug);
   } else if (sub === "edit") {
-    await editCapability(slug, { inline: true });
+    await editCapability(slug);
   }
 }
 
@@ -2476,9 +2251,6 @@ async function showRunForm(slug) {
     <details class="advanced"><summary>Workflow contract</summary>${json(cap)}</details>`;
   bindCopy();
   const form = $("#run-form");
-  clearEditorDirty();
-  attachEditorGuards();
-  wireDirtyTracking(form);
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     let input;
@@ -2500,8 +2272,6 @@ async function showRunForm(slug) {
     }
     try {
       const result = await api(`/api/capabilities/${slug}/run`, { method: "POST", body: { input } });
-      clearEditorDirty();
-      detachEditorGuards();
       toast("Run created", "ok");
       // Landing's "Try it" CTA sends users here with ?try=<slug>. After the
       // sample run is queued, route them to /app#connect so they wire MCP,
@@ -2517,7 +2287,6 @@ async function showRunForm(slug) {
       }
       location.hash = deepLinks.run(result.run.id).slice(1);
       state.view = `runs/${result.run.id}`;
-      editorGuard.lastHash = location.hash;
       await render();
     } catch (error) {
       toast(error.message, "error");
@@ -2525,122 +2294,31 @@ async function showRunForm(slug) {
   });
 }
 
-async function editCapability(slug = "", { inline = false } = {}) {
+async function editCapability(slug = "") {
   const cap = slug
     ? (await api(`/api/capabilities/${slug}`)).capability
     : { name: "", slug: "", description: "", category: "General", keywords: [], inputSchema: {}, outputSchema: {}, requiredRunnerTags: [], requiredSkills: [], requiredAgents: [], approvalPolicy: {}, workflow: { type: "builtin", name: "" }, enabled: true };
-  // Mount inline under the detail header when invoked from a workflow detail
-  // page (Edit button or #workflows/<slug>/edit deep link); otherwise fall
-  // back to the legacy bottom #editor slot used by the workflows list.
-  const inlineHost = inline ? $("#inline-editor") : null;
-  const editor = inlineHost || $("#editor");
-  if (!editor) return;
+  const editor = $("#editor");
   editor.classList.remove("hidden");
-  if (!inline) editor.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  // Slug-edit opt-in: for an existing workflow the slug is rendered as a
-  // chip and only becomes editable when the user explicitly clicks
-  // "Edit slug", which also reveals a deep-link-breakage warning.
-  let slugEditMode = !slug;
-  const oldSlug = slug || "";
-  const slugInputHidden = slug && !slugEditMode;
-  editor.innerHTML = `<header class="inline-editor-head">
-      <h2>${slug ? "Edit" : "New"} Workflow</h2>
-      ${inline ? `<button type="button" class="button" id="cap-cancel" title="Discard and collapse the editor">Cancel</button>` : ""}
-    </header>
+  editor.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  editor.innerHTML = `<h2>${slug ? "Edit" : "New"} Workflow</h2>
     <form id="cap-form" class="form-grid">
       <label>Name <span class="req">*</span><input id="cap-name" value="${esc(cap.name)}" required></label>
-      <label>Slug${slug ? "" : ' <span class="field-hint">Leave blank to derive from the name.</span>'}
-        ${slug
-          ? `<div class="slug-chip-row" id="cap-slug-row">
-              <span class="slug-chip" id="cap-slug-chip" title="Used in deep links like /workflows/${esc(cap.slug)}">${esc(cap.slug)}</span>
-              <button type="button" class="button" id="cap-slug-edit-toggle">Edit slug</button>
-            </div>`
-          : ""}
-        <input id="cap-slug" value="${esc(cap.slug)}" ${slugInputHidden ? `class="hidden"` : ""} autocomplete="off">
-        <p class="field-warning hidden" id="cap-slug-warning">Heads up — changing the slug breaks existing deep links like <code>${esc(deepLinks.abs(deepLinks.workflow(cap.slug || "workflow")))}</code>. Anyone hitting the old URL will 404 until you change it back.</p>
-      </label>
+      <label>Slug${slug ? "" : ' <span class="field-hint">Leave blank to derive from the name.</span>'}<input id="cap-slug" value="${esc(cap.slug)}" ${slug ? "disabled" : ""}></label>
       <label>Description<textarea id="cap-description">${esc(cap.description)}</textarea></label>
       <label>Category<input id="cap-category" value="${esc(cap.category || "General")}"></label>
       <label>Keywords<input id="cap-keywords" value="${esc((cap.keywords || []).join(", "))}"><span class="field-hint">Comma-separated.</span></label>
       <label>Required runner tags<input id="cap-tags" value="${esc((cap.requiredRunnerTags || []).join(", "))}"><span class="field-hint">Comma-separated. Only runners with all these tags can execute it.</span></label>
       <label class="inline"><input type="checkbox" id="cap-enabled" ${cap.enabled === false ? "" : "checked"}> Enabled</label>
       <label class="inline"><input type="checkbox" id="cap-approval" ${cap.approvalPolicy?.required ? "checked" : ""}> Require approval before running</label>
-      <p class="field-hint approval-helper${cap.approvalPolicy?.required ? "" : " hidden"}" id="cap-approval-helper">Runs will pause for human approval before executing; the reason is shown to approvers.</p>
-      <label class="approval-reason-row${cap.approvalPolicy?.required ? "" : " hidden"}" id="cap-approval-reason-row">Approval reason <span class="req">*</span>
-        <input id="cap-approval-reason" value="${esc(cap.approvalPolicy?.reason || "")}">
-        <span class="field-error" data-error-for="cap-approval-reason"></span>
-      </label>
+      <label>Approval reason<input id="cap-approval-reason" value="${esc(cap.approvalPolicy?.reason || "")}"></label>
       <details class="advanced"><summary>Advanced: input/output schema &amp; workflow (JSON)</summary>
         <label><textarea id="cap-json">${esc(JSON.stringify({ inputSchema: cap.inputSchema || {}, outputSchema: cap.outputSchema || {}, workflow: cap.workflow || {}, requiredSkills: cap.requiredSkills || [], requiredAgents: cap.requiredAgents || [] }, null, 2))}</textarea></label>
       </details>
-      <div class="editor-actions">
-        <button class="primary" type="submit">Save Workflow</button>
-        ${inline ? `<button type="button" class="button" id="cap-cancel-2">Cancel</button>` : ""}
-      </div>
+      <button class="primary" type="submit">Save Workflow</button>
     </form>`;
-
-  clearEditorDirty();
-  attachEditorGuards();
-  const form = $("#cap-form");
-  wireDirtyTracking(form);
-
-  // Slug chip ↔ input toggle (existing workflows only).
-  if (slug) {
-    const toggleBtn = $("#cap-slug-edit-toggle");
-    const chip = $("#cap-slug-chip");
-    const input = $("#cap-slug");
-    const warning = $("#cap-slug-warning");
-    toggleBtn?.addEventListener("click", () => {
-      slugEditMode = !slugEditMode;
-      chip?.classList.toggle("hidden", slugEditMode);
-      input?.classList.toggle("hidden", !slugEditMode);
-      warning?.classList.toggle("hidden", !slugEditMode);
-      toggleBtn.textContent = slugEditMode ? "Keep current slug" : "Edit slug";
-      if (slugEditMode) {
-        input?.focus();
-        markEditorDirty();
-      } else if (input) {
-        // Re-arming "keep" reverts any pending edits to the original slug.
-        input.value = oldSlug;
-      }
-    });
-  }
-
-  // Approval helper + inline reason validation.
-  const approvalToggle = $("#cap-approval");
-  const approvalReason = $("#cap-approval-reason");
-  const approvalReasonRow = $("#cap-approval-reason-row");
-  const approvalHelper = $("#cap-approval-helper");
-  const approvalReasonError = form.querySelector('[data-error-for="cap-approval-reason"]');
-  const syncApprovalUI = () => {
-    const on = !!approvalToggle?.checked;
-    approvalHelper?.classList.toggle("hidden", !on);
-    approvalReasonRow?.classList.toggle("hidden", !on);
-    if (!on && approvalReasonError) approvalReasonError.textContent = "";
-  };
-  approvalToggle?.addEventListener("change", syncApprovalUI);
-  approvalReason?.addEventListener("input", () => {
-    if (approvalReasonError && approvalReason.value.trim()) approvalReasonError.textContent = "";
-  });
-
-  const closeInline = () => {
-    clearEditorDirty();
-    detachEditorGuards();
-    if (inline) {
-      editor.classList.add("hidden");
-      editor.innerHTML = "";
-    }
-  };
-  const cancelHandler = () => {
-    if (!confirmDiscardIfDirty()) return;
-    closeInline();
-  };
-  $("#cap-cancel")?.addEventListener("click", cancelHandler);
-  $("#cap-cancel-2")?.addEventListener("click", cancelHandler);
-
-  form.addEventListener("submit", async (event) => {
+  $("#cap-form").addEventListener("submit", async (event) => {
     event.preventDefault();
-    clearEditorError(editor);
     let advanced = {};
     try {
       advanced = JSON.parse($("#cap-json").value || "{}");
@@ -2649,24 +2327,11 @@ async function editCapability(slug = "", { inline = false } = {}) {
     }
     const name = $("#cap-name").value.trim();
     if (!name) return toast("Name is required", "error");
-    // Inline approval-reason validation runs BEFORE the network call so the
-    // user sees the field-level error instead of a generic "missing reason"
-    // toast bouncing off the server.
-    if (approvalToggle?.checked && !approvalReason.value.trim()) {
-      if (approvalReasonError) approvalReasonError.textContent = "Reason is required when approval is enabled.";
-      approvalReason.focus();
-      return;
-    }
-    // Existing slug stays unless the user opted into "Edit slug"; new
-    // workflows always honor whatever was typed (blank → server derives).
-    const submittedSlug = slug
-      ? (slugEditMode ? ($("#cap-slug").value.trim() || oldSlug) : oldSlug)
-      : ($("#cap-slug").value.trim() || undefined);
     const payload = {
       ...cap,
       ...advanced,
       name,
-      slug: submittedSlug,
+      slug: slug || $("#cap-slug").value.trim() || undefined,
       description: $("#cap-description").value,
       category: $("#cap-category").value.trim() || "General",
       keywords: $("#cap-keywords").value.split(",").map((k) => k.trim()).filter(Boolean),
@@ -2676,37 +2341,22 @@ async function editCapability(slug = "", { inline = false } = {}) {
     };
     try {
       const saved = slug
-        ? await api(`/api/capabilities/${encodeURIComponent(slug)}`, { method: "PATCH", body: payload })
+        ? await api(`/api/capabilities/${slug}`, { method: "PATCH", body: payload })
         : await api("/api/capabilities", { method: "POST", body: payload });
-      clearEditorDirty();
-      detachEditorGuards();
-      const targetSlug = saved?.capability?.slug || submittedSlug || slug;
-      // If renaming changed the slug, surface a sticky Undo banner on the
-      // new detail page for 30s instead of a transient toast.
-      if (slug && targetSlug && targetSlug !== oldSlug) {
-        state.slugUndo = { oldSlug, newSlug: targetSlug, expiresAt: Date.now() + 30000 };
-      }
       toast("Workflow saved", "ok");
+      // If we were editing from a workflow's detail page, return the user
+      // there (with the editor closed) instead of bouncing back to the list
+      // — keeps Edit feeling inline rather than modal.
       const segments = deepLinks.parse().segments;
       const onDetail = segments[0] === "workflows" && segments[1];
-      if ((inline || onDetail) && targetSlug) {
-        // Slug unchanged → re-render in place (no URL/scroll change).
-        // Slug changed → hop to the new detail URL so deep links work.
-        if (segments[1] === targetSlug) {
-          await renderWorkflowDetail(targetSlug, { sub: "" });
-        } else {
-          state.view = `workflows/${targetSlug}`;
-          location.hash = `workflows/${targetSlug}`;
-          editorGuard.lastHash = location.hash;
-          await render();
-        }
+      const targetSlug = saved?.capability?.slug || slug;
+      if (onDetail && targetSlug) {
+        setView(`workflows/${targetSlug}`);
       } else {
         await renderCapabilities();
       }
     } catch (error) {
-      const { friendly, raw } = friendlySaveError(error);
-      renderEditorError(editor, friendly, raw);
-      toast(friendly, "error");
+      toast(error.message, "error");
     }
   });
 }
