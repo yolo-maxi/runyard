@@ -222,38 +222,45 @@ function buildChildPayload(feature, input) {
 }
 
 function renderReport(ctx, research, featureMap, prioritized, dispatched, executed) {
+  const safeResearch = research || {};
+  const competitors = Array.isArray(safeResearch.competitors) ? safeResearch.competitors : [];
+  const sources = Array.isArray(safeResearch.sources) ? safeResearch.sources : [];
+  const safeFeatureMap = featureMap || {};
+  const mappedFeatures = Array.isArray(safeFeatureMap.features) ? safeFeatureMap.features : [];
+  const prioritizedFeatures = Array.isArray(prioritized) ? prioritized : [];
+  const dispatchedRuns = Array.isArray(dispatched) ? dispatched : [];
   const lines = [];
   lines.push(`# Product Workflow — Runyard\n`);
   lines.push(`Mode: ${executed ? "EXECUTED (gated implementation runs queued sequentially)" : "PLAN ONLY (no runs created)"}`);
   lines.push(`Target repo selector: ${ctx.input.repoDir || ctx.input.project || ctx.input.repo || "smithers-hub"} → branch ${ctx.input.targetBranch || "main"}\n`);
 
-  lines.push(`## Competitors mapped (${research.competitors.length})`);
-  for (const c of research.competitors) {
+  lines.push(`## Competitors mapped (${competitors.length})`);
+  for (const c of competitors) {
     lines.push(`- **${c.name}**${c.url ? ` (${c.url})` : ""}${c.positioning ? ` — ${c.positioning}` : ""}`);
     if (c.features?.length) lines.push(`  - features: ${c.features.join("; ")}`);
   }
-  if (research.sources?.length) lines.push(`\nSources: ${research.sources.join(", ")}`);
+  if (sources.length) lines.push(`\nSources: ${sources.join(", ")}`);
 
-  lines.push(`\n## Feature map (${featureMap.features.length})`);
-  if (featureMap.tableMarkdown) {
-    lines.push(featureMap.tableMarkdown);
+  lines.push(`\n## Feature map (${mappedFeatures.length})`);
+  if (safeFeatureMap.tableMarkdown) {
+    lines.push(safeFeatureMap.tableMarkdown);
   } else {
-    for (const f of featureMap.features) {
+    for (const f of mappedFeatures) {
       lines.push(`- **${f.name}** — Runyard has it: ${f.runyardHasIt ? "yes" : "no"}. ${f.gap || f.description || ""}`);
     }
   }
 
-  lines.push(`\n## Prioritized features (${prioritized.length})`);
-  for (const f of prioritized) {
+  lines.push(`\n## Prioritized features (${prioritizedFeatures.length})`);
+  for (const f of prioritizedFeatures) {
     lines.push(`${f.rank || "?"}. **${f.title}** [${f.priority || "?"}] — ${f.rationale || ""}`);
     lines.push(`   - acceptance: ${f.acceptanceCheck || "(none)"}`);
   }
 
   lines.push(`\n## Implementation runs (${executed ? "created" : "would create"}) — sequential, one at a time`);
-  if (!dispatched.length) {
+  if (!dispatchedRuns.length) {
     lines.push("(none)");
   } else {
-    for (const d of dispatched) {
+    for (const d of dispatchedRuns) {
       const idPart = d.runId ? `run ${d.runId}` : "(not created — plan only)";
       lines.push(
         `${d.rank || "?"}. **${d.title}** → ${idPart}` +
