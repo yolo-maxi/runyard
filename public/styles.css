@@ -1541,6 +1541,74 @@ details.advanced[open] summary {
   flex-wrap: wrap;
   gap: 6px;
   margin: 0 0 10px;
+  /* Make sure the wrapping flex parent never grows past its container — long
+   * runner ids or branch names previously pushed the row sideways on narrow
+   * viewports. */
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Run-detail metadata collapser — wraps the meta strip + chips row in a
+ * <details> so an operator who already knows the project/branch/runner can
+ * fold it away to cut visual density. Default-open, persisted per run. */
+.run-detail-meta {
+  margin: 0 0 10px;
+}
+
+.run-detail-meta-summary {
+  list-style: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  margin: 0 0 6px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--soft);
+  border: 1px solid var(--line);
+  min-height: 28px;
+}
+
+.run-detail-meta-summary::-webkit-details-marker {
+  display: none;
+}
+
+.run-detail-meta-summary::before {
+  content: "▸";
+  display: inline-block;
+  font-size: 11px;
+  color: var(--muted);
+  transition: transform 0.15s ease;
+  width: 10px;
+  text-align: center;
+}
+
+.run-detail-meta[open] > .run-detail-meta-summary::before {
+  transform: rotate(90deg);
+}
+
+.run-detail-meta-summary:hover {
+  color: var(--ink);
+}
+
+.run-detail-meta-body {
+  /* The body inherits the existing run-meta-strip / run-detail-chips styles,
+   * which already handle wrapping. Constrain max-width so it cannot bleed
+   * past its container even when contents are long. */
+  min-width: 0;
+  max-width: 100%;
+}
+
+.run-detail-meta-body .run-meta-strip,
+.run-detail-meta-body .run-detail-chips {
+  margin-bottom: 6px;
+}
+
+.run-detail-meta-body .run-detail-chips:last-child,
+.run-detail-meta-body .run-meta-strip:last-child {
+  margin-bottom: 0;
 }
 
 .run-id-mono {
@@ -3610,6 +3678,15 @@ details.advanced[open] summary {
   font-size: 12px;
 }
 
+/* Long workflow slugs in the subtitle were able to push past their flex row
+ * on narrow viewports; constrain so the pill wraps with everything else. */
+.run-banner-subtitle .run-cap-link {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .run-banner-actions {
   grid-area: actions;
   display: flex;
@@ -3753,12 +3830,19 @@ details.advanced[open] summary {
   font-size: 15px;
   min-width: 0;
   overflow-wrap: anywhere;
+  flex: 0 0 auto;
 }
 
+/* Truncate the in-flight step name with an ellipsis instead of wrapping it
+ * over multiple lines — the full value remains reachable via the title=
+ * attribute set in JS, so nothing is lost. */
 .run-section-meta {
   font-size: 12px;
   min-width: 0;
-  overflow-wrap: anywhere;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .run-section-actions {
@@ -3767,6 +3851,8 @@ details.advanced[open] summary {
   flex-wrap: wrap;
   gap: 6px;
   align-items: center;
+  /* Keep actions from being forced onto a second row when there is room. */
+  flex: 0 0 auto;
 }
 
 .run-section-actions .button,
@@ -3978,6 +4064,15 @@ details.advanced[open] summary {
     min-height: 44px;
   }
 
+  /* On narrow viewports allow the in-flight step name to wrap to multiple
+   * lines — there isn't room to ellipsize meaningfully and the actions row
+   * already drops below on its own line. */
+  .run-section-meta {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    flex: 1 1 100%;
+  }
+
   .run-section-actions {
     margin-left: 0;
     width: 100%;
@@ -3985,6 +4080,11 @@ details.advanced[open] summary {
 
   .run-section-body {
     padding: 0 12px 12px;
+  }
+
+  .run-detail-meta-summary {
+    width: 100%;
+    justify-content: flex-start;
   }
 
   .artifact-row {

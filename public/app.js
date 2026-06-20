@@ -2575,7 +2575,7 @@ function renderRunDiagnostics(diagnostics) {
     ? `<div class="diagnostics-logs">
         <div class="diagnostics-logs-head">
           <h4>Recent log excerpts</h4>
-          <button type="button" class="button copy-btn" data-copy="${esc(logs.map((entry) => `[${entry.createdAt}] ${entry.type}: ${entry.message}`).join("\n"))}" title="Copy log excerpt">Copy log</button>
+          <button type="button" class="button copy-btn" data-copy="${esc(logs.map((entry) => `[${entry.createdAt}] ${entry.type}: ${entry.message}`).join("\n"))}" title="Copy these failure-window excerpts to the clipboard">Copy excerpt</button>
         </div>
         <pre class="diagnostics-pre"><code>${esc(logs.map((entry) => `[${entry.createdAt}] ${entry.type}: ${entry.message}`).join("\n"))}</code></pre>
         <p class="muted">Token/secret-shaped strings are redacted in this excerpt.</p>
@@ -2788,9 +2788,9 @@ function renderRunLog(run, events, summary) {
   return `<div class="run-log-toolbar">
       ${renderRunLogTotals(totals)}
       <div class="run-log-controls">
-        <button type="button" class="button" data-copy="${esc(dump)}" title="Copy redacted run log">Copy log</button>
-        <a class="button" href="/api/runs/${esc(run.id)}/logs" target="_blank" rel="noopener" title="Open redacted plain-text log">Download text</a>
-        <a class="button" href="/api/runs/${esc(run.id)}/log-summary" target="_blank" rel="noopener" title="Open structured log summary JSON">Summary JSON</a>
+        <button type="button" class="button" data-copy="${esc(dump)}" title="Copy the redacted plain-text log to the clipboard">Copy as text</button>
+        <a class="button" href="/api/runs/${esc(run.id)}/logs" target="_blank" rel="noopener" title="Download the redacted plain-text log">Download .txt</a>
+        <a class="button" href="/api/runs/${esc(run.id)}/log-summary" target="_blank" rel="noopener" title="Download the structured log summary as JSON">Download .json</a>
       </div>
     </div>
     <div class="run-log-filters">
@@ -3073,9 +3073,14 @@ function renderArtifactsCard(artifacts) {
 
 // Outcome-first banner: large color-coded status pill, duration, started-at
 // relative time, and the headline error inline when the run failed/cancelled.
-// Right side hosts Re-run (always visible) plus an overflow menu with
-// Edit & re-run, Copy run id, Open workflow, and Cancel (when applicable).
-// Title + run id + workflow live as a smaller subtitle underneath.
+// Right side hosts Re-run (always visible) plus an overflow menu with the
+// less-frequent, distinctly-named actions. Title + run id + workflow live
+// as a smaller subtitle underneath.
+//
+// Naming note: the primary action ("Re-run") fires immediately with the same
+// inputs, while the overflow's "Re-run with edits…" opens the input editor
+// first. We previously called the latter "Edit & re-run", which read like a
+// duplicate of "Re-run" rather than a distinct action — hence the rename.
 function runOutcomeBanner(run, diagnostics, title, slug, durStr) {
   const statusKey = String(run.status || "").toLowerCase();
   const isFailure = RUN_DETAIL_FAILURE_STATUSES.has(statusKey);
@@ -3088,10 +3093,10 @@ function runOutcomeBanner(run, diagnostics, title, slug, durStr) {
   const workflowLabel = run.capabilityName || slug || "Workflow";
   const canCancel = isActiveRun(run);
   const overflowItems = [
-    `<button type="button" id="edit-rerun-run" role="menuitem">Edit &amp; re-run</button>`,
-    `<button type="button" id="copy-run-id" role="menuitem" data-copy="${esc(run.id)}">Copy run id</button>`,
-    `<a class="button" role="menuitem" href="${esc(workflowHref)}">Open workflow</a>`,
-    canCancel ? `<button type="button" id="cancel-run" class="danger" role="menuitem">Cancel run</button>` : ""
+    `<button type="button" id="edit-rerun-run" role="menuitem" title="Open the input editor, then queue a re-run">Re-run with edits…</button>`,
+    `<button type="button" id="copy-run-id" role="menuitem" data-copy="${esc(run.id)}" title="Copy this run's id to the clipboard">Copy run id</button>`,
+    `<a class="button" role="menuitem" href="${esc(workflowHref)}" title="Open this run's workflow definition">Open workflow</a>`,
+    canCancel ? `<button type="button" id="cancel-run" class="danger" role="menuitem" title="Stop this run now">Cancel run</button>` : ""
   ].filter(Boolean).join("");
   return `<header class="run-banner" data-status="${esc(statusKey)}" data-failure="${isFailure ? "1" : "0"}">
     <div class="run-banner-headline">
@@ -3106,7 +3111,7 @@ function runOutcomeBanner(run, diagnostics, title, slug, durStr) {
       ${slug ? `<a class="run-cap-link" href="${esc(workflowHref)}">${esc(workflowLabel)}</a>` : ""}
     </p>
     <div class="run-banner-actions" role="group" aria-label="Run actions">
-      <button type="button" id="rerun-run" class="primary">Re-run</button>
+      <button type="button" id="rerun-run" class="primary" title="Re-run with the same inputs (no editor)">Re-run</button>
       <details class="run-action-overflow">
         <summary class="button run-action-overflow-trigger" aria-haspopup="menu" aria-label="More run actions">More <span aria-hidden="true">▾</span></summary>
         <div class="run-action-overflow-menu" role="menu">${overflowItems}</div>
@@ -3149,12 +3154,14 @@ async function renderRunDetail(runId, { focus = "", focusId = "" } = {}) {
     : focus === "artifacts"
       ? `<p class="muted">Linked directly to this run's artifacts.</p>`
       : "";
+  // Each chip carries a title= so the full value is reachable on hover when
+  // the inline-flex chip ellipsizes a long project / branch / runner id.
   const chips = [];
-  if (project) chips.push(`<span class="chip chip-project">📦 ${esc(project)}</span>`);
-  if (branch) chips.push(`<span class="chip chip-branch">🌿 ${esc(branch)}</span>`);
-  if (run.workflowVersion) chips.push(`<span class="chip chip-version">workflow v${esc(run.workflowVersion)}</span>`);
-  if (execution) chips.push(`<span class="chip chip-runner">execution ${esc(execution)}</span>`);
-  if (run.runnerId) chips.push(`<span class="chip chip-runner">🛠 ${esc(run.runnerId)}</span>`);
+  if (project) chips.push(`<span class="chip chip-project" title="Project: ${esc(project)}">📦 ${esc(project)}</span>`);
+  if (branch) chips.push(`<span class="chip chip-branch" title="Branch: ${esc(branch)}">🌿 ${esc(branch)}</span>`);
+  if (run.workflowVersion) chips.push(`<span class="chip chip-version" title="Workflow version ${esc(run.workflowVersion)}">workflow v${esc(run.workflowVersion)}</span>`);
+  if (execution) chips.push(`<span class="chip chip-runner" title="Execution mode: ${esc(execution)}">execution ${esc(execution)}</span>`);
+  if (run.runnerId) chips.push(`<span class="chip chip-runner" title="Runner: ${esc(run.runnerId)}">🛠 ${esc(run.runnerId)}</span>`);
   const crumbNav = breadcrumbs([
     { label: "Runs", href: deepLinks.runs() },
     { label: run.capabilityName || slug || "Workflow", href: slug ? deepLinks.workflow(slug) : deepLinks.workflows() },
@@ -3169,23 +3176,35 @@ async function renderRunDetail(runId, { focus = "", focusId = "" } = {}) {
   const payloadOpen = runDetailSectionOpen(run.id, "payload", statusKey);
   const payloadBytes = runRawPayloadBytes(run);
   const payloadSizeLabel = payloadBytes ? formatBytes(payloadBytes) : "empty";
-  const fullLogHref = `/api/runs/${encodeURIComponent(run.id)}/logs`;
   const artifactCount = (data.artifacts || []).length;
+  // Metadata (timing strip + chips) is wrapped in a <details> so operators
+  // who don't need the project/branch/runner fingerprint every time can fold
+  // it away. Open by default on first load; the toggle state persists per
+  // run in sessionStorage so it isn't fought on refresh.
+  const metaCollapseOpen = (() => {
+    try { return sessionStorage.getItem(`runDetail.section.${run.id}.meta`) !== "0"; } catch { return true; }
+  })();
+  const metaBlock = (metaStrip || chips.length)
+    ? `<details class="run-detail-meta" data-run-section="meta"${metaCollapseOpen ? " open" : ""}>
+        <summary class="run-detail-meta-summary" aria-label="Run metadata"><span class="run-detail-meta-toggle">Run metadata</span></summary>
+        <div class="run-detail-meta-body">
+          ${metaStrip}
+          ${chips.length ? `<p class="run-detail-chips">${chips.join("")}</p>` : ""}
+        </div>
+      </details>`
+    : "";
   content.innerHTML = `${crumbNav}
     ${banner}
-    ${metaStrip}
-    ${chips.length ? `<p class="run-detail-chips">${chips.join("")}</p>` : ""}
+    ${metaBlock}
     ${run.status === "queued" ? renderQueueBanner(run) : ""}
     ${focusHint}
     ${renderRunDiagnostics(diagnostics)}
     <details class="panel run-section" data-run-section="log"${logOpen ? " open" : ""} id="panel-logs">
       <summary class="run-section-summary">
         <span class="run-section-title">Run log</span>
-        <span class="run-section-meta muted">${esc(run.currentStep || "—")}</span>
+        <span class="run-section-meta muted" title="${esc(run.currentStep || "")}">${esc(run.currentStep || "—")}</span>
         <span class="run-section-actions">
-          <button type="button" class="button" data-copy="${esc(runLogTextDump(data.events || []))}" title="Copy redacted run log">Copy logs</button>
-          <a class="button" href="${esc(fullLogHref)}" target="_blank" rel="noopener" title="Open full log in a new tab">Open full log ↗</a>
-          <label class="run-log-wrap-toggle" title="Wrap long lines"><input type="checkbox" id="run-log-wrap-toggle"${wrapOn ? " checked" : ""}> Wrap</label>
+          <label class="run-log-wrap-toggle" title="Wrap long log lines so nothing scrolls off the right"><input type="checkbox" id="run-log-wrap-toggle"${wrapOn ? " checked" : ""}> Wrap</label>
           ${shareButton(deepLinks.runLogs(run.id), "Copy share link to this run's log")}
         </span>
       </summary>
