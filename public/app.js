@@ -3750,6 +3750,13 @@ async function renderSettings() {
 // so deep-linked URLs survive reload and update on every navigation.
 window.addEventListener("hashchange", () => {
   state.view = location.hash.slice(1) || "home";
+  // Mirror setView's optimistic badge clear so anchor-driven nav (e.g. the
+  // mobile Approvals chip) hides the count instantly; refreshSidebarBadges
+  // reconciles on the next 30s tick.
+  if (state.view === "approvals" || state.view.startsWith("approvals/")) {
+    SIDEBAR_BADGE_STATE.approvals = 0;
+    applySidebarBadges();
+  }
   render().catch(showError);
 });
 
