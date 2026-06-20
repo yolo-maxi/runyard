@@ -98,9 +98,12 @@ function createProductManager(repoDir) {
     systemPrompt:
       "You are a Product Manager with taste, reviewing an existing feature inside this repository. " +
       "Inspect the actual current behavior (read code, configs, prompts, UI, copy) before passing judgment. " +
+      "Stay inside the requested target and product context. Do not broaden a narrow request into unrelated product, naming, landing-page, deploy, or architecture work. " +
+      "If you cannot find target-specific improvements, return an empty improvements array and explain the blocker in risks. " +
       "Lead with the user's real experience: what is confusing, slow, ugly, surprising, or broken? " +
       "Name concrete frictions in plain language and rank improvements by user impact, then effort. " +
       "For each improvement write a one-sentence rationale, a concrete change a builder can act on, and a verifiable acceptance check. " +
+      "For UI, app, dashboard, or web-surface changes, include mobile readability, tap target, and narrow-viewport acceptance checks by default. " +
       "Cut anything you cannot defend as user-visible value. Do NOT modify files; you are reviewing only. Return only the requested JSON."
   });
 }
@@ -114,8 +117,24 @@ function createBuilder(repoDir) {
     systemPrompt:
       "You are an implementation agent working inside a git repository. Apply the Product Manager's prioritized improvements with tight, idiomatic edits that match the surrounding code. " +
       "Do NOT git commit, git push, or deploy, and do NOT run the test suite — a separate gated pipeline runs tests, commits, pushes, and deploys. " +
-      "Treat each acceptance check as a definition of done. Keep changes scoped to the listed improvements; do not touch unrelated files."
+      "Treat each acceptance check as a definition of done. Keep changes scoped to the listed improvements and hard scope contract; do not touch unrelated files. " +
+      "For UI, app, dashboard, or web-surface changes, preserve mobile usability and verify text/layout at narrow widths where possible."
   });
+}
+
+function improveScopeContract(input) {
+  const target = String(input?.target || "").trim();
+  const context = String(input?.context || "").trim();
+  return [
+    "HARD SCOPE CONTRACT:",
+    `- Target: ${target || "(missing)"}`,
+    context ? `- Context: ${context}` : "- Context: (none)",
+    "- Propose and implement only improvements directly supported by that target/context.",
+    "- Do not switch surfaces. Examples: a docs/runbook target must not become landing-page work; a mobile target must not become a naming/deploy-topology rewrite.",
+    "- Do not rename the product, change deploy topology, add new public surfaces, or alter unrelated workflows unless explicitly requested in target/context.",
+    "- If there are no target-specific changes worth making, return an empty change set instead of inventing adjacent work.",
+    "- If the change touches UI/web/app/dashboard surfaces, include mobile/narrow-viewport acceptance checks."
+  ].join("\n");
 }
 
 export default smithers((ctx) => {
@@ -145,12 +164,15 @@ export default smithers((ctx) => {
         {baseline && (
           <Task id="review" output={outputs.review} agent={productManager} timeoutMs={20 * 60 * 1000}>
             {`You are inspecting an existing feature inside the repository at ${repoDir}.\n\n` +
+              `${improveScopeContract(ctx.input)}\n\n` +
               `=== WHAT TO REVIEW ===\n${ctx.input.target}\n=== END ===\n\n` +
               (ctx.input.context ? `=== PRODUCT CONTEXT / USER NOTES ===\n${ctx.input.context}\n=== END ===\n\n` : "") +
               `Propose at most ${ctx.input.maxImprovements} prioritized improvements. Rank by user impact, then effort. ` +
+              `Every improvement must explicitly name how it stays inside the hard scope contract. ` +
+              `Reject tempting adjacent work unless the target/context asks for it. ` +
               `For each improvement include: title, rationale, change (concrete builder instruction), priority (must-fix | should-fix | polish), acceptanceCheck.\n\n` +
               `Also write a single \`builderPrompt\` string that a coding agent can act on directly to implement ALL improvements together, ` +
-              `referencing concrete files, components, and acceptance checks. The builderPrompt should be self-contained.\n\n` +
+              `referencing concrete files, components, acceptance checks, and the hard scope contract. The builderPrompt should be self-contained.\n\n` +
               `Return JSON {"summary","userPain":[...],"improvements":[{"title","rationale","change","priority","acceptanceCheck"}],"builderPrompt","risks":[...]}.`}
           </Task>
         )}
@@ -159,6 +181,7 @@ export default smithers((ctx) => {
         {review && (
           <Task id="implement" output={outputs.implement} agent={builder} timeoutMs={45 * 60 * 1000}>
             {`Apply these prioritized improvements to the repository at ${repoDir}. Edit files only — do not commit, push, deploy, or run tests.\n\n` +
+              `${improveScopeContract(ctx.input)}\n\n` +
               `=== PM SUMMARY ===\n${review.summary || "(no summary)"}\n\n` +
               `=== USER PAIN ===\n${(review.userPain || []).map((line, i) => `${i + 1}. ${line}`).join("\n") || "(none)"}\n\n` +
               `=== IMPROVEMENTS TO IMPLEMENT ===\n${

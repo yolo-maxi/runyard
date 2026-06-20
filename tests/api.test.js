@@ -1536,6 +1536,9 @@ describe("Improve capability", () => {
     assert.match(src, /acceptanceCheck/);
     assert.match(src, /resolveImproveRepo\(ctx\.input/);
     assert.match(src, /cwd: repoDir/);
+    assert.match(src, /HARD SCOPE CONTRACT/);
+    assert.match(src, /docs\/runbook target must not become landing-page work/);
+    assert.match(src, /mobile\/narrow-viewport acceptance checks/);
     assert.doesNotMatch(src, /const REPO =/);
     assert.match(src, /ClaudeCodeAgent/);
   });
