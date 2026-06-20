@@ -216,6 +216,70 @@ function deriveRunDescription(run) {
   return truncate(parts.join(" — "), 240);
 }
 
+function normalizeSupervisionLineage(value) {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== "string" || !value.trim()) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function runPresentation(run) {
+  if (!run || typeof run !== "object") return { run, input: {}, output: null, supervision: null };
+  const storedInput = run.input && typeof run.input === "object" && !Array.isArray(run.input) ? run.input : {};
+  const rawInput = stripSupervisionInternals(run.input || {});
+  const rawOutput = run.output && typeof run.output === "object" && !Array.isArray(run.output) ? run.output : null;
+  const superviseOutput = rawOutput?.outputs?.supervise && typeof rawOutput.outputs.supervise === "object" && !Array.isArray(rawOutput.outputs.supervise)
+    ? rawOutput.outputs.supervise
+    : rawOutput;
+  const isHubSupervisionEnvelope = typeof storedInput.__supervisionToken === "string" && storedInput.__supervisionToken.trim();
+  const wrappedCapability = run.capabilitySlug === SUPERVISOR_CAPABILITY_SLUG && isHubSupervisionEnvelope && typeof rawInput.wrappedCapability === "string"
+    ? rawInput.wrappedCapability.trim()
+    : "";
+  if (!wrappedCapability) {
+    return { run, input: rawInput, output: run.output, supervision: null };
+  }
+
+  const wrappedInput = rawInput.wrappedInput && typeof rawInput.wrappedInput === "object" && !Array.isArray(rawInput.wrappedInput)
+    ? stripSupervisionInternals(rawInput.wrappedInput)
+    : {};
+  const wrappedCapabilityRecord = getCapability(wrappedCapability);
+  const childRunId = typeof superviseOutput?.wrappedRunId === "string"
+    ? superviseOutput.wrappedRunId
+    : typeof superviseOutput?.wrapped_run_id === "string"
+      ? superviseOutput.wrapped_run_id
+      : "";
+  const childRun = childRunId ? getRun(childRunId) : null;
+  const childOutput = childRun && childRun.output !== undefined ? childRun.output : null;
+  const lineage = normalizeSupervisionLineage(superviseOutput?.lineage);
+  const effectiveRun = {
+    ...run,
+    capabilitySlug: wrappedCapability,
+    capabilityName: wrappedCapabilityRecord?.name || wrappedCapability,
+    input: wrappedInput,
+    output: childOutput
+  };
+  return {
+    run: effectiveRun,
+    input: wrappedInput,
+    output: childOutput,
+    supervision: {
+      supervisorRunId: run.id,
+      supervisorCapabilitySlug: SUPERVISOR_CAPABILITY_SLUG,
+      childRunId,
+      wrappedCapability,
+      wrappedCapabilityName: wrappedCapabilityRecord?.name || wrappedCapability,
+      outcome: superviseOutput?.outcome || "",
+      attempts: lineage.length,
+      lineage,
+      ...(superviseOutput?.approval ? { approval: superviseOutput.approval } : {})
+    }
+  };
+}
+
 function normalizeOrigin(value) {
   if (!value) return null;
   if (typeof value === "string") return { label: value };
@@ -690,23 +754,37 @@ function buildQueueIndex(runs) {
 
 function withRunLinks(run, queueIndex = null) {
   if (!run || typeof run !== "object") return run;
+  const presentation = runPresentation(run);
+  const visibleRun = presentation.run || run;
+  const visibleInput = presentation.input || {};
+  const visibleOutput = presentation.output;
   const origin = runOrigin(run);
-  const execution = executionIntentFromInput(run.input || {});
-  const reasonHint = quickReasonHint(run);
-  const failedStep = quickFailedStep(run);
+  const execution = executionIntentFromInput(visibleInput || {});
+  const reasonHint = quickReasonHint(visibleRun);
+  const failedStep = quickFailedStep(visibleRun);
   const queue = run.status === "queued" && queueIndex
     ? { position: queueIndex.map.get(run.id) || null, total: queueIndex.total }
     : null;
   return {
     ...run,
+    capabilitySlug: visibleRun.capabilitySlug,
+    capabilityName: visibleRun.capabilityName,
     // Internal supervision plumbing (the bypass token / marker) must never
-    // reach an API caller — only the runner that executes the supervising run
-    // sees it, via the raw claim endpoint.
-    input: stripSupervisionInternals(run.input),
-    title: deriveRunTitle(run),
-    description: deriveRunDescription(run),
-    project: firstContextString(run.input, PROJECT_INPUT_KEYS),
-    branch: firstContextString(run.input, BRANCH_INPUT_KEYS),
+    // reach an API caller. For supervised runs, callers see the wrapped
+    // workflow's input/output and can inspect the envelope under `supervision`.
+    input: visibleInput,
+    output: visibleOutput,
+    ...(presentation.supervision
+      ? {
+          actualCapabilitySlug: run.capabilitySlug,
+          actualCapabilityName: run.capabilityName,
+          supervision: presentation.supervision
+        }
+      : {}),
+    title: deriveRunTitle(visibleRun),
+    description: deriveRunDescription(visibleRun),
+    project: firstContextString(visibleInput, PROJECT_INPUT_KEYS),
+    branch: firstContextString(visibleInput, BRANCH_INPUT_KEYS),
     origin,
     originLabel: origin?.label || "",
     execution,
@@ -717,7 +795,7 @@ function withRunLinks(run, queueIndex = null) {
     deepLink: deepLinks.run(run.id),
     deepLinkLogs: deepLinks.runLogs(run.id),
     deepLinkArtifacts: deepLinks.runArtifacts(run.id),
-    ...(run.capabilitySlug ? { deepLinkWorkflow: deepLinks.workflow(run.capabilitySlug) } : {})
+    ...(visibleRun.capabilitySlug ? { deepLinkWorkflow: deepLinks.workflow(visibleRun.capabilitySlug) } : {})
   };
 }
 
