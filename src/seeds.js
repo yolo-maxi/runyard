@@ -563,5 +563,79 @@ export const seedCapabilities = [
     // attention-needed instead of a silent green success. See src/supervision.js.
     supervision: { default: true },
     workflow: { engine: "smithers", entry: ".smithers/workflows/improve.tsx" }
+  },
+  {
+    slug: "product-workflow",
+    name: "Product Workflow (sequential)",
+    description:
+      "Sequential product-development pipeline for the Runyard app: researches competitors and maps their features, synthesizes a feature map against Runyard, prioritizes the gaps, then dispatches one gated implementation per feature — strictly one at a time so no two builders touch the repo at once. Each implementation reuses the implement-change-gated contract (pnpm test, staged diff, sane commit, push to main). execute=false plans and reports the runs it would create; execute=true queues them sequentially and pushes straight to main.",
+    category: "Product",
+    keywords: ["product", "competitors", "research", "feature map", "prioritize", "roadmap", "sequential", "smithers"],
+    inputSchema: {
+      type: "object",
+      properties: {
+        context: {
+          type: "string",
+          description: "Optional product context: positioning, target users, known competitor names/URLs, or constraints to focus the research."
+        },
+        competitors: {
+          type: "string",
+          description: "Optional comma- or newline-separated list of named competitors/products to map first."
+        },
+        maxCompetitors: {
+          type: "number",
+          description: "How many competitors to map (1-12, default 5)."
+        },
+        maxFeatures: {
+          type: "number",
+          description: "How many prioritized features to (plan to) implement, in order (1-8, default 3)."
+        },
+        execute: {
+          type: "boolean",
+          description: "If true, queue real gated implementation runs sequentially. If false (default), plan and report the runs that would be created."
+        },
+        deploy: {
+          type: "boolean",
+          description: "Forwarded to each implementation run: deploy to prod after its gates pass (default false)."
+        },
+        targetBranch: {
+          type: "string",
+          description: "Branch each implementation pushes to (default main)."
+        },
+        repoDir: {
+          type: "string",
+          description: "Absolute runner-local git repo path to inspect/build. Must be inside allowed improve repo roots. Defaults to the Runyard repo."
+        },
+        repo: {
+          type: "string",
+          description: "Friendly repo key resolved on the runner from IMPROVE_REPO_MAP. Defaults to smithers-hub (Runyard)."
+        },
+        project: {
+          type: "string",
+          description: "Optional friendly project key resolved from IMPROVE_PROJECT_MAP or IMPROVE_REPO_MAP."
+        }
+      }
+    },
+    outputSchema: {
+      type: "object",
+      properties: {
+        research: { type: "object" },
+        featureMap: { type: "object" },
+        prioritize: { type: "object" },
+        dispatch: { type: "object" }
+      }
+    },
+    requiredRunnerTags: ["smithers"],
+    requiredSkills: ["research-method", "product-review", "implementation"],
+    requiredAgents: ["researcher", "product-manager", "implementation-agent"],
+    approvalPolicy: {
+      required: true,
+      reason: "Runs research and PM agents, then can queue gated implementation runs that commit, push to main, and may deploy."
+    },
+    // Default supervision envelope: a user starting `product-workflow` gets a
+    // visible run-smithers supervising run that wraps it, so a failure surfaces
+    // as attention-needed instead of a silent green success.
+    supervision: { default: true },
+    workflow: { engine: "smithers", entry: ".smithers/workflows/product-workflow.tsx" }
   }
 ];
