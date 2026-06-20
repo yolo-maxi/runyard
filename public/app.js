@@ -343,7 +343,15 @@ function bindTemplateButtons() {
 // A tiny pill rendered inside each sidebar button so an operator sees that
 // something needs attention without having to open the tab first. Counts are
 // refreshed every 30s and on every navigation; visiting the tab clears it.
-const SIDEBAR_BADGE_STATE = { runners: 0, runs: 0 };
+const SIDEBAR_BADGE_STATE = { runners: 0, runs: 0, approvals: 0 };
+
+function applyMobileNavBadges() {
+  document.querySelectorAll('.mobile-primary-nav [data-badge="approvals"]').forEach((badge) => {
+    const count = SIDEBAR_BADGE_STATE.approvals || 0;
+    badge.textContent = String(count);
+    badge.hidden = count <= 0;
+  });
+}
 
 function applySidebarBadges() {
   document.querySelectorAll(".sidebar button").forEach((button) => {
@@ -372,13 +380,15 @@ function applySidebarBadges() {
       button.appendChild(badge);
     }
   });
+  applyMobileNavBadges();
 }
 
 async function refreshSidebarBadges() {
   try {
-    const [runsData, runnersData] = await Promise.all([
+    const [runsData, runnersData, dashboardData] = await Promise.all([
       api("/api/runs?limit=50").catch(() => ({ runs: [] })),
-      api("/api/runners").catch(() => ({ runners: [] }))
+      api("/api/runners").catch(() => ({ runners: [] })),
+      api("/api/dashboard").catch(() => ({ stats: {}, pendingApprovals: [] }))
     ]);
     const cutoff = Date.now() - 24 * 3600 * 1000;
     SIDEBAR_BADGE_STATE.runs = (runsData.runs || []).filter((r) => {
@@ -387,6 +397,9 @@ async function refreshSidebarBadges() {
       return Number.isNaN(t) ? true : t >= cutoff;
     }).length;
     SIDEBAR_BADGE_STATE.runners = (runnersData.runners || []).filter((r) => !r.online).length;
+    SIDEBAR_BADGE_STATE.approvals =
+      Number(dashboardData.stats?.pendingApprovals || 0) ||
+      (dashboardData.pendingApprovals || []).length;
     applySidebarBadges();
   } catch {
     // best-effort; badges stay as last known
@@ -540,6 +553,7 @@ const PRIMARY_VIEWS = new Map([
   ["dashboard", "home"],
   ["workflows", "workflows"],
   ["capabilities", "workflows"],
+  ["approvals", "approvals"],
   ["agents", "agents"],
   ["skills", "agents"],
   ["knowledge", "agents"]
@@ -578,6 +592,10 @@ function setView(view) {
   }
   if (view === "runners") {
     SIDEBAR_BADGE_STATE.runners = 0;
+    applySidebarBadges();
+  }
+  if (view === "approvals" || view.startsWith("approvals/")) {
+    SIDEBAR_BADGE_STATE.approvals = 0;
     applySidebarBadges();
   }
   render().catch(showError);
