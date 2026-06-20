@@ -2893,6 +2893,242 @@ function bindRunLogFilters(panel) {
   reapply();
 }
 
+// --- Run detail page helpers (banner, meta strip, sections, artifacts) -----
+// The detail page used to dump every diagnostic — status pill, timing,
+// origin/folder, headline, log excerpt, artifacts, raw payload — as a long
+// stack of equally-weighted cards. We now lead with an outcome-first banner
+// (status + duration + headline error), follow it with a compact middot-
+// separated meta strip, and group everything else into collapsible sections
+// (log → artifacts → context → raw payload) that auto-open based on outcome.
+const RUN_DETAIL_SUCCESS_STATUSES = new Set(["succeeded", "recovered", "approved"]);
+const RUN_DETAIL_FAILURE_STATUSES = new Set(["failed", "error", "cancelled", "rejected"]);
+
+function runDetailSectionDefaultOpen(name, status) {
+  if (RUN_DETAIL_FAILURE_STATUSES.has(status)) {
+    return name === "log" || name === "diagnostics";
+  }
+  if (RUN_DETAIL_SUCCESS_STATUSES.has(status)) {
+    return name === "artifacts";
+  }
+  // Active/queued/unknown: keep the timeline open so progress is visible.
+  return name === "log";
+}
+
+function runDetailSectionOpen(runId, name, status) {
+  try {
+    const stored = sessionStorage.getItem(`runDetail.section.${runId}.${name}`);
+    if (stored === "1") return true;
+    if (stored === "0") return false;
+  } catch {}
+  return runDetailSectionDefaultOpen(name, status);
+}
+
+function runLogWrapStored() {
+  try { return localStorage.getItem("runDetail.logWrap") === "1"; } catch { return false; }
+}
+
+// Approximate bytes of the raw input+output blob — lets us tell power users
+// up-front whether expanding the payload section will dump 2KB or 2MB.
+function runRawPayloadBytes(run) {
+  try {
+    const s = JSON.stringify({ input: run?.input ?? null, output: run?.output ?? null });
+    if (!s) return 0;
+    if (typeof Blob === "function") return new Blob([s]).size;
+    return s.length;
+  } catch { return 0; }
+}
+
+const ARTIFACT_TEXT_EXTS = new Set(["txt", "md", "markdown", "log", "csv", "tsv", "yaml", "yml", "html", "xml", "js", "ts", "jsx", "tsx", "css", "sh", "py", "rb", "go", "rs", "java", "c", "h"]);
+const ARTIFACT_IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"]);
+const ARTIFACT_PREVIEW_BYTE_LIMIT = 100 * 1024;
+
+function artifactExt(artifact) {
+  const name = String(artifact?.name || "").toLowerCase();
+  const dot = name.lastIndexOf(".");
+  if (dot >= 0 && dot < name.length - 1) return name.slice(dot + 1);
+  if (artifact?.mimeType && MIME_EXT[artifact.mimeType]) return MIME_EXT[artifact.mimeType].replace(/^\./, "");
+  return "";
+}
+
+function artifactPreviewKind(artifact) {
+  const mime = String(artifact?.mimeType || "").toLowerCase();
+  const ext = artifactExt(artifact);
+  if (mime.startsWith("image/") || ARTIFACT_IMAGE_EXTS.has(ext)) return "image";
+  if (mime === "application/json" || ext === "json") return "json";
+  if (mime.startsWith("text/") || ARTIFACT_TEXT_EXTS.has(ext)) return "text";
+  return "binary";
+}
+
+function artifactIcon(artifact) {
+  switch (artifactPreviewKind(artifact)) {
+    case "image": return "🖼";
+    case "json": return "🧾";
+    case "text": return "📄";
+    default: return "📦";
+  }
+}
+
+function prettyPrintJson(text) {
+  try { return JSON.stringify(JSON.parse(text), null, 2); } catch { return text; }
+}
+
+// Modal preview for an artifact. Renders images inline, pretty-prints JSON
+// or text under 100KB, and falls back to a download nudge for anything else.
+// Esc, the close button, and overlay-click all dismiss; focus is trapped
+// between the close button and Open link and restored on close.
+async function openArtifactPreview(artifact) {
+  document.querySelectorAll(".artifact-modal").forEach((el) => el.remove());
+  const overlay = document.createElement("div");
+  overlay.className = "artifact-modal";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+  overlay.setAttribute("aria-label", `Preview ${artifactDisplayName(artifact)}`);
+  overlay.innerHTML = `<div class="artifact-modal-card" role="document">
+      <header class="artifact-modal-head">
+        <strong class="artifact-modal-title">${esc(artifactDisplayName(artifact))}</strong>
+        <span class="muted artifact-modal-meta">${esc(formatBytes(artifact.sizeBytes))}${artifact.mimeType ? ` · ${esc(artifact.mimeType)}` : ""}</span>
+        <button type="button" class="artifact-modal-close" aria-label="Close preview">×</button>
+      </header>
+      <div class="artifact-modal-body" data-artifact-body>
+        <p class="muted">Loading preview…</p>
+      </div>
+      <footer class="artifact-modal-foot">
+        <a class="button" href="/api/artifacts/${esc(artifact.id)}/download" target="_blank" rel="noopener">Open ↗</a>
+      </footer>
+    </div>`;
+  document.body.appendChild(overlay);
+  const body = overlay.querySelector("[data-artifact-body]");
+  const closeBtn = overlay.querySelector(".artifact-modal-close");
+  const lastFocused = document.activeElement;
+  const close = () => {
+    document.removeEventListener("keydown", onKey);
+    overlay.remove();
+    if (lastFocused && typeof lastFocused.focus === "function") {
+      try { lastFocused.focus(); } catch {}
+    }
+  };
+  const onKey = (event) => {
+    if (event.key === "Escape") { event.preventDefault(); close(); return; }
+    if (event.key === "Tab") {
+      const focusables = Array.from(overlay.querySelectorAll("button, a[href], [tabindex]:not([tabindex='-1'])"))
+        .filter((el) => !el.hasAttribute("disabled"));
+      if (!focusables.length) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    }
+  };
+  document.addEventListener("keydown", onKey);
+  overlay.addEventListener("click", (event) => { if (event.target === overlay) close(); });
+  closeBtn.addEventListener("click", close);
+  closeBtn.focus();
+
+  const kind = artifactPreviewKind(artifact);
+  const size = Number(artifact.sizeBytes || 0);
+  try {
+    if (kind === "image") {
+      body.innerHTML = `<img class="artifact-modal-image" src="/api/artifacts/${esc(artifact.id)}/download" alt="${esc(artifactDisplayName(artifact))}">`;
+    } else if ((kind === "json" || kind === "text") && size > 0 && size <= ARTIFACT_PREVIEW_BYTE_LIMIT) {
+      const res = await fetch(`/api/artifacts/${encodeURIComponent(artifact.id)}/download`);
+      const text = await res.text();
+      const formatted = kind === "json" ? prettyPrintJson(text) : text;
+      body.innerHTML = `<pre class="artifact-modal-pre"><code>${esc(formatted)}</code></pre>`;
+    } else if (kind === "json" || kind === "text") {
+      body.innerHTML = `<p class="muted">File is ${esc(formatBytes(size))} — too large to preview inline. Use Open ↗ to view or download.</p>`;
+    } else {
+      body.innerHTML = `<p class="muted">Preview not available for this type${size ? ` (${esc(formatBytes(size))})` : ""}. Use Open ↗ to download.</p>`;
+    }
+  } catch (error) {
+    body.innerHTML = `<p class="muted">Preview failed: ${esc(error?.message || "unknown error")}</p>`;
+  }
+}
+
+function renderArtifactsCard(artifacts) {
+  if (!artifacts.length) {
+    return `<p class="muted artifacts-empty">No artifacts produced by this run.</p>`;
+  }
+  return `<ul class="artifact-list rich">${artifacts.map((artifact) => {
+    const id = esc(artifact.id);
+    const name = esc(artifactDisplayName(artifact));
+    const icon = artifactIcon(artifact);
+    const kind = artifactPreviewKind(artifact);
+    const sizeLabel = esc(formatBytes(artifact.sizeBytes));
+    const mime = artifact.mimeType ? ` · ${esc(artifact.mimeType)}` : "";
+    const previewable = kind !== "binary";
+    return `<li class="artifact-row" id="artifact-${id}" data-kind="${esc(kind)}">
+      <span class="artifact-icon" aria-hidden="true">${icon}</span>
+      <div class="artifact-row-main">
+        <span class="artifact-row-name">${name}</span>
+        <span class="muted artifact-row-meta">${sizeLabel}${mime}</span>
+      </div>
+      <div class="artifact-row-actions">
+        ${previewable ? `<button type="button" class="button artifact-preview-btn" data-artifact-preview="${id}">Preview</button>` : ""}
+        <a class="button" href="/api/artifacts/${id}/download" target="_blank" rel="noopener">Open ↗</a>
+        ${shareButton(deepLinks.artifact(artifact), "Copy share link to this artifact in its run")}
+      </div>
+    </li>`;
+  }).join("")}</ul>`;
+}
+
+// Outcome-first banner: large color-coded status pill, duration, started-at
+// relative time, and the headline error inline when the run failed/cancelled.
+// Right side hosts Re-run (always visible) plus an overflow menu with
+// Edit & re-run, Copy run id, Open workflow, and Cancel (when applicable).
+// Title + run id + workflow live as a smaller subtitle underneath.
+function runOutcomeBanner(run, diagnostics, title, slug, durStr) {
+  const statusKey = String(run.status || "").toLowerCase();
+  const isFailure = RUN_DETAIL_FAILURE_STATUSES.has(statusKey);
+  const headline = isFailure && diagnostics?.headline
+    ? String(diagnostics.headline).split(/\r?\n/).find((line) => line.trim()) || ""
+    : "";
+  const startedRel = relativeTime(run.startedAt || run.createdAt);
+  const startedAbs = run.startedAt || run.createdAt;
+  const workflowHref = slug ? deepLinks.workflow(slug) : deepLinks.workflows();
+  const workflowLabel = run.capabilityName || slug || "Workflow";
+  const canCancel = isActiveRun(run);
+  const overflowItems = [
+    `<button type="button" id="edit-rerun-run" role="menuitem">Edit &amp; re-run</button>`,
+    `<button type="button" id="copy-run-id" role="menuitem" data-copy="${esc(run.id)}">Copy run id</button>`,
+    `<a class="button" role="menuitem" href="${esc(workflowHref)}">Open workflow</a>`,
+    canCancel ? `<button type="button" id="cancel-run" class="danger" role="menuitem">Cancel run</button>` : ""
+  ].filter(Boolean).join("");
+  return `<header class="run-banner" data-status="${esc(statusKey)}" data-failure="${isFailure ? "1" : "0"}">
+    <div class="run-banner-headline">
+      <span class="run-banner-status">${status(run.status)}</span>
+      ${durStr ? `<span class="run-banner-duration" title="Total duration"><span class="muted" aria-hidden="true">⏱</span> ${esc(durStr)}</span>` : ""}
+      ${startedRel ? `<span class="run-banner-time muted" title="${esc(startedAbs || "")}">started ${esc(startedRel)}</span>` : ""}
+      ${headline ? `<span class="run-banner-error" title="${esc(diagnostics?.headline || "")}">${esc(headline)}</span>` : ""}
+    </div>
+    <h1 class="run-banner-title">${esc(title)}</h1>
+    <p class="run-banner-subtitle muted">
+      <span class="run-id-mono" title="Run id">${esc(run.id)}</span>
+      ${slug ? `<a class="run-cap-link" href="${esc(workflowHref)}">${esc(workflowLabel)}</a>` : ""}
+    </p>
+    <div class="run-banner-actions" role="group" aria-label="Run actions">
+      <button type="button" id="rerun-run" class="primary">Re-run</button>
+      <details class="run-action-overflow">
+        <summary class="button run-action-overflow-trigger" aria-haspopup="menu" aria-label="More run actions">More <span aria-hidden="true">▾</span></summary>
+        <div class="run-action-overflow-menu" role="menu">${overflowItems}</div>
+      </details>
+    </div>
+  </header>`;
+}
+
+function runMetaStripHtml(run, durStr) {
+  const items = [];
+  const startedAt = run.startedAt || run.createdAt;
+  if (startedAt) items.push(`<li><span class="muted">Started</span> <span title="${esc(startedAt)}">${esc(relativeTime(startedAt))}</span></li>`);
+  if (run.completedAt) items.push(`<li><span class="muted">Ended</span> <span title="${esc(run.completedAt)}">${esc(relativeTime(run.completedAt))}</span></li>`);
+  if (durStr) items.push(`<li><span class="muted">Duration</span> ${esc(durStr)}</li>`);
+  const attempt = Number(run.attempt || 0);
+  if (attempt > 0) items.push(`<li><span class="muted">Attempt</span> ${esc(attempt)}</li>`);
+  const trigger = run.originLabel || run.origin?.label || "";
+  if (trigger) items.push(`<li><span class="muted">Trigger</span> ${esc(trigger)}</li>`);
+  if (!items.length) return "";
+  return `<ul class="run-meta-strip" aria-label="Run metadata">${items.join("")}</ul>`;
+}
+
 async function renderRunDetail(runId, { focus = "", focusId = "" } = {}) {
   const data = await api(`/api/runs/${runId}`);
   const run = data.run;
@@ -2907,6 +3143,7 @@ async function renderRunDetail(runId, { focus = "", focusId = "" } = {}) {
   const execution = runExecutionLabel(run);
   const dur = runDurationMs(run);
   const durStr = formatDuration(dur);
+  const statusKey = String(run.status || "").toLowerCase();
   const focusHint = focus === "logs"
     ? `<p class="muted">Linked directly to this run's log.</p>`
     : focus === "artifacts"
@@ -2923,52 +3160,126 @@ async function renderRunDetail(runId, { focus = "", focusId = "" } = {}) {
     { label: run.capabilityName || slug || "Workflow", href: slug ? deepLinks.workflow(slug) : deepLinks.workflows() },
     { label: run.id, href: deepLinks.run(run.id), title: `Run ${run.id}`, current: true }
   ]);
-  content.innerHTML = `${crumbNav}${toolbar(title, `<a class="button" href="${esc(slug ? deepLinks.workflow(slug) : deepLinks.workflows())}">Workflow</a>
-      <a class="button" href="${esc(deepLinks.runLogs(run.id))}">Run log</a>
-      <a class="button" href="${esc(deepLinks.runArtifacts(run.id))}">Artifacts</a>
-      <button id="edit-rerun-run">Edit &amp; re-run</button>
-      <button id="rerun-run">Re-run</button>
-      <button id="cancel-run" class="danger">Cancel</button>`, deepLinks.run(run.id))}
-    <p class="run-detail-sub">
-      ${status(run.status)}
-      ${slug ? `<a class="run-cap-link" href="${esc(deepLinks.workflow(slug))}">${esc(run.capabilityName || slug)}</a>` : ""}
-      <span class="run-id-mono" title="Run id">${esc(run.id)}</span>
-      <span class="muted">${esc(relativeTime(run.createdAt))}${durStr ? ` · ${esc(durStr)}` : ""}</span>
-    </p>
-    <p class="run-origin-detail"><strong>Origin</strong> ${esc(origin)}</p>
-    <p class="run-detail-desc">${esc(description)}</p>
+  const banner = runOutcomeBanner(run, diagnostics, title, slug, durStr);
+  const metaStrip = runMetaStripHtml(run, durStr);
+  const wrapOn = runLogWrapStored();
+  const logOpen = runDetailSectionOpen(run.id, "log", statusKey);
+  const artifactsOpen = runDetailSectionOpen(run.id, "artifacts", statusKey);
+  const contextOpen = runDetailSectionOpen(run.id, "context", statusKey);
+  const payloadOpen = runDetailSectionOpen(run.id, "payload", statusKey);
+  const payloadBytes = runRawPayloadBytes(run);
+  const payloadSizeLabel = payloadBytes ? formatBytes(payloadBytes) : "empty";
+  const fullLogHref = `/api/runs/${encodeURIComponent(run.id)}/logs`;
+  const artifactCount = (data.artifacts || []).length;
+  content.innerHTML = `${crumbNav}
+    ${banner}
+    ${metaStrip}
     ${chips.length ? `<p class="run-detail-chips">${chips.join("")}</p>` : ""}
     ${run.status === "queued" ? renderQueueBanner(run) : ""}
-    <p class="run-folder-banner"><span class="run-folder">📁 ${esc(folder)}</span> <span class="muted">— display-only grouping for this run's artifacts &amp; logs</span></p>
     ${focusHint}
     ${renderRunDiagnostics(diagnostics)}
-    <section class="split">
-      <div class="panel" id="panel-logs">
-        <h2>Run log ${shareButton(deepLinks.runLogs(run.id), "Copy share link to this run's log")}</h2>
-        <p class="muted">${esc(run.currentStep || "—")}</p>
+    <details class="panel run-section" data-run-section="log"${logOpen ? " open" : ""} id="panel-logs">
+      <summary class="run-section-summary">
+        <span class="run-section-title">Run log</span>
+        <span class="run-section-meta muted">${esc(run.currentStep || "—")}</span>
+        <span class="run-section-actions">
+          <button type="button" class="button" data-copy="${esc(runLogTextDump(data.events || []))}" title="Copy redacted run log">Copy logs</button>
+          <a class="button" href="${esc(fullLogHref)}" target="_blank" rel="noopener" title="Open full log in a new tab">Open full log ↗</a>
+          <label class="run-log-wrap-toggle" title="Wrap long lines"><input type="checkbox" id="run-log-wrap-toggle"${wrapOn ? " checked" : ""}> Wrap</label>
+          ${shareButton(deepLinks.runLogs(run.id), "Copy share link to this run's log")}
+        </span>
+      </summary>
+      <div class="run-section-body${wrapOn ? " run-log-wrap" : ""}" data-run-log-body>
         ${renderRunLog(run, data.events || [], data.logSummary || null)}
       </div>
-      <div class="panel" id="panel-artifacts">
+    </details>
+    <details class="panel run-section" data-run-section="artifacts"${artifactsOpen ? " open" : ""} id="panel-artifacts">
+      <summary class="run-section-summary">
+        <span class="run-section-title">Artifacts</span>
+        <span class="run-section-meta muted">${esc(artifactCount)} item${artifactCount === 1 ? "" : "s"}</span>
+        <span class="run-section-actions">${shareButton(deepLinks.runArtifacts(run.id), "Copy share link to this run's artifacts")}</span>
+      </summary>
+      <div class="run-section-body">${renderArtifactsCard(data.artifacts || [])}</div>
+    </details>
+    <details class="panel run-section" data-run-section="context"${contextOpen ? " open" : ""}>
+      <summary class="run-section-summary">
+        <span class="run-section-title">Run context</span>
+        <span class="run-section-meta muted">${esc(origin)}</span>
+      </summary>
+      <div class="run-section-body">
+        ${description ? `<p class="run-detail-desc">${esc(description)}</p>` : ""}
+        <p class="run-origin-detail"><strong>Origin</strong> ${esc(origin)}</p>
+        <p class="run-folder-banner"><span class="run-folder">📁 ${esc(folder)}</span> <span class="muted">— display-only grouping for this run's artifacts &amp; logs</span></p>
+      </div>
+    </details>
+    <details class="panel run-section" data-run-section="payload"${payloadOpen ? " open" : ""}>
+      <summary class="run-section-summary">
+        <span class="run-section-title">Raw payload</span>
+        <span class="run-section-meta muted">${esc(payloadSizeLabel)}</span>
+      </summary>
+      <div class="run-section-body">
         <h3>Input</h3>${json(run.input)}
         <h3>Output</h3>${json(run.output)}
-        <h3>Artifacts ${shareButton(deepLinks.runArtifacts(run.id), "Copy share link to this run's artifacts")}</h3>
-        ${artifactList(data.artifacts)}
       </div>
-    </section>`;
-  $("#cancel-run").addEventListener("click", async () => {
+    </details>`;
+  // Cancel only present when the run is still cancellable.
+  $("#cancel-run")?.addEventListener("click", async () => {
     await api(`/api/runs/${run.id}/cancel`, { method: "POST", body: { reason: "Cancelled from Web Hub" } });
     await renderRunDetail(run.id, { focus, focusId });
   });
-  $("#edit-rerun-run").addEventListener("click", () => editRerunRun(run));
-  $("#rerun-run").addEventListener("click", () => rerunRun(run.id).catch(showError));
+  $("#edit-rerun-run")?.addEventListener("click", () => editRerunRun(run));
+  $("#rerun-run")?.addEventListener("click", () => rerunRun(run.id).catch(showError));
+  // Persist user overrides per-run so toggles aren't fought on refresh.
+  document.querySelectorAll("[data-run-section]").forEach((el) => {
+    el.addEventListener("toggle", () => {
+      try { sessionStorage.setItem(`runDetail.section.${run.id}.${el.dataset.runSection}`, el.open ? "1" : "0"); } catch {}
+    });
+  });
+  const wrapToggle = $("#run-log-wrap-toggle");
+  wrapToggle?.addEventListener("change", () => {
+    const on = !!wrapToggle.checked;
+    try { localStorage.setItem("runDetail.logWrap", on ? "1" : "0"); } catch {}
+    document.querySelector("[data-run-log-body]")?.classList.toggle("run-log-wrap", on);
+  });
+  // Overflow menu Esc-to-close; the <details>-based menu also closes when any
+  // menuitem inside is activated so the bar doesn't stay popped open.
+  const overflow = document.querySelector(".run-action-overflow");
+  if (overflow) {
+    overflow.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && overflow.open) {
+        overflow.open = false;
+        overflow.querySelector("summary")?.focus();
+      }
+    });
+    overflow.querySelectorAll("[role='menuitem']").forEach((item) => {
+      item.addEventListener("click", () => { overflow.open = false; });
+    });
+  }
+  // Inline artifact previews open a modal with focus trap + Esc-to-close.
+  document.querySelectorAll("[data-artifact-preview]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = btn.dataset.artifactPreview;
+      const artifact = (data.artifacts || []).find((a) => a.id === id);
+      if (artifact) openArtifactPreview(artifact);
+    });
+  });
   bindCopy();
   bindRunLogFilters($("#panel-logs"));
-  // Honor the sub-route by bringing the relevant panel into view.
-  if (focus === "logs") $("#panel-logs")?.scrollIntoView({ behavior: "smooth", block: "start" });
-  if (focus === "artifacts") $("#panel-artifacts")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  // Honor the sub-route by bringing the relevant panel into view, opening it
+  // first if the user has it collapsed.
+  if (focus === "logs") {
+    const el = $("#panel-logs");
+    if (el) { el.open = true; el.scrollIntoView({ behavior: "smooth", block: "start" }); }
+  }
+  if (focus === "artifacts") {
+    const el = $("#panel-artifacts");
+    if (el) { el.open = true; el.scrollIntoView({ behavior: "smooth", block: "start" }); }
+  }
   if (focus === "artifacts" && focusId) focusElement(`artifact-${focusId}`);
 }
 
+// Compact list used by the dashboard run card — distinct from the rich
+// preview-enabled rendering on the detail page (renderArtifactsCard).
 function artifactList(artifacts) {
   if (!artifacts.length) return `<p class="muted">No artifacts.</p>`;
   return `<ul class="artifact-list">${artifacts.map((artifact) => `<li id="artifact-${esc(artifact.id)}"><a href="/api/artifacts/${esc(artifact.id)}/download" target="_blank">${esc(artifactDisplayName(artifact))}</a> ${shareButton(deepLinks.artifact(artifact), "Copy share link to this artifact in its run")} <span class="muted">${esc(formatBytes(artifact.sizeBytes))}${artifact.mimeType ? ` · ${esc(artifact.mimeType)}` : ""}</span></li>`).join("")}</ul>`;
