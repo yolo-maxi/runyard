@@ -3235,6 +3235,14 @@ async function renderRunDetail(runId, { focus = "", focusId = "" } = {}) {
       try { sessionStorage.setItem(`runDetail.section.${run.id}.${el.dataset.runSection}`, el.open ? "1" : "0"); } catch {}
     });
   });
+  // Inline action controls live inside <summary> so they share the row with
+  // the section title. Clicking them must not toggle the section open — the
+  // browser's default behavior for clicks on <summary>. stopPropagation here
+  // prevents the click from reaching summary while still letting the
+  // button/link's own default action run (copy fires, links navigate).
+  document.querySelectorAll(".run-section-actions, .run-log-wrap-toggle").forEach((el) => {
+    el.addEventListener("click", (event) => event.stopPropagation());
+  });
   const wrapToggle = $("#run-log-wrap-toggle");
   wrapToggle?.addEventListener("change", () => {
     const on = !!wrapToggle.checked;
