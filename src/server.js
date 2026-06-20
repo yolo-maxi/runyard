@@ -2728,10 +2728,15 @@ app.post("/api/runs/:id/cancel", requireAuth, requireScopes("api", "mcp", "runne
 app.post("/api/runs/:id/rerun", requireAuth, requireScopes("api", "mcp"), async (req, res) => {
   const previous = getRun(req.params.id);
   if (!previous) return res.status(404).json({ error: "run not found" });
-  const capability = getCapability(previous.capabilitySlug);
+  const previousPresented = withRunLinks(previous);
+  const capability = getCapability(previousPresented.capabilitySlug);
   if (!capability || !capability.enabled) return res.status(404).json({ error: "capability not found" });
-  const input = previous.input && typeof previous.input === "object" && !Array.isArray(previous.input) ? { ...previous.input } : {};
+  const editedInput = req.body?.input && typeof req.body.input === "object" && !Array.isArray(req.body.input) ? req.body.input : null;
+  const baseInput = editedInput || previousPresented.input;
+  const input = baseInput && typeof baseInput === "object" && !Array.isArray(baseInput) ? { ...baseInput } : {};
   delete input.__origin;
+  delete input.__supervisionToken;
+  delete input.__supervisedChild;
   input.rerunOf = previous.id;
   const origin = requestOrigin(req, {
     ...input,

@@ -459,6 +459,7 @@ function helpTip(text, docsAnchor = "") {
 // the wrong repo. `repoDir` stays as an explicit, clearly-warned manual escape
 // hatch. See hydrateRepoPickers().
 const REPO_SELECTOR_KEYS = new Set(["repo", "project"]);
+const RERUN_DRAFT_KEY = "runyard.editRerunDraft.v1";
 const REPODIR_WARNING =
   "Advanced manual override: must be an absolute path that is runner-local and inside the runner's allowlisted improve roots. Prefer a configured repo/project above; do not combine with repo/project.";
 
@@ -520,6 +521,39 @@ function schemaForm(schema = {}) {
   const keys = Object.keys(props);
   if (!keys.length) return "";
   return keys.map((key) => schemaField(key, props[key], required.has(key))).join("");
+}
+
+function takeRerunDraft(slug) {
+  try {
+    const raw = sessionStorage.getItem(RERUN_DRAFT_KEY);
+    if (!raw) return null;
+    const draft = JSON.parse(raw);
+    if (draft?.capabilitySlug !== slug) return null;
+    sessionStorage.removeItem(RERUN_DRAFT_KEY);
+    return draft;
+  } catch {
+    sessionStorage.removeItem(RERUN_DRAFT_KEY);
+    return null;
+  }
+}
+
+function setSchemaFieldValue(scope, key, value) {
+  const field = Array.from(scope.querySelectorAll("[data-field]")).find((el) => el.dataset.field === key);
+  if (!field || value == null) return;
+  if (field.dataset.ftype === "boolean") {
+    field.checked = Boolean(value);
+  } else if (field.dataset.ftype === "json") {
+    field.value = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  } else {
+    field.value = String(value);
+  }
+}
+
+function fillRunForm(scope, schema = {}, input = {}) {
+  const values = input && typeof input === "object" && !Array.isArray(input) ? input : {};
+  Object.keys(schema.properties || {}).forEach((key) => setSchemaFieldValue(scope, key, values[key]));
+  const raw = scope.querySelector("#run-raw, [data-field='__raw']");
+  if (raw) raw.value = JSON.stringify(values, null, 2);
 }
 
 // Repo/project catalog for the picker. Cached for the session; failures degrade
@@ -1300,6 +1334,7 @@ function runCard(run, artifacts = []) {
       <a class="button" href="${esc(slug ? deepLinks.workflow(slug) : deepLinks.workflows())}">Workflow</a>
       <a class="button" href="${esc(deepLinks.runLogs(run.id))}">Run log</a>
       <a class="button" href="${esc(deepLinks.runArtifacts(run.id))}">Artifacts</a>
+      <button data-edit-rerun="${esc(run.id)}">Edit &amp; re-run</button>
       <button data-rerun="${esc(run.id)}">Re-run</button>
     </footer>
   </article>`;
@@ -1614,6 +1649,12 @@ async function renderHome() {
   document.querySelectorAll("[data-approve]").forEach((button) => button.addEventListener("click", () => resolveApproval(button.dataset.approve, "approve", { rerender: "none" }).then(() => render().catch(showError))));
   document.querySelectorAll("[data-reject]").forEach((button) => button.addEventListener("click", () => resolveApproval(button.dataset.reject, "reject", { rerender: "none" }).then(() => render().catch(showError))));
   document.querySelectorAll("[data-rerun]").forEach((button) => button.addEventListener("click", () => rerunRun(button.dataset.rerun).catch(showError)));
+  document.querySelectorAll("[data-edit-rerun]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const data = await api(`/api/runs/${button.dataset.editRerun}`);
+      editRerunRun(data.run);
+    });
+  });
   bindCopy();
   bindHomeFilterBar();
   // Keep the per-card progress strip live for any run still in flight. The
@@ -2335,22 +2376,26 @@ async function showRunForm(slug) {
   const hasFields = Object.keys(schema.properties || {}).length > 0;
   const approval = cap.approvalPolicy?.required;
   const sample = Object.fromEntries(Object.entries(schema.properties || {}).map(([key]) => [key, ""]));
+  const rerunDraft = takeRerunDraft(slug);
+  const initialInput = rerunDraft?.input && typeof rerunDraft.input === "object" && !Array.isArray(rerunDraft.input) ? rerunDraft.input : sample;
   const editor = $("#editor");
   editor.classList.remove("hidden");
   editor.scrollIntoView({ behavior: "smooth", block: "nearest" });
   editor.innerHTML = `<h2>Run ${esc(cap.name)} ${shareButton(deepLinks.workflow(slug), `Copy share link to ${cap.name}`)}</h2>
     <p class="muted">${esc(cap.description || "")}</p>
     <p class="muted"><span class="kbd">${esc(deepLinks.abs(deepLinks.workflow(slug)))}</span></p>
+    ${rerunDraft ? `<p class="notice">Editing input before re-running <a href="${esc(deepLinks.run(rerunDraft.previousRunId))}">${esc(rerunDraft.previousRunId)}</a>. Adjust fields, then submit to keep rerun lineage.</p>` : ""}
     ${approval ? `<p class="notice">This workflow may ask for approval at checkpoints while it runs.${cap.approvalPolicy?.reason ? ` ${esc(cap.approvalPolicy.reason)}` : ""}</p>` : ""}
     ${cap.supervision?.default ? `<p class="notice">This run is supervised by <strong>run-smithers</strong>: the Hub creates a supervising run that wraps it, records lineage, recovers interrupted attempts, and flags it for attention instead of reporting a silent success if it can't finish.</p>` : ""}
     <form id="run-form" class="form-grid">
       ${hasFields ? schemaForm(schema) : `<label>Input JSON<textarea data-field="__raw" data-ftype="json" placeholder="{}">{}</textarea><span class="field-hint">This workflow has no declared input schema. Provide raw JSON.</span><span class="field-error" data-error-for="__raw"></span></label>`}
-      ${hasFields ? `<details class="advanced"><summary>Edit as raw JSON instead</summary><label><textarea id="run-raw" data-ftype="json" placeholder="{}">${esc(JSON.stringify(sample, null, 2))}</textarea></label></details>` : ""}
-      <button class="primary" type="submit">Create Run</button>
+      ${hasFields ? `<details class="advanced"><summary>Edit as raw JSON instead</summary><label><textarea id="run-raw" data-ftype="json" placeholder="{}">${esc(JSON.stringify(initialInput, null, 2))}</textarea></label></details>` : ""}
+      <button class="primary" type="submit">${rerunDraft ? "Re-run with edited input" : "Create Run"}</button>
     </form>
     <details class="advanced"><summary>Workflow contract</summary>${json(cap)}</details>`;
   bindCopy();
   const form = $("#run-form");
+  fillRunForm(form, schema, initialInput);
   // Fill repo/project pickers (improve, idea-to-product, …) from the catalog.
   hydrateRepoPickers(form);
   form.addEventListener("submit", async (event) => {
@@ -2373,8 +2418,10 @@ async function showRunForm(slug) {
       return toast("Input is not valid JSON", "error");
     }
     try {
-      const result = await api(`/api/capabilities/${slug}/run`, { method: "POST", body: { input } });
-      toast("Run created", "ok");
+      const result = rerunDraft?.previousRunId
+        ? await api(`/api/runs/${rerunDraft.previousRunId}/rerun`, { method: "POST", body: { input } })
+        : await api(`/api/capabilities/${slug}/run`, { method: "POST", body: { input } });
+      toast(rerunDraft ? "Edited re-run queued" : "Run created", "ok");
       // Landing's "Try it" CTA sends users here with ?try=<slug>. After the
       // sample run is queued, route them to /app#connect so they wire MCP,
       // CLI, API, or a runner pool *after* seeing a capability succeed.
@@ -2876,6 +2923,7 @@ async function renderRunDetail(runId, { focus = "", focusId = "" } = {}) {
   content.innerHTML = `${crumbNav}${toolbar(title, `<a class="button" href="${esc(slug ? deepLinks.workflow(slug) : deepLinks.workflows())}">Workflow</a>
       <a class="button" href="${esc(deepLinks.runLogs(run.id))}">Run log</a>
       <a class="button" href="${esc(deepLinks.runArtifacts(run.id))}">Artifacts</a>
+      <button id="edit-rerun-run">Edit &amp; re-run</button>
       <button id="rerun-run">Re-run</button>
       <button id="cancel-run" class="danger">Cancel</button>`, deepLinks.run(run.id))}
     <p class="run-detail-sub">
@@ -2908,6 +2956,7 @@ async function renderRunDetail(runId, { focus = "", focusId = "" } = {}) {
     await api(`/api/runs/${run.id}/cancel`, { method: "POST", body: { reason: "Cancelled from Web Hub" } });
     await renderRunDetail(run.id, { focus, focusId });
   });
+  $("#edit-rerun-run").addEventListener("click", () => editRerunRun(run));
   $("#rerun-run").addEventListener("click", () => rerunRun(run.id).catch(showError));
   bindCopy();
   bindRunLogFilters($("#panel-logs"));
@@ -3082,6 +3131,21 @@ async function rerunRun(id) {
   location.hash = deepLinks.run(result.run.id).slice(1);
   state.view = `runs/${result.run.id}`;
   await render();
+}
+
+function editRerunRun(run) {
+  if (!run?.id || !run.capabilitySlug) return toast("Cannot edit this run", "error");
+  const input = run.input && typeof run.input === "object" && !Array.isArray(run.input) ? { ...run.input } : {};
+  delete input.__origin;
+  delete input.__supervisionToken;
+  delete input.__supervisedChild;
+  delete input.rerunOf;
+  sessionStorage.setItem(RERUN_DRAFT_KEY, JSON.stringify({
+    previousRunId: run.id,
+    capabilitySlug: run.capabilitySlug,
+    input
+  }));
+  setView(`workflows/${run.capabilitySlug}/run`);
 }
 
 // Scroll a deep-linked item into view and briefly highlight it so the user

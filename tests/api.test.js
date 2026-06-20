@@ -545,6 +545,15 @@ describe("Smithers Hub API", () => {
     assert.equal(rerun.run.origin.type, "hub-rerun");
     assert.equal(rerun.run.origin.previousRunId, created.run.id);
     assert.notEqual(rerun.run.id, created.run.id);
+
+    const edited = await api(`/api/runs/${created.run.id}/rerun`, {
+      method: "POST",
+      body: { input: { goal: "rerun me, but edited" } }
+    });
+    assert.equal(edited.run.status, "queued");
+    assert.equal(edited.run.input.goal, "rerun me, but edited");
+    assert.equal(edited.run.input.rerunOf, created.run.id);
+    assert.equal(edited.run.origin.type, "hub-rerun");
   });
 });
 

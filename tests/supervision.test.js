@@ -267,6 +267,9 @@ describe("run form repo picker (UI source)", () => {
     assert.match(src, /hydrateRepoPickers/);
     assert.match(src, /\/api\/repo-options/);
     assert.match(src, /<datalist/);
+    assert.match(src, /Edit &amp; re-run/);
+    assert.match(src, /RERUN_DRAFT_KEY/);
+    assert.match(src, /Re-run with edited input/);
     // Raw JSON escape hatch must still exist.
     assert.match(src, /Edit as raw JSON instead/);
   });
