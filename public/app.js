@@ -281,7 +281,10 @@ const WORKFLOW_TEMPLATES = [
     requiredSkills: [],
     requiredAgents: [],
     inputSchema: { type: "object", properties: { name: { type: "string", description: "Who to greet" } } },
-    workflow: { type: "shell", entry: "echo 'hello from runyard'" }
+    // Real runnable example: greets the input, references the current run id
+    // (Runyard exposes it as SMITHERS_RUN_ID on the runner), and prints an
+    // unambiguous success line so the operator can confirm the pipe end-to-end.
+    workflow: { type: "shell", entry: "echo \"hello, ${name:-world} — run ${SMITHERS_RUN_ID:-?} of hello-world completed successfully\"" }
   },
   {
     slug: "fetch-and-summarize",
@@ -523,18 +526,24 @@ function schemaForm(schema = {}) {
   return keys.map((key) => schemaField(key, props[key], required.has(key))).join("");
 }
 
-function takeRerunDraft(slug) {
+// The draft now sticks around until the operator either submits the form or
+// explicitly discards it from the in-form banner, so a reload no longer eats
+// the in-progress edit. Submitting/discarding go through clearRerunDraft().
+function loadRerunDraft(slug) {
   try {
     const raw = sessionStorage.getItem(RERUN_DRAFT_KEY);
     if (!raw) return null;
     const draft = JSON.parse(raw);
     if (draft?.capabilitySlug !== slug) return null;
-    sessionStorage.removeItem(RERUN_DRAFT_KEY);
     return draft;
   } catch {
     sessionStorage.removeItem(RERUN_DRAFT_KEY);
     return null;
   }
+}
+
+function clearRerunDraft() {
+  try { sessionStorage.removeItem(RERUN_DRAFT_KEY); } catch {}
 }
 
 function setSchemaFieldValue(scope, key, value) {
@@ -2379,15 +2388,22 @@ async function showRunForm(slug) {
   const hasFields = Object.keys(schema.properties || {}).length > 0;
   const approval = cap.approvalPolicy?.required;
   const sample = Object.fromEntries(Object.entries(schema.properties || {}).map(([key]) => [key, ""]));
-  const rerunDraft = takeRerunDraft(slug);
+  const rerunDraft = loadRerunDraft(slug);
   const initialInput = rerunDraft?.input && typeof rerunDraft.input === "object" && !Array.isArray(rerunDraft.input) ? rerunDraft.input : sample;
+  const draftStamped = rerunDraft?.at ? relativeTime(rerunDraft.at) : "";
   const editor = $("#editor");
   editor.classList.remove("hidden");
   editor.scrollIntoView({ behavior: "smooth", block: "nearest" });
   editor.innerHTML = `<h2>Run ${esc(cap.name)} ${shareButton(deepLinks.workflow(slug), `Copy share link to ${cap.name}`)}</h2>
     <p class="muted">${esc(cap.description || "")}</p>
     <p class="muted"><span class="kbd">${esc(deepLinks.abs(deepLinks.workflow(slug)))}</span></p>
-    ${rerunDraft ? `<p class="notice">Editing input before re-running <a href="${esc(deepLinks.run(rerunDraft.previousRunId))}">${esc(rerunDraft.previousRunId)}</a>. Adjust fields, then submit to keep rerun lineage.</p>` : ""}
+    ${rerunDraft ? `<div class="notice rerun-draft-banner" id="rerun-draft-banner" role="status">
+        <div class="rerun-draft-banner-text">
+          <strong>Draft restored${draftStamped ? ` from ${esc(draftStamped)}` : ""}</strong>
+          <span class="muted">Editing input before re-running <a href="${esc(deepLinks.run(rerunDraft.previousRunId))}">${esc(rerunDraft.previousRunId)}</a>. Submit to keep rerun lineage, or discard to start clean.</span>
+        </div>
+        <button type="button" class="button rerun-draft-discard" id="rerun-draft-discard" aria-label="Discard restored rerun draft">Discard</button>
+      </div>` : ""}
     ${approval ? `<p class="notice">This workflow may ask for approval at checkpoints while it runs.${cap.approvalPolicy?.reason ? ` ${esc(cap.approvalPolicy.reason)}` : ""}</p>` : ""}
     ${cap.supervision?.default ? `<p class="notice">This run is supervised by <strong>run-smithers</strong>: the Hub creates a supervising run that wraps it, records lineage, recovers interrupted attempts, and flags it for attention instead of reporting a silent success if it can't finish.</p>` : ""}
     <form id="run-form" class="form-grid">
@@ -2399,6 +2415,19 @@ async function showRunForm(slug) {
   bindCopy();
   const form = $("#run-form");
   fillRunForm(form, schema, initialInput);
+  // Discard wipes the draft and snaps fields back to server defaults so the
+  // operator can start clean without leaving the page.
+  $("#rerun-draft-discard")?.addEventListener("click", () => {
+    clearRerunDraft();
+    const banner = $("#rerun-draft-banner");
+    if (banner) banner.remove();
+    fillRunForm(form, schema, sample);
+    const rawEl = $("#run-raw");
+    if (rawEl) rawEl.value = JSON.stringify(sample, null, 2);
+    const submitBtn = form.querySelector('button[type="submit"]');
+    if (submitBtn) submitBtn.textContent = "Create Run";
+    toast("Draft discarded", "ok");
+  });
   // Fill repo/project pickers (improve, idea-to-product, …) from the catalog.
   hydrateRepoPickers(form);
   form.addEventListener("submit", async (event) => {
@@ -2424,6 +2453,9 @@ async function showRunForm(slug) {
       const result = rerunDraft?.previousRunId
         ? await api(`/api/runs/${rerunDraft.previousRunId}/rerun`, { method: "POST", body: { input } })
         : await api(`/api/capabilities/${slug}/run`, { method: "POST", body: { input } });
+      // Submit succeeded — the persisted draft is no longer relevant, so wipe
+      // it before navigating off the form.
+      if (rerunDraft) clearRerunDraft();
       toast(rerunDraft ? "Edited re-run queued" : "Run created", "ok");
       // Landing's "Try it" CTA sends users here with ?try=<slug>. After the
       // sample run is queued, route them to /app#connect so they wire MCP,
@@ -3123,9 +3155,9 @@ function runOutcomeBanner(run, diagnostics, title, slug, durStr) {
 function runMetaStripHtml(run, durStr) {
   const items = [];
   const startedAt = run.startedAt || run.createdAt;
-  if (startedAt) items.push(`<li><span class="muted">Started</span> <span title="${esc(startedAt)}">${esc(relativeTime(startedAt))}</span></li>`);
-  if (run.completedAt) items.push(`<li><span class="muted">Ended</span> <span title="${esc(run.completedAt)}">${esc(relativeTime(run.completedAt))}</span></li>`);
-  if (durStr) items.push(`<li><span class="muted">Duration</span> ${esc(durStr)}</li>`);
+  if (startedAt) items.push(`<li class="chip--time"><span class="muted">Started</span> <span title="${esc(startedAt)}">${esc(relativeTime(startedAt))}</span></li>`);
+  if (run.completedAt) items.push(`<li class="chip--time"><span class="muted">Ended</span> <span title="${esc(run.completedAt)}">${esc(relativeTime(run.completedAt))}</span></li>`);
+  if (durStr) items.push(`<li class="chip--time"><span class="muted">Duration</span> ${esc(durStr)}</li>`);
   const attempt = Number(run.attempt || 0);
   if (attempt > 0) items.push(`<li><span class="muted">Attempt</span> ${esc(attempt)}</li>`);
   const trigger = run.originLabel || run.origin?.label || "";
@@ -3155,13 +3187,15 @@ async function renderRunDetail(runId, { focus = "", focusId = "" } = {}) {
       ? `<p class="muted">Linked directly to this run's artifacts.</p>`
       : "";
   // Each chip carries a title= so the full value is reachable on hover when
-  // the inline-flex chip ellipsizes a long project / branch / runner id.
+  // the inline-flex chip ellipsizes a long project / branch / runner id. The
+  // modifier classes (.chip--id) give id-like values a quieter, monospaced
+  // treatment so the prominent banner status pill stays the focal point.
   const chips = [];
   if (project) chips.push(`<span class="chip chip-project" title="Project: ${esc(project)}">📦 ${esc(project)}</span>`);
   if (branch) chips.push(`<span class="chip chip-branch" title="Branch: ${esc(branch)}">🌿 ${esc(branch)}</span>`);
-  if (run.workflowVersion) chips.push(`<span class="chip chip-version" title="Workflow version ${esc(run.workflowVersion)}">workflow v${esc(run.workflowVersion)}</span>`);
+  if (run.workflowVersion) chips.push(`<span class="chip chip-version chip--id" title="Workflow version ${esc(run.workflowVersion)}">workflow v${esc(run.workflowVersion)}</span>`);
   if (execution) chips.push(`<span class="chip chip-runner" title="Execution mode: ${esc(execution)}">execution ${esc(execution)}</span>`);
-  if (run.runnerId) chips.push(`<span class="chip chip-runner" title="Runner: ${esc(run.runnerId)}">🛠 ${esc(run.runnerId)}</span>`);
+  if (run.runnerId) chips.push(`<span class="chip chip-runner chip--id" title="Runner: ${esc(run.runnerId)}">🛠 ${esc(run.runnerId)}</span>`);
   const crumbNav = breadcrumbs([
     { label: "Runs", href: deepLinks.runs() },
     { label: run.capabilityName || slug || "Workflow", href: slug ? deepLinks.workflow(slug) : deepLinks.workflows() },
@@ -3177,21 +3211,25 @@ async function renderRunDetail(runId, { focus = "", focusId = "" } = {}) {
   const payloadBytes = runRawPayloadBytes(run);
   const payloadSizeLabel = payloadBytes ? formatBytes(payloadBytes) : "empty";
   const artifactCount = (data.artifacts || []).length;
-  // Metadata (timing strip + chips) is wrapped in a <details> so operators
-  // who don't need the project/branch/runner fingerprint every time can fold
-  // it away. Open by default on first load; the toggle state persists per
-  // run in sessionStorage so it isn't fought on refresh.
+  // The timing strip (Started/Ended/Duration/Attempt/Trigger) stays visible
+  // above the fold so an operator can answer "what happened, how long" with
+  // zero clicks. The verbose, fingerprint-style chips (project, branch,
+  // workflow version, runner, execution mode) collapse into the disclosure —
+  // they're useful for forensics but noisy at first glance. Toggle state
+  // persists per-run in sessionStorage so it isn't fought on refresh.
   const metaCollapseOpen = (() => {
-    try { return sessionStorage.getItem(`runDetail.section.${run.id}.meta`) !== "0"; } catch { return true; }
+    try { return sessionStorage.getItem(`runDetail.section.${run.id}.meta`) === "1"; } catch { return false; }
   })();
   const metaBlock = (metaStrip || chips.length)
-    ? `<details class="run-detail-meta" data-run-section="meta"${metaCollapseOpen ? " open" : ""}>
-        <summary class="run-detail-meta-summary" aria-label="Run metadata"><span class="run-detail-meta-toggle">Run metadata</span></summary>
-        <div class="run-detail-meta-body">
-          ${metaStrip}
-          ${chips.length ? `<p class="run-detail-chips">${chips.join("")}</p>` : ""}
-        </div>
-      </details>`
+    ? `<div class="run-detail-meta-core">
+        ${metaStrip}
+        ${chips.length ? `<details class="run-detail-meta" data-run-section="meta"${metaCollapseOpen ? " open" : ""}>
+            <summary class="run-detail-meta-summary" aria-label="Run identifiers and fingerprint"><span class="run-detail-meta-toggle">Project, branch, runner &amp; version</span></summary>
+            <div class="run-detail-meta-body">
+              <p class="run-detail-chips">${chips.join("")}</p>
+            </div>
+          </details>` : ""}
+      </div>`
     : "";
   content.innerHTML = `${crumbNav}
     ${banner}
@@ -3484,7 +3522,10 @@ function editRerunRun(run) {
   sessionStorage.setItem(RERUN_DRAFT_KEY, JSON.stringify({
     previousRunId: run.id,
     capabilitySlug: run.capabilitySlug,
-    input
+    input,
+    // Stamped so the "Draft restored {relative time}" banner can show how
+    // stale the in-progress edit is.
+    at: new Date().toISOString()
   }));
   setView(`workflows/${run.capabilitySlug}/run`);
 }
@@ -4046,6 +4087,22 @@ function resetActiveSupportTab() {
   renderSupportChat();
 }
 
+// Wipes ALL chat tabs and removes the localStorage key — different from the
+// per-tab reset above. Asks for confirmation because it is destructive across
+// the operator's entire chat history.
+function clearAllSupportChats() {
+  if (typeof window !== "undefined" && typeof window.confirm === "function") {
+    const ok = window.confirm("Clear the entire support conversation? This removes every chat tab and cannot be undone.");
+    if (!ok) return;
+  }
+  try { localStorage.removeItem(SUPPORT_CHAT_STORAGE_KEY); } catch {}
+  const fresh = emptyChat();
+  supportChatState.tabs = [fresh];
+  supportChatState.activeId = fresh.id;
+  renderSupportChat();
+  toast("Conversation cleared", "ok");
+}
+
 function closeSupportTab(id) {
   const idx = supportChatState.tabs.findIndex((tab) => tab.id === id);
   if (idx < 0) return;
@@ -4164,16 +4221,28 @@ function renderSupportChat() {
 
 function renderMessageBubble(message) {
   const role = message.role || "assistant";
+  // System and tool bubbles are transient/diagnostic — a timestamp on each
+  // one would add noise without information, so they stay unstamped.
   if (role === "tool") {
     return `<div class="support-chat-msg tool">${esc(message.content)}</div>`;
   }
   if (role === "system") {
     return `<div class="support-chat-msg system">${esc(message.content)}</div>`;
   }
+  // Relative timestamp sits beneath the user/assistant bubble so the operator
+  // can tell "did the agent answer this five seconds ago or yesterday".
+  const stamp = message.at ? relativeTime(message.at) : "";
+  const meta = stamp ? `<div class="support-chat-msg-meta muted" title="${esc(message.at || "")}">${esc(stamp)}</div>` : "";
   if (message.error) {
-    return `<div class="support-chat-msg error">${esc(message.content)}</div>`;
+    return `<div class="support-chat-msg-wrap support-chat-msg-wrap--error">
+      <div class="support-chat-msg error">${esc(message.content)}</div>
+      ${meta}
+    </div>`;
   }
-  return `<div class="support-chat-msg ${esc(role)}">${esc(message.content)}</div>`;
+  return `<div class="support-chat-msg-wrap support-chat-msg-wrap--${esc(role)}">
+    <div class="support-chat-msg ${esc(role)}">${esc(message.content)}</div>
+    ${meta}
+  </div>`;
 }
 
 // Pulls the trailing ```json {"actions":[...]}``` block out of a reply (if any)
@@ -4320,6 +4389,24 @@ function bindSupportChat() {
   panel.querySelector(".support-chat-close")?.addEventListener("click", () => setSupportChatOpen(false));
   panel.querySelector(".support-chat-new")?.addEventListener("click", () => addSupportTab());
   panel.querySelector(".support-chat-reset")?.addEventListener("click", () => resetActiveSupportTab());
+  const overflow = panel.querySelector(".support-chat-overflow");
+  panel.querySelector(".support-chat-clear-all")?.addEventListener("click", () => {
+    if (overflow) overflow.open = false;
+    clearAllSupportChats();
+  });
+  // Click outside or Esc closes the overflow menu so it doesn't trap the user.
+  if (overflow) {
+    document.addEventListener("click", (event) => {
+      if (!overflow.open) return;
+      if (!overflow.contains(event.target)) overflow.open = false;
+    });
+    overflow.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && overflow.open) {
+        overflow.open = false;
+        overflow.querySelector("summary")?.focus();
+      }
+    });
+  }
   panel.querySelector(".support-chat-tabs")?.addEventListener("click", (event) => {
     const closeBtn = event.target.closest("[data-tab-close]");
     if (closeBtn) {

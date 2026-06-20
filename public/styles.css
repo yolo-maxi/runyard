@@ -717,6 +717,39 @@ label.inline input {
   font-size: 14px;
 }
 
+/* Rerun draft banner: surfaces the persisted edit so the operator never
+ * loses an in-progress draft silently. Discard button aligns to the right
+ * on wide viewports and drops below the text on narrow ones. */
+.rerun-draft-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  justify-content: space-between;
+}
+
+.rerun-draft-banner-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 220px;
+}
+
+.rerun-draft-banner-text strong { color: var(--ink); }
+
+.rerun-draft-discard {
+  flex: 0 0 auto;
+  min-height: 36px;
+}
+
+@media (max-width: 640px) {
+  .rerun-draft-discard {
+    width: 100%;
+    min-height: 44px;
+  }
+}
+
 details.advanced {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -1382,6 +1415,36 @@ details.advanced[open] summary {
   color: #166534;
 }
 
+/* ---- Semantic chip modifiers --------------------------------------------
+ * Differentiate chips by role on the run-detail meta strip so the page is
+ * easier to scan: status pops, IDs are quiet & monospaced (fingerprint, not
+ * focal), timestamps fade to a tertiary muted treatment. The modifiers
+ * compose with the existing .chip-* colour classes (e.g. chip-runner can
+ * also be a chip--id). */
+.chip--status {
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  box-shadow: 0 1px 2px rgba(15, 25, 35, 0.08);
+}
+
+.chip--id {
+  font-family: "SFMono-Regular", Consolas, ui-monospace, Menlo, monospace;
+  font-size: 11.5px;
+  background: var(--soft);
+  border-color: var(--line);
+  color: var(--ink-soft, var(--muted));
+  /* Quieter than the coloured chips above so id-like values recede. */
+  opacity: 0.92;
+}
+
+.chip--time {
+  color: var(--muted);
+}
+
+.run-meta-strip li.chip--time {
+  color: var(--muted);
+}
+
 /* ---- Runner pool / capacity affordances ---- */
 .runner-pool-summary {
   display: flex;
@@ -1548,11 +1611,17 @@ details.advanced[open] summary {
   max-width: 100%;
 }
 
-/* Run-detail metadata collapser — wraps the meta strip + chips row in a
- * <details> so an operator who already knows the project/branch/runner can
- * fold it away to cut visual density. Default-open, persisted per run. */
-.run-detail-meta {
+/* Run-detail metadata: core timing strip (.run-detail-meta-core > .run-meta-strip)
+ * stays visible above the fold so the operator can answer "what happened &
+ * how long" with zero clicks. Verbose fingerprint chips (project, branch,
+ * runner, workflow version) collapse into the <details> so they don't crowd
+ * the page on every visit. Toggle state persists per run. */
+.run-detail-meta-core {
   margin: 0 0 10px;
+}
+
+.run-detail-meta {
+  margin: 4px 0 10px;
 }
 
 .run-detail-meta-summary {
@@ -1561,14 +1630,15 @@ details.advanced[open] summary {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 8px;
+  padding: 10px 12px;
   margin: 0 0 6px;
-  border-radius: 6px;
+  border-radius: 8px;
   font-size: 12px;
   color: var(--muted);
   background: var(--soft);
   border: 1px solid var(--line);
-  min-height: 28px;
+  /* 44px tap target so the disclosure passes mobile touch heuristics. */
+  min-height: 44px;
 }
 
 .run-detail-meta-summary::-webkit-details-marker {
@@ -3461,8 +3531,10 @@ details.advanced[open] summary {
 .support-chat-actions {
   display: inline-flex;
   gap: 2px;
+  align-items: center;
 }
-.support-chat-actions button {
+.support-chat-actions button,
+.support-chat-actions .support-chat-overflow-trigger {
   min-height: 28px;
   padding: 2px 8px;
   border-radius: 6px;
@@ -3470,9 +3542,106 @@ details.advanced[open] summary {
   background: transparent;
   border: 1px solid transparent;
 }
-.support-chat-actions button:hover {
+.support-chat-actions button:hover,
+.support-chat-actions .support-chat-overflow-trigger:hover {
   background: var(--soft);
   border-color: var(--line);
+}
+
+/* Overflow (kebab) menu in the chat header. Hosts destructive actions like
+ * Clear conversation so they don't sit one mis-tap away from the close
+ * button. */
+.support-chat-overflow {
+  position: relative;
+}
+.support-chat-overflow-trigger {
+  list-style: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  user-select: none;
+  color: var(--ink-soft, var(--muted));
+}
+.support-chat-overflow-trigger::-webkit-details-marker { display: none; }
+.support-chat-overflow-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 1002;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(15, 25, 35, 0.18);
+  min-width: 180px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.support-chat-overflow-menu button {
+  text-align: left;
+  padding: 8px 10px;
+  font-size: 13px;
+  border-radius: 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--ink);
+  cursor: pointer;
+  min-height: 36px;
+}
+.support-chat-overflow-menu button:hover {
+  background: var(--soft);
+  border-color: var(--line);
+}
+
+/* Per-message wrapper + timestamp meta. The wrapper inherits the bubble's
+ * alignment so the stamp sits flush under it. */
+.support-chat-msg-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 88%;
+}
+.support-chat-msg-wrap--user {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+.support-chat-msg-wrap--assistant {
+  align-self: flex-start;
+  align-items: flex-start;
+}
+.support-chat-msg-wrap--error {
+  align-self: stretch;
+  align-items: flex-start;
+  max-width: 100%;
+}
+.support-chat-msg-wrap .support-chat-msg {
+  max-width: 100%;
+  align-self: stretch;
+}
+.support-chat-msg-meta {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 0 4px;
+}
+
+/* Docs/landing topbars: allow the .nav row to wrap on narrow viewports so
+ * the 'Open Smithers Hub →' link stays visible above the fold even when
+ * sibling buttons (Landing/Quickstart/llms.txt) would otherwise push it
+ * off-screen. The app topbar uses a separate mobile-primary-nav row, so
+ * the existing flex-wrap: nowrap stays correct there — we scope this fix
+ * to topbars that contain a .back-to-app marker. */
+@media (max-width: 850px) {
+  .nav:has(.back-to-app) {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    row-gap: 6px;
+  }
+  .nav .back-to-app {
+    order: -1;
+  }
 }
 .support-chat-status {
   padding: 6px 12px;
