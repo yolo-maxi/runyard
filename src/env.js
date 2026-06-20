@@ -105,6 +105,10 @@ export const env = {
   hostname: deriveHostnameLabel(),
   sessionSecret: resolveSessionSecret(),
   bootstrapToken: process.env.SMITHERS_HUB_BOOTSTRAP_TOKEN || "",
+  runyardMobileFeedbackEndpointSecret:
+    process.env.SMITHERS_HUB_RUNYARD_MOBILE_FEEDBACK_SECRET ||
+    process.env.RUNYARD_MOBILE_FEEDBACK_ENDPOINT_SECRET ||
+    "",
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || process.env.SMITHERS_TELEGRAM_BOT_TOKEN || "",
   telegramApprovalChatId:
     process.env.TELEGRAM_APPROVAL_CHAT_ID ||

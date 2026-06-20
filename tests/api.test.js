@@ -11,6 +11,7 @@ process.env.SMITHERS_HUB_DATA_DIR = temp;
 process.env.SMITHERS_HUB_DB = path.join(temp, "test.sqlite");
 process.env.SMITHERS_HUB_SESSION_SECRET = "test-secret";
 process.env.SMITHERS_HUB_BOOTSTRAP_TOKEN = "shub_test_token";
+process.env.SMITHERS_HUB_RUNYARD_MOBILE_FEEDBACK_SECRET = "shub_test_feedback_endpoint";
 process.env.SMITHERS_OBSTRUCTION_ANALYSIS_ENABLED = "0";
 
 const { app, notifyTelegram } = await import("../src/server.js");
@@ -1123,6 +1124,186 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
     // A different token (admin) tries to register using my runner id -> must NOT overwrite mine.
     const other = await api("/api/runners/register", { method: "POST", body: { id: myId, name: "hijack", tags: ["smithers", "node"] } });
     assert.notEqual(other.runner.id, myId);
+  });
+});
+
+describe("Authenticated workflow endpoints", () => {
+  const endpointSecret = "shub_test_feedback_endpoint";
+
+  it("lists configured endpoints for admins without exposing secrets", async () => {
+    const listed = await api("/api/workflow-endpoints");
+    const endpoint = listed.endpoints.find((entry) => entry.slug === "runyard-mobile-feedback");
+    assert.ok(endpoint, "seeded feedback endpoint should be discoverable to admins");
+    assert.equal(endpoint.capabilitySlug, "improve-no-deploy");
+    assert.equal(endpoint.repo, "smithers-hub");
+    assert.equal(endpoint.project, "runyard");
+    assert.equal(endpoint.secretConfigured, true);
+    assert.equal(JSON.stringify(endpoint).includes(endpointSecret), false);
+    assert.equal(Object.hasOwn(endpoint, "secretHash"), false);
+  });
+
+  it("rejects unauthorized feedback endpoint requests", async () => {
+    const missing = await raw(
+      "/api/workflow-endpoints/runyard-mobile-feedback",
+      { method: "POST", body: { feedback: "missing auth" } },
+      null
+    );
+    assert.equal(missing.status, 401);
+
+    const invalid = await raw(
+      "/api/workflow-endpoints/runyard-mobile-feedback",
+      { method: "POST", body: { feedback: "bad auth" } },
+      "shub_wrong_feedback_secret"
+    );
+    assert.equal(invalid.status, 401);
+  });
+
+  it("queues authorized feedback as a constrained improve-no-deploy run and records audit metadata", async () => {
+    const feedback = "Please make the approval screen easier to scan on mobile.";
+    const created = await raw(
+      "/api/workflow-endpoints/runyard-mobile-feedback",
+      {
+        method: "POST",
+        body: {
+          feedback,
+          app: "runyard-mobile",
+          user: "fran",
+          session: "sess-auth-endpoint",
+          url: "https://app.example/feedback",
+          route: "/approvals",
+          severity: "medium",
+          workflowSlug: "hello",
+          capabilitySlug: "hello",
+          repo: "other-repo",
+          project: "other-project",
+          repoDir: "/tmp/evil",
+          runnerId: "runner_evil",
+          deploy: true,
+          targetBranch: "prod"
+        }
+      },
+      endpointSecret
+    );
+    assert.equal(created.status, 202);
+    assert.equal(created.data.deduped, false);
+    assert.equal(created.data.run.capabilitySlug, "improve-no-deploy");
+    assert.match(created.data.payloadHash, /^sha256:[a-f0-9]{64}$/);
+
+    const detail = await api(`/api/runs/${created.data.run.id}`);
+    assert.equal(detail.run.capabilitySlug, "improve-no-deploy");
+    assert.equal(detail.run.status, "queued");
+    assert.equal(detail.run.input.project, "runyard");
+    assert.equal(detail.run.input.repo, "smithers-hub");
+    assert.equal(detail.run.input.repoDir, undefined);
+    assert.equal(detail.run.input.deploy, undefined);
+    assert.equal(detail.run.input.targetBranch, undefined);
+    assert.equal(detail.run.input.runnerId, undefined);
+    assert.equal(detail.run.input.untrustedFeedback.text, feedback);
+    assert.equal(detail.run.input.untrustedFeedback.app, "runyard-mobile");
+    assert.equal(detail.run.input.untrustedFeedback.user, "fran");
+    assert.equal(detail.run.input.untrustedFeedback.session, "sess-auth-endpoint");
+    assert.match(detail.run.input.context, /untrusted user\/app data/i);
+    assert.equal(detail.run.origin.type, "workflow-endpoint");
+    assert.equal(detail.run.origin.endpointSlug, "runyard-mobile-feedback");
+
+    const events = await api(`/api/runs/${created.data.run.id}/events`);
+    assert.ok(events.events.find((event) => event.type === "workflow_endpoint.queued"));
+
+    const audit = await api("/api/audit?limit=50");
+    const entry = audit.audit.find((item) => item.action === "workflow_endpoint.queued" && item.target === created.data.run.id);
+    assert.ok(entry, "workflow endpoint enqueue should be audited");
+    assert.equal(entry.detail.endpointSlug, "runyard-mobile-feedback");
+    assert.equal(entry.detail.runId, created.data.run.id);
+    assert.equal(entry.detail.payloadHash, created.data.payloadHash);
+    assert.equal(entry.detail.source.app, "runyard-mobile");
+    assert.equal(entry.detail.source.user, "fran");
+    assert.equal(entry.detail.source.session, "sess-auth-endpoint");
+    const auditJson = JSON.stringify(entry);
+    assert.equal(auditJson.includes(endpointSecret), false);
+    assert.equal(auditJson.includes(feedback), false);
+  });
+
+  it("dedupes repeated feedback payloads within the endpoint window", async () => {
+    const body = {
+      feedback: "Repeated feedback payload for dedupe coverage.",
+      app: "runyard-mobile",
+      session: "sess-dedupe"
+    };
+    const first = await raw("/api/workflow-endpoints/runyard-mobile-feedback", { method: "POST", body }, endpointSecret);
+    assert.equal(first.status, 202);
+    assert.equal(first.data.deduped, false);
+
+    const second = await raw("/api/workflow-endpoints/runyard-mobile-feedback", { method: "POST", body }, endpointSecret);
+    assert.equal(second.status, 202);
+    assert.equal(second.data.deduped, true);
+    assert.equal(second.data.run.id, first.data.run.id);
+
+    const audit = await api("/api/audit?limit=50");
+    assert.ok(audit.audit.find((entry) => entry.action === "workflow_endpoint.deduped" && entry.target === first.data.run.id));
+  });
+
+  it("enforces endpoint payload limits and per-endpoint rate limits", async () => {
+    const tooLarge = await raw(
+      "/api/workflow-endpoints/runyard-mobile-feedback",
+      { method: "POST", body: { feedback: "x".repeat(33 * 1024), app: "runyard-mobile" } },
+      endpointSecret
+    );
+    assert.equal(tooLarge.status, 413);
+
+    const rateSecret = "shub_test_rate_endpoint";
+    await api("/api/workflow-endpoints", {
+      method: "POST",
+      body: {
+        slug: "rate-limit-feedback",
+        name: "Rate limit feedback",
+        secret: rateSecret,
+        capabilitySlug: "improve-no-deploy",
+        project: "runyard",
+        repo: "smithers-hub",
+        maxPayloadBytes: 4096,
+        rateLimitCount: 1,
+        rateLimitWindowMs: 60_000,
+        dedupeWindowMs: 0,
+        config: { target: "Rate limit feedback", maxImprovements: 1 }
+      }
+    });
+
+    const first = await raw(
+      "/api/workflow-endpoints/rate-limit-feedback",
+      { method: "POST", body: { feedback: "first rate-limited payload" } },
+      rateSecret
+    );
+    assert.equal(first.status, 202);
+
+    const second = await raw(
+      "/api/workflow-endpoints/rate-limit-feedback",
+      { method: "POST", body: { feedback: "second rate-limited payload" } },
+      rateSecret
+    );
+    assert.equal(second.status, 429);
+  });
+
+  it("seeds improve-no-deploy as a recommendation-only workflow without deploy behavior", async () => {
+    const { capabilities } = await api("/api/capabilities");
+    const cap = capabilities.find((entry) => entry.slug === "improve-no-deploy");
+    assert.ok(cap, "improve-no-deploy capability should be seeded");
+    assert.equal(cap.workflow.engine, "smithers");
+    assert.equal(cap.workflow.entry, ".smithers/workflows/improve-no-deploy.tsx");
+    assert.equal(cap.approvalPolicy.required, false);
+    assert.equal(cap.inputSchema.properties.deploy, undefined);
+    assert.equal(cap.inputSchema.properties.untrustedFeedback.type, "object");
+    assert.deepEqual(cap.requiredRunnerTags, ["smithers"]);
+    assert.ok(cap.requiredSkills.includes("product-review"));
+
+    const tpl = path.join(process.cwd(), "workflow-templates", "workflows", "improve-no-deploy.tsx");
+    assert.ok(existsSync(tpl), "bundled improve-no-deploy workflow should exist");
+    const src = readFileSync(tpl, "utf8");
+    assert.match(src, /UNTRUSTED FEEDBACK DATA/);
+    assert.match(src, /id="review"/);
+    assert.match(src, /id="patch-suggestions"/);
+    assert.match(src, /id="report"/);
+    assert.doesNotMatch(src, /id="(?:implement|test|commit|push|deploy)"/);
+    assert.doesNotMatch(src, /git\s+push|push",\s*"origin"|systemctl|GATED_/);
   });
 });
 

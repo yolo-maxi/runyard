@@ -8,6 +8,7 @@ This folder is the durable product and architecture record for Runyard (public n
 - `implementation-decisions.md` — current architecture decisions and tradeoffs.
 - `acceptance-and-manual-tests.md` — acceptance criteria and manual test coverage.
 - `workflow-hardening-and-optimizer.md` — workflow hardening philosophy, optimizer loop, and agent-to-code gradient.
+- `workflow-endpoints.md` — authenticated fixed-purpose workflow intake endpoints.
 
 Read in this order:
 

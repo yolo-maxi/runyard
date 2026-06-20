@@ -1,4 +1,4 @@
-import { existsSync, writeFileSync, chmodSync } from "node:fs";
+import { existsSync, writeFileSync, chmodSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { env } from "./env.js";
@@ -209,17 +209,53 @@ export function initDb() {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS workflow_endpoints (
+      id TEXT PRIMARY KEY,
+      slug TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      secret_hash TEXT NOT NULL,
+      capability_slug TEXT NOT NULL,
+      project TEXT NOT NULL DEFAULT '',
+      repo TEXT NOT NULL DEFAULT '',
+      repo_dir TEXT NOT NULL DEFAULT '',
+      max_payload_bytes INTEGER NOT NULL DEFAULT 32768,
+      rate_limit_count INTEGER NOT NULL DEFAULT 30,
+      rate_limit_window_ms INTEGER NOT NULL DEFAULT 60000,
+      dedupe_window_ms INTEGER NOT NULL DEFAULT 600000,
+      config TEXT NOT NULL DEFAULT '{}',
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS workflow_endpoint_invocations (
+      id TEXT PRIMARY KEY,
+      endpoint_id TEXT NOT NULL REFERENCES workflow_endpoints(id) ON DELETE CASCADE,
+      endpoint_slug TEXT NOT NULL,
+      payload_hash TEXT NOT NULL,
+      source_app TEXT NOT NULL DEFAULT '',
+      source_user TEXT NOT NULL DEFAULT '',
+      source_session TEXT NOT NULL DEFAULT '',
+      run_id TEXT REFERENCES runs(id) ON DELETE SET NULL,
+      status TEXT NOT NULL DEFAULT 'queued',
+      created_at TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
     CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
     CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at);
     CREATE INDEX IF NOT EXISTS idx_events_run ON run_events(run_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_artifacts_run ON artifacts(run_id);
     CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status);
+    CREATE INDEX IF NOT EXISTS idx_workflow_endpoint_invocations_payload ON workflow_endpoint_invocations(endpoint_id, payload_hash, created_at);
+    CREATE INDEX IF NOT EXISTS idx_workflow_endpoint_invocations_endpoint ON workflow_endpoint_invocations(endpoint_id, created_at);
   `);
 
   migrateRunnersPoolColumns();
   setSettingDefault("instance_name", env.instanceName);
   seedAll();
+  seedWorkflowEndpoints();
   autoQueueLegacyRunStartApprovals();
   ensureBootstrapToken();
 }
@@ -323,6 +359,56 @@ function seedAll() {
   for (const capability of seedCapabilities) upsertCapability(capability);
 }
 
+const seededWorkflowEndpoints = [
+  {
+    slug: "runyard-mobile-feedback",
+    name: "Runyard mobile/app feedback",
+    description: "Accepts trusted app-server feedback submissions and queues a constrained improve-no-deploy run for Runyard.",
+    capabilitySlug: "improve-no-deploy",
+    project: "runyard",
+    repo: "smithers-hub",
+    maxPayloadBytes: 32 * 1024,
+    rateLimitCount: 30,
+    rateLimitWindowMs: 60_000,
+    dedupeWindowMs: 10 * 60_000,
+    config: {
+      target: "Runyard mobile/app feedback",
+      maxImprovements: 3,
+      untrustedInput: true
+    }
+  }
+];
+
+function endpointSecretPath(slug) {
+  return path.join(env.dataDir, "workflow-endpoints", `${slug}-secret.txt`);
+}
+
+function readOrCreateSeededEndpointSecret(slug) {
+  const file = endpointSecretPath(slug);
+  if (existsSync(file)) {
+    const value = readFileSync(file, "utf8").trim();
+    if (value) return value;
+  }
+  const token = randomToken();
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, `${token}\n`, { mode: 0o600 });
+  try {
+    chmodSync(file, 0o600);
+  } catch {
+    /* best effort on platforms without chmod */
+  }
+  console.log(`Runyard workflow endpoint secret written to ${file}`);
+  return token;
+}
+
+function seedWorkflowEndpoints() {
+  for (const endpoint of seededWorkflowEndpoints) {
+    const existing = one("SELECT id FROM workflow_endpoints WHERE slug = ?", [endpoint.slug]);
+    const secret = env.runyardMobileFeedbackEndpointSecret || (existing ? "" : readOrCreateSeededEndpointSecret(endpoint.slug));
+    upsertWorkflowEndpoint(endpoint, secret ? { secret } : {});
+  }
+}
+
 export function normalizeCapability(row) {
   if (!row) return null;
   return {
@@ -403,6 +489,171 @@ export function upsertCapability(input) {
   );
   snapshotCapability(created.id);
   return getCapability(input.slug);
+}
+
+function normalizeWorkflowEndpoint(row, { includeSecretHash = false } = {}) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    slug: row.slug,
+    name: row.name,
+    description: row.description,
+    capabilitySlug: row.capability_slug,
+    project: row.project,
+    repo: row.repo,
+    repoDir: row.repo_dir,
+    maxPayloadBytes: row.max_payload_bytes,
+    rateLimitCount: row.rate_limit_count,
+    rateLimitWindowMs: row.rate_limit_window_ms,
+    dedupeWindowMs: row.dedupe_window_ms,
+    config: parseJson(row.config, {}),
+    enabled: Boolean(row.enabled),
+    secretConfigured: Boolean(row.secret_hash),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    ...(includeSecretHash ? { secretHash: row.secret_hash } : {})
+  };
+}
+
+function positiveInteger(value, fallback, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(Math.max(Math.floor(parsed), min), max);
+}
+
+export function listWorkflowEndpoints({ includeDisabled = false } = {}) {
+  const rows = includeDisabled
+    ? all("SELECT * FROM workflow_endpoints ORDER BY slug")
+    : all("SELECT * FROM workflow_endpoints WHERE enabled = 1 ORDER BY slug");
+  return rows.map((row) => normalizeWorkflowEndpoint(row));
+}
+
+export function getWorkflowEndpoint(slugOrId, { includeSecretHash = false, includeDisabled = false } = {}) {
+  const row = includeDisabled
+    ? one("SELECT * FROM workflow_endpoints WHERE slug = ? OR id = ?", [slugOrId, slugOrId])
+    : one("SELECT * FROM workflow_endpoints WHERE (slug = ? OR id = ?) AND enabled = 1", [slugOrId, slugOrId]);
+  return normalizeWorkflowEndpoint(row, { includeSecretHash });
+}
+
+export function upsertWorkflowEndpoint(input, options = {}) {
+  const slug = input.slug;
+  if (!slug) throw new Error("workflow endpoint slug is required");
+  const existing = one("SELECT * FROM workflow_endpoints WHERE slug = ?", [slug]);
+  if (!existing && !options.secret) throw new Error("workflow endpoint secret is required for new endpoints");
+  const timestamp = now();
+  const payload = {
+    slug,
+    name: input.name || slug,
+    description: input.description || "",
+    secret_hash: options.secret ? hashToken(options.secret) : existing.secret_hash,
+    capability_slug: input.capabilitySlug || input.capability_slug || existing?.capability_slug || "",
+    project: input.project || existing?.project || "",
+    repo: input.repo || existing?.repo || "",
+    repo_dir: input.repoDir || input.repo_dir || existing?.repo_dir || "",
+    max_payload_bytes: positiveInteger(input.maxPayloadBytes || input.max_payload_bytes, existing?.max_payload_bytes || 32 * 1024, {
+      min: 1024,
+      max: 1024 * 1024
+    }),
+    rate_limit_count: positiveInteger(input.rateLimitCount || input.rate_limit_count, existing?.rate_limit_count || 30, {
+      min: 1,
+      max: 10_000
+    }),
+    rate_limit_window_ms: positiveInteger(input.rateLimitWindowMs || input.rate_limit_window_ms, existing?.rate_limit_window_ms || 60_000, {
+      min: 1000,
+      max: 86_400_000
+    }),
+    dedupe_window_ms: positiveInteger(input.dedupeWindowMs ?? input.dedupe_window_ms, existing?.dedupe_window_ms || 10 * 60_000, {
+      min: 0,
+      max: 86_400_000
+    }),
+    config: json(input.config || parseJson(existing?.config, {}), {}),
+    enabled: input.enabled == null ? (existing?.enabled ?? 1) : input.enabled === false ? 0 : 1,
+    updated_at: timestamp
+  };
+  if (existing) {
+    run(
+      `UPDATE workflow_endpoints SET name=$name, description=$description, secret_hash=$secret_hash,
+       capability_slug=$capability_slug, project=$project, repo=$repo, repo_dir=$repo_dir,
+       max_payload_bytes=$max_payload_bytes, rate_limit_count=$rate_limit_count,
+       rate_limit_window_ms=$rate_limit_window_ms, dedupe_window_ms=$dedupe_window_ms,
+       config=$config, enabled=$enabled, updated_at=$updated_at WHERE slug=$slug`,
+      payload
+    );
+  } else {
+    run(
+      `INSERT INTO workflow_endpoints
+       (id, slug, name, description, secret_hash, capability_slug, project, repo, repo_dir,
+        max_payload_bytes, rate_limit_count, rate_limit_window_ms, dedupe_window_ms, config,
+        enabled, created_at, updated_at)
+       VALUES ($id, $slug, $name, $description, $secret_hash, $capability_slug, $project, $repo, $repo_dir,
+        $max_payload_bytes, $rate_limit_count, $rate_limit_window_ms, $dedupe_window_ms, $config,
+        $enabled, $created_at, $updated_at)`,
+      { id: id("wend"), created_at: timestamp, ...payload }
+    );
+  }
+  return getWorkflowEndpoint(slug, { includeDisabled: true });
+}
+
+export function countWorkflowEndpointInvocations(endpointId, sinceIso) {
+  return one(
+    "SELECT COUNT(*) AS count FROM workflow_endpoint_invocations WHERE endpoint_id = ? AND created_at >= ?",
+    [endpointId, sinceIso]
+  ).count;
+}
+
+export function findRecentWorkflowEndpointInvocation(endpointId, payloadHash, sinceIso) {
+  const row = one(
+    `SELECT * FROM workflow_endpoint_invocations
+      WHERE endpoint_id = ? AND payload_hash = ? AND created_at >= ? AND run_id IS NOT NULL
+      ORDER BY created_at DESC LIMIT 1`,
+    [endpointId, payloadHash, sinceIso]
+  );
+  if (!row) return null;
+  return {
+    id: row.id,
+    endpointId: row.endpoint_id,
+    endpointSlug: row.endpoint_slug,
+    payloadHash: row.payload_hash,
+    sourceApp: row.source_app,
+    sourceUser: row.source_user,
+    sourceSession: row.source_session,
+    runId: row.run_id,
+    status: row.status,
+    createdAt: row.created_at
+  };
+}
+
+export function recordWorkflowEndpointInvocation({ endpoint, payloadHash, source = {}, runId = null, status = "queued" }) {
+  const record = {
+    id: id("weni"),
+    endpoint_id: endpoint.id,
+    endpoint_slug: endpoint.slug,
+    payload_hash: payloadHash,
+    source_app: source.app || "",
+    source_user: source.user || "",
+    source_session: source.session || "",
+    run_id: runId,
+    status,
+    created_at: now()
+  };
+  run(
+    `INSERT INTO workflow_endpoint_invocations
+     (id, endpoint_id, endpoint_slug, payload_hash, source_app, source_user, source_session, run_id, status, created_at)
+     VALUES ($id, $endpoint_id, $endpoint_slug, $payload_hash, $source_app, $source_user, $source_session, $run_id, $status, $created_at)`,
+    record
+  );
+  return {
+    id: record.id,
+    endpointId: record.endpoint_id,
+    endpointSlug: record.endpoint_slug,
+    payloadHash,
+    sourceApp: record.source_app,
+    sourceUser: record.source_user,
+    sourceSession: record.source_session,
+    runId,
+    status,
+    createdAt: record.created_at
+  };
 }
 
 function snapshotCapability(capabilityId) {
