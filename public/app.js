@@ -2670,7 +2670,9 @@ function renderRunDiagnostics(diagnostics) {
           ${timeline.map((event) => `<li>
             <time>${esc(formatTimestamp(event.createdAt))}</time>
             <code class="diagnostics-event-type">${esc(event.type)}</code>
-            <span class="diagnostics-event-msg">${esc(event.message || "")}</span>
+            <div class="diagnostics-event-msg-cell">
+              <span class="diagnostics-event-msg">${esc(event.message || "")}</span>
+            </div>
           </li>`).join("")}
         </ol>
       </div>`
@@ -3322,6 +3324,11 @@ async function renderRunDetail(runId, { focus = "", focusId = "" } = {}) {
     ${run.status === "queued" ? renderQueueBanner(run) : ""}
     ${focusHint}
     ${renderRunDiagnostics(diagnostics)}
+    <div class="run-sections-toolbar" role="toolbar" aria-label="Run detail sections">
+      <button type="button" class="button" id="run-sections-expand" title="Open every run-detail section">Expand all</button>
+      <button type="button" class="button" id="run-sections-collapse" title="Close every run-detail section">Collapse all</button>
+      <span class="run-sections-toolbar-hint" aria-hidden="true">log · artifacts · context · payload</span>
+    </div>
     <details class="panel run-section" data-run-section="log"${logOpen ? " open" : ""} id="panel-logs">
       <summary class="run-section-summary">
         <span class="run-section-title">Run log</span>
@@ -3387,6 +3394,19 @@ async function renderRunDetail(runId, { focus = "", focusId = "" } = {}) {
       } catch {}
     });
   });
+  // Expand-all / Collapse-all flips every run-section <details> at once.
+  // The per-section toggle listener above persists the new state to
+  // sessionStorage automatically, so the choice survives a reload. We skip
+  // the "meta" details so the fingerprint chips stay tucked away unless the
+  // user reaches for them individually.
+  const setAllSectionsOpen = (open) => {
+    document.querySelectorAll(".run-section[data-run-section]").forEach((el) => {
+      if (el.dataset.runSection === "meta") return;
+      if (el.open !== open) el.open = open;
+    });
+  };
+  $("#run-sections-expand")?.addEventListener("click", () => setAllSectionsOpen(true));
+  $("#run-sections-collapse")?.addEventListener("click", () => setAllSectionsOpen(false));
   // Inline action controls live inside <summary> so they share the row with
   // the section title. Clicking them must not toggle the section open — the
   // browser's default behavior for clicks on <summary>. stopPropagation here
@@ -3425,6 +3445,32 @@ async function renderRunDetail(runId, { focus = "", focusId = "" } = {}) {
   });
   bindCopy();
   bindRunLogFilters($("#panel-logs"));
+  // Long diagnostics event messages (e.g. a 200-line traceback) clamp to ~6
+  // lines and get a "Show full message" affordance below them. We only render
+  // the toggle when the message actually overflows — checked once layout is
+  // settled — so short messages stay clean.
+  const attachEventMsgToggles = () => {
+    document.querySelectorAll(".diagnostics-event-msg-cell").forEach((cell) => {
+      if (cell.dataset.msgToggleBound === "1") return;
+      const msg = cell.querySelector(".diagnostics-event-msg");
+      if (!msg) return;
+      if (msg.scrollHeight <= msg.clientHeight + 1) return;
+      cell.dataset.msgToggleBound = "1";
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "diagnostics-event-toggle";
+      toggle.textContent = "Show full message";
+      toggle.setAttribute("aria-expanded", "false");
+      toggle.addEventListener("click", () => {
+        const expanded = msg.classList.toggle("diagnostics-event-msg--expanded");
+        toggle.textContent = expanded ? "Show less" : "Show full message";
+        toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+      });
+      cell.appendChild(toggle);
+    });
+  };
+  if (typeof requestAnimationFrame === "function") requestAnimationFrame(attachEventMsgToggles);
+  else attachEventMsgToggles();
   // Honor the sub-route by bringing the relevant panel into view, opening it
   // first if the user has it collapsed.
   if (focus === "logs") {
