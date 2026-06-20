@@ -716,6 +716,152 @@ details.advanced[open] summary {
   min-width: 0;
 }
 
+/* ---- Inline workflow editor (mounted under detail header) ----------------- */
+.inline-editor {
+  margin: 12px 0 16px;
+  border-left: 3px solid var(--brand, #2563eb);
+}
+
+.inline-editor-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.inline-editor-head h2 {
+  margin: 0;
+}
+
+.editor-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+/* Slug chip + opt-in editor */
+.slug-chip-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.slug-chip {
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 13px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--soft);
+  border: 1px solid var(--line);
+  color: var(--ink);
+}
+
+.slug-chip.hidden { display: none; }
+
+.field-warning {
+  border-left: 3px solid var(--warn, #d97706);
+  background: #fffbeb;
+  padding: 8px 10px;
+  border-radius: 0 6px 6px 0;
+  font-size: 13px;
+  color: #92400e;
+  margin: 6px 0 0;
+}
+
+.field-warning code {
+  background: #fff;
+  border: 1px solid #fcd34d;
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+
+.field-warning.hidden { display: none; }
+
+/* Approval helper (one-liner that appears under the toggle) */
+.approval-helper {
+  margin: -2px 0 4px;
+}
+
+.approval-helper.hidden,
+.approval-reason-row.hidden { display: none; }
+
+/* Friendly save-error banner with a "Details" disclosure for the raw API msg. */
+.editor-error {
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: var(--danger);
+  padding: 10px 12px;
+  border-radius: 8px;
+  margin-bottom: 10px;
+  font-size: 14px;
+}
+
+.editor-error p { margin: 0; }
+
+.editor-error details { margin-top: 6px; }
+
+.editor-error summary {
+  cursor: pointer;
+  color: var(--danger);
+  font-size: 13px;
+}
+
+.editor-error pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin: 6px 0 0;
+  color: var(--ink);
+}
+
+/* Sticky "Slug changed — Undo" banner on the new detail page after a rename. */
+.slug-undo-banner {
+  position: sticky;
+  top: 8px;
+  z-index: 30;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid #fcd34d;
+  background: #fffbeb;
+  color: #92400e;
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin: 4px 0 10px;
+  box-shadow: 0 4px 14px rgba(146, 64, 14, 0.08);
+  font-size: 14px;
+}
+
+.slug-undo-banner code {
+  background: #fff;
+  border: 1px solid #fcd34d;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12.5px;
+}
+
+.slug-undo-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.slug-undo-dismiss {
+  padding: 2px 8px;
+  min-height: 0;
+  font-size: 16px;
+  line-height: 1;
+}
+
 /* ---- Inline "copy share link" button (🔗) used across views ---- */
 .share-link {
   border: 1px solid var(--line);
