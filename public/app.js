@@ -546,6 +546,68 @@ function clearRerunDraft() {
   try { sessionStorage.removeItem(RERUN_DRAFT_KEY); } catch {}
 }
 
+// Read the persisted rerun draft regardless of which workflow it targets.
+// Used by the cross-page "unsaved draft" indicator so the operator notices a
+// dangling edit on the runs list and source run detail, not just inside the
+// rerun form itself.
+function peekRerunDraft() {
+  try {
+    const raw = sessionStorage.getItem(RERUN_DRAFT_KEY);
+    if (!raw) return null;
+    const draft = JSON.parse(raw);
+    if (!draft?.capabilitySlug) return null;
+    return draft;
+  } catch {
+    try { sessionStorage.removeItem(RERUN_DRAFT_KEY); } catch {}
+    return null;
+  }
+}
+
+// Inline banner surfacing a dangling rerun draft. Rendered on the runs list
+// and on the source run detail; clicking Resume jumps into the rerun editor
+// (which restores the draft via loadRerunDraft), Discard wipes the draft and
+// re-renders. The banner element id is unique per render-site to avoid two
+// banners on a page sharing the same DOM id.
+function rerunDraftBanner(draft, { context = "list" } = {}) {
+  if (!draft?.capabilitySlug) return "";
+  const stamp = draft.at ? relativeTime(draft.at) : "";
+  const prevId = draft.previousRunId ? esc(draft.previousRunId) : "";
+  const where = context === "run"
+    ? `Editing input before re-running this run.`
+    : `Editing input before re-running ${prevId ? `<a href="${esc(deepLinks.run(draft.previousRunId))}">${prevId}</a>` : "a previous run"}.`;
+  return `<div class="notice rerun-draft-banner" id="rerun-draft-indicator-${esc(context)}" role="status">
+    <div class="rerun-draft-banner-text">
+      <strong>Unsaved rerun draft${stamp ? ` · ${esc(stamp)}` : ""}</strong>
+      <span class="muted">${where} Resume to keep editing, or discard to clear it.</span>
+    </div>
+    <div class="rerun-draft-banner-actions">
+      <button type="button" class="button primary" data-rerun-draft-resume="${esc(draft.capabilitySlug)}">Resume rerun draft</button>
+      <button type="button" class="button rerun-draft-discard" data-rerun-draft-discard="1">Discard</button>
+    </div>
+  </div>`;
+}
+
+// Wire the resume/discard buttons emitted by rerunDraftBanner(). Safe to call
+// multiple times — buttons set data-bound="1" after the first pass.
+function bindRerunDraftBanner({ onDiscard } = {}) {
+  document.querySelectorAll("[data-rerun-draft-resume]").forEach((btn) => {
+    if (btn.dataset.bound === "1") return;
+    btn.dataset.bound = "1";
+    btn.addEventListener("click", () => {
+      setView(`workflows/${btn.dataset.rerunDraftResume}/run`);
+    });
+  });
+  document.querySelectorAll("[data-rerun-draft-discard]").forEach((btn) => {
+    if (btn.dataset.bound === "1") return;
+    btn.dataset.bound = "1";
+    btn.addEventListener("click", async () => {
+      clearRerunDraft();
+      toast("Rerun draft discarded", "ok");
+      if (typeof onDiscard === "function") await onDiscard();
+    });
+  });
+}
+
 function setSchemaFieldValue(scope, key, value) {
   const field = Array.from(scope.querySelectorAll("[data-field]")).find((el) => el.dataset.field === key);
   if (!field || value == null) return;
@@ -1623,12 +1685,21 @@ async function renderHome() {
         </div>
       </nav>`
     : "";
+  const pendingDraft = peekRerunDraft();
   content.innerHTML = `${toolbar("Runs", `<button id="home-new-run">Run a workflow</button>`, deepLinks.home())}
     ${primaryActionBar({ runners, capabilities, lastFailedRun, failed24h })}
     ${failureBanner(lastFailedRun)}
+    ${rerunDraftBanner(pendingDraft, { context: "list" })}
     <p class="muted deep-link-hint">Every page, run, workflow, and artifact has a stable URL — click 🔗 to copy a shareable link.</p>
     ${renderHomeFilterBar(filters)}
-    ${gettingStarted ? empty("No runs yet.", "Pick a workflow and run it, or start a runner to execute work. Head to Workflows to begin.") : ""}
+    ${gettingStarted ? `<div class="empty empty-runs" role="region" aria-label="No runs yet">
+        <p class="empty-runs-headline"><strong>No runs yet</strong></p>
+        <p class="muted">Workflows you trigger will appear here with logs, artifacts, and re-run controls. Start with the quickstart, or pick a workflow to launch.</p>
+        <div class="empty-runs-actions">
+          <a class="button primary" href="/docs#quickstart">Open quickstart</a>
+          <button type="button" class="button" id="empty-runs-pick-workflow">Pick a workflow</button>
+        </div>
+      </div>` : ""}
     ${renderRunnerPoolSummary(pool, { context: "home" })}
     ${(!filtersActive && active.length)
       ? `<h2 class="section-heading in-flight-heading">In flight <span class="muted">${active.length} live</span></h2>
@@ -1658,6 +1729,7 @@ async function renderHome() {
     ${pending.length ? `<h2 class="section-heading">Pending approvals</h2>
       <section class="panel">${approvalList(pending)}</section>` : ""}`;
   $("#home-new-run").addEventListener("click", () => setView("workflows"));
+  $("#empty-runs-pick-workflow")?.addEventListener("click", () => setView("workflows"));
   document.querySelectorAll("[data-approve]").forEach((button) => button.addEventListener("click", () => resolveApproval(button.dataset.approve, "approve", { rerender: "none" }).then(() => render().catch(showError))));
   document.querySelectorAll("[data-reject]").forEach((button) => button.addEventListener("click", () => resolveApproval(button.dataset.reject, "reject", { rerender: "none" }).then(() => render().catch(showError))));
   document.querySelectorAll("[data-rerun]").forEach((button) => button.addEventListener("click", () => rerunRun(button.dataset.rerun).catch(showError)));
@@ -1669,6 +1741,7 @@ async function renderHome() {
   });
   bindCopy();
   bindHomeFilterBar();
+  bindRerunDraftBanner({ onDiscard: () => render().catch(showError) });
   // Keep the per-card progress strip live for any run still in flight. The
   // polling loop is cancelled implicitly when a new view re-renders (it
   // bumps progressPollToken on the next call).
@@ -3124,8 +3197,12 @@ function runOutcomeBanner(run, diagnostics, title, slug, durStr) {
   const workflowHref = slug ? deepLinks.workflow(slug) : deepLinks.workflows();
   const workflowLabel = run.capabilityName || slug || "Workflow";
   const canCancel = isActiveRun(run);
+  // The primary "Re-run" button re-queues the same input untouched. The
+  // overflow entry is the *editing* variant — kept distinct from the primary
+  // by both verb ("Edit input") and trailing "…" to signal a follow-up form,
+  // so the two no longer read as duplicates.
   const overflowItems = [
-    `<button type="button" id="edit-rerun-run" role="menuitem" title="Open the input editor, then queue a re-run">Re-run with edits…</button>`,
+    `<button type="button" id="edit-rerun-run" role="menuitem" title="Open the input editor, then queue a re-run">Edit input &amp; re-run…</button>`,
     `<button type="button" id="copy-run-id" role="menuitem" data-copy="${esc(run.id)}" title="Copy this run's id to the clipboard">Copy run id</button>`,
     `<a class="button" role="menuitem" href="${esc(workflowHref)}" title="Open this run's workflow definition">Open workflow</a>`,
     canCancel ? `<button type="button" id="cancel-run" class="danger" role="menuitem" title="Stop this run now">Cancel run</button>` : ""
@@ -3139,11 +3216,11 @@ function runOutcomeBanner(run, diagnostics, title, slug, durStr) {
     </div>
     <h1 class="run-banner-title">${esc(title)}</h1>
     <p class="run-banner-subtitle muted">
-      <span class="run-id-mono" title="Run id">${esc(run.id)}</span>
+      <button type="button" class="run-id-mono run-id-mono-copy" data-copy="${esc(run.id)}" title="${esc(run.id)} — click to copy" aria-label="Copy run id ${esc(run.id)}">${esc(run.id)}</button>
       ${slug ? `<a class="run-cap-link" href="${esc(workflowHref)}">${esc(workflowLabel)}</a>` : ""}
     </p>
     <div class="run-banner-actions" role="group" aria-label="Run actions">
-      <button type="button" id="rerun-run" class="primary" title="Re-run with the same inputs (no editor)">Re-run</button>
+      <button type="button" id="rerun-run" class="primary" title="Re-run with the same input (no editor)">Re-run same input</button>
       <details class="run-action-overflow">
         <summary class="button run-action-overflow-trigger" aria-haspopup="menu" aria-label="More run actions">More <span aria-hidden="true">▾</span></summary>
         <div class="run-action-overflow-menu" role="menu">${overflowItems}</div>
@@ -3213,12 +3290,17 @@ async function renderRunDetail(runId, { focus = "", focusId = "" } = {}) {
   const artifactCount = (data.artifacts || []).length;
   // The timing strip (Started/Ended/Duration/Attempt/Trigger) stays visible
   // above the fold so an operator can answer "what happened, how long" with
-  // zero clicks. The verbose, fingerprint-style chips (project, branch,
-  // workflow version, runner, execution mode) collapse into the disclosure —
-  // they're useful for forensics but noisy at first glance. Toggle state
-  // persists per-run in sessionStorage so it isn't fought on refresh.
+  // zero clicks. The fingerprint-style chips (project, branch, workflow
+  // version, runner, execution mode) live in the disclosure too — useful for
+  // forensics, redundant once you know the run. Default to OPEN so a first
+  // visit shows status/repo/workflow chips without an extra tap; a single
+  // shared localStorage preference lets power users hide them and have that
+  // stick across runs.
   const metaCollapseOpen = (() => {
-    try { return sessionStorage.getItem(`runDetail.section.${run.id}.meta`) === "1"; } catch { return false; }
+    try {
+      const raw = localStorage.getItem("runyard.runDetailMeta.open.v1");
+      return raw === null ? true : raw === "1";
+    } catch { return true; }
   })();
   const metaBlock = (metaStrip || chips.length)
     ? `<div class="run-detail-meta-core">
@@ -3231,9 +3313,12 @@ async function renderRunDetail(runId, { focus = "", focusId = "" } = {}) {
           </details>` : ""}
       </div>`
     : "";
+  const pendingDraft = peekRerunDraft();
+  const draftForThisRun = pendingDraft && pendingDraft.previousRunId === run.id ? pendingDraft : null;
   content.innerHTML = `${crumbNav}
     ${banner}
     ${metaBlock}
+    ${rerunDraftBanner(draftForThisRun, { context: "run" })}
     ${run.status === "queued" ? renderQueueBanner(run) : ""}
     ${focusHint}
     ${renderRunDiagnostics(diagnostics)}
@@ -3286,10 +3371,20 @@ async function renderRunDetail(runId, { focus = "", focusId = "" } = {}) {
   });
   $("#edit-rerun-run")?.addEventListener("click", () => editRerunRun(run));
   $("#rerun-run")?.addEventListener("click", () => rerunRun(run.id).catch(showError));
+  bindRerunDraftBanner({ onDiscard: () => renderRunDetail(run.id, { focus, focusId }) });
   // Persist user overrides per-run so toggles aren't fought on refresh.
+  // The meta block (project/branch/runner/version) uses a single shared
+  // preference instead — it's the same chips on every run, so per-run state
+  // would force a re-collapse on each navigation.
   document.querySelectorAll("[data-run-section]").forEach((el) => {
     el.addEventListener("toggle", () => {
-      try { sessionStorage.setItem(`runDetail.section.${run.id}.${el.dataset.runSection}`, el.open ? "1" : "0"); } catch {}
+      try {
+        if (el.dataset.runSection === "meta") {
+          localStorage.setItem("runyard.runDetailMeta.open.v1", el.open ? "1" : "0");
+        } else {
+          sessionStorage.setItem(`runDetail.section.${run.id}.${el.dataset.runSection}`, el.open ? "1" : "0");
+        }
+      } catch {}
     });
   });
   // Inline action controls live inside <summary> so they share the row with

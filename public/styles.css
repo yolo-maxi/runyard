@@ -669,6 +669,41 @@ code {
   margin-bottom: 0;
 }
 
+/* Runs-list empty state: same shape as .empty but with a clear headline + a
+ * CTA row beneath. Keeps the content readable at 360px and ensures both
+ * buttons hit the 44px tap-target rule on touch viewports. */
+.empty-runs {
+  padding: 24px 16px;
+}
+
+.empty-runs-headline {
+  margin: 0 0 6px;
+  font-size: 18px;
+}
+
+.empty-runs-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 14px;
+}
+
+.empty-runs-actions .button {
+  min-height: 36px;
+}
+
+@media (max-width: 640px) {
+  .empty-runs-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .empty-runs-actions .button {
+    min-height: 44px;
+    width: 100%;
+  }
+}
+
 /* Form helpers */
 .field-hint {
   color: var(--muted);
@@ -743,9 +778,31 @@ label.inline input {
   min-height: 36px;
 }
 
+/* The cross-page banner (runs list + source run detail) carries two actions
+ * — Resume reopens the rerun editor, Discard wipes the draft. They share a
+ * container so they stay aligned and wrap together at narrow widths. */
+.rerun-draft-banner-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.rerun-draft-banner-actions .button {
+  min-height: 36px;
+}
+
 @media (max-width: 640px) {
   .rerun-draft-discard {
     width: 100%;
+    min-height: 44px;
+  }
+  .rerun-draft-banner-actions {
+    width: 100%;
+  }
+  .rerun-draft-banner-actions .button {
+    flex: 1 1 auto;
     min-height: 44px;
   }
 }
@@ -1690,8 +1747,47 @@ details.advanced[open] summary {
   border-radius: 6px;
   padding: 1px 6px;
   color: var(--muted);
-  max-width: 100%;
-  overflow-wrap: anywhere;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+/* Copy-on-click variant used in the run banner subtitle. <button> base styles
+ * would override the chip look, so re-anchor font/color/border here and bump
+ * the tap target on narrow viewports. */
+button.run-id-mono,
+.run-id-mono-copy {
+  cursor: pointer;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--soft);
+  border: 1px solid var(--line);
+  line-height: 1.4;
+}
+
+button.run-id-mono:hover,
+.run-id-mono-copy:hover,
+button.run-id-mono:focus-visible,
+.run-id-mono-copy:focus-visible {
+  background: var(--panel);
+  color: var(--ink);
+  border-color: var(--brand);
+}
+
+@media (max-width: 640px) {
+  .run-id-mono {
+    max-width: min(220px, 70vw);
+  }
+  button.run-id-mono,
+  .run-id-mono-copy {
+    min-height: 44px;
+    padding: 6px 10px;
+    display: inline-flex;
+    align-items: center;
+  }
 }
 
 /* ---- Workflow card (list) + detail page ---- */
@@ -2296,13 +2392,139 @@ details.advanced[open] summary {
 
 .diagnostics-panel .copy-btn {
   font-size: 12px;
-  padding: 2px 8px;
-  min-height: 0;
+  padding: 8px 12px;
+}
+
+/* Long event messages clamp to ~6 lines and surface a "Show full message"
+ * affordance instead of dumping a 200-line stderr blob into the row.
+ * The wrapper is the actual grid cell so the toggle sits below the text
+ * without breaking the time/type/message column layout. */
+.diagnostics-event-msg-cell {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.diagnostics-event-msg {
+  overflow-wrap: anywhere;
+  display: block;
+  width: 100%;
+  max-height: 8.7em; /* ~6 lines at line-height 1.45 */
+  overflow: hidden;
+  position: relative;
+  white-space: pre-wrap;
+}
+
+.diagnostics-event-msg::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 1.6em;
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.95));
+  pointer-events: none;
+}
+
+.diagnostics-event-msg.diagnostics-event-msg--expanded {
+  max-height: none;
+}
+
+.diagnostics-event-msg.diagnostics-event-msg--expanded::after {
+  display: none;
+}
+
+.diagnostics-event-toggle {
+  font-size: 11px;
+  padding: 4px 10px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--brand);
+  cursor: pointer;
+  min-height: 28px;
+}
+
+/* Expand-all / Collapse-all bar that sits above the stack of run-section
+ * <details> blocks. The two buttons share full row width on mobile so
+ * either is a comfortable tap target without horizontal scroll. */
+.run-sections-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 8px;
+  align-items: center;
+}
+
+.run-sections-toolbar .button {
+  min-height: 36px;
+  font-size: 13px;
+  padding: 6px 12px;
+}
+
+.run-sections-toolbar .run-sections-toolbar-hint {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 @media (max-width: 720px) {
   .diagnostics-event-list li {
     grid-template-columns: 1fr;
+  }
+  /* Stack the diagnostics "Recent log excerpts" header so the Copy button
+   * sits beneath the heading instead of being squashed onto the same row. */
+  .diagnostics-logs-head {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .diagnostics-logs-head .copy-btn {
+    width: 100%;
+  }
+  .diagnostics-panel .copy-btn {
+    min-height: 36px;
+  }
+  /* Run-log toolbar — totals on one row, full-width filter controls and
+   * search input so nothing scrolls off the right of a 375px viewport. */
+  .run-log-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .run-log-toolbar .run-log-totals,
+  .run-log-toolbar .run-log-controls {
+    width: 100%;
+  }
+  .run-log-controls .button {
+    flex: 1 1 auto;
+    min-height: 44px;
+  }
+  .run-log-filters {
+    grid-template-columns: 1fr;
+  }
+  .run-log-search {
+    width: 100%;
+  }
+  .run-log-search input {
+    width: 100%;
+    /* 16px prevents iOS Safari from zooming on focus. */
+    font-size: 16px;
+    min-height: 44px;
+    padding: 8px 12px;
+  }
+  .run-log-clear {
+    width: 100%;
+    min-height: 44px;
+    justify-self: stretch;
+  }
+  .run-sections-toolbar {
+    flex-direction: row;
+  }
+  .run-sections-toolbar .button {
+    flex: 1 1 0;
+    min-height: 44px;
+  }
+  .run-sections-toolbar .run-sections-toolbar-hint {
+    display: none;
   }
 }
 
