@@ -58,19 +58,23 @@ after(async () => {
 });
 
 describe("supervision decision (pure)", () => {
-  it("flags only capabilities that opt in, never the wrapper itself", () => {
+  it("supervises Smithers workflow capabilities by default, never the wrapper itself", () => {
     assert.equal(capabilityDefaultsToSupervision({ slug: "improve", supervision: { default: true } }), true);
-    assert.equal(capabilityDefaultsToSupervision({ slug: "improve", supervision: {} }), false);
-    assert.equal(capabilityDefaultsToSupervision({ slug: "research" }), false);
+    assert.equal(capabilityDefaultsToSupervision({ slug: "research", workflow: { engine: "smithers" } }), true);
+    assert.equal(capabilityDefaultsToSupervision({ slug: "research", workflow: { engine: "smithers" }, supervision: { default: false } }), false);
+    assert.equal(capabilityDefaultsToSupervision({ slug: "internal-tool", workflow: { engine: "smithers" }, supervision: { internal: true } }), false);
+    assert.equal(capabilityDefaultsToSupervision({ slug: "external", workflow: { engine: "http" } }), false);
     // The wrapper is never wrapped even if mislabeled.
     assert.equal(capabilityDefaultsToSupervision({ slug: "run-smithers", supervision: { default: true } }), false);
   });
 
   it("decides wrap vs direct, with the wrapper as the recursion base case", () => {
     const improve = { slug: "improve", supervision: { default: true } };
+    const research = { slug: "research", workflow: { engine: "smithers" } };
     assert.equal(decideSupervision(improve, { target: "x" }, {}).action, "wrap");
+    assert.equal(decideSupervision(research, { prompt: "x" }, {}).action, "wrap");
     assert.equal(decideSupervision({ slug: "run-smithers" }, {}, {}).action, "direct");
-    assert.equal(decideSupervision({ slug: "research" }, {}, {}).action, "direct");
+    assert.equal(decideSupervision({ slug: "internal", workflow: { engine: "smithers" }, supervision: { default: false } }, {}, {}).action, "direct");
   });
 
   it("honors a valid bypass marker but ignores a forged/stale one", () => {
@@ -109,9 +113,13 @@ describe("supervision decision (pure)", () => {
 });
 
 describe("supervision envelope over the API", () => {
-  it("wraps improve and idea-to-product, hiding the bypass token", async () => {
-    for (const slug of ["improve", "idea-to-product"]) {
-      const input = slug === "improve" ? { target: "polish" } : { idea: "tiny app" };
+  it("wraps normal UI-startable capabilities, hiding the bypass token", async () => {
+    for (const [slug, input] of [
+      ["improve", { target: "polish" }],
+      ["idea-to-product", { idea: "tiny app" }],
+      ["research", { prompt: "tiny research" }],
+      ["implement-change-gated", { workPrompt: "tiny change", deploy: false, repo: "smithers-hub" }]
+    ]) {
       const created = await api(`/api/capabilities/${slug}/run`, { method: "POST", body: { input } });
       assert.equal(created.run.capabilitySlug, "run-smithers", `${slug} should be wrapped`);
       assert.equal(created.supervising.wrappedCapability, slug);
@@ -212,5 +220,14 @@ describe("run form repo picker (UI source)", () => {
     assert.match(src, /<datalist/);
     // Raw JSON escape hatch must still exist.
     assert.match(src, /Edit as raw JSON instead/);
+  });
+});
+
+describe("implement-change-gated repo selector contract", () => {
+  it("declares repo picker fields in the seeded input schema", async () => {
+    const { capability } = await api("/api/capabilities/implement-change-gated");
+    assert.equal(capability.inputSchema.properties.repo.type, "string");
+    assert.equal(capability.inputSchema.properties.project.type, "string");
+    assert.equal(capability.inputSchema.properties.repoDir.type, "string");
   });
 });

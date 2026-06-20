@@ -225,6 +225,7 @@ export const seedCapabilities = [
     outputSchema: { type: "object", properties: { answer: { type: "string" }, wordCount: { type: "number" } } },
     requiredRunnerTags: ["smithers"],
     approvalPolicy: { required: false },
+    supervision: { default: false, internal: true },
     workflow: { engine: "smithers", entry: ".smithers/workflows/hello.tsx" }
   },
   {
@@ -302,7 +303,19 @@ export const seedCapabilities = [
         workPrompt: { type: "string", description: "The change request / implementation prompt." },
         deploy: { type: "boolean", description: "Deploy to prod after gates pass (default false)." },
         targetBranch: { type: "string", description: "Branch to push (default main)." },
-        commitMessage: { type: "string", description: "Optional commit message." }
+        commitMessage: { type: "string", description: "Optional commit message." },
+        repoDir: {
+          type: "string",
+          description: "Absolute runner-local git repo path to edit. Must be inside allowed improve repo roots."
+        },
+        repo: {
+          type: "string",
+          description: "Optional friendly repo key resolved on the runner from IMPROVE_REPO_MAP JSON."
+        },
+        project: {
+          type: "string",
+          description: "Optional friendly project key resolved from IMPROVE_PROJECT_MAP or IMPROVE_REPO_MAP."
+        }
       }
     },
     outputSchema: {

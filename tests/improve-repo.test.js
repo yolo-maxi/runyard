@@ -79,6 +79,26 @@ describe("improve repo resolution", () => {
     assert.equal(resolve({ project: "app" }, env, defaultRepo), repoByProjectKey);
   });
 
+  it("treats the UI default smithers-hub key as the default repo", () => {
+    const defaultRepo = initRepo("default-for-smithers-hub-key");
+    const otherCwd = path.join(temp, "not-the-default-cwd");
+    mkdirSync(otherCwd, { recursive: true });
+
+    assert.equal(resolve({ repo: "smithers-hub" }, { IMPROVE_REPO_DIR: defaultRepo }, otherCwd), defaultRepo);
+    assert.equal(resolve({ project: "smithers-hub" }, { IMPROVE_REPO_DIR: defaultRepo }, otherCwd), defaultRepo);
+  });
+
+  it("prefers an explicit smithers-hub map entry over the workspace default", () => {
+    const workspaceDefault = initRepo("workspace-default-for-smithers-hub-map");
+    const mappedHub = initRepo("mapped-smithers-hub");
+    const env = {
+      IMPROVE_REPO_MAP: JSON.stringify({ "smithers-hub": mappedHub }),
+      IMPROVE_ALLOWED_REPO_ROOTS: mappedHub
+    };
+
+    assert.equal(resolve({ repo: "smithers-hub" }, env, workspaceDefault), mappedHub);
+  });
+
   it("rejects unknown friendly repo selectors clearly", () => {
     const defaultRepo = initRepo("default-for-missing-map");
 

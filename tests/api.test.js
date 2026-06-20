@@ -1474,7 +1474,8 @@ describe("Smart Contract Audit capability", () => {
       body: { input: { target: "/tmp/does-not-matter-for-queue", maxAgents: 2 } }
     });
     assert.equal(created.run.status, "queued");
-    assert.equal(created.run.capabilitySlug, "smart-contract-audit");
+    assert.equal(created.run.capabilitySlug, "run-smithers");
+    assert.equal(created.supervising.wrappedCapability, "smart-contract-audit");
   });
 
   it("ships the workflow template in the runner bundle directory", () => {
@@ -1580,7 +1581,8 @@ describe("App Skinner capability", () => {
       body: { input: { appIdea: "A/B cat compass miniapp", skinCount: 3 } }
     });
     assert.equal(created.run.status, "queued");
-    assert.equal(created.run.capabilitySlug, "app-skinner");
+    assert.equal(created.run.capabilitySlug, "run-smithers");
+    assert.equal(created.supervising.wrappedCapability, "app-skinner");
     const approval = (await api("/api/approvals?status=pending")).approvals.find((item) => item.runId === created.run.id);
     assert.equal(approval, undefined);
   });
@@ -1649,7 +1651,8 @@ describe("Run Knowledge Builder capability", () => {
       body: { input: { capabilitySlug: "hello", status: "failed,cancelled", count: 5, focusArea: "failure patterns" } }
     });
     assert.equal(created.run.status, "queued");
-    assert.equal(created.run.capabilitySlug, "run-knowledge-builder");
+    assert.equal(created.run.capabilitySlug, "run-smithers");
+    assert.equal(created.supervising.wrappedCapability, "run-knowledge-builder");
     const approval = (await api("/api/approvals?status=pending")).approvals.find((item) => item.runId === created.run.id);
     assert.equal(approval, undefined);
   });

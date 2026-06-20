@@ -5,9 +5,9 @@
 import { createSmithers, Sequence, ClaudeCodeAgent } from "smithers-orchestrator";
 import { existsSync } from "node:fs";
 import { z } from "zod/v4";
+import { resolveImproveRepo } from "./improve-repo.js";
 
 // Repo + deploy target are deployment-specific; set env vars on your runner.
-const REPO = process.env.GATED_REPO_DIR || process.cwd();
 const PROD_REMOTE = process.env.GATED_PROD_REMOTE || "prod";
 const PROD_HOST = process.env.GATED_PROD_HOST || "";
 const PROD_DIR = process.env.GATED_PROD_DIR || "";
@@ -44,7 +44,10 @@ const inputSchema = z.object({
   workPrompt: z.string().describe("The change request / implementation prompt."),
   deploy: z.boolean().default(false).describe("If true, deploy to prod after gates pass."),
   targetBranch: z.string().default("main"),
-  commitMessage: z.string().default("")
+  commitMessage: z.string().default(""),
+  repoDir: z.string().default("").describe("Absolute runner-local git repo path to edit. Must be inside allowed improve repo roots."),
+  repo: z.string().default("").describe("Optional friendly repo key resolved on the runner from IMPROVE_REPO_MAP JSON."),
+  project: z.string().default("").describe("Optional friendly project key resolved from IMPROVE_PROJECT_MAP or IMPROVE_REPO_MAP.")
 });
 
 const { Workflow, Task, smithers, outputs } = createSmithers({
@@ -57,17 +60,21 @@ const { Workflow, Task, smithers, outputs } = createSmithers({
   deploy: deployOut
 });
 
-const builder = new ClaudeCodeAgent({
-  model: "claude-opus-4-7",
-  cwd: REPO,
-  dangerouslySkipPermissions: true,
-  timeoutMs: 45 * 60 * 1000,
-  systemPrompt:
-    "You are an implementation agent working inside a git repository. Make the requested change with tight, idiomatic edits that match the surrounding code. " +
-    "Do NOT git commit, git push, or deploy, and do NOT run the test suite — a separate gated pipeline runs tests, commits, pushes, and deploys. Keep changes scoped; do not touch unrelated files."
-});
+function createBuilder(repoDir) {
+  return new ClaudeCodeAgent({
+    model: "claude-opus-4-7",
+    cwd: repoDir,
+    dangerouslySkipPermissions: true,
+    timeoutMs: 45 * 60 * 1000,
+    systemPrompt:
+      "You are an implementation agent working inside a git repository. Make the requested change with tight, idiomatic edits that match the surrounding code. " +
+      "Do NOT git commit, git push, or deploy, and do NOT run the test suite — a separate gated pipeline runs tests, commits, pushes, and deploys. Keep changes scoped; do not touch unrelated files."
+  });
+}
 
 export default smithers((ctx) => {
+  const repoDir = resolveImproveRepo(ctx.input, { env: process.env, cwd: process.cwd(), gitBin: GIT, gitEnv: TOOL_ENV });
+  const builder = createBuilder(repoDir);
   const baseline = ctx.outputMaybe("baseline", { nodeId: "baseline" });
   const impl = ctx.outputMaybe("implement", { nodeId: "implement" });
   const test = ctx.outputMaybe("test", { nodeId: "test" });
@@ -81,7 +88,7 @@ export default smithers((ctx) => {
         <Task id="baseline" output={outputs.baseline} retries={0}>
           {async () => {
             const { execFileSync } = await import("node:child_process");
-            const startHead = execFileSync(GIT, ["rev-parse", "HEAD"], { cwd: REPO, encoding: "utf8", env: TOOL_ENV }).trim();
+            const startHead = execFileSync(GIT, ["rev-parse", "HEAD"], { cwd: repoDir, encoding: "utf8", env: TOOL_ENV }).trim();
             return { startHead };
           }}
         </Task>
@@ -89,7 +96,7 @@ export default smithers((ctx) => {
         {/* 1. Implementation agent makes the change (edits only). */}
         {baseline && (
           <Task id="implement" output={outputs.implement} agent={builder} timeoutMs={45 * 60 * 1000}>
-            {`Implement this change request in the repository at ${REPO}. Edit files only — do not commit, push, deploy, or run tests.\n\n` +
+            {`Implement this change request in the repository at ${repoDir}. Edit files only — do not commit, push, deploy, or run tests.\n\n` +
               `=== CHANGE REQUEST ===\n${ctx.input.workPrompt}\n=== END ===\n\n` +
               `When finished, return JSON {"summary": <what you changed>, "notes": <risks/tradeoffs>}.`}
           </Task>
@@ -103,7 +110,7 @@ export default smithers((ctx) => {
               let out = "";
               let passed = false;
               try {
-                out = execFileSync(PNPM, ["test"], { cwd: REPO, encoding: "utf8", env: TOOL_ENV, maxBuffer: 1024 * 1024 * 64 });
+                out = execFileSync(PNPM, ["test"], { cwd: repoDir, encoding: "utf8", env: TOOL_ENV, maxBuffer: 1024 * 1024 * 64 });
                 passed = true;
               } catch (e) {
                 out = `${e.stdout || ""}${e.stderr || ""}${e.message || ""}`;
@@ -121,7 +128,7 @@ export default smithers((ctx) => {
           <Task id="commit" output={outputs.commit} retries={0}>
             {async () => {
               const { execFileSync } = await import("node:child_process");
-              const run = (args) => execFileSync(GIT, args, { cwd: REPO, encoding: "utf8", env: TOOL_ENV });
+              const run = (args) => execFileSync(GIT, args, { cwd: repoDir, encoding: "utf8", env: TOOL_ENV });
               run(["add", "-A"]);
               const staged = run(["diff", "--cached", "--name-only"]).split("\n").map((s) => s.trim()).filter(Boolean);
               const stat = run(["diff", "--cached", "--stat"]).trim();
@@ -152,7 +159,7 @@ export default smithers((ctx) => {
               // origin resolves via ~/.ssh/config (github -> id_ed25519_github); no GIT_SSH_COMMAND override here.
               let detail = "";
               try {
-                detail = execFileSync(GIT, ["push", "origin", `HEAD:${branch}`], { cwd: REPO, encoding: "utf8", env: TOOL_ENV, stdio: ["ignore", "pipe", "pipe"] });
+                detail = execFileSync(GIT, ["push", "origin", `HEAD:${branch}`], { cwd: repoDir, encoding: "utf8", env: TOOL_ENV, stdio: ["ignore", "pipe", "pipe"] });
               } catch (e) {
                 detail = `${e.stdout || ""}${e.stderr || ""}`;
                 throw new Error(`GATE FAILED: git push origin failed.\n${detail.slice(0, 800)}`);
@@ -175,7 +182,7 @@ export default smithers((ctx) => {
                 throw new Error("GATE FAILED: deploy=true requires GATED_PROD_HOST, GATED_PROD_DIR, and GATED_DEPLOY_KEY on the runner.");
               }
               const env = { ...TOOL_ENV, GIT_SSH_COMMAND: `${SSH} -i ${DEPLOY_KEY} -o BatchMode=yes -o StrictHostKeyChecking=accept-new` };
-              execFileSync(GIT, ["push", PROD_REMOTE, `${commit.commit}:refs/heads/sync-tmp`], { cwd: REPO, encoding: "utf8", env });
+              execFileSync(GIT, ["push", PROD_REMOTE, `${commit.commit}:refs/heads/sync-tmp`], { cwd: repoDir, encoding: "utf8", env });
               const remoteCmd = `cd ${PROD_DIR} && git checkout -q main && git reset --hard sync-tmp && git branch -D sync-tmp; rm -f data/cli.tgz && systemctl --user restart smithers-hub.service && sleep 2 && git log --oneline -1`;
               const remoteOut = execFileSync(
                 SSH,

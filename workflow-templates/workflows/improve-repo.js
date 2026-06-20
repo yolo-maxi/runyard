@@ -118,7 +118,8 @@ export function resolveImproveRepo(input = {}, options = {}) {
     selected = repoDirInput;
     selectedLabel = "repoDir";
   } else if (friendlyKey) {
-    const mapped = improveRepoMap(env)[friendlyKey];
+    const repoMap = improveRepoMap(env);
+    const mapped = repoMap[friendlyKey] || (friendlyKey === "smithers-hub" ? defaultRepo : "");
     if (!mapped) {
       throw new Error(`improve repo selector "${friendlyKey}" is not configured in IMPROVE_REPO_MAP or IMPROVE_PROJECT_MAP.`);
     }

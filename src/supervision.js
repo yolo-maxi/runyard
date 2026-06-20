@@ -31,14 +31,19 @@ export const SUPERVISION_INTERNAL_KEYS = [SUPERVISION_CHILD_KEY, SUPERVISION_TOK
 
 const TERMINAL_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
 
-// A capability opts into the default supervision envelope with
-// `supervision: { default: true }` in its seed metadata. The wrapper itself is
-// never wrapped — that is the recursion base case.
+// Smithers workflow capabilities are supervised by default. Low-level/internal
+// capabilities can opt out with `supervision: { default: false }` or
+// `supervision: { internal: true }`. The wrapper itself is never wrapped — that
+// is the recursion base case.
 export function capabilityDefaultsToSupervision(capability) {
   if (!capability || typeof capability !== "object") return false;
   if (capability.slug === SUPERVISOR_CAPABILITY_SLUG) return false;
   const supervision = capability.supervision;
-  return Boolean(supervision && typeof supervision === "object" && supervision.default === true);
+  if (supervision && typeof supervision === "object") {
+    if (supervision.default === false || supervision.internal === true) return false;
+    if (supervision.default === true) return true;
+  }
+  return capability.workflow?.engine === "smithers";
 }
 
 // Pull the internal bypass marker off a run input, if present and well-formed.
