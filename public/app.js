@@ -808,6 +808,9 @@ async function bootAuthenticated(data) {
   // Visiting Runs/Home clears the count locally so the badge updates fast.
   refreshSidebarBadges();
   setInterval(refreshSidebarBadges, 30_000);
+  // Mount the hovering support agent now that we have a session — every
+  // /api/chat call inherits the operator's scopes, so it can't run earlier.
+  bootSupportChatOnce();
   markTelegramWebAppReady();
 }
 
@@ -4024,12 +4027,5 @@ function bootSupportChatOnce() {
   bindSupportChat();
   refreshSupportChatStatus();
 }
-
-// Hook into the existing auth boot path by polling — bootAuthenticated runs
-// before this module finishes loading on cold paint, so we observe state.me
-// once it's set instead of monkey-patching the auth flow.
-setInterval(() => {
-  bootSupportChatOnce();
-}, 800);
 
 boot();
