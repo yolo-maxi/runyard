@@ -515,6 +515,7 @@ code {
 }
 
 .status.succeeded,
+.status.recovered,
 .status.approved,
 .status.online {
   color: var(--ok);
@@ -538,6 +539,12 @@ code {
   color: var(--warn);
   border-color: #fed7aa;
   background: #fffbeb;
+}
+
+.status.superseded {
+  color: var(--muted);
+  border-color: #cbd5e1;
+  background: #f8fafc;
 }
 
 .split {

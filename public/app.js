@@ -33,6 +33,8 @@ function status(value) {
     failed: "❌",
     error: "❌",
     cancelled: "🛑",
+    recovered: "↩",
+    superseded: "↪",
     rejected: "⛔",
     running: "▶",
     assigned: "🧭",
@@ -857,19 +859,26 @@ function runStatusGlyph(s) {
     case "queued": return "⏸";
     case "waiting_approval": return "✋";
     case "succeeded":
+    case "recovered":
     case "approved": return "✓";
     case "failed":
     case "error": return "✗";
     case "cancelled":
+    case "superseded":
     case "rejected": return "⚠";
     default: return "•";
   }
 }
 
 const DIAGNOSTIC_STATUSES = new Set(["failed", "error", "cancelled", "rejected", "waiting_approval"]);
+const UNRESOLVED_FAILURE_STATUSES = new Set(["failed", "error"]);
 
 function isDiagnosticRun(run) {
   return run && DIAGNOSTIC_STATUSES.has(run.status);
+}
+
+function isUnresolvedFailure(run) {
+  return run && UNRESOLVED_FAILURE_STATUSES.has(run.status);
 }
 
 // --- Run summary fallbacks (client-side mirror of server.js helpers) --------
@@ -1457,13 +1466,13 @@ async function renderHome() {
   // badge agree on what "needs attention".
   const cutoff = Date.now() - 24 * 3600 * 1000;
   const recentlyFailed = runs.filter((r) => {
-    if (!["failed", "error"].includes(r.status)) return false;
+    if (!isUnresolvedFailure(r)) return false;
     const t = Date.parse(r.completedAt || r.createdAt || "");
     return Number.isNaN(t) ? true : t >= cutoff;
   });
   const failed24h = recentlyFailed.length;
   const lastFailedRun = recentlyFailed[0]
-    || runs.find((r) => ["failed", "error"].includes(r.status))
+    || runs.find(isUnresolvedFailure)
     || null;
   // Best-effort artifact bucket — if the call fails we just skip the preview.
   const artifactsByRun = new Map();
