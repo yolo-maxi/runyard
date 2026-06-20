@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Runyard — Self-hosted control plane for agent runs</title>
-    <meta name="description" content="Runyard is a self-hosted control plane for agent runs. See live workflows, trigger a run, then connect MCP, CLI, API, or a runner pool." />
+    <meta name="description" content="Runyard is a self-hosted control plane for agent runs. Try a sample capability in one click, then connect MCP, CLI, API, or runners from the Advanced panel." />
     <link rel="stylesheet" href="/public/styles.css" />
     <style>
       .try-hero { display: grid; gap: 1.5rem; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); align-items: stretch; }
@@ -17,38 +17,18 @@
       .try-foot { margin-top: 0.75rem; }
       .demo { background: rgba(0,0,0,0.55); color: #d8ffd8; border-radius: 12px; padding: 0.9rem 1rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; line-height: 1.45; min-height: 220px; box-shadow: 0 1px 2px rgba(0,0,0,0.15); overflow: hidden; }
       .demo-head { color: #9fdcff; opacity: 0.85; margin-bottom: 0.4rem; }
-      .demo pre { margin: 0; white-space: pre-wrap; color: inherit; font: inherit; }
-      .demo-caption { margin-top: 0.5rem; color: #9fdcff; opacity: 0.85; font-size: 0.8rem; }
+      .demo-line { display: block; opacity: 0; animation: demo-line 8s linear infinite; }
+      .demo-line:nth-child(2) { animation-delay: 0.6s; }
+      .demo-line:nth-child(3) { animation-delay: 1.4s; }
+      .demo-line:nth-child(4) { animation-delay: 2.2s; }
+      .demo-line:nth-child(5) { animation-delay: 3.0s; }
+      .demo-line:nth-child(6) { animation-delay: 3.8s; }
+      .demo-line:nth-child(7) { animation-delay: 4.6s; color: #f6c177; }
+      .demo-line:nth-child(8) { animation-delay: 5.4s; color: #9fdcff; }
+      @keyframes demo-line { 0% { opacity: 0; transform: translateY(4px); } 6% { opacity: 1; transform: translateY(0); } 70% { opacity: 1; } 100% { opacity: 0.35; transform: translateY(0); } }
       details.advanced-block { background: var(--surface, rgba(255,255,255,0.04)); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 1rem 1.25rem; margin-top: 1rem; }
       details.advanced-block > summary { cursor: pointer; font-weight: 600; }
       details.advanced-block[open] > summary { margin-bottom: 1rem; }
-      .workflows-panel { margin-top: 1rem; }
-      .workflows-panel table { width: 100%; border-collapse: collapse; }
-      .workflows-panel th, .workflows-panel td { text-align: left; padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--line); vertical-align: middle; }
-      .workflows-panel th { color: var(--muted); font-weight: 600; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.04em; }
-      .workflows-panel tr:last-child td { border-bottom: none; }
-      .workflows-panel .wf-name { font-weight: 600; }
-      .workflows-panel .wf-slug { color: var(--muted); font-size: 0.85rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-      .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.78rem; font-weight: 600; border: 1px solid transparent; }
-      .badge-ok { background: var(--brand-tint); color: var(--ok); border-color: var(--ok); }
-      .badge-running { background: #e6f0ff; color: #1d4ed8; border-color: #1d4ed8; }
-      .badge-failed { background: #fde7e9; color: var(--danger); border-color: var(--danger); }
-      .badge-warn { background: #fef3c7; color: var(--warn); border-color: var(--warn); }
-      .badge-idle { background: var(--soft); color: var(--muted); border: 1px solid var(--line); }
-      .empty-state { padding: 1.5rem; background: var(--soft); border: 1px dashed var(--line); border-radius: 12px; }
-      .empty-state h2 { margin: 0 0 0.4rem; font-size: 1.1rem; }
-      .empty-state code { background: rgba(0,0,0,0.05); padding: 1px 6px; border-radius: 4px; }
-      .ops-block { font-size: 0.85rem; }
-      .ops-block table { width: 100%; border-collapse: collapse; }
-      .ops-block td, .ops-block th { padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--line); text-align: left; }
-      .ops-block .row-stale td { color: var(--danger); }
-      dialog.run-modal { border: 1px solid var(--line); border-radius: 12px; padding: 1.25rem 1.5rem; max-width: 480px; width: 90vw; }
-      dialog.run-modal::backdrop { background: rgba(0,0,0,0.4); }
-      dialog.run-modal h2 { margin: 0 0 0.5rem; }
-      dialog.run-modal .form-grid { display: grid; gap: 0.6rem; }
-      dialog.run-modal textarea { min-height: 84px; }
-      dialog.run-modal .modal-actions { display: flex; gap: 0.6rem; margin-top: 0.6rem; justify-content: flex-end; }
-      dialog.run-modal .modal-result { margin-top: 0.6rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; }
     </style>
   </head>
   <body>
@@ -56,6 +36,7 @@
       <div class="brand">
         <span class="brand-mark" aria-hidden="true"></span>
         <span class="brand-name">Runyard</span>
+        <span class="brand-pill" title="Public name for Smithers Hub">Smithers&nbsp;Hub</span>
       </div>
       <nav class="nav">
         <a class="button" href="/docs/quickstart">Quickstart</a>
@@ -70,18 +51,23 @@
             <div class="try-copy">
               <p class="hero-eyebrow">Self-hosted control plane for agent runs</p>
               <h1>Run your first capability in one click</h1>
-              <p class="try-def">A <strong>workflow</strong> is a team-defined capability with inputs, steps, checks, and an approval policy. Agents discover it through Runyard, runners execute it, and the Hub keeps the durable record of logs and artifacts.</p>
+              <p class="try-def">A <strong>capability</strong> is a team-defined action — a workflow with inputs, outputs, runner requirements, and an approval policy — that agents discover and run through Runyard. Pick one, hit Try, and watch logs stream while artifacts land on the Hub.</p>
               <div class="try-actions">
-                <button class="button primary" type="button" id="trigger-run-button">Trigger run…</button>
-                <a class="button" href="/app#workflows">View workflows</a>
+                <a class="button primary" href="/app?try=hello#workflows/hello/run">Try it: run <code>hello</code></a>
                 <a class="button" href="/docs/quickstart">Quickstart</a>
               </div>
-              <p class="try-foot muted">Sample run uses the default single-host topology. Wire MCP, CLI, API, or a runner pool from <a href="/app#connect">Connect</a> after your first successful run.</p>
+              <p class="try-foot muted">Sample run uses the default single-host topology. No topology decision required up front — you can wire MCP, CLI, API, or a runner pool from <a href="/app#connect">Connect</a> after your first successful run.</p>
             </div>
             <div class="demo" aria-hidden="true">
-              <div class="demo-head">$ cat workflow-templates/workflows/hello.tsx</div>
-<pre>{{HERO_WORKFLOW_EXAMPLE}}</pre>
-              <div class="demo-caption">This is what a workflow looks like.</div>
+              <div class="demo-head">$ smithers-hub run hello --where local</div>
+              <span class="demo-line">→ queued run_01H9 capability=hello runner=local</span>
+              <span class="demo-line">  step 1/3 prepare workspace ✓</span>
+              <span class="demo-line">  step 2/3 invoke agent (claude) …</span>
+              <span class="demo-line">  log: collected 3 sources, drafting summary</span>
+              <span class="demo-line">  step 3/3 write artifact hello-output.md</span>
+              <span class="demo-line">  ✓ artifact hello-output.md (2.1 KB)</span>
+              <span class="demo-line">★ run succeeded · open /app#connect to wire your agents</span>
+              <span class="demo-line">$ _</span>
             </div>
           </div>
           <details class="advanced-block">
@@ -123,125 +109,69 @@ smithers-hub-runner</pre>
       </section>
       <section class="band">
         <div class="band-inner">
-          <div class="toolbar"><h1>Workflows</h1><span class="muted" id="workflows-updated">Live · server-rendered at request time</span></div>
-          {{WORKFLOWS_PANEL}}
+          <div class="toolbar"><h1>What Runyard gives you</h1></div>
+          <div class="grid">
+            <article class="item">
+              <span class="status-dot status-dot-ok" aria-hidden="true"></span>
+              <h3>Capability Catalog</h3>
+              <p class="muted">Agents see a clean menu of team-defined actions with input/output schemas, required runner tags, skills, and approval policy.</p>
+            </article>
+            <article class="item">
+              <span class="status-dot status-dot-info" aria-hidden="true"></span>
+              <h3>Local and Remote Runners</h3>
+              <p class="muted">Run work on a VPS, laptop, or workstation; the Hub keeps the durable record and the runners stay disposable.</p>
+            </article>
+            <article class="item">
+              <span class="status-dot status-dot-warn" aria-hidden="true"></span>
+              <h3>Unified Approvals</h3>
+              <p class="muted">Approve through Web, API, CLI, Telegram, or MCP without re-implementing workflow gates per surface.</p>
+            </article>
+            <article class="item">
+              <span class="status-dot status-dot-ok" aria-hidden="true"></span>
+              <h3>Shared Company Memory</h3>
+              <p class="muted">Editable skills, agents, and knowledge entries become reusable infrastructure rather than scattered prompts.</p>
+            </article>
+            <article class="item">
+              <span class="status-dot status-dot-info" aria-hidden="true"></span>
+              <h3>Open agent surface</h3>
+              <p class="muted">Stable HTTP API, <code>/openapi.json</code>, <code>/llms.txt</code> (rendered from <code>get_menu</code>), and an MCP server keep agents and humans on the same surface.</p>
+            </article>
+            <article class="item">
+              <span class="status-dot status-dot-danger" aria-hidden="true"></span>
+              <h3>Private by default</h3>
+              <p class="muted">Bearer-token auth, per-deployment data dir, no SaaS dependency. Bring your own domain and TLS terminator.</p>
+            </article>
+          </div>
         </div>
       </section>
       <section class="band">
         <div class="band-inner">
           <div class="toolbar"><h1>Workflow hardening</h1></div>
-          <p class="muted">Runyard treats agent workflows as processes to improve, not just prompts to rerun. Workflows start agentic, then harden into smaller scripted and coded steps wherever outcomes become repeatable.</p>
+          <p class="muted">Runyard treats agent workflows as processes to improve, not just prompts to rerun. Inspired by the process order “question, delete, simplify, accelerate, automate,” workflows start agentic, then harden into smaller scripted and coded steps wherever outcomes become repeatable.</p>
           <div class="grid">
             <article class="item">
-              <span class="status-dot {{STATUS_DOT_AGENTS_CLASS}}" aria-hidden="true" title="{{STATUS_DOT_AGENTS_TOOLTIP}}"></span>
-              <h3>Discover with agents <span class="muted" style="font-weight:400;font-size:0.85rem">— {{STATUS_DOT_AGENTS_LABEL}}</span></h3>
+              <span class="status-dot status-dot-info" aria-hidden="true"></span>
+              <h3>Discover with agents</h3>
               <p class="muted">Early runs keep agents close to the work so they can explore, write throwaway scripts, learn edge cases, and produce the first useful deliverables.</p>
             </article>
             <article class="item">
-              <span class="status-dot {{STATUS_DOT_HARDEN_CLASS}}" aria-hidden="true" title="{{STATUS_DOT_HARDEN_TOOLTIP}}"></span>
-              <h3>Extract the repeatable bits <span class="muted" style="font-weight:400;font-size:0.85rem">— {{STATUS_DOT_HARDEN_LABEL}}</span></h3>
+              <span class="status-dot status-dot-warn" aria-hidden="true"></span>
+              <h3>Extract the repeatable bits</h3>
               <p class="muted">Runyard keeps the scripts, commands, evals, and artifacts agents create, then turns stable patterns into explicit workflow steps with inputs, outputs, and checks.</p>
             </article>
             <article class="item">
-              <span class="status-dot {{STATUS_DOT_COMPILE_CLASS}}" aria-hidden="true" title="{{STATUS_DOT_COMPILE_TOOLTIP}}"></span>
-              <h3>Compile toward code <span class="muted" style="font-weight:400;font-size:0.85rem">— {{STATUS_DOT_COMPILE_LABEL}}</span></h3>
+              <span class="status-dot status-dot-ok" aria-hidden="true"></span>
+              <h3>Compile toward code</h3>
               <p class="muted">Nightly optimizer runs replay workflows, diff outcomes, delete unnecessary steps, and propose deterministic code paths for the parts that no longer need agent judgment.</p>
             </article>
           </div>
         </div>
       </section>
-      {{OPS_BLOCK}}
-    </main>
-    <dialog id="run-modal" class="run-modal" aria-labelledby="run-modal-title">
-      <h2 id="run-modal-title">Trigger a run</h2>
-      <form id="run-modal-form" class="form-grid">
-        <label>Workflow
-          <select name="workflow" id="run-modal-workflow" required></select>
-        </label>
-        <label>Goal / input JSON
-          <textarea name="input" id="run-modal-input" placeholder='{"topic": "durable AI workflows"}'></textarea>
-        </label>
-        <div class="modal-actions">
-          <button type="button" class="button" id="run-modal-cancel">Cancel</button>
-          <button type="submit" class="button primary">Run</button>
+      <section class="band band-foot">
+        <div class="band-inner">
+          <p class="muted">Runyard is the public name for the project formerly called Smithers Hub. Package, bin, and env names keep the <code>smithers-hub</code> prefix so existing deployments and tokens keep working.</p>
         </div>
-        <div class="modal-result muted" id="run-modal-result"></div>
-      </form>
-    </dialog>
-    <script>
-      (function () {
-        var btn = document.getElementById("trigger-run-button");
-        var dlg = document.getElementById("run-modal");
-        var form = document.getElementById("run-modal-form");
-        var cancel = document.getElementById("run-modal-cancel");
-        var select = document.getElementById("run-modal-workflow");
-        var result = document.getElementById("run-modal-result");
-        if (!btn || !dlg || !form || !select) return;
-        var workflows = window.__RUNYARD_WORKFLOWS__ || [];
-        if (!workflows.length) {
-          var opt = document.createElement("option");
-          opt.value = "";
-          opt.textContent = "No workflows registered yet";
-          opt.disabled = true;
-          opt.selected = true;
-          select.appendChild(opt);
-          btn.disabled = workflows.length === 0;
-        } else {
-          workflows.forEach(function (w) {
-            var o = document.createElement("option");
-            o.value = w.slug;
-            o.textContent = w.name + " (" + w.slug + ")";
-            select.appendChild(o);
-          });
-        }
-        btn.addEventListener("click", function () {
-          result.textContent = "";
-          if (typeof dlg.showModal === "function") dlg.showModal();
-          else dlg.setAttribute("open", "open");
-        });
-        cancel.addEventListener("click", function () {
-          if (typeof dlg.close === "function") dlg.close();
-          else dlg.removeAttribute("open");
-        });
-        form.addEventListener("submit", function (e) {
-          e.preventDefault();
-          var slug = select.value;
-          if (!slug) return;
-          var raw = document.getElementById("run-modal-input").value.trim();
-          var input = {};
-          if (raw) {
-            try { input = JSON.parse(raw); }
-            catch (_e) { input = { goal: raw }; }
-          }
-          result.textContent = "Submitting…";
-          fetch("/api/capabilities/" + encodeURIComponent(slug) + "/run", {
-            method: "POST",
-            credentials: "include",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ input: input })
-          }).then(function (r) {
-            return r.json().then(function (body) { return { ok: r.ok, status: r.status, body: body }; });
-          }).then(function (res) {
-            if (!res.ok) {
-              if (res.status === 401) {
-                result.innerHTML = 'Not signed in — <a href="/app">open the Hub</a> and log in, then try again.';
-                return;
-              }
-              result.textContent = "Error: " + (res.body && res.body.error ? res.body.error : res.status);
-              return;
-            }
-            var runId = res.body && (res.body.id || (res.body.run && res.body.run.id));
-            if (runId) {
-              result.innerHTML = 'Run started: <strong>' + runId + '</strong> · <a href="/app#runs/' + encodeURIComponent(runId) + '/logs">view log</a>';
-            } else {
-              result.textContent = "Run accepted.";
-            }
-          }).catch(function (err) {
-            result.textContent = "Network error: " + String(err && err.message || err);
-          });
-        });
-      })();
-    </script>
-    {{WORKFLOWS_JSON_SCRIPT}}
+      </section>
+    </main>
   </body>
 </html>
