@@ -3597,4 +3597,439 @@ setInterval(() => {
   }
 }, 1000);
 
+// --- Runyard support chat ---------------------------------------------------
+// Hovering in-app copilot. The operator sees a FAB bottom-right; clicking it
+// pops a panel with tabs across the top (one per chat session). Each tab keeps
+// its own message thread in localStorage, so a "reset" is just a new tab and
+// the old context isn't lost. The model is the "Runyard user support agent"
+// persona on the server side; here we POST messages with the operator's live
+// view/hash and execute the small action protocol the server returns.
+const SUPPORT_CHAT_STORAGE_KEY = "runyard.supportChat.v1";
+const SUPPORT_CHAT_MAX_TABS = 8;
+const SUPPORT_CHAT_MAX_TURNS = 24;
+
+const supportChatState = {
+  hydrated: false,
+  open: false,
+  tabs: [],
+  activeId: null,
+  configured: false,
+  statusMessage: "",
+  busy: false
+};
+
+function newChatId() {
+  return `c_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-4)}`;
+}
+
+function emptyChat(seedTitle = "") {
+  return {
+    id: newChatId(),
+    title: seedTitle || "New chat",
+    messages: [],
+    createdAt: new Date().toISOString()
+  };
+}
+
+function loadSupportChatState() {
+  if (supportChatState.hydrated) return;
+  supportChatState.hydrated = true;
+  try {
+    const raw = localStorage.getItem(SUPPORT_CHAT_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && Array.isArray(parsed.tabs)) {
+        supportChatState.tabs = parsed.tabs.filter((tab) => tab && typeof tab === "object" && tab.id);
+        supportChatState.activeId = parsed.activeId || supportChatState.tabs[0]?.id || null;
+      }
+    }
+  } catch {
+    // ignore — start fresh
+  }
+  if (!supportChatState.tabs.length) {
+    const first = emptyChat();
+    supportChatState.tabs = [first];
+    supportChatState.activeId = first.id;
+  }
+  if (!supportChatState.activeId || !supportChatState.tabs.find((tab) => tab.id === supportChatState.activeId)) {
+    supportChatState.activeId = supportChatState.tabs[0].id;
+  }
+}
+
+function persistSupportChat() {
+  try {
+    localStorage.setItem(SUPPORT_CHAT_STORAGE_KEY, JSON.stringify({
+      tabs: supportChatState.tabs.map((tab) => ({
+        ...tab,
+        // Hard cap stored history per tab so localStorage stays small.
+        messages: tab.messages.slice(-40)
+      })),
+      activeId: supportChatState.activeId
+    }));
+  } catch {
+    // localStorage may be full or disabled; rendering still works in-memory.
+  }
+}
+
+function activeSupportTab() {
+  return supportChatState.tabs.find((tab) => tab.id === supportChatState.activeId) || null;
+}
+
+function setActiveSupportTab(id) {
+  if (!supportChatState.tabs.find((tab) => tab.id === id)) return;
+  supportChatState.activeId = id;
+  persistSupportChat();
+  renderSupportChat();
+}
+
+function addSupportTab() {
+  if (supportChatState.tabs.length >= SUPPORT_CHAT_MAX_TABS) {
+    toast(`Chat tab limit (${SUPPORT_CHAT_MAX_TABS}) reached`, "error");
+    return;
+  }
+  const tab = emptyChat();
+  supportChatState.tabs.push(tab);
+  supportChatState.activeId = tab.id;
+  persistSupportChat();
+  renderSupportChat();
+  setTimeout(() => document.querySelector(".support-chat-input")?.focus(), 0);
+}
+
+function resetActiveSupportTab() {
+  const tab = activeSupportTab();
+  if (!tab) return;
+  tab.messages = [];
+  tab.title = "New chat";
+  tab.createdAt = new Date().toISOString();
+  persistSupportChat();
+  renderSupportChat();
+}
+
+function closeSupportTab(id) {
+  const idx = supportChatState.tabs.findIndex((tab) => tab.id === id);
+  if (idx < 0) return;
+  supportChatState.tabs.splice(idx, 1);
+  if (!supportChatState.tabs.length) {
+    const fresh = emptyChat();
+    supportChatState.tabs.push(fresh);
+    supportChatState.activeId = fresh.id;
+  } else if (supportChatState.activeId === id) {
+    supportChatState.activeId = supportChatState.tabs[Math.min(idx, supportChatState.tabs.length - 1)].id;
+  }
+  persistSupportChat();
+  renderSupportChat();
+}
+
+function appendMessage(tab, role, content, extras = {}) {
+  if (!tab) return;
+  tab.messages.push({ role, content: String(content ?? ""), at: new Date().toISOString(), ...extras });
+  // Title the tab from the first user prompt so the tab strip stays scannable.
+  if (role === "user" && (tab.title === "New chat" || !tab.title)) {
+    tab.title = content.split(/\n/)[0].slice(0, 40).trim() || "Chat";
+  }
+  persistSupportChat();
+}
+
+function describeContext() {
+  const route = deepLinks.parse(location.hash);
+  const params = {};
+  route.params.forEach((value, key) => { params[key] = value; });
+  return {
+    view: route.view,
+    hash: location.hash || "",
+    segments: route.segments,
+    params,
+    title: document.title,
+    url: location.href,
+    online: navigator.onLine,
+    me: state.me?.name || state.me?.id || ""
+  };
+}
+
+function setSupportStatus(message) {
+  supportChatState.statusMessage = message || "";
+  const node = document.querySelector(".support-chat-status");
+  if (!node) return;
+  node.textContent = supportChatState.statusMessage;
+  node.hidden = !supportChatState.statusMessage;
+}
+
+async function refreshSupportChatStatus() {
+  try {
+    const info = await api("/api/chat/status");
+    supportChatState.configured = Boolean(info?.configured);
+    if (!supportChatState.configured) {
+      setSupportStatus("Support agent is offline — set OPENAI_API_KEY or ANTHROPIC_API_KEY on the Hub to enable it.");
+    } else {
+      setSupportStatus("");
+    }
+  } catch {
+    supportChatState.configured = false;
+    setSupportStatus("Support agent status unavailable.");
+  }
+}
+
+function showSupportFab(show) {
+  const fab = document.getElementById("support-chat-fab");
+  if (!fab) return;
+  fab.classList.toggle("hidden", !show);
+}
+
+function setSupportChatOpen(open) {
+  supportChatState.open = Boolean(open);
+  const panel = document.getElementById("support-chat");
+  if (panel) panel.classList.toggle("hidden", !supportChatState.open);
+  const fab = document.getElementById("support-chat-fab");
+  if (fab) fab.setAttribute("aria-expanded", supportChatState.open ? "true" : "false");
+  if (supportChatState.open) {
+    renderSupportChat();
+    setTimeout(() => document.querySelector(".support-chat-input")?.focus(), 0);
+  }
+}
+
+function renderSupportChat() {
+  const panel = document.getElementById("support-chat");
+  if (!panel) return;
+  const tabsHost = panel.querySelector(".support-chat-tabs");
+  const body = panel.querySelector(".support-chat-body");
+  if (!tabsHost || !body) return;
+  tabsHost.innerHTML = supportChatState.tabs.map((tab) => {
+    const isActive = tab.id === supportChatState.activeId;
+    return `<button type="button" role="tab" aria-selected="${isActive}" class="support-chat-tab${isActive ? " active" : ""}" data-tab-id="${esc(tab.id)}" title="${esc(tab.title)}">
+      <span class="support-chat-tab-label">${esc(tab.title || "Chat")}</span>
+      <span class="support-chat-tab-close" data-tab-close="${esc(tab.id)}" role="button" aria-label="Close tab">✕</span>
+    </button>`;
+  }).join("");
+  const tab = activeSupportTab();
+  if (!tab) {
+    body.innerHTML = "";
+    return;
+  }
+  if (!tab.messages.length) {
+    body.innerHTML = `<div class="support-chat-empty">
+      <strong>Runyard support agent</strong>
+      <div style="margin-top:6px">Ask in natural language — e.g. <em>"open the most recent failed run"</em>, <em>"start a hello-world run"</em>, or <em>"explain this page"</em>. The agent sees the page you're on.</div>
+    </div>`;
+  } else {
+    body.innerHTML = tab.messages.map((message) => renderMessageBubble(message)).join("");
+  }
+  body.scrollTop = body.scrollHeight;
+  const status = panel.querySelector(".support-chat-status");
+  if (status) {
+    status.textContent = supportChatState.statusMessage;
+    status.hidden = !supportChatState.statusMessage;
+  }
+}
+
+function renderMessageBubble(message) {
+  const role = message.role || "assistant";
+  if (role === "tool") {
+    return `<div class="support-chat-msg tool">${esc(message.content)}</div>`;
+  }
+  if (role === "system") {
+    return `<div class="support-chat-msg system">${esc(message.content)}</div>`;
+  }
+  if (message.error) {
+    return `<div class="support-chat-msg error">${esc(message.content)}</div>`;
+  }
+  return `<div class="support-chat-msg ${esc(role)}">${esc(message.content)}</div>`;
+}
+
+// Pulls the trailing ```json {"actions":[...]}``` block out of a reply (if any)
+// and returns { text, actions }. We intentionally accept either a fenced block
+// or a bare trailing JSON object so the model gets some slack.
+function parseAgentActions(reply) {
+  const text = String(reply || "");
+  const fence = text.match(/```(?:json)?\s*([\s\S]+?)\s*```\s*$/i);
+  let payload = null;
+  let head = text;
+  if (fence) {
+    try { payload = JSON.parse(fence[1]); head = text.slice(0, fence.index).trim(); } catch { /* fall through */ }
+  }
+  if (!payload) {
+    const brace = text.lastIndexOf("{");
+    if (brace > -1) {
+      const tail = text.slice(brace).trim();
+      try {
+        const candidate = JSON.parse(tail);
+        if (candidate && Array.isArray(candidate.actions)) {
+          payload = candidate;
+          head = text.slice(0, brace).trim();
+        }
+      } catch { /* not JSON */ }
+    }
+  }
+  const actions = Array.isArray(payload?.actions) ? payload.actions.slice(0, 8) : [];
+  const replyText = payload?.reply ? String(payload.reply) : head || "";
+  return { text: replyText.trim(), actions };
+}
+
+async function executeAgentAction(action) {
+  const tool = String(action?.tool || "").toLowerCase();
+  const args = action?.args || {};
+  if (tool === "navigate") {
+    const hash = String(args.hash || args.to || "");
+    if (!hash) return { ok: false, summary: "navigate requires { hash }" };
+    location.hash = hash.startsWith("#") ? hash : `#${hash}`;
+    return { ok: true, summary: `Navigated to ${hash}` };
+  }
+  if (tool === "click") {
+    const selector = String(args.selector || "");
+    const el = selector ? document.querySelector(selector) : null;
+    if (!el) return { ok: false, summary: `click: no element matched ${selector}` };
+    el.click();
+    return { ok: true, summary: `Clicked ${selector}` };
+  }
+  if (tool === "fill") {
+    const selector = String(args.selector || "");
+    const value = args.value == null ? "" : String(args.value);
+    const el = selector ? document.querySelector(selector) : null;
+    if (!el) return { ok: false, summary: `fill: no element matched ${selector}` };
+    if ("value" in el) {
+      el.value = value;
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+      return { ok: true, summary: `Filled ${selector}` };
+    }
+    el.textContent = value;
+    return { ok: true, summary: `Set text on ${selector}` };
+  }
+  if (tool === "reload" || tool === "refresh") {
+    await render();
+    return { ok: true, summary: "Re-rendered current view" };
+  }
+  if (tool === "api") {
+    const method = String(args.method || "GET").toUpperCase();
+    const apiPath = String(args.path || "");
+    if (!apiPath.startsWith("/api/")) return { ok: false, summary: "api: path must start with /api/" };
+    try {
+      const data = await api(apiPath, {
+        method,
+        body: args.body !== undefined ? args.body : undefined
+      });
+      const preview = JSON.stringify(data).slice(0, 600);
+      return { ok: true, summary: `${method} ${apiPath} → ${preview}` };
+    } catch (error) {
+      return { ok: false, summary: `${method} ${apiPath} failed: ${error.message}` };
+    }
+  }
+  return { ok: false, summary: `Unknown tool: ${tool}` };
+}
+
+async function runActions(tab, actions) {
+  if (!actions.length) return;
+  for (const action of actions) {
+    const result = await executeAgentAction(action);
+    appendMessage(tab, "tool", `${action.tool}: ${result.summary}`);
+  }
+  renderSupportChat();
+}
+
+async function sendSupportMessage(text) {
+  const tab = activeSupportTab();
+  if (!tab || supportChatState.busy) return;
+  const trimmed = String(text || "").trim();
+  if (!trimmed) return;
+  appendMessage(tab, "user", trimmed);
+  renderSupportChat();
+  supportChatState.busy = true;
+  appendMessage(tab, "system", "…thinking");
+  renderSupportChat();
+  try {
+    const history = tab.messages
+      .filter((m) => m.role === "user" || m.role === "assistant")
+      .slice(-SUPPORT_CHAT_MAX_TURNS)
+      .map((m) => ({ role: m.role, content: m.content }));
+    const response = await api("/api/chat", {
+      method: "POST",
+      body: {
+        messages: history,
+        context: describeContext()
+      }
+    });
+    // Drop the trailing "…thinking" system placeholder before saving the reply.
+    if (tab.messages.length && tab.messages[tab.messages.length - 1].role === "system") {
+      tab.messages.pop();
+    }
+    const { text: replyText, actions } = parseAgentActions(response.reply || "");
+    appendMessage(tab, "assistant", replyText || "(empty reply)");
+    renderSupportChat();
+    if (actions.length) {
+      await runActions(tab, actions);
+    }
+  } catch (error) {
+    if (tab.messages.length && tab.messages[tab.messages.length - 1].role === "system") {
+      tab.messages.pop();
+    }
+    appendMessage(tab, "assistant", `Sorry — ${error.message || "the support agent failed"}`, { error: true });
+    renderSupportChat();
+  } finally {
+    supportChatState.busy = false;
+  }
+}
+
+function bindSupportChat() {
+  if (document.documentElement.dataset.supportChatBound === "1") return;
+  document.documentElement.dataset.supportChatBound = "1";
+  const fab = document.getElementById("support-chat-fab");
+  const panel = document.getElementById("support-chat");
+  if (!fab || !panel) return;
+  loadSupportChatState();
+  fab.addEventListener("click", () => setSupportChatOpen(!supportChatState.open));
+  panel.querySelector(".support-chat-close")?.addEventListener("click", () => setSupportChatOpen(false));
+  panel.querySelector(".support-chat-new")?.addEventListener("click", () => addSupportTab());
+  panel.querySelector(".support-chat-reset")?.addEventListener("click", () => resetActiveSupportTab());
+  panel.querySelector(".support-chat-tabs")?.addEventListener("click", (event) => {
+    const closeBtn = event.target.closest("[data-tab-close]");
+    if (closeBtn) {
+      event.stopPropagation();
+      closeSupportTab(closeBtn.dataset.tabClose);
+      return;
+    }
+    const tabBtn = event.target.closest("[data-tab-id]");
+    if (tabBtn) setActiveSupportTab(tabBtn.dataset.tabId);
+  });
+  const form = panel.querySelector(".support-chat-form");
+  const input = panel.querySelector(".support-chat-input");
+  form?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const value = input.value;
+    input.value = "";
+    sendSupportMessage(value);
+  });
+  input?.addEventListener("keydown", (event) => {
+    // Enter sends, Shift+Enter inserts a newline — the common chat convention.
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      form?.requestSubmit();
+    }
+  });
+  // Global hotkey: Ctrl+/ (or Cmd+/) toggles the chat.
+  document.addEventListener("keydown", (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key === "/") {
+      event.preventDefault();
+      setSupportChatOpen(!supportChatState.open);
+    }
+  });
+  showSupportFab(true);
+  renderSupportChat();
+}
+
+// Boot the chat once the operator is authenticated. The FAB stays hidden on
+// the login screen — there's no /api/chat without a session.
+function bootSupportChatOnce() {
+  if (document.documentElement.dataset.supportChatBooted === "1") return;
+  if (!state.me) return;
+  document.documentElement.dataset.supportChatBooted = "1";
+  bindSupportChat();
+  refreshSupportChatStatus();
+}
+
+// Hook into the existing auth boot path by polling — bootAuthenticated runs
+// before this module finishes loading on cold paint, so we observe state.me
+// once it's set instead of monkey-patching the auth flow.
+setInterval(() => {
+  bootSupportChatOnce();
+}, 800);
+
 boot();

@@ -31,7 +31,7 @@ Runyard is a private, self-hosted company capability platform. Agents discover c
 
 ## Required Interfaces
 
-- Web Hub: landing page, docs, catalog, editors, runs, artifacts, approvals, runners, tokens.
+- Web Hub: landing page, docs, catalog, editors, runs, artifacts, approvals, runners, tokens, in-app support agent chat.
 - HTTP API: auth, capabilities, runs, logs, artifacts, approvals, agents, skills, knowledge, runners.
 - CLI: login, capabilities, run, runs, logs, artifacts, approvals, tokens, runners.
 - MCP: capability discovery, run creation/status/logs/artifacts, approvals, agents, skills, knowledge.

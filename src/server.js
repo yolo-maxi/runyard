@@ -59,6 +59,7 @@ import {
   RUN_OBSTRUCTION_ANALYSIS_ARTIFACT_NAME
 } from "./runObstructionAnalysis.js";
 import { executionIntentFromInput, normalizeExecutionIntent } from "./runExecution.js";
+import { chatWithSupportAgent, supportAgentInfo } from "./runyardSupportAgent.js";
 import { hashToken, parseCookies, sign, timingSafeEqualStr, unsign } from "./security.js";
 import { buildRepoCatalog } from "./repoCatalog.js";
 import {
@@ -2947,6 +2948,41 @@ app.post("/api/runners/:id/heartbeat", requireAuth, requireScopes("runner"), (re
 app.get("/api/runners/:id/next-run", requireAuth, requireScopes("runner"), async (req, res) => {
   const { claimNextRun } = await import("./db.js");
   res.json(claimNextRun(req.params.id) || {});
+});
+
+// --- In-app support chat ----------------------------------------------------
+// Backs the hovering "Runyard user support agent" panel mounted in /app. The
+// model is briefed once on the operator's current view + hash and returns a
+// reply plus an optional JSON action block the browser executes (navigate,
+// click, fill, api). Auth is required so the proxied api actions inherit the
+// operator's scopes — never broaden access here.
+app.get("/api/chat/status", requireAuth, (_req, res) => {
+  res.json(supportAgentInfo());
+});
+
+app.post("/api/chat", requireAuth, rateLimit({ bucket: "support-chat", max: 60, windowMs: 60_000 }), async (req, res) => {
+  const body = req.body || {};
+  const messages = Array.isArray(body.messages) ? body.messages : [];
+  if (!messages.length) return res.status(400).json({ error: "messages array required" });
+  try {
+    const result = await chatWithSupportAgent({
+      messages,
+      context: body.context || {}
+    });
+    recordAudit(
+      req.token?.name || req.token?.id || "unknown",
+      "chat.message",
+      `support-agent:${result.provider}/${result.model}`,
+      { view: body.context?.view || "", turns: messages.length }
+    );
+    res.json({
+      reply: result.reply,
+      provider: result.provider,
+      model: result.model
+    });
+  } catch (error) {
+    res.status(503).json({ error: error.message || "support agent unavailable" });
+  }
 });
 
 app.post("/api/telegram/webhook", async (req, res) => {
