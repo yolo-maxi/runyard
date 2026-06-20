@@ -176,6 +176,24 @@ describe("supervision envelope over the API", () => {
     assert.equal(forged.run.actualCapabilitySlug, "run-smithers", "a forged token must not skip supervision");
   });
 
+  it("routes reruns of supervised workflows back through the supervisor", async () => {
+    const first = await api("/api/capabilities/improve/run", {
+      method: "POST",
+      body: { input: { target: "rerun target", repo: "smithers-hub" } }
+    });
+    const rerun = await api(`/api/runs/${first.run.id}/rerun`, {
+      method: "POST",
+      body: { input: { target: "rerun target edited", repo: "smithers-hub" } }
+    });
+    assert.equal(rerun.run.capabilitySlug, "improve");
+    assert.equal(rerun.run.actualCapabilitySlug, "run-smithers");
+    assert.equal(rerun.supervising.wrappedCapability, "improve");
+    assert.equal(rerun.run.input.target, "rerun target edited");
+    assert.equal(rerun.run.input.repo, "smithers-hub");
+    assert.equal(rerun.run.input.rerunOf, first.run.id);
+    assert.match(getRun(rerun.run.id).input.__supervisionToken, /^sup_/);
+  });
+
   it("presents supervised child output instead of the supervisor envelope output", async () => {
     const parent = await api("/api/capabilities/research/run", {
       method: "POST",

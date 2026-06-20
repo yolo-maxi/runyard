@@ -2746,16 +2746,19 @@ app.post("/api/runs/:id/rerun", requireAuth, requireScopes("api", "mcp"), async 
       previousRunId: previous.id
     }
   });
-  const run = createRun(capability, input, {
+  const dispatched = dispatchRun(capability, input, {
     requestedBy: origin.requestedBy,
     origin: origin.origin
   });
+  const run = dispatched.run;
   addRunEvent(previous.id, "run.rerun_requested", `Re-run requested as ${run.id}`, { runId: run.id });
   addRunEvent(run.id, "run.rerun_of", `Re-run of ${previous.id}`, { previousRunId: previous.id });
   const pending = listApprovals("pending").find((approval) => approval.runId === run.id);
   if (pending) await notifyTelegram(pending);
   res.status(202).json({
     run: withRunLinks(run),
+    ...(dispatched.supervising ? { supervising: dispatched.supervising } : {}),
+    ...(dispatched.supervisedChild ? { supervisedChild: dispatched.supervisedChild } : {}),
     previousRun: withRunLinks(previous),
     statusUrl: `/api/runs/${run.id}`,
     webUrl: `/app#runs/${run.id}`,
