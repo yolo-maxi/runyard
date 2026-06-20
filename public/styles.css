@@ -676,6 +676,12 @@ code {
   font-weight: 400;
 }
 
+/* repoDir manual-override warning: the raw path escape hatch must read as
+   "advanced / be careful" next to the friendly repo/project pickers. */
+.field-hint.warn {
+  color: var(--danger);
+}
+
 .req {
   color: var(--danger);
 }

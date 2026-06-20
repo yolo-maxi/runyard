@@ -12,6 +12,7 @@ import {
   createRun,
   countWorkflowEndpointInvocations,
   dashboardStats,
+  findActiveSupervisorByToken,
   findRecentWorkflowEndpointInvocation,
   getArtifact,
   getApproval,
@@ -59,6 +60,14 @@ import {
 } from "./runObstructionAnalysis.js";
 import { executionIntentFromInput, normalizeExecutionIntent } from "./runExecution.js";
 import { hashToken, parseCookies, sign, timingSafeEqualStr, unsign } from "./security.js";
+import { buildRepoCatalog } from "./repoCatalog.js";
+import {
+  SUPERVISOR_CAPABILITY_SLUG,
+  buildSupervisorInput,
+  decideSupervision,
+  mintSupervisionToken,
+  stripSupervisionInternals
+} from "./supervision.js";
 
 const app = express();
 app.disable("x-powered-by");
@@ -690,6 +699,10 @@ function withRunLinks(run, queueIndex = null) {
     : null;
   return {
     ...run,
+    // Internal supervision plumbing (the bypass token / marker) must never
+    // reach an API caller — only the runner that executes the supervising run
+    // sees it, via the raw claim endpoint.
+    input: stripSupervisionInternals(run.input),
     title: deriveRunTitle(run),
     description: deriveRunDescription(run),
     project: firstContextString(run.input, PROJECT_INPUT_KEYS),
@@ -715,6 +728,69 @@ function decorateSingleRun(run) {
   if (run.status !== "queued") return withRunLinks(run);
   const queueIndex = buildQueueIndex(listRuns({ status: "queued", limit: 500 }));
   return withRunLinks(run, queueIndex);
+}
+
+// Single choke point for turning a run request into a created run, applying the
+// default supervision envelope. `improve` / `idea-to-product` (and anything
+// flagged `supervision.default`) are wrapped in a visible run-smithers
+// supervising run so failures surface as attention-needed instead of a silent
+// success. The wrapper is never wrapped, and a verified supervised child run
+// (carrying the internal bypass token) is dispatched directly — this is what
+// stops the envelope from recursing forever. See src/supervision.js.
+function dispatchRun(capability, input, options = {}) {
+  const decision = decideSupervision(capability, input, {
+    findSupervisorByToken: findActiveSupervisorByToken
+  });
+
+  if (decision.action === "wrap") {
+    const supervisorCapability = getCapability(SUPERVISOR_CAPABILITY_SLUG);
+    if (supervisorCapability && supervisorCapability.enabled) {
+      const token = mintSupervisionToken();
+      const goal = typeof input?.goal === "string" && input.goal.trim() ? input.goal.trim() : "";
+      const supervisorInput = buildSupervisorInput({ capability, input, goal, token });
+      const run = createRun(supervisorCapability, supervisorInput, {
+        ...options,
+        origin: { ...(options.origin || {}), supervises: capability.slug, wrappedCapability: capability.slug }
+      });
+      addRunEvent(run.id, "run.supervision.wrapped", `Supervising ${capability.name} via run-smithers`, {
+        wrappedCapability: capability.slug,
+        wrappedCapabilityName: capability.name
+      });
+      return {
+        run,
+        supervising: {
+          supervisor: SUPERVISOR_CAPABILITY_SLUG,
+          wrappedCapability: capability.slug,
+          wrappedCapabilityName: capability.name
+        }
+      };
+    }
+    // Supervisor capability missing/disabled — fall through to a direct run
+    // rather than blocking the user entirely.
+  }
+
+  if (decision.parentRunId) {
+    const childInput = stripSupervisionInternals(input);
+    const origin = {
+      ...(options.origin || {}),
+      type: "run-smithers-child",
+      parentRunId: decision.parentRunId,
+      label: (options.origin && options.origin.label) || `Supervised child of ${decision.parentRunId}`
+    };
+    const run = createRun(capability, childInput, { ...options, origin });
+    addRunEvent(run.id, "run.supervision.child", `Supervised child run of ${decision.parentRunId}`, {
+      parentRunId: decision.parentRunId,
+      deepLink: deepLinks.run(decision.parentRunId)
+    });
+    addRunEvent(decision.parentRunId, "run.supervision.spawned_child", `Spawned supervised child run ${run.id}`, {
+      childRunId: run.id,
+      capability: capability.slug,
+      deepLink: deepLinks.run(run.id)
+    });
+    return { run, supervisedChild: { parentRunId: decision.parentRunId } };
+  }
+
+  return { run: createRun(capability, input, options) };
 }
 
 function withCapabilityLinks(cap) {
@@ -2344,16 +2420,19 @@ app.post("/api/capabilities/:id/run", requireAuth, requireScopes("api", "mcp"), 
   }
   const execution = normalizeExecutionIntent(input, req.body || {});
   const origin = requestOrigin(req, input);
-  const run = createRun(capability, input, {
+  const dispatched = dispatchRun(capability, input, {
     runnerId: req.body.runnerId,
     requestedBy: origin.requestedBy,
     origin: origin.origin,
     execution
   });
+  const run = dispatched.run;
   const pending = listApprovals("pending").find((approval) => approval.runId === run.id);
   if (pending) await notifyTelegram(pending);
   res.status(202).json({
     run: withRunLinks(run),
+    ...(dispatched.supervising ? { supervising: dispatched.supervising } : {}),
+    ...(dispatched.supervisedChild ? { supervisedChild: dispatched.supervisedChild } : {}),
     statusUrl: `/api/runs/${run.id}`,
     logsUrl: `/api/runs/${run.id}/logs`,
     artifactsUrl: `/api/runs/${run.id}/artifacts`,
@@ -2364,6 +2443,13 @@ app.post("/api/capabilities/:id/run", requireAuth, requireScopes("api", "mcp"), 
     deepLinkLogs: deepLinks.runLogs(run.id),
     deepLinkArtifacts: deepLinks.runArtifacts(run.id)
   });
+});
+
+// Curated repo/project catalog for the Run form's repo picker. Returns only
+// operator-configured friendly selector keys + a default Hub entry — never raw
+// runner-local paths, secrets, or a filesystem scan. See src/repoCatalog.js.
+app.get("/api/repo-options", requireAuth, (_req, res) => {
+  res.json(buildRepoCatalog(process.env));
 });
 
 app.get("/api/agents", requireAuth, (req, res) => res.json({ agents: listAgents(req.query.q || "").map(withAgentLinks) }));

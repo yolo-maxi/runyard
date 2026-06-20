@@ -1531,13 +1531,20 @@ describe("Idea to Product capability", () => {
     assert.equal(cap.approvalPolicy.required, true);
   });
 
-  it("queues immediately and relies on in-workflow approvals", async () => {
+  it("is wrapped in a supervising run-smithers run by default", async () => {
     const created = await api("/api/capabilities/idea-to-product/run", {
       method: "POST",
       body: { input: { idea: "A tiny dashboard for tracking launch chores", deploy: false } }
     });
     assert.equal(created.run.status, "queued");
-    assert.equal(created.run.capabilitySlug, "idea-to-product");
+    // The user asked for idea-to-product but the Hub applies the default
+    // supervision envelope: the visible run is the run-smithers wrapper.
+    assert.equal(created.run.capabilitySlug, "run-smithers");
+    assert.equal(created.supervising.wrappedCapability, "idea-to-product");
+    assert.equal(created.run.input.wrappedCapability, "idea-to-product");
+    assert.equal(created.run.input.wrappedInput.idea, "A tiny dashboard for tracking launch chores");
+    // The internal bypass token must never be exposed to API callers.
+    assert.equal(created.run.input.__supervisionToken, undefined);
     const approval = (await api("/api/approvals?status=pending")).approvals.find((item) => item.runId === created.run.id);
     assert.equal(approval, undefined);
   });
@@ -1682,13 +1689,18 @@ describe("Improve capability", () => {
     assert.equal(cap.approvalPolicy.required, true);
   });
 
-  it("queues immediately and relies on in-workflow approvals", async () => {
+  it("is wrapped in a supervising run-smithers run by default", async () => {
     const created = await api("/api/capabilities/improve/run", {
       method: "POST",
       body: { input: { target: "Run log usability", context: "Logs are too noisy" } }
     });
     assert.equal(created.run.status, "queued");
-    assert.equal(created.run.capabilitySlug, "improve");
+    // Default supervision envelope: improve runs behind run-smithers.
+    assert.equal(created.run.capabilitySlug, "run-smithers");
+    assert.equal(created.supervising.wrappedCapability, "improve");
+    assert.equal(created.run.input.wrappedCapability, "improve");
+    assert.equal(created.run.input.wrappedInput.target, "Run log usability");
+    assert.equal(created.run.input.__supervisionToken, undefined);
     const approval = (await api("/api/approvals?status=pending")).approvals.find((item) => item.runId === created.run.id);
     assert.equal(approval, undefined);
   });

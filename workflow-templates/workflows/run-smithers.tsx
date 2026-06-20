@@ -25,7 +25,11 @@ const inputSchema = z.object({
   wrappedInput: z.record(z.string(), z.unknown()).default({}),
   goal: z.string().default("").describe("Outcome the watcher is trying to finish."),
   maxAttempts: z.number().int().min(1).max(32).default(RUN_SMITHERS_DEFAULT_MAX_ATTEMPTS),
-  fingerprintThreshold: z.number().int().min(1).max(10).default(RUN_SMITHERS_FINGERPRINT_LIMIT)
+  fingerprintThreshold: z.number().int().min(1).max(10).default(RUN_SMITHERS_FINGERPRINT_LIMIT),
+  // Internal bypass token the Hub minted for this supervising run. The watcher
+  // echoes it on every child spawn so the Hub recognizes the child as already
+  // supervised and does not re-wrap it (infinite-wrapping guard).
+  __supervisionToken: z.string().default("")
 });
 
 const superviseOut = z.looseObject({
@@ -57,11 +61,22 @@ async function hubJson(pathname: string, options: { method?: string; body?: unkn
   return text ? JSON.parse(text) : null;
 }
 
-async function spawnChildRun(state: ReturnType<typeof createWatcherState>, wrappedInput: Record<string, unknown>) {
+async function spawnChildRun(
+  state: ReturnType<typeof createWatcherState>,
+  wrappedInput: Record<string, unknown>,
+  supervisionToken: string
+) {
   const created = await hubJson(`/api/capabilities/${encodeURIComponent(state.capabilitySlug)}/run`, {
     method: "POST",
     body: {
-      input: wrappedInput,
+      input: {
+        ...wrappedInput,
+        // Internal bypass marker: tells the Hub this child run is already
+        // supervised by this run-smithers run, so it is dispatched directly
+        // instead of being wrapped again. The token is validated server-side
+        // against this supervising run and redacted from API responses.
+        __supervisedChild: { token: supervisionToken }
+      },
       origin: {
         type: "run-smithers",
         label: `run-smithers wrapper${state.parentRunId ? ` ${state.parentRunId}` : ""}`,
@@ -128,7 +143,7 @@ export default smithers((ctx) => (
           let lastClassification = classifyChildState(null);
 
           while (state.attempts.length < state.maxAttempts && !state.approvalRequested) {
-            const child = await spawnChildRun(state, ctx.input.wrappedInput || {});
+            const child = await spawnChildRun(state, ctx.input.wrappedInput || {}, ctx.input.__supervisionToken || "");
             if (!child) {
               recordChildAttempt(state, {
                 runId: "",

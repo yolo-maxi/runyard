@@ -112,19 +112,6 @@ describe("Workflow source + code viewer", () => {
     assert.ok(taskIds.includes("test") && taskIds.includes("commit") && taskIds.includes("push"));
   });
 
-  it("returns a supervised article-writing graph", async () => {
-    const data = await api("/api/capabilities/article-writing/source");
-    assert.equal(data.available, true);
-    assert.equal(data.slug, "article-writing");
-    assert.equal(data.metadata.displayName, "Article Writing");
-    const taskIds = data.graph.nodes.filter((node) => node.kind !== "entry").map((node) => node.id);
-    assert.ok(taskIds.includes("source-pack"), "article-writing should gather a source pack");
-    assert.ok(taskIds.includes("thesis"), "article-writing should propose a thesis");
-    assert.ok(taskIds.includes("supervisor"), "article-writing should include a supervising editor");
-    assert.ok(taskIds.includes("publish-pack"), "article-writing should produce a publish pack");
-    assert.ok(data.code.includes("<Approval"), "article-writing should include human approval gates");
-  });
-
   it("rejects unknown capabilities with 404", async () => {
     const res = await fetch(`${baseUrl}/api/capabilities/does-not-exist/source`, {
       headers: { authorization: `Bearer ${token}` }

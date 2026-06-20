@@ -454,9 +454,46 @@ function helpTip(text, docsAnchor = "") {
 }
 
 // --- Schema-driven form fields ----------------------------------------------
+// Repo/project selector keys get a searchable picker (populated from
+// /api/repo-options) instead of a free-text box, so operators stop hand-typing
+// the wrong repo. `repoDir` stays as an explicit, clearly-warned manual escape
+// hatch. See hydrateRepoPickers().
+const REPO_SELECTOR_KEYS = new Set(["repo", "project"]);
+const REPODIR_WARNING =
+  "Advanced manual override: must be an absolute path that is runner-local and inside the runner's allowlisted improve roots. Prefer a configured repo/project above; do not combine with repo/project.";
+
+function repoSelectorField(key, prop, required) {
+  const hint = prop.description ? `<span class="field-hint">${esc(prop.description)}</span>` : "";
+  const label = `${esc(key)}${required ? ' <span class="req">*</span>' : ""}`;
+  const listId = `repo-options-${esc(key)}`;
+  // A text input backed by a <datalist> keeps collectSchemaInput's string
+  // contract, gives native search/filtering, and stays usable on mobile.
+  return `<label>${label}${hint}
+    <input type="text" data-field="${esc(key)}" data-ftype="string" data-repo-selector="${esc(key)}"
+      list="${listId}" placeholder="Search configured ${esc(key)}s…" autocomplete="off">
+    <datalist id="${listId}"></datalist>
+    <span class="field-error" data-error-for="${esc(key)}"></span></label>`;
+}
+
+function repoDirField(key, prop, required) {
+  const description = prop.description ? `${esc(prop.description)} ` : "";
+  const label = `${esc(key)}${required ? ' <span class="req">*</span>' : ""}`;
+  return `<label>${label}
+    <span class="field-hint warn">${description}${esc(REPODIR_WARNING)}</span>
+    <input type="text" data-field="${esc(key)}" data-ftype="string" placeholder="/abs/runner-local/path (advanced)">
+    <span class="field-error" data-error-for="${esc(key)}"></span></label>`;
+}
+
 // Render a labeled control for one JSON-Schema property.
 function schemaField(key, prop = {}, required = false) {
   const type = prop.type || "string";
+  // Repo/project/repoDir selectors render as a picker rather than a plain box.
+  if (REPO_SELECTOR_KEYS.has(key) && (prop.type || "string") === "string" && !Array.isArray(prop.enum)) {
+    return repoSelectorField(key, prop, required);
+  }
+  if (key === "repoDir" && (prop.type || "string") === "string") {
+    return repoDirField(key, prop, required);
+  }
   const hint = prop.description ? `<span class="field-hint">${esc(prop.description)}</span>` : "";
   const label = `${esc(key)}${required ? ' <span class="req">*</span>' : ""}`;
   let control;
@@ -483,6 +520,41 @@ function schemaForm(schema = {}) {
   const keys = Object.keys(props);
   if (!keys.length) return "";
   return keys.map((key) => schemaField(key, props[key], required.has(key))).join("");
+}
+
+// Repo/project catalog for the picker. Cached for the session; failures degrade
+// to a plain text box (the input still works, just without suggestions).
+let repoOptionsCache = null;
+async function loadRepoOptions() {
+  if (repoOptionsCache) return repoOptionsCache;
+  try {
+    repoOptionsCache = await api("/api/repo-options");
+  } catch {
+    repoOptionsCache = { options: [] };
+  }
+  return repoOptionsCache;
+}
+
+// Populate the <datalist> behind each repo/project picker so the operator can
+// search configured options instead of hand-typing a key. Native datalist
+// search keeps it usable on mobile and keyboard-accessible.
+async function hydrateRepoPickers(scope) {
+  const inputs = scope.querySelectorAll("[data-repo-selector]");
+  if (!inputs.length) return;
+  const catalog = await loadRepoOptions();
+  const options = Array.isArray(catalog.options) ? catalog.options : [];
+  inputs.forEach((input) => {
+    const selector = input.dataset.repoSelector;
+    const listId = input.getAttribute("list");
+    const datalist = listId ? document.getElementById(listId) : null;
+    if (!datalist) return;
+    const matches = options.filter((opt) => (opt.selector || "repo") === selector);
+    datalist.innerHTML = matches
+      .map((opt) => `<option value="${esc(opt.value)}">${esc(opt.label || opt.value)}${opt.default ? " — default" : ""}</option>`)
+      .join("");
+    const def = matches.find((opt) => opt.default);
+    if (def && !input.value) input.placeholder = `Search ${selector}s… (default: ${def.value})`;
+  });
 }
 
 // Read structured fields back into an object, validating required + JSON fields. Returns {ok, values, errors}.
@@ -2270,6 +2342,7 @@ async function showRunForm(slug) {
     <p class="muted">${esc(cap.description || "")}</p>
     <p class="muted"><span class="kbd">${esc(deepLinks.abs(deepLinks.workflow(slug)))}</span></p>
     ${approval ? `<p class="notice">This workflow may ask for approval at checkpoints while it runs.${cap.approvalPolicy?.reason ? ` ${esc(cap.approvalPolicy.reason)}` : ""}</p>` : ""}
+    ${cap.supervision?.default ? `<p class="notice">This run is supervised by <strong>run-smithers</strong>: the Hub creates a supervising run that wraps it, records lineage, recovers interrupted attempts, and flags it for attention instead of reporting a silent success if it can't finish.</p>` : ""}
     <form id="run-form" class="form-grid">
       ${hasFields ? schemaForm(schema) : `<label>Input JSON<textarea data-field="__raw" data-ftype="json" placeholder="{}">{}</textarea><span class="field-hint">This workflow has no declared input schema. Provide raw JSON.</span><span class="field-error" data-error-for="__raw"></span></label>`}
       ${hasFields ? `<details class="advanced"><summary>Edit as raw JSON instead</summary><label><textarea id="run-raw" data-ftype="json" placeholder="{}">${esc(JSON.stringify(sample, null, 2))}</textarea></label></details>` : ""}
@@ -2278,6 +2351,8 @@ async function showRunForm(slug) {
     <details class="advanced"><summary>Workflow contract</summary>${json(cap)}</details>`;
   bindCopy();
   const form = $("#run-form");
+  // Fill repo/project pickers (improve, idea-to-product, …) from the catalog.
+  hydrateRepoPickers(form);
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     let input;

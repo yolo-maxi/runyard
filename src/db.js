@@ -114,6 +114,7 @@ export function initDb() {
       required_skills TEXT NOT NULL DEFAULT '[]',
       required_agents TEXT NOT NULL DEFAULT '[]',
       approval_policy TEXT NOT NULL DEFAULT '{}',
+      supervision TEXT NOT NULL DEFAULT '{}',
       workflow TEXT NOT NULL DEFAULT '{}',
       version INTEGER NOT NULL DEFAULT 1,
       enabled INTEGER NOT NULL DEFAULT 1,
@@ -253,6 +254,7 @@ export function initDb() {
   `);
 
   migrateRunnersPoolColumns();
+  migrateCapabilitySupervisionColumn();
   setSettingDefault("instance_name", env.instanceName);
   seedAll();
   seedWorkflowEndpoints();
@@ -270,6 +272,16 @@ function migrateRunnersPoolColumns() {
   }
   if (!columns.includes("active_runs")) {
     db.exec("ALTER TABLE runners ADD COLUMN active_runs INTEGER NOT NULL DEFAULT 0");
+  }
+}
+
+// `supervision` (the default-supervision-envelope flag) shipped after the
+// initial capabilities schema. Add the column on existing installs so seeding
+// can populate it; the CREATE TABLE above is a no-op when the table exists.
+function migrateCapabilitySupervisionColumn() {
+  const columns = all("PRAGMA table_info(capabilities)").map((row) => row.name);
+  if (!columns.includes("supervision")) {
+    db.exec("ALTER TABLE capabilities ADD COLUMN supervision TEXT NOT NULL DEFAULT '{}'");
   }
 }
 
@@ -424,6 +436,7 @@ export function normalizeCapability(row) {
     requiredSkills: parseJson(row.required_skills, []),
     requiredAgents: parseJson(row.required_agents, []),
     approvalPolicy: parseJson(row.approval_policy, {}),
+    supervision: parseJson(row.supervision, {}),
     workflow: parseJson(row.workflow, {}),
     version: row.version,
     enabled: Boolean(row.enabled),
@@ -461,6 +474,7 @@ export function upsertCapability(input) {
     required_skills: json(input.requiredSkills || input.required_skills || [], []),
     required_agents: json(input.requiredAgents || input.required_agents || [], []),
     approval_policy: json(input.approvalPolicy || input.approval_policy || {}, {}),
+    supervision: json(input.supervision || input.supervision_policy || {}, {}),
     workflow: json(input.workflow || {}, {}),
     enabled: input.enabled === false ? 0 : 1,
     updated_at: timestamp
@@ -471,7 +485,7 @@ export function upsertCapability(input) {
       `UPDATE capabilities SET name=$name, description=$description, category=$category, keywords=$keywords,
        input_schema=$input_schema, output_schema=$output_schema, required_runner_tags=$required_runner_tags,
        required_skills=$required_skills, required_agents=$required_agents, approval_policy=$approval_policy,
-       workflow=$workflow, enabled=$enabled, version=$version, updated_at=$updated_at WHERE slug=$slug`,
+       supervision=$supervision, workflow=$workflow, enabled=$enabled, version=$version, updated_at=$updated_at WHERE slug=$slug`,
       { ...payload, version }
     );
     snapshotCapability(existing.id);
@@ -481,9 +495,9 @@ export function upsertCapability(input) {
   run(
     `INSERT INTO capabilities
      (id, slug, name, description, category, keywords, input_schema, output_schema, required_runner_tags,
-      required_skills, required_agents, approval_policy, workflow, version, enabled, created_at, updated_at)
+      required_skills, required_agents, approval_policy, supervision, workflow, version, enabled, created_at, updated_at)
      VALUES ($id, $slug, $name, $description, $category, $keywords, $input_schema, $output_schema,
-      $required_runner_tags, $required_skills, $required_agents, $approval_policy, $workflow, $version,
+      $required_runner_tags, $required_skills, $required_agents, $approval_policy, $supervision, $workflow, $version,
       $enabled, $created_at, $updated_at)`,
     created
   );
@@ -912,6 +926,30 @@ export function createRun(capability, input, options = {}) {
 export function getRun(runId) {
   const row = one("SELECT * FROM runs WHERE id = ?", [runId]);
   return normalizeRun(row);
+}
+
+// Find a still-active supervising run-smithers run by its internal supervision
+// token. Used to validate a child run's bypass marker — the token is minted by
+// the Hub when it creates a supervising run and is redacted from every API
+// response, so only a genuine supervised child (the run-smithers workflow
+// echoing the token it received) can present a matching one. Returns the
+// supervising run or null.
+export function findActiveSupervisorByToken(token, wrappedCapability = "") {
+  const clean = String(token || "").trim();
+  if (!clean) return null;
+  const rows = all(
+    `SELECT * FROM runs
+      WHERE capability_slug = 'run-smithers'
+        AND status NOT IN ('succeeded', 'failed', 'cancelled')
+      ORDER BY created_at DESC LIMIT 200`
+  );
+  for (const row of rows) {
+    const input = parseJson(row.input, {});
+    if (input?.__supervisionToken !== clean) continue;
+    if (wrappedCapability && input?.wrappedCapability !== wrappedCapability) continue;
+    return normalizeRun(row);
+  }
+  return null;
 }
 
 // Build the WHERE clause shared by listRuns / countRuns so search/time/cursor
