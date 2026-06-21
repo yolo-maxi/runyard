@@ -332,8 +332,14 @@ async function recoverAgentJsonFromEvents(runId, nodeId, expectedKeys) {
   const dbPath = smithersDbPath();
   if (!runId || !nodeId || !existsSync(dbPath)) return null;
   try {
-    const { DatabaseSync } = await import("node:sqlite");
-    const db = new DatabaseSync(dbPath, { readOnly: true });
+    let db;
+    try {
+      const { DatabaseSync } = await import("node:sqlite");
+      db = new DatabaseSync(dbPath, { readOnly: true });
+    } catch {
+      const { Database } = await import("bun:sqlite");
+      db = new Database(dbPath, { readonly: true });
+    }
     try {
       const rows = db
         .prepare(

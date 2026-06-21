@@ -119,6 +119,7 @@ describe("Product Workflow capability", () => {
     assert.match(src, /_smithers_events/);
     assert.match(src, /NodeOutput/);
     assert.match(src, /AgentEvent/);
+    assert.match(src, /bun:sqlite/);
     assert.match(src, /hydratedStage\(research/);
     assert.match(src, /hydratedStage\(featureMap/);
   });
