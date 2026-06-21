@@ -53,7 +53,11 @@ export function readSupervisionBypass(input) {
   if (!marker || typeof marker !== "object" || Array.isArray(marker)) return null;
   const token = typeof marker.token === "string" ? marker.token.trim() : "";
   if (!token) return null;
-  return { token, parentRunId: typeof marker.parentRunId === "string" ? marker.parentRunId : "" };
+  return {
+    token,
+    parentRunId: typeof marker.parentRunId === "string" ? marker.parentRunId : "",
+    purpose: typeof marker.purpose === "string" ? marker.purpose.trim() : ""
+  };
 }
 
 // Remove internal supervision plumbing from an input object before it is stored
@@ -99,10 +103,13 @@ export function decideSupervision(capability, input, { findSupervisorByToken } =
   const bypass = readSupervisionBypass(input);
   if (bypass) {
     // A bypass is only honored when it points at a real, still-active
-    // supervising run-smithers run that wraps *this exact* capability. A forged
-    // or stale marker falls through and gets wrapped like any other request.
+    // supervising run-smithers run. Normal child retries must match the
+    // wrapped capability exactly. A one-shot self-repair child is allowed to
+    // dispatch implement-change-gated directly because it is still inside the
+    // same supervisor loop and presents the same secret token.
+    const isRepairBypass = bypass.purpose === "repair" && capability.slug === "implement-change-gated";
     const parent = typeof findSupervisorByToken === "function"
-      ? findSupervisorByToken(bypass.token, capability.slug)
+      ? findSupervisorByToken(bypass.token, isRepairBypass ? "" : capability.slug)
       : null;
     if (parent && !TERMINAL_STATUSES.has(parent.status)) {
       return { action: "direct", parentRunId: parent.id, bypass };

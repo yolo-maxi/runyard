@@ -96,6 +96,27 @@ describe("supervision decision (pure)", () => {
     assert.equal(stale.action, "wrap");
   });
 
+  it("allows a verified run-smithers repair child to dispatch implement-change-gated directly", () => {
+    const gated = { slug: "implement-change-gated", workflow: { engine: "smithers" } };
+    const findSupervisorByToken = (tok, cap) =>
+      tok === "good" && cap === "" ? { id: "run-parent", status: "running" } : null;
+
+    const repair = decideSupervision(
+      gated,
+      { workPrompt: "fix workflow", __supervisedChild: { token: "good", purpose: "repair" } },
+      { findSupervisorByToken }
+    );
+    assert.equal(repair.action, "direct");
+    assert.equal(repair.parentRunId, "run-parent");
+
+    const forged = decideSupervision(
+      gated,
+      { workPrompt: "fix workflow", __supervisedChild: { token: "bad", purpose: "repair" } },
+      { findSupervisorByToken }
+    );
+    assert.equal(forged.action, "wrap");
+  });
+
   it("buildSupervisorInput nests the user input and strips internals on read", () => {
     const built = buildSupervisorInput({
       capability: { slug: "improve", name: "Improve" },
@@ -108,6 +129,7 @@ describe("supervision decision (pure)", () => {
     assert.equal(built.wrappedInput.__supervisedChild, undefined);
     assert.equal(built.__supervisionToken, "sup_abc");
     assert.equal(readSupervisionBypass({ __supervisedChild: { token: "t" } }).token, "t");
+    assert.equal(readSupervisionBypass({ __supervisedChild: { token: "t", purpose: "repair" } }).purpose, "repair");
     assert.equal(stripSupervisionInternals({ a: 1, __supervisionToken: "x" }).__supervisionToken, undefined);
   });
 });

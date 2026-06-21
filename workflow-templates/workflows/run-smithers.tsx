@@ -186,7 +186,7 @@ async function attemptWorkflowRepair(
           // by run-smithers (because all Smithers workflows default to
           // supervision), which creates nested repair supervisors and leaves the
           // parent waiting on the wrapper instead of the actual repair.
-          __supervisedChild: { token: supervisionToken },
+          __supervisedChild: { token: supervisionToken, purpose: "repair" },
           // Repair commits land on a dedicated branch so we never force a fix
           // straight onto main as part of autonomous self-correction.
           targetBranch: process.env.RUN_SMITHERS_REPAIR_BRANCH || "smithers-self-repair",
