@@ -429,14 +429,11 @@ export default smithers((ctx) => {
 
         {research && (
           <Task id="researchReady" output={outputs.researchReady} retries={0}>
-            {async () =>
-              assertStageReady(
-                "research",
-                await hydratedStage(research, ctx.runId, "research", ["competitors"]),
-                ["competitors"],
-                "The research agent likely returned unparseable/non-JSON output instead of a competitors array."
-              )
-            }
+            {/* Upstream stage: do not gate on empty competitors. Persisted output
+                may be empty (loose-schema defaults) and event-log recovery is
+                best-effort under supervision (sibling DB). Only the final
+                prioritize stage gates dispatch. */}
+            {async () => await hydratedStage(research, ctx.runId, "research", ["competitors"])}
           </Task>
         )}
 
@@ -454,14 +451,9 @@ export default smithers((ctx) => {
 
         {featureMap && (
           <Task id="featureMapReady" output={outputs.featureMapReady} retries={0}>
-            {async () =>
-              assertStageReady(
-                "featureMap",
-                await hydratedStage(featureMap, ctx.runId, "featureMap", ["features"]),
-                ["features"],
-                "The feature-map agent likely returned unparseable/non-JSON output instead of a features array."
-              )
-            }
+            {/* Upstream stage: same rationale as researchReady — pass through the
+                hydrated stage; only prioritize gates dispatch. */}
+            {async () => await hydratedStage(featureMap, ctx.runId, "featureMap", ["features"])}
           </Task>
         )}
 
