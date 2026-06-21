@@ -2706,6 +2706,9 @@ app.post("/api/runs/:id/complete", requireAuth, requireScopes("runner"), require
   const output = req.body.output || {};
   const result = transitionRun(req.params.id, "succeeded", { current_step: "completed", output, completed_at: now() });
   if (!result.ok) return res.status(result.code).json({ error: result.error });
+  if (result.raced) {
+    addRunEvent(req.params.id, "run.transition_ignored", `Ignored late 'succeeded' report; run already terminal as '${result.run.status}'`, { attempted: "succeeded", terminal: result.run.status });
+  }
   if (!result.idempotent) addRunEvent(req.params.id, "run.succeeded", "Run completed");
   const chainedRun = result.idempotent ? null : queueNextChainedRun(result.run, output, req);
   if (!result.idempotent) recordRunTerminalArtifacts(result.run.id);
@@ -2714,6 +2717,9 @@ app.post("/api/runs/:id/complete", requireAuth, requireScopes("runner"), require
 app.post("/api/runs/:id/fail", requireAuth, requireScopes("runner"), requireRunOwnerOrAdmin, (req, res) => {
   const result = transitionRun(req.params.id, "failed", { current_step: "failed", error: req.body.error || "failed", completed_at: now() });
   if (!result.ok) return res.status(result.code).json({ error: result.error });
+  if (result.raced) {
+    addRunEvent(req.params.id, "run.transition_ignored", `Ignored late 'failed' report; run already terminal as '${result.run.status}'`, { attempted: "failed", terminal: result.run.status });
+  }
   if (!result.idempotent) addRunEvent(req.params.id, "run.failed", req.body.error || "Run failed");
   if (!result.idempotent) recordRunTerminalArtifacts(result.run.id);
   res.json({ run: result.run });

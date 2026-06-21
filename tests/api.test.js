@@ -605,14 +605,43 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
   it("guards run state transitions", async () => {
     const created = await api("/api/capabilities/hello/run", { method: "POST", body: { input: { goal: "state" } } });
     const runId = created.run.id;
+    // A genuinely invalid (non-terminal) transition is still rejected: a queued
+    // run cannot jump straight to succeeded without being assigned/running.
+    const earlyComplete = await raw(`/api/runs/${runId}/complete`, { method: "POST", body: { output: {} } });
+    assert.equal(earlyComplete.status, 409);
     await api(`/api/runs/${runId}/cancel`, { method: "POST", body: { reason: "stop" } });
-    // Cannot complete a cancelled run.
-    const complete = await raw(`/api/runs/${runId}/complete`, { method: "POST", body: { output: {} } });
-    assert.equal(complete.status, 409);
     // Re-cancelling a cancelled run is idempotent.
     const reCancel = await raw(`/api/runs/${runId}/cancel`, { method: "POST", body: {} });
     assert.equal(reCancel.status, 200);
     assert.equal(reCancel.data.run.status, "cancelled");
+  });
+
+  it("treats a late terminal report after cancellation as a benign no-op (transition race)", async () => {
+    // Reproduces the runner-log noise: a supervised child is cancelled, then the
+    // runner finishes a beat later and reports complete/fail. The first terminal
+    // state (cancelled) must win, the late report must NOT 409, and a calm
+    // run.transition_ignored event should explain the race.
+    const created = await api("/api/capabilities/hello/run", { method: "POST", body: { input: { goal: "race" } } });
+    const runId = created.run.id;
+    const runner = await api("/api/runners/register", { method: "POST", body: { name: "race", hostname: "race", tags: ["smithers"] } });
+    await api(`/api/runners/${runner.runner.id}/next-run`); // assign
+    await api(`/api/runs/${runId}/start`, { method: "POST", body: {} }); // running
+    await api(`/api/runs/${runId}/cancel`, { method: "POST", body: { reason: "operator stop" } });
+
+    const lateComplete = await raw(`/api/runs/${runId}/complete`, { method: "POST", body: { output: { ok: true } } });
+    assert.equal(lateComplete.status, 200, "late complete after cancel must not 409");
+    assert.equal(lateComplete.data.run.status, "cancelled", "operator cancellation wins");
+
+    const lateFail = await raw(`/api/runs/${runId}/fail`, { method: "POST", body: { error: "boom" } });
+    assert.equal(lateFail.status, 200, "late fail after cancel must not 409");
+    assert.equal(lateFail.data.run.status, "cancelled");
+
+    const detail = await api(`/api/runs/${runId}`);
+    assert.equal(detail.run.status, "cancelled");
+    assert.equal(detail.run.error || "", "", "late fail must not overwrite the cancelled run's error");
+    const events = (await api(`/api/runs/${runId}/events`)).events || [];
+    assert.ok(events.some((e) => e.type === "run.transition_ignored"), "should record a calm transition_ignored event");
+    assert.ok(!events.some((e) => e.type === "run.succeeded"), "must not record a success event for the raced report");
   });
 
   it("does not double-assign a queued run to two runners", async () => {

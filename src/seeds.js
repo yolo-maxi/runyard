@@ -193,6 +193,10 @@ export const seedCapabilities = [
         fingerprintThreshold: {
           type: "number",
           description: "Number of identical normalized error fingerprints before requesting approval (default 3)."
+        },
+        maxCodeRepairs: {
+          type: "number",
+          description: "Max bounded workflow-code repairs per supervised child before escalating (default 1; 0 disables self-correction)."
         }
       }
     },
@@ -202,6 +206,7 @@ export const seedCapabilities = [
         outcome: { type: "string", description: "succeeded | needs_recovery | abandoned" },
         wrappedRunId: { type: "string", description: "The child run id that produced the final outcome." },
         lineage: { type: "array", description: "Ordered child-run attempts the watcher recorded." },
+        repairs: { type: "array", description: "Workflow-code repair attempts the watcher made (file, synced, testPassed)." },
         approval: { type: "object", description: "Approval request payload when the watcher escalated." }
       }
     },

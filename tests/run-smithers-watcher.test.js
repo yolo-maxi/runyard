@@ -16,12 +16,15 @@ process.env.SMITHERS_OBSTRUCTION_ANALYSIS_ENABLED = "0";
 const { app } = await import("../src/server.js");
 const {
   RUN_SMITHERS_DEFAULT_MAX_ATTEMPTS,
+  RUN_SMITHERS_DEFAULT_MAX_CODE_REPAIRS,
   RUN_SMITHERS_FINGERPRINT_LIMIT,
   classifyChildState,
+  classifyWorkflowCodeFailure,
   createWatcherState,
   decideNextAction,
   normalizeErrorFingerprint,
   recordChildAttempt,
+  recordRepairAttempt,
   watcherSummary
 } = await import("../src/runSmithersWatcher.js");
 
@@ -196,8 +199,95 @@ describe("run-smithers watcher classifier + three-strike rule", () => {
   it("exposes sensible defaults", () => {
     assert.equal(RUN_SMITHERS_FINGERPRINT_LIMIT, 3);
     assert.ok(RUN_SMITHERS_DEFAULT_MAX_ATTEMPTS >= 3);
+    assert.equal(RUN_SMITHERS_DEFAULT_MAX_CODE_REPAIRS, 1);
     const state = createWatcherState({});
     assert.equal(state.maxAttempts, RUN_SMITHERS_DEFAULT_MAX_ATTEMPTS);
     assert.equal(state.fingerprintThreshold, RUN_SMITHERS_FINGERPRINT_LIMIT);
+    assert.equal(state.maxCodeRepairs, RUN_SMITHERS_DEFAULT_MAX_CODE_REPAIRS);
+    assert.equal(state.codeRepairs, 0);
+  });
+});
+
+describe("run-smithers workflow-code self-correction", () => {
+  it("classifies deterministic workflow-code failures and ignores infra noise", () => {
+    assert.equal(
+      classifyWorkflowCodeFailure("TypeError: Cannot read properties of undefined (reading 'competitors')").isCodeFailure,
+      true
+    );
+    assert.equal(classifyWorkflowCodeFailure("ReferenceError: foo is not defined").isCodeFailure, true);
+    assert.equal(
+      classifyWorkflowCodeFailure("smithers run failed at node 'dispatch': boom at product-workflow.tsx:237:42").isCodeFailure,
+      true
+    );
+    // Infra/transient errors must NOT be treated as code bugs.
+    assert.equal(classifyWorkflowCodeFailure("pnpm install failed: ENOSPC writing /tmp/x").isCodeFailure, false);
+    assert.equal(classifyWorkflowCodeFailure("ETIMEDOUT contacting the model provider").isCodeFailure, false);
+    assert.equal(classifyWorkflowCodeFailure("").isCodeFailure, false);
+  });
+
+  it("decides a one-shot repair on the first workflow-code failure (the product-workflow dispatch bug)", () => {
+    const state = createWatcherState({ capabilitySlug: "product-workflow", maxAttempts: 8, fingerprintThreshold: 3 });
+    recordChildAttempt(state, {
+      runId: "run_disp1",
+      status: "failed",
+      failedStep: "dispatch",
+      error:
+        "smithers run run-1781996504858 failed at node 'dispatch': " +
+        "TypeError: Cannot read properties of undefined (reading 'competitors') at renderReport (product-workflow.tsx:237:42)"
+    });
+    const decision = decideNextAction(state, classifyChildState({ status: "failed" }));
+    assert.equal(decision.action, "repair", "first code failure should trigger a repair, not a blind retry");
+    assert.equal(decision.capability, "product-workflow");
+    assert.equal(decision.failedStep, "dispatch");
+    assert.equal(state.approvalRequested, false);
+  });
+
+  it("repairs at most once per fingerprint, then escalates with a clear artifact if it repeats", () => {
+    const state = createWatcherState({ capabilitySlug: "product-workflow", maxAttempts: 8, fingerprintThreshold: 3, maxCodeRepairs: 1 });
+    const codeError =
+      "smithers run X failed at node 'dispatch': TypeError: Cannot read properties of undefined (reading 'competitors') at product-workflow.tsx:237:42";
+
+    // 1) First failure → repair decision.
+    recordChildAttempt(state, { runId: "run_a", status: "failed", failedStep: "dispatch", error: codeError });
+    const first = decideNextAction(state, classifyChildState({ status: "failed" }));
+    assert.equal(first.action, "repair");
+
+    // The template runs the bounded repair + workspace sync, then records it.
+    recordRepairAttempt(state, { fingerprint: first.fingerprint, file: "product-workflow.tsx", ok: true, synced: true, testPassed: true });
+    assert.equal(state.codeRepairs, 1);
+
+    // 2) Same code failure reappears after the repair → escalate, do NOT repair again.
+    recordChildAttempt(state, { runId: "run_b", status: "failed", failedStep: "dispatch", error: codeError });
+    const second = decideNextAction(state, classifyChildState({ status: "failed" }));
+    assert.equal(second.action, "approval");
+    assert.equal(second.escalation, "workflow_code_repair_failed");
+    assert.equal(state.approvalRequested, true);
+
+    const summary = watcherSummary(state);
+    assert.equal(summary.codeRepairs, 1);
+    assert.equal(summary.repairs[0].file, "product-workflow.tsx");
+    assert.equal(summary.repairs[0].synced, true);
+    // Never silently masked as success.
+    assert.notEqual(summary.outcome, "succeeded");
+  });
+
+  it("does not repair infra failures — those still retry within budget", () => {
+    const state = createWatcherState({ capabilitySlug: "improve", maxAttempts: 5, fingerprintThreshold: 3 });
+    recordChildAttempt(state, { runId: "run_i", status: "failed", error: "pnpm install failed: ETIMEDOUT" });
+    const decision = decideNextAction(state, classifyChildState({ status: "failed" }));
+    assert.equal(decision.action, "retry");
+    assert.equal(state.codeRepairs, 0);
+  });
+
+  it("succeeds normally after a repair fixes the workflow code", () => {
+    const state = createWatcherState({ capabilitySlug: "product-workflow" });
+    recordChildAttempt(state, { runId: "run_a", status: "failed", failedStep: "dispatch", error: "TypeError: x is not a function at wf.tsx:1:1" });
+    assert.equal(decideNextAction(state, classifyChildState({ status: "failed" })).action, "repair");
+    recordRepairAttempt(state, { fingerprint: state.lastFingerprint, ok: true, synced: true, testPassed: true });
+    // Rerun succeeds with output.
+    recordChildAttempt(state, { runId: "run_b", status: "succeeded" });
+    const decision = decideNextAction(state, classifyChildState({ status: "succeeded", output: { ok: true } }));
+    assert.equal(decision.action, "succeed");
+    assert.equal(state.outcome, "succeeded");
   });
 });

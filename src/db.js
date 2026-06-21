@@ -1083,12 +1083,22 @@ export function canTransitionRun(from, to) {
   return (RUN_TRANSITIONS[from] || []).includes(to);
 }
 
-// Guarded status change. Returns {ok, run, error, code, idempotent}. Re-applying a terminal status is a no-op.
+// Guarded status change. Returns {ok, run, error, code, idempotent, raced}. Re-applying a terminal status is a no-op.
 export function transitionRun(runId, toStatus, updates = {}) {
   const current = getRun(runId);
   if (!current) return { ok: false, code: 404, error: "run not found" };
   if (current.status === toStatus && RUN_TERMINAL.has(toStatus)) {
     return { ok: true, idempotent: true, run: current };
+  }
+  // Terminal-vs-terminal race: a run already reached a terminal state (most
+  // commonly an operator/deadline `cancelled`) and a slower writer — usually a
+  // supervised child runner that finished just after cancellation — now reports
+  // a *different* terminal status. The first terminal state is authoritative
+  // (operator intent wins), so treat the late writer as a benign no-op instead
+  // of a scary 409. This keeps `cannot transition cancelled to failed/succeeded`
+  // noise out of the runner logs without masking real success/failure.
+  if (RUN_TERMINAL.has(current.status) && RUN_TERMINAL.has(toStatus)) {
+    return { ok: true, idempotent: true, raced: true, run: current };
   }
   if (!canTransitionRun(current.status, toStatus)) {
     return { ok: false, code: 409, error: `cannot transition run from '${current.status}' to '${toStatus}'`, run: current };

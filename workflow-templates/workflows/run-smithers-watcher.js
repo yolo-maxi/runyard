@@ -12,7 +12,67 @@
 
 export const RUN_SMITHERS_FINGERPRINT_LIMIT = 3;
 export const RUN_SMITHERS_DEFAULT_MAX_ATTEMPTS = 8;
+// One bounded workflow-code repair per supervised child by default. A repair
+// edits the wrapped workflow's own source/template (not a broad refactor) and
+// reruns the child exactly once; if the same class of failure repeats we stop
+// and escalate to an operator instead of looping.
+export const RUN_SMITHERS_DEFAULT_MAX_CODE_REPAIRS = 1;
 export const RUN_SMITHERS_LINEAGE_SCHEMA_VERSION = "smithers.hub.run-smithers.watcher.v1";
+
+// Deterministic workflow-code failures: re-running the same input will not fix
+// them, so they are candidates for a one-shot code repair rather than a blind
+// retry. These match JS exceptions a workflow template raises and stacks that
+// point at workflow source files.
+const WORKFLOW_CODE_FAILURE_PATTERNS = [
+  /\btypeerror\b/i,
+  /\breferenceerror\b/i,
+  /\bsyntaxerror\b/i,
+  /\brangeerror\b/i,
+  /cannot read propert(?:y|ies)/i,
+  /is not a function/i,
+  /is not defined/i,
+  /is not iterable/i,
+  /(?:undefined|null) is not an object/i,
+  /cannot access '[^']*' before initialization/i,
+  /unexpected (?:token|identifier|end of)/i,
+  // a stack frame pointing at a workflow source file (.tsx/.ts/.jsx/.js:line:col)
+  /\.(?:tsx|ts|jsx|js):\d+:\d+/i
+];
+
+// Infra / transient signals that look scary but are NOT deterministic code
+// bugs — repairing workflow source would be wrong here; retry/escalate instead.
+const NON_CODE_FAILURE_HINTS = [
+  /\benospc\b/i,
+  /\benomem\b/i,
+  /\beacces\b/i,
+  /\betimedout\b/i,
+  /\beconnreset\b/i,
+  /\beconnrefused\b/i,
+  /\benotfound\b/i,
+  /\benetwork\b/i,
+  /timed?\s?out/i,
+  /deadline/i,
+  /rate.?limit/i,
+  /out of memory/i,
+  /no space left/i,
+  /pnpm (?:install|store)/i,
+  /npm install/i
+];
+
+// Classify a child error as a deterministic workflow-code failure. Returns
+// { isCodeFailure, kind }. Infra/transient hints win so a flaky network error
+// is never mistaken for a code bug.
+export function classifyWorkflowCodeFailure(message) {
+  const text = String(message ?? "");
+  if (!text.trim()) return { isCodeFailure: false, kind: "" };
+  for (const hint of NON_CODE_FAILURE_HINTS) {
+    if (hint.test(text)) return { isCodeFailure: false, kind: "infra" };
+  }
+  for (const pattern of WORKFLOW_CODE_FAILURE_PATTERNS) {
+    if (pattern.test(text)) return { isCodeFailure: true, kind: "workflow_code" };
+  }
+  return { isCodeFailure: false, kind: "" };
+}
 
 // Volatile fragments that change every attempt (ids, timestamps, paths,
 // long hex). Stripping them makes the normalized fingerprint match across
@@ -98,8 +158,12 @@ export function createWatcherState({
   input = {},
   parentRunId = "",
   maxAttempts = RUN_SMITHERS_DEFAULT_MAX_ATTEMPTS,
-  fingerprintThreshold = RUN_SMITHERS_FINGERPRINT_LIMIT
+  fingerprintThreshold = RUN_SMITHERS_FINGERPRINT_LIMIT,
+  maxCodeRepairs = RUN_SMITHERS_DEFAULT_MAX_CODE_REPAIRS
 } = {}) {
+  const normalizedMaxCodeRepairs = Number.isFinite(maxCodeRepairs)
+    ? Math.max(0, Math.floor(maxCodeRepairs))
+    : RUN_SMITHERS_DEFAULT_MAX_CODE_REPAIRS;
   return {
     schemaVersion: RUN_SMITHERS_LINEAGE_SCHEMA_VERSION,
     parentRunId,
@@ -112,8 +176,41 @@ export function createWatcherState({
     outcome: null,
     approvalRequested: false,
     maxAttempts: Math.max(1, Math.floor(maxAttempts) || RUN_SMITHERS_DEFAULT_MAX_ATTEMPTS),
-    fingerprintThreshold: Math.max(1, Math.floor(fingerprintThreshold) || RUN_SMITHERS_FINGERPRINT_LIMIT)
+    fingerprintThreshold: Math.max(1, Math.floor(fingerprintThreshold) || RUN_SMITHERS_FINGERPRINT_LIMIT),
+    // Workflow-code self-correction accounting. `codeRepairs` is the number of
+    // repairs already attempted; `repairedFingerprints` records which error
+    // fingerprints we have already tried to repair so we never repair the same
+    // failure twice (and never loop).
+    maxCodeRepairs: normalizedMaxCodeRepairs,
+    codeRepairs: 0,
+    repairedFingerprints: {},
+    repairs: []
   };
+}
+
+// Record that a one-shot workflow-code repair was attempted for the given error
+// fingerprint. Callers (the run-smithers template) invoke this after running a
+// repair agent + syncing the repaired workflow into the runner workspace, just
+// before rerunning the child. Bumps the repair budget so the cap is honoured.
+export function recordRepairAttempt(state, repair = {}) {
+  if (!state || typeof state !== "object") {
+    throw new TypeError("recordRepairAttempt requires a watcher state");
+  }
+  const fingerprint = String(repair.fingerprint || state.lastFingerprint || "");
+  state.codeRepairs = (state.codeRepairs || 0) + 1;
+  if (fingerprint) state.repairedFingerprints[fingerprint] = (state.repairedFingerprints[fingerprint] || 0) + 1;
+  const entry = {
+    fingerprint,
+    file: String(repair.file || ""),
+    failedStep: String(repair.failedStep || ""),
+    ok: Boolean(repair.ok),
+    testPassed: repair.testPassed === undefined ? null : Boolean(repair.testPassed),
+    synced: Boolean(repair.synced),
+    notes: String(repair.notes || "").slice(0, 600),
+    recordedAt: repair.recordedAt || ""
+  };
+  state.repairs.push(entry);
+  return entry;
 }
 
 // Record a child run attempt onto the watcher state. Callers should call this
@@ -178,6 +275,66 @@ export function decideNextAction(state, childClassification = null) {
   const fingerprint = last?.fingerprint || "";
   const count = fingerprint ? state.fingerprintCounts[fingerprint] : 0;
 
+  // Operator cancellations are intent, never a bug — don't repair or auto-resume.
+  if (classification.kind === "cancelled") {
+    return {
+      action: "give_up",
+      reason: "child run was cancelled; the supervisor does not auto-resume operator cancellations"
+    };
+  }
+
+  // Self-correction: a deterministic workflow-code failure (a TypeError, a
+  // failed node, a JS stack pointing at workflow source) will not be fixed by
+  // re-running the same input. Attempt exactly one bounded code repair for this
+  // error fingerprint before falling back to blind retry / approval. This takes
+  // priority over the three-strike and maxAttempts escalations so we repair on
+  // the *first* code failure instead of burning attempts on a doomed re-run.
+  const codeFailure = classifyWorkflowCodeFailure(last?.error || "");
+  if (codeFailure.isCodeFailure) {
+    const alreadyRepaired = Boolean(fingerprint && state.repairedFingerprints[fingerprint]);
+    if (!alreadyRepaired && state.codeRepairs < state.maxCodeRepairs) {
+      return {
+        action: "repair",
+        reason: `Child failed with a deterministic workflow-code error (${codeFailure.kind}); attempting one bounded repair of the workflow source before rerunning.`,
+        fingerprint,
+        failedStep: last?.failedStep || "",
+        capability: state.capabilitySlug,
+        error: last?.error || "",
+        attempt: state.attempts.length + 1
+      };
+    }
+    // A repair was already attempted for this failure (or the repair budget is
+    // exhausted) and the same class of code failure repeated — stop and escalate
+    // with a clear artifact instead of looping.
+    state.approvalRequested = true;
+    return {
+      action: "approval",
+      escalation: "workflow_code_repair_failed",
+      reason: alreadyRepaired
+        ? "An automated one-shot workflow-code repair did not resolve the failure; operator review required."
+        : "Workflow-code repair budget is exhausted; operator review required.",
+      fingerprint,
+      count,
+      options: [
+        {
+          id: "retry_anyway",
+          label: "Retry the wrapped run once more",
+          effect: "spawn another child run with the same input after a manual look at the workflow code"
+        },
+        {
+          id: "edit_and_retry",
+          label: "Approve a manual workflow-code fix or revised input",
+          effect: "operator fixes the workflow source / supplies a new input; watcher spawns a fresh child run"
+        },
+        {
+          id: "abandon",
+          label: "Abandon the wrapped goal",
+          effect: "stop autonomous attempts and mark the supervising run needs_recovery"
+        }
+      ]
+    };
+  }
+
   // Three-strike rule: if the same normalized fingerprint has been observed
   // `fingerprintThreshold` times, stop autonomous retry and surface an
   // approval with concrete options instead of marking the run failed.
@@ -230,13 +387,6 @@ export function decideNextAction(state, childClassification = null) {
     };
   }
 
-  if (classification.kind === "cancelled") {
-    return {
-      action: "give_up",
-      reason: "child run was cancelled; the supervisor does not auto-resume operator cancellations"
-    };
-  }
-
   if (classification.recoverable) {
     return {
       action: "retry",
@@ -268,6 +418,9 @@ export function watcherSummary(state) {
     attempts: state.attempts.length,
     maxAttempts: state.maxAttempts,
     fingerprintThreshold: state.fingerprintThreshold,
+    maxCodeRepairs: state.maxCodeRepairs,
+    codeRepairs: state.codeRepairs || 0,
+    repairs: (state.repairs || []).map((entry) => ({ ...entry })),
     outcome: state.outcome,
     approvalRequested: Boolean(state.approvalRequested),
     fingerprintLeaders,

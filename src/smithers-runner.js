@@ -13,6 +13,7 @@ import { promisify } from "node:util";
 import { HubClient } from "./apiClient.js";
 import { markdownArtifactsFromOutputs } from "./runnerArtifacts.js";
 import { normalizeRunnerTags } from "./runExecution.js";
+import { extractSmithersFailure } from "./smithersFailure.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -232,9 +233,21 @@ async function executeAssignment(assignment) {
       await client.post(`/api/runs/${run.id}/complete`, { output: { smithersRunId: sid, outputs } });
       console.log(`Completed ${run.id} via smithers ${sid}`);
     } else {
-      const error = supervisionFailure || (deadlineExceeded
-        ? `smithers run ${sid} exceeded runner deadline (${maxRunMs}ms) and was cancelled`
-        : `smithers run ${sid} ended in state '${state}'`);
+      let error;
+      if (supervisionFailure) {
+        error = supervisionFailure;
+      } else if (deadlineExceeded) {
+        error = `smithers run ${sid} exceeded runner deadline (${maxRunMs}ms) and was cancelled`;
+      } else {
+        // Surface the real failing-node error/stack (e.g. a TypeError in a
+        // workflow template) instead of the opaque state message, so the
+        // supervising watcher can recognise a deterministic workflow-code
+        // failure and decide whether a one-shot repair is warranted.
+        const failure = extractSmithersFailure(st, eventLines);
+        error = failure.error
+          ? `smithers run ${sid} failed${failure.failedStep ? ` at node '${failure.failedStep}'` : ""}: ${failure.error}`.slice(0, 2000)
+          : `smithers run ${sid} ended in state '${state}'`;
+      }
       await client.post(`/api/runs/${run.id}/fail`, { error });
       console.log(`Run ${run.id} ended '${state}' (smithers ${sid})`);
     }
