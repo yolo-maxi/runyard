@@ -375,13 +375,19 @@ export default smithers((ctx) => {
               // ever need to re-enable the per-stage guards:
               //   "The research agent likely returned unparseable/non-JSON output instead of a competitors array."
               //   "The feature-map agent likely returned unparseable/non-JSON output instead of a features array."
-              requireNonEmptyStage(
-                "prioritize",
-                prioritize?.prioritizedFeatures,
-                "The prioritization agent likely returned unparseable/non-JSON output instead of a prioritizedFeatures array."
-              );
+              // We only hard-fail on an empty prioritized list when we're about
+              // to queue real implementation runs. Plan-only (execute=false) is
+              // diagnostic — surfacing a zero-feature plan in the report is more
+              // useful than crashing the supervised envelope.
+              if (ctx.input.execute) {
+                requireNonEmptyStage(
+                  "prioritize",
+                  prioritize?.prioritizedFeatures,
+                  "The prioritization agent likely returned unparseable/non-JSON output instead of a prioritizedFeatures array."
+                );
+              }
 
-              const features = arrayFromMaybeJson(prioritize.prioritizedFeatures)
+              const features = arrayFromMaybeJson(prioritize?.prioritizedFeatures)
                 .slice()
                 .sort((a, b) => (a.rank || 0) - (b.rank || 0))
                 .slice(0, ctx.input.maxFeatures)
