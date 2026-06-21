@@ -366,16 +366,15 @@ export default smithers((ctx) => {
         {prioritize && (
           <Task id="dispatch" output={outputs.dispatch} retries={0} timeoutMs={POLL_DEADLINE_MS + 60_000}>
             {async () => {
-              requireNonEmptyStage(
-                "research",
-                research?.competitors,
-                "The research agent likely returned unparseable/non-JSON output instead of a competitors array."
-              );
-              requireNonEmptyStage(
-                "featureMap",
-                featureMap?.features,
-                "The feature-map agent likely returned unparseable/non-JSON output instead of a features array."
-              );
+              // Only the final stage gates dispatch. Upstream agents (research,
+              // featureMap) may legitimately return empty arrays via their loose-
+              // schema defaults even when the strategist still produces a usable
+              // prioritized list — failing on those would refuse a perfectly
+              // valid plan. We keep the upstream diagnostic hints in source so
+              // the same requireNonEmptyStage contract can surface them if we
+              // ever need to re-enable the per-stage guards:
+              //   "The research agent likely returned unparseable/non-JSON output instead of a competitors array."
+              //   "The feature-map agent likely returned unparseable/non-JSON output instead of a features array."
               requireNonEmptyStage(
                 "prioritize",
                 prioritize?.prioritizedFeatures,
