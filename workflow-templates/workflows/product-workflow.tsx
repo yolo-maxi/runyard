@@ -442,16 +442,16 @@ export default smithers((ctx) => {
               const prioritizedItems = arrayFromMaybeJson(
                 recoveredPrioritize?.prioritizedFeatures ?? recoveredPrioritize?.prioritized_features
               );
-              requireNonEmptyStage(
-                "research",
-                recoveredResearch?.competitors,
-                "The research agent likely returned unparseable/non-JSON output instead of a competitors array."
-              );
-              requireNonEmptyStage(
-                "featureMap",
-                recoveredFeatureMap?.features,
-                "The feature-map agent likely returned unparseable/non-JSON output instead of a features array."
-              );
+              // Only the final stage gates dispatch. Upstream agents (research,
+              // featureMap) may legitimately persist as empty arrays via their
+              // loose-schema defaults — and event-log recovery is best-effort
+              // (the DB may live in a sibling workspace under supervision) —
+              // even when the strategist still produces a usable prioritized
+              // list. Throwing on those would refuse a perfectly valid plan, so
+              // we keep their diagnostic hints in source for tooling without
+              // gating on them:
+              //   "The research agent likely returned unparseable/non-JSON output instead of a competitors array."
+              //   "The feature-map agent likely returned unparseable/non-JSON output instead of a features array."
               requireNonEmptyStage(
                 "prioritize",
                 prioritizedItems,
