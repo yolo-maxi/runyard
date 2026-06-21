@@ -361,27 +361,18 @@ runnerCommand
     child.on("exit", (code) => process.exit(code ?? 0));
   });
 
-program
-  .command("mcp-config")
-  .description("Print MCP server config snippet (and the explicit install command for OpenClaw/mcporter)")
-  .option("--as <name>", "register the Hub MCP under this server name (default: smithers-hub / smithers-hub-<remote>); pass `smithers` to override the local smithers-orchestrator MCP")
-  .action((opts) => printMcpConfig(opts));
+program.command("mcp-config").description("Print MCP server config snippet").action(() => printMcpConfig());
 
 const mcpCommand = program.command("mcp").description("MCP commands");
 mcpCommand
   .command("install")
   .description("Configure AI client(s) to use this Hub over MCP")
-  .option("--client <client>", "one of: claude-code, claude-desktop, codex, cursor, windsurf, gemini, vscode, mcporter", "claude-code")
+  .option("--client <client>", `one of: ${"claude-code, claude-desktop, codex, cursor, windsurf, gemini, vscode"}`, "claude-code")
   .option("--all", "auto-detect and configure every AI client found on this machine")
   .option("--remote <name>", "bind to a specific org remote (default: current)")
   .option("--global", "Claude Code: write user-level config instead of a project .mcp.json")
-  .option("--as <name>", "register the Hub MCP under this server name (default: smithers-hub / smithers-hub-<remote>); pass `smithers` to take over the name the local smithers-orchestrator MCP is registered under")
   .action((opts) => installMcp(opts));
-mcpCommand
-  .command("config")
-  .description("Print the MCP server config snippet")
-  .option("--as <name>", "register the Hub MCP under this server name (default: smithers-hub / smithers-hub-<remote>)")
-  .action((opts) => printMcpConfig(opts));
+mcpCommand.command("config").description("Print the MCP server config snippet").action(() => printMcpConfig());
 
 // MCP server spec — references this CLI's sibling mcp.js by absolute path and a remote name.
 // No token is written here: mcp.js reads it from ~/.smithers-hub for the named remote.
@@ -476,43 +467,13 @@ const CLIENTS = {
       return file;
     },
     activate: "start a new Codex session (it loads MCP servers on launch)"
-  },
-  // OpenClaw (and other clients that use mcporter under the hood) reads MCP
-  // servers from ~/.mcporter/mcporter.json — same shape as Claude Code. We
-  // also try the OpenClaw codex-home location if it exists, so a single
-  // `--client mcporter` writes both side-effects without follow-up.
-  mcporter: {
-    detect: () =>
-      existsSync(path.join(HOME, ".mcporter"))
-      || existsSync(path.join(HOME, ".openclaw")),
-    apply: (name, server) => {
-      const files = [path.join(HOME, ".mcporter", "mcporter.json")];
-      const openclawHome = path.join(HOME, ".openclaw", "agents", "main", "agent", "codex-home", "home", ".mcporter", "mcporter.json");
-      if (existsSync(path.dirname(path.dirname(openclawHome)))) files.push(openclawHome);
-      for (const file of files) {
-        mergeJson(file, (d) => {
-          d.mcpServers = d.mcpServers || {};
-          d.mcpServers[name] = { command: server.command, args: server.args };
-        });
-      }
-      return files.join(" + ");
-    },
-    activate: "restart OpenClaw (or run `mcporter list` / `openclaw mcp list` to confirm)"
   }
 };
 
-function resolveServerName(remote, alias) {
-  if (alias && String(alias).trim()) return String(alias).trim();
-  return remote === "default" ? "smithers-hub" : `smithers-hub-${remote}`;
-}
-
 function installMcp(opts) {
   const remote = resolveRemote(opts.remote || program.opts().remote).name;
-  const serverName = resolveServerName(remote, opts.as);
+  const serverName = remote === "default" ? "smithers-hub" : `smithers-hub-${remote}`;
   const server = mcpServerSpec(remote);
-  if (opts.as === "smithers") {
-    console.log("Note: writing the Hub MCP under the name `smithers` will override the local smithers-orchestrator MCP for any client keyed off that name.");
-  }
   let ids;
   if (opts.all) {
     ids = Object.keys(CLIENTS).filter((id) => CLIENTS[id].detect());
@@ -537,34 +498,10 @@ function installMcp(opts) {
   console.log(`\nToken is read from ~/.smithers-hub (remote "${remote}") — none is stored in the configs above.`);
 }
 
-function printMcpConfig(opts = {}) {
+function printMcpConfig() {
   const remote = resolveRemote(program.opts().remote).name;
-  const name = resolveServerName(remote, opts.as);
-  const spec = mcpServerSpec(remote);
-  const snippet = { mcpServers: { [name]: spec } };
-  const jsonFlag = program.opts().json;
-  if (jsonFlag) {
-    console.log(JSON.stringify(snippet, null, 2));
-    return;
-  }
-  console.log(JSON.stringify(snippet, null, 2));
-  // Friendly footer: this is the Hub MCP (capability catalog), not the local
-  // smithers-orchestrator workflow MCP. Emit the exact commands Ocean /
-  // OpenClaw users should run, so the integration is unambiguous.
-  console.log("");
-  console.log(`# Server name "${name}" exposes the Hub capability catalog:`);
-  console.log("#   list_capabilities / search_capabilities / describe_capability / run_capability");
-  console.log("#   list_runs / get_run_status / get_run_logs / get_run_artifacts / list_runners");
-  console.log("# Compatibility aliases for the smithers-orchestrator MCP shape are also exposed:");
-  console.log("#   list_workflows -> list_capabilities, run_workflow -> run_capability, watch_run -> get_run_status");
-  console.log("# This is NOT the local `smithers` (smithers-orchestrator) MCP — that one only");
-  console.log("# sees workflows under the local .smithers workspace and returns [] when none exist.");
-  console.log("");
-  console.log("# OpenClaw / mcporter — install in home scope:");
-  console.log(`smithers-hub mcp install --client mcporter${opts.as ? ` --as ${opts.as}` : ""}`);
-  console.log("# Or, to override the local smithers-orchestrator MCP for sessions that already");
-  console.log("# key off the name `smithers`:");
-  console.log("smithers-hub mcp install --client mcporter --as smithers");
+  const name = remote === "default" ? "smithers-hub" : `smithers-hub-${remote}`;
+  console.log(JSON.stringify({ mcpServers: { [name]: mcpServerSpec(remote) } }, null, 2));
 }
 
 program.parseAsync(process.argv).catch((error) => {
