@@ -138,8 +138,8 @@ describe("Product Workflow capability", () => {
     // operator) can act on it.
     assert.match(src, /product-workflow node 'researchReady'/);
     assert.match(src, /schema researchOut/);
-    assert.match(src, /missing: summary, competitors, sources, openQuestions/);
-    assert.match(src, /Fail fast so supervision can classify \+ repair/);
+    assert.match(src, /missing: competitors/);
+    assert.match(src, /silently reporting zero competitors/);
   });
 
   it("assertResearchReady throws on the exact null payload that broke run-1782060314224", async () => {
@@ -188,7 +188,7 @@ describe("Product Workflow capability", () => {
     assert.deepEqual(normalized.sources, []);
     assert.deepEqual(normalized.openQuestions, []);
 
-    // 2) But: "all empty after coercion" = genuinely empty research → assert
+    // 2) But: "no structured competitors after coercion" = unusable research → assert
     //    must throw an actionable error that names the workflow, node, schema,
     //    and missing fields. No silent success path.
     assert.throws(
@@ -197,7 +197,7 @@ describe("Product Workflow capability", () => {
         assert.ok(err instanceof Error);
         assert.match(err.message, /product-workflow node 'researchReady'/);
         assert.match(err.message, /schema researchOut/);
-        assert.match(err.message, /missing: summary, competitors, sources, openQuestions/);
+        assert.match(err.message, /missing: competitors/);
         return true;
       }
     );
@@ -208,12 +208,12 @@ describe("Product Workflow capability", () => {
       assert.throws(() => assertResearchReady(normalizeResearch(stage)), /refused to emit an empty\/null payload/);
     }
 
-    // 4) Any usable content (just a summary, or just one competitor) passes —
-    //    schema-shaped, schema-validatable, and the workflow can continue.
-    const justSummary = assertResearchReady(normalizeResearch({ summary: "competitor scan complete; see notes" }));
-    assert.equal(typeof justSummary.summary, "string");
-    assert.ok(justSummary.summary.length > 0);
-    assert.deepEqual(justSummary.competitors, []);
+    // 4) A summary-only result still fails because the final report would show
+    //    "Competitors mapped (0)".
+    assert.throws(
+      () => assertResearchReady(normalizeResearch({ summary: "competitor scan complete; see notes" })),
+      /missing: competitors/
+    );
 
     const oneCompetitor = assertResearchReady(
       normalizeResearch({

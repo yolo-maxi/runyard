@@ -421,28 +421,18 @@ function normalizeResearch(stage) {
 }
 
 // researchReady output schema (researchOut) requires string + array fields.
-// The Smithers persistence layer for the upstream `research` node has been
-// observed to store all-null columns when the agent returned an empty/null
-// payload, and event-log recovery can also come back empty under supervision
-// (sibling-DB best-effort). normalizeResearch coerces those nulls into the
-// schema's expected types so validation passes when the agent produced any
-// usable content. But if the *entire* research payload is genuinely empty —
-// no summary, no competitors, no sources, no openQuestions — we must NOT
-// silently produce a clean-looking empty object that lets the wrapped workflow
-// march on to feature-mapping with nothing to map. Throw an actionable error
-// the supervising run-smithers watcher can classify and (optionally) repair.
+// normalizeResearch coerces near-miss payloads to that shape, then this guard
+// insists on real structured competitor rows. A summary-only research result is
+// not enough because the final report would still show "Competitors mapped (0)".
 function assertResearchReady(normalized) {
-  const summary = String(normalized?.summary || "").trim();
   const competitors = arrayFromMaybeJson(normalized?.competitors);
-  const sources = arrayFromMaybeJson(normalized?.sources);
-  const openQuestions = arrayFromMaybeJson(normalized?.openQuestions);
-  if (summary.length === 0 && competitors.length === 0 && sources.length === 0 && openQuestions.length === 0) {
+  if (competitors.length === 0) {
     throw new Error(
       "product-workflow node 'researchReady' (schema researchOut) refused to emit an empty/null payload: " +
-        "upstream 'research' produced no content (missing: summary, competitors, sources, openQuestions). " +
+        "upstream 'research' produced no structured competitors (missing: competitors). " +
         "The research agent likely returned non-JSON output, the node persisted with null fields, " +
         "and event-log recovery (NodeOutput/AgentEvent for nodeId='research') also found nothing usable. " +
-        "Fail fast so supervision can classify + repair rather than silently planning zero features."
+        "Fail fast so supervision can classify + repair rather than silently reporting zero competitors."
     );
   }
   return normalized;
@@ -577,9 +567,14 @@ export default smithers((ctx) => {
 
         {featureMap && (
           <Task id="featureMapReady" output={outputs.featureMapReady} retries={0}>
-            {/* Upstream stage: same rationale as researchReady — pass through the
-                hydrated stage; only prioritize gates dispatch. */}
-            {async () => await hydratedStage(featureMap, ctx.runId, "featureMap", ["features"])}
+            {async () =>
+              assertStageReady(
+                "featureMap",
+                await hydratedStage(featureMap, ctx.runId, "featureMap", ["features"]),
+                ["features"],
+                "The feature-map agent likely returned unparseable/non-JSON output instead of a features array."
+              )
+            }
           </Task>
         )}
 
@@ -620,16 +615,16 @@ export default smithers((ctx) => {
               const prioritizedItems = arrayFromMaybeJson(
                 recoveredPrioritize?.prioritizedFeatures ?? recoveredPrioritize?.prioritized_features
               );
-              // Only the final stage gates dispatch. Upstream agents (research,
-              // featureMap) may legitimately persist as empty arrays via their
-              // loose-schema defaults — and event-log recovery is best-effort
-              // (the DB may live in a sibling workspace under supervision) —
-              // even when the strategist still produces a usable prioritized
-              // list. Throwing on those would refuse a perfectly valid plan, so
-              // we keep their diagnostic hints in source for tooling without
-              // gating on them:
-              //   "The research agent likely returned unparseable/non-JSON output instead of a competitors array."
-              //   "The feature-map agent likely returned unparseable/non-JSON output instead of a features array."
+              requireNonEmptyStage(
+                "research",
+                recoveredResearch?.competitors,
+                "The research agent likely returned unparseable/non-JSON output instead of a competitors array."
+              );
+              requireNonEmptyStage(
+                "featureMap",
+                recoveredFeatureMap?.features,
+                "The feature-map agent likely returned unparseable/non-JSON output instead of a features array."
+              );
               requireNonEmptyStage(
                 "prioritize",
                 prioritizedItems,
