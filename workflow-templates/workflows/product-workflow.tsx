@@ -372,6 +372,53 @@ async function hydratedStage(stage, runId, nodeId, expectedKeys) {
   return (await recoverAgentJsonFromEvents(runId, nodeId, expectedKeys)) || stage || {};
 }
 
+// Recovered/passed-through agent JSON often has near-miss shapes that fail the
+// strict researchOut schema — e.g. `sources: [{url,title}]` instead of strings,
+// or competitors missing `name` / with non-string `features`. Coerce each field
+// to the schema's expected type so researchReady never throws "Task output
+// failed validation" on an otherwise usable upstream payload.
+function coerceString(value) {
+  if (typeof value === "string") return value;
+  if (value == null) return "";
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (typeof value === "object") {
+    if (typeof value.url === "string") return value.url;
+    if (typeof value.title === "string") return value.title;
+    if (typeof value.name === "string") return value.name;
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return "";
+    }
+  }
+  return String(value);
+}
+
+function coerceStringArray(value) {
+  return arrayFromMaybeJson(value).map(coerceString).filter((s) => s !== "");
+}
+
+function normalizeResearch(stage) {
+  const safe = stage && typeof stage === "object" ? stage : {};
+  return {
+    ...safe,
+    summary: coerceString(safe.summary),
+    competitors: arrayFromMaybeJson(safe.competitors).map((c) => {
+      const obj = c && typeof c === "object" ? c : {};
+      return {
+        ...obj,
+        name: coerceString(obj.name),
+        url: coerceString(obj.url),
+        positioning: coerceString(obj.positioning),
+        features: coerceStringArray(obj.features),
+        notes: coerceString(obj.notes)
+      };
+    }),
+    sources: coerceStringArray(safe.sources),
+    openQuestions: coerceStringArray(safe.openQuestions)
+  };
+}
+
 function requireNonEmptyStage(stage, items, hint) {
   if (arrayFromMaybeJson(items).length) return;
   throw new TypeError(
@@ -433,7 +480,7 @@ export default smithers((ctx) => {
                 may be empty (loose-schema defaults) and event-log recovery is
                 best-effort under supervision (sibling DB). Only the final
                 prioritize stage gates dispatch. */}
-            {async () => await hydratedStage(research, ctx.runId, "research", ["competitors"])}
+            {async () => normalizeResearch(await hydratedStage(research, ctx.runId, "research", ["competitors"]))}
           </Task>
         )}
 
