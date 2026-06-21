@@ -4,6 +4,7 @@
 /** @jsxImportSource smithers-orchestrator */
 import { createSmithers, Sequence, ClaudeCodeAgent } from "smithers-orchestrator";
 import { existsSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { z } from "zod/v4";
 import { resolveImproveRepo } from "./improve-repo.js";
@@ -461,8 +462,58 @@ function assertStageReady(stage, hydrated, keys, hint) {
   return hydrated;
 }
 
+// resolveImproveRepo falls back to defaultImproveRepo (cwd) when ctx.input.repo
+// is the default "smithers-hub" selector and the runner has no
+// IMPROVE_REPO_MAP / IMPROVE_REPO_DIR / GATED_REPO_DIR configured. On a stock
+// runner workspace (e.g. /home/xiko/smithers-workspace), cwd is NOT itself a
+// git repo, so resolveGitTopLevel rejects it as "improve target must be a git
+// repository" and the whole workflow aborts at build time before plan-only can
+// even render. Probe known runner-local locations for the Runyard repo so the
+// default selector keeps working on a freshly provisioned runner. Only used
+// when the caller did not pin an explicit repoDir/project/non-default repo —
+// any explicit selector still surfaces its own configuration error.
+function probeRunyardRepoFallback() {
+  const explicit = [
+    process.env.SMITHERS_HUB_ROOT,
+    process.env.IMPROVE_REPO_DIR,
+    process.env.GATED_REPO_DIR
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+  const cwd = process.cwd();
+  const candidates = [
+    ...explicit,
+    path.resolve(cwd, "..", "smithers-hub"),
+    path.resolve(os.homedir(), "smithers-hub"),
+    path.resolve(os.homedir(), "clawd", "smithers-hub")
+  ];
+  for (const candidate of candidates) {
+    if (candidate && existsSync(path.join(candidate, ".git"))) return candidate;
+  }
+  return "";
+}
+
+function resolveRunyardRepoDir(input) {
+  const options = { env: process.env, cwd: process.cwd(), gitBin: GIT, gitEnv: TOOL_ENV };
+  try {
+    return resolveImproveRepo(input, options);
+  } catch (error) {
+    const explicitRepoDir = String(input?.repoDir || "").trim();
+    const friendlyKey = String(input?.repo || input?.project || "").trim();
+    if (explicitRepoDir) throw error;
+    if (friendlyKey && friendlyKey !== "smithers-hub") throw error;
+    const fallback = probeRunyardRepoFallback();
+    if (!fallback) throw error;
+    // Backfill IMPROVE_REPO_DIR so improveAllowedRoots also accepts the
+    // fallback path; otherwise it would refuse the retry as "outside allowed
+    // roots" because the default allowed root is still the non-git cwd.
+    const envWithFallback = { ...process.env, IMPROVE_REPO_DIR: fallback };
+    return resolveImproveRepo({ repoDir: fallback }, { ...options, env: envWithFallback });
+  }
+}
+
 export default smithers((ctx) => {
-  const repoDir = resolveImproveRepo(ctx.input, { env: process.env, cwd: process.cwd(), gitBin: GIT, gitEnv: TOOL_ENV });
+  const repoDir = resolveRunyardRepoDir(ctx.input);
   const researcher = createResearcher(repoDir);
   const strategist = createStrategist(repoDir);
   const baseline = ctx.outputMaybe("baseline", { nodeId: "baseline" });
