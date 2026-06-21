@@ -965,6 +965,9 @@ function hubMenuPayload(req) {
         result: "A remote runner executes the workflow; outputs and artifacts are fetched from the Hub."
       }
     ],
+    // Keep this list aligned with the `tools` array in src/mcp.js — get_menu /
+    // /llms.txt advertise it as the authoritative MCP surface, and an agent
+    // should be able to trust it without dialing tools/list separately.
     tools: [
       "get_menu",
       "list_capabilities",
@@ -977,6 +980,14 @@ function hubMenuPayload(req) {
       "get_run_artifacts",
       "list_runners",
       "list_pending_approvals",
+      "approve_run",
+      "reject_run",
+      "request_changes_run",
+      "cancel_run",
+      "search_artifacts",
+      "list_agents",
+      "list_skills",
+      "search_knowledge",
       // Compatibility aliases — listed so a curious agent sees them in the
       // menu and trusts that calling the smithers-orchestrator names still
       // lands on the Hub catalog.
