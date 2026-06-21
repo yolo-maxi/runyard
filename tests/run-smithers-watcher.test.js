@@ -18,6 +18,7 @@ const {
   RUN_SMITHERS_DEFAULT_MAX_ATTEMPTS,
   RUN_SMITHERS_DEFAULT_MAX_CODE_REPAIRS,
   RUN_SMITHERS_FINGERPRINT_LIMIT,
+  assertSupervisionSucceeded,
   classifyChildState,
   classifyWorkflowCodeFailure,
   createWatcherState,
@@ -293,6 +294,83 @@ describe("run-smithers workflow-code self-correction", () => {
     const decision = decideNextAction(state, classifyChildState({ status: "failed" }));
     assert.equal(decision.action, "retry");
     assert.equal(state.codeRepairs, 0);
+  });
+
+  it("assertSupervisionSucceeded throws when the watcher could not finish the goal", () => {
+    // Mirrors the live failure: child failed at researchReady, one-shot repair
+    // ran, child failed again, watcher escalated to approval. The supervise
+    // node returns this object — the gate must throw so the wrapper run fails
+    // visibly instead of looking 'finished' at the workflow layer.
+    const result = {
+      outcome: "needs_recovery",
+      wrappedRunId: "run_child_xyz",
+      capability: "product-workflow",
+      lineage: [
+        { runId: "run_child_a", status: "failed", failedStep: "researchReady" },
+        { runId: "run_child_b", status: "failed", failedStep: "researchReady" }
+      ],
+      repairs: [{ file: "product-workflow.tsx", ok: true, synced: true, testPassed: true }],
+      codeRepairs: 1,
+      approval: { reason: "operator review required" },
+      summary: "attempts=2 maxAttempts=8 threshold=3 codeRepairs=1/1 outcome=needs_recovery"
+    };
+    assert.throws(
+      () => assertSupervisionSucceeded(result),
+      (err) => {
+        assert.ok(err instanceof Error);
+        assert.match(err.message, /run-smithers supervision/);
+        assert.match(err.message, /product-workflow/);
+        assert.match(err.message, /needs_recovery/);
+        assert.match(err.message, /attempts=2/);
+        assert.match(err.message, /codeRepairs=1/);
+        assert.match(err.message, /approvalRequested=true/);
+        return true;
+      }
+    );
+  });
+
+  it("assertSupervisionSucceeded covers abandoned + unknown outcomes (never silently passes)", () => {
+    for (const outcome of ["abandoned", "running", "", "unknown_string"]) {
+      assert.throws(
+        () => assertSupervisionSucceeded({ outcome, capability: "improve", lineage: [], repairs: [], summary: "" }),
+        new RegExp("did not reach a 'succeeded' outcome")
+      );
+    }
+    assert.throws(() => assertSupervisionSucceeded(null), /did not reach a 'succeeded' outcome/);
+    assert.throws(() => assertSupervisionSucceeded(undefined), /did not reach a 'succeeded' outcome/);
+  });
+
+  it("assertSupervisionSucceeded does NOT throw when the wrapped child truly succeeded", () => {
+    const ok = assertSupervisionSucceeded({
+      outcome: "succeeded",
+      wrappedRunId: "run_child_ok",
+      capability: "improve",
+      lineage: [{ runId: "run_child_ok", status: "succeeded" }],
+      repairs: [],
+      codeRepairs: 0,
+      approval: null,
+      summary: "attempts=1 outcome=succeeded"
+    });
+    assert.equal(ok.outcome, "succeeded");
+  });
+
+  it("ships the assertSupervisionSucceeded helper in both the src + workflow-templates copies of the watcher", () => {
+    const src = readFileSync(path.join(process.cwd(), "src", "runSmithersWatcher.js"), "utf8");
+    const tpl = readFileSync(
+      path.join(process.cwd(), "workflow-templates", "workflows", "run-smithers-watcher.js"),
+      "utf8"
+    );
+    assert.match(src, /export function assertSupervisionSucceeded/);
+    assert.match(tpl, /export function assertSupervisionSucceeded/);
+  });
+
+  it("run-smithers.tsx wires a superviseGate task that calls assertSupervisionSucceeded", () => {
+    const src = readFileSync(path.join(process.cwd(), "workflow-templates", "workflows", "run-smithers.tsx"), "utf8");
+    assert.match(src, /id="superviseGate"/);
+    assert.match(src, /assertSupervisionSucceeded\(supervise\)/);
+    // The gate runs only after supervise is persisted, so operators can still
+    // inspect the full lineage via `smithers output <run> supervise`.
+    assert.match(src, /ctx\.outputMaybe\("supervise"/);
   });
 
   it("succeeds normally after a repair fixes the workflow code", () => {

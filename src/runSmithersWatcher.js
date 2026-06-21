@@ -404,6 +404,44 @@ export function decideNextAction(state, childClassification = null) {
   };
 }
 
+// Hard gate the supervising wrapper run on a real `succeeded` outcome.
+//
+// The watcher loop always returns a result object — even when the wrapped child
+// repeatedly failed and we escalated to operator approval (`needs_recovery`) or
+// burned the attempt budget (`abandoned`). If the workflow simply returned that
+// object, the wrapper's local Smithers run would report as `finished` (✓) and
+// only the Hub-side runner's outcome-string fallback would convert it to a
+// failure. That makes the local wrapper look successful and lets `smithers
+// inspect` / the workflow log mask a real supervision failure.
+//
+// Calling this helper from a second task in `run-smithers.tsx` (after the
+// supervise output is persisted) makes the wrapper fail visibly at the workflow
+// layer with an actionable message that names the supervised capability, the
+// failing outcome, the attempt/repair tally, and the approval state. The
+// preceding supervise task still persists the full lineage so operators can
+// inspect what happened.
+export function assertSupervisionSucceeded(result) {
+  const safe = result && typeof result === "object" ? result : {};
+  const outcome = String(safe.outcome || "");
+  if (outcome === "succeeded") return safe;
+  const capability = String(safe.capability || safe.wrappedCapability || "");
+  const lineageCount = Array.isArray(safe.lineage) ? safe.lineage.length : 0;
+  const repairCount = Array.isArray(safe.repairs) ? safe.repairs.length : 0;
+  const codeRepairs = Number.isFinite(safe.codeRepairs) ? safe.codeRepairs : 0;
+  const approvalRequested = Boolean(safe.approval) || Boolean(safe.approvalRequested);
+  const summary = String(safe.summary || "").slice(0, 600);
+  const labelled = capability ? ` of '${capability}'` : "";
+  const parts = [
+    `run-smithers supervision${labelled} did not reach a 'succeeded' outcome (got '${outcome || "unknown"}').`,
+    `attempts=${lineageCount} repairs=${repairCount} codeRepairs=${codeRepairs} approvalRequested=${approvalRequested}.`
+  ];
+  if (summary) parts.push(`summary: ${summary}`);
+  parts.push(
+    "Wrapped child runs failed and autonomous recovery (retries + one-shot workflow-code repair) did not finish the goal."
+  );
+  throw new Error(parts.join(" "));
+}
+
 export function watcherSummary(state) {
   if (!state || typeof state !== "object") return null;
   const fingerprintLeaders = Object.entries(state.fingerprintCounts || {})

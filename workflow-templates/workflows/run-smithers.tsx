@@ -8,6 +8,7 @@ import {
   RUN_SMITHERS_DEFAULT_MAX_ATTEMPTS,
   RUN_SMITHERS_DEFAULT_MAX_CODE_REPAIRS,
   RUN_SMITHERS_FINGERPRINT_LIMIT,
+  assertSupervisionSucceeded,
   classifyChildState,
   createWatcherState,
   decideNextAction,
@@ -46,12 +47,24 @@ const superviseOut = z.looseObject({
   repairs: z.array(z.unknown()).default([]),
   codeRepairs: z.number().default(0),
   approval: z.unknown().nullable().default(null),
-  summary: z.string().default("")
+  summary: z.string().default(""),
+  capability: z.string().default("")
+});
+
+// superviseGate runs after supervise so the wrapper's local Smithers run fails
+// visibly when the watcher could not finish the goal. Without this gate the
+// wrapper looked `finished` (✓) even after a child failed + repair failed +
+// approval was requested — only the Hub runner's outcome-string fallback would
+// fail it. Operators need the local workflow to show the failure too.
+const superviseGateOut = z.looseObject({
+  ok: z.boolean().default(false),
+  outcome: z.string().default("")
 });
 
 const { Workflow, Task, smithers, outputs } = createSmithers({
   input: inputSchema,
-  supervise: superviseOut
+  supervise: superviseOut,
+  superviseGate: superviseGateOut
 });
 
 async function hubJson(pathname: string, options: { method?: string; body?: unknown } = {}) {
@@ -254,7 +267,9 @@ async function requestApprovalCheckpoint(state: ReturnType<typeof createWatcherS
   });
 }
 
-export default smithers((ctx) => (
+export default smithers((ctx) => {
+  const supervise = ctx.outputMaybe("supervise", { nodeId: "supervise" });
+  return (
   <Workflow name="run-smithers">
     <Sequence>
       <Task id="supervise" output={outputs.supervise} retries={0} timeoutMs={POLL_DEADLINE_MS + 60_000}>
@@ -348,10 +363,29 @@ export default smithers((ctx) => (
                   fingerprint
                 }
               : null,
-            summary: `attempts=${state.attempts.length} maxAttempts=${state.maxAttempts} threshold=${state.fingerprintThreshold} codeRepairs=${summaryState.codeRepairs}/${state.maxCodeRepairs} outcome=${state.outcome || (state.approvalRequested ? "needs_recovery" : "abandoned")}`
+            summary: `attempts=${state.attempts.length} maxAttempts=${state.maxAttempts} threshold=${state.fingerprintThreshold} codeRepairs=${summaryState.codeRepairs}/${state.maxCodeRepairs} outcome=${state.outcome || (state.approvalRequested ? "needs_recovery" : "abandoned")}`,
+            capability: state.capabilitySlug
           };
         }}
       </Task>
+
+      {/* Hard gate on the supervising outcome. Runs only after `supervise`
+          persisted its full output (lineage, repairs, approval) so operators
+          can still inspect everything via `smithers output <run> supervise`.
+          When the watcher could not reach a real `succeeded` outcome the
+          gate throws — the wrapper's local Smithers run fails visibly with
+          an actionable message instead of being marked `finished` (✓). The
+          Hub runner's outcome-string fallback (runSmithersSupervisionFailure)
+          stays as defense-in-depth. */}
+      {supervise && (
+        <Task id="superviseGate" output={outputs.superviseGate} retries={0}>
+          {async () => {
+            assertSupervisionSucceeded(supervise);
+            return { ok: true, outcome: String(supervise.outcome || "succeeded") };
+          }}
+        </Task>
+      )}
     </Sequence>
   </Workflow>
-));
+  );
+});

@@ -123,6 +123,116 @@ describe("Product Workflow capability", () => {
     assert.match(src, /hydratedStage\(featureMap/);
   });
 
+  it("researchReady never emits invalid null fields and fails actionably when research is genuinely empty", () => {
+    // Source-level contract: the researchReady task chains assertResearchReady
+    // around normalizeResearch + hydratedStage so the schema never sees nulls,
+    // and the workflow fails fast with an actionable error when the upstream
+    // research payload is genuinely empty.
+    const tpl = path.join(process.cwd(), "workflow-templates", "workflows", "product-workflow.tsx");
+    const src = readFileSync(tpl, "utf8");
+    assert.match(src, /function normalizeResearch/);
+    assert.match(src, /function assertResearchReady/);
+    assert.match(src, /assertResearchReady\(normalizeResearch\(await hydratedStage\(research/);
+    // The actionable error must name the workflow, the failing node, the
+    // schema, and the missing fields so the supervising watcher (and the
+    // operator) can act on it.
+    assert.match(src, /product-workflow node 'researchReady'/);
+    assert.match(src, /schema researchOut/);
+    assert.match(src, /missing: summary, competitors, sources, openQuestions/);
+    assert.match(src, /Fail fast so supervision can classify \+ repair/);
+  });
+
+  it("assertResearchReady throws on the exact null payload that broke run-1782060314224", async () => {
+    // Drive the helper directly by extracting it from source. The workflow is a
+    // .tsx (JSX-in-JS) so we can't import it; eval is acceptable here because
+    // we only execute our own checked-in source. This locks the runtime
+    // behavior — not just the source string — to the regression we just fixed.
+    const tpl = path.join(process.cwd(), "workflow-templates", "workflows", "product-workflow.tsx");
+    const src = readFileSync(tpl, "utf8");
+    const slice = (name) => {
+      const start = src.indexOf(`function ${name}(`);
+      if (start === -1) throw new Error(`could not locate helper ${name}`);
+      // Walk braces from the first `{` after the signature to find the close.
+      let depth = 0;
+      let i = src.indexOf("{", start);
+      const begin = i;
+      for (; i < src.length; i++) {
+        if (src[i] === "{") depth++;
+        else if (src[i] === "}") {
+          depth--;
+          if (depth === 0) return src.slice(start, i + 1);
+        }
+      }
+      throw new Error(`unterminated helper ${name}`);
+    };
+    const helperSource =
+      slice("arrayFromMaybeJson") +
+      "\n" +
+      slice("coerceString") +
+      "\n" +
+      slice("coerceStringArray") +
+      "\n" +
+      slice("normalizeResearch") +
+      "\n" +
+      slice("assertResearchReady") +
+      "\nreturn { normalizeResearch, assertResearchReady };";
+    const { normalizeResearch, assertResearchReady } = new Function(helperSource)();
+
+    // 1) The exact persisted shape from the live regression — all four fields
+    //    null. normalize must coerce nulls into the schema's expected types so
+    //    the validator never sees a null again.
+    const persistedNullStage = { summary: null, competitors: null, sources: null, openQuestions: null };
+    const normalized = normalizeResearch(persistedNullStage);
+    assert.equal(normalized.summary, "");
+    assert.deepEqual(normalized.competitors, []);
+    assert.deepEqual(normalized.sources, []);
+    assert.deepEqual(normalized.openQuestions, []);
+
+    // 2) But: "all empty after coercion" = genuinely empty research → assert
+    //    must throw an actionable error that names the workflow, node, schema,
+    //    and missing fields. No silent success path.
+    assert.throws(
+      () => assertResearchReady(normalized),
+      (err) => {
+        assert.ok(err instanceof Error);
+        assert.match(err.message, /product-workflow node 'researchReady'/);
+        assert.match(err.message, /schema researchOut/);
+        assert.match(err.message, /missing: summary, competitors, sources, openQuestions/);
+        return true;
+      }
+    );
+
+    // 3) Same payload variants — empty arrays / undefined fields / nullish
+    //    stage — must all throw, never validate as a successful empty plan.
+    for (const stage of [{}, undefined, null, { summary: "   ", competitors: [], sources: [], openQuestions: [] }]) {
+      assert.throws(() => assertResearchReady(normalizeResearch(stage)), /refused to emit an empty\/null payload/);
+    }
+
+    // 4) Any usable content (just a summary, or just one competitor) passes —
+    //    schema-shaped, schema-validatable, and the workflow can continue.
+    const justSummary = assertResearchReady(normalizeResearch({ summary: "competitor scan complete; see notes" }));
+    assert.equal(typeof justSummary.summary, "string");
+    assert.ok(justSummary.summary.length > 0);
+    assert.deepEqual(justSummary.competitors, []);
+
+    const oneCompetitor = assertResearchReady(
+      normalizeResearch({
+        summary: null,
+        competitors: [{ name: "Alpha", url: { url: "https://alpha.example" }, features: [{ title: "F1" }, "F2"] }],
+        sources: [{ url: "https://src.example" }, "https://raw.example"],
+        openQuestions: null
+      })
+    );
+    assert.equal(oneCompetitor.summary, "");
+    assert.equal(oneCompetitor.competitors.length, 1);
+    assert.equal(oneCompetitor.competitors[0].name, "Alpha");
+    // Object-with-url collapses to the url string per coerceString.
+    assert.equal(oneCompetitor.competitors[0].url, "https://alpha.example");
+    assert.deepEqual(oneCompetitor.competitors[0].features, ["F1", "F2"]);
+    assert.deepEqual(oneCompetitor.sources, ["https://src.example", "https://raw.example"]);
+    assert.deepEqual(oneCompetitor.openQuestions, []);
+  });
+
   it("is supervised by the run-smithers envelope by default", async () => {
     const created = await api("/api/capabilities/product-workflow/run", {
       method: "POST",

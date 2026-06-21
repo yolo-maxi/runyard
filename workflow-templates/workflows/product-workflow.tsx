@@ -419,6 +419,34 @@ function normalizeResearch(stage) {
   };
 }
 
+// researchReady output schema (researchOut) requires string + array fields.
+// The Smithers persistence layer for the upstream `research` node has been
+// observed to store all-null columns when the agent returned an empty/null
+// payload, and event-log recovery can also come back empty under supervision
+// (sibling-DB best-effort). normalizeResearch coerces those nulls into the
+// schema's expected types so validation passes when the agent produced any
+// usable content. But if the *entire* research payload is genuinely empty —
+// no summary, no competitors, no sources, no openQuestions — we must NOT
+// silently produce a clean-looking empty object that lets the wrapped workflow
+// march on to feature-mapping with nothing to map. Throw an actionable error
+// the supervising run-smithers watcher can classify and (optionally) repair.
+function assertResearchReady(normalized) {
+  const summary = String(normalized?.summary || "").trim();
+  const competitors = arrayFromMaybeJson(normalized?.competitors);
+  const sources = arrayFromMaybeJson(normalized?.sources);
+  const openQuestions = arrayFromMaybeJson(normalized?.openQuestions);
+  if (summary.length === 0 && competitors.length === 0 && sources.length === 0 && openQuestions.length === 0) {
+    throw new Error(
+      "product-workflow node 'researchReady' (schema researchOut) refused to emit an empty/null payload: " +
+        "upstream 'research' produced no content (missing: summary, competitors, sources, openQuestions). " +
+        "The research agent likely returned non-JSON output, the node persisted with null fields, " +
+        "and event-log recovery (NodeOutput/AgentEvent for nodeId='research') also found nothing usable. " +
+        "Fail fast so supervision can classify + repair rather than silently planning zero features."
+    );
+  }
+  return normalized;
+}
+
 function requireNonEmptyStage(stage, items, hint) {
   if (arrayFromMaybeJson(items).length) return;
   throw new TypeError(
@@ -480,7 +508,7 @@ export default smithers((ctx) => {
                 may be empty (loose-schema defaults) and event-log recovery is
                 best-effort under supervision (sibling DB). Only the final
                 prioritize stage gates dispatch. */}
-            {async () => normalizeResearch(await hydratedStage(research, ctx.runId, "research", ["competitors"]))}
+            {async () => assertResearchReady(normalizeResearch(await hydratedStage(research, ctx.runId, "research", ["competitors"])))}
           </Task>
         )}
 
