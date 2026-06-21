@@ -125,9 +125,17 @@ async function resolveRepairTarget(state: ReturnType<typeof createWatcherState>)
   if (!file) return null;
   let repoRoot = "";
   try {
-    repoRoot = resolveImproveRepo({}, { env: process.env, cwd: process.cwd() });
-  } catch {
-    return null;
+    const explicitRepairRepo =
+      process.env.RUN_SMITHERS_REPAIR_REPO_DIR ||
+      process.env.SMITHERS_HUB_ROOT ||
+      process.env.IMPROVE_REPO_DIR ||
+      process.env.GATED_REPO_DIR ||
+      "";
+    repoRoot = explicitRepairRepo
+      ? resolveImproveRepo({ repoDir: explicitRepairRepo }, { env: process.env, cwd: process.cwd() })
+      : resolveImproveRepo({}, { env: process.env, cwd: process.cwd() });
+  } catch (error) {
+    return { entry, file, repoRoot: "", workspaceDir: "", error: String(error?.message || error) };
   }
   const workspaceDir = process.env.SMITHERS_WORKSPACE || process.cwd();
   return { entry, file, repoRoot, workspaceDir };
@@ -145,8 +153,15 @@ async function attemptWorkflowRepair(
   supervisionToken: string
 ) {
   const target = await resolveRepairTarget(state);
-  if (!target) {
-    return { ok: false, file: "", synced: false, testPassed: null, notes: `could not resolve a repair target for ${state.capabilitySlug}` };
+  if (!target || !target.repoRoot || !target.workspaceDir) {
+    const reason = target?.error ? `: ${target.error}` : "";
+    return {
+      ok: false,
+      file: target?.file || "",
+      synced: false,
+      testPassed: null,
+      notes: `could not resolve a repair target for ${state.capabilitySlug}${reason}`
+    };
   }
   const { entry, file, repoRoot, workspaceDir } = target;
   const failedStep = decision.failedStep ? ` at node '${decision.failedStep}'` : "";

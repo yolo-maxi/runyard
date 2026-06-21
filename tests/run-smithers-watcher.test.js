@@ -99,6 +99,14 @@ describe("run-smithers capability", () => {
     assert.match(src, /implement-change-gated\/run/);
   });
 
+  it("resolves self-repair against an explicit Hub repo root before workflow cwd", () => {
+    const tpl = path.join(process.cwd(), "workflow-templates", "workflows", "run-smithers.tsx");
+    const src = readFileSync(tpl, "utf8");
+    assert.match(src, /RUN_SMITHERS_REPAIR_REPO_DIR/);
+    assert.match(src, /SMITHERS_HUB_ROOT/);
+    assert.match(src, /resolveImproveRepo\(\{\s*repoDir:\s*explicitRepairRepo\s*\}/);
+  });
+
   it("queues immediately and does not block existing capabilities", async () => {
     const created = await api("/api/capabilities/run-smithers/run", {
       method: "POST",
