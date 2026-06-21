@@ -917,8 +917,31 @@ function hubMenuPayload(req) {
       artifacts: `${publicUrl(req)}/api/runs/{runId}/artifacts`,
       note: "Runs, outputs, logs, and artifacts are recorded in the Hub even when execution happens on a local runner. For improve, repoDir selects the allowlisted runner-local git repo to edit; the Hub remains the source of truth for logs and artifacts."
     },
+    publicContract: {
+      unit: "capability",
+      summary: "Capabilities are the public contract. When asked to 'do X', an agent should first call list_capabilities / search_capabilities here before writing new code by hand or reaching for the local smithers-orchestrator MCP.",
+      preferOverLocalWorkflowMcp: true,
+      compatibilityAliases: {
+        list_workflows: "list_capabilities",
+        run_workflow: "run_capability",
+        list_runs: "list_runs",
+        watch_run: "get_run_status"
+      },
+      note: "The local `smithers` MCP (bun add -g smithers-orchestrator) only sees workflows under the local `.smithers/workspace` and returns an empty list when no workspace is scaffolded. The Hub MCP exposes the company capability catalog, which is the actual contract Ocean/OpenClaw should consult first."
+    },
+    install: {
+      printConfig: "smithers-hub mcp-config",
+      claudeCode: "smithers-hub mcp install --client claude-code",
+      claudeCodeGlobal: "smithers-hub mcp install --client claude-code --global",
+      codex: "smithers-hub mcp install --client codex",
+      cursor: "smithers-hub mcp install --client cursor",
+      mcporter: "smithers-hub mcp install --client mcporter   # OpenClaw/mcporter home-scope config",
+      replaceLocalSmithers: "smithers-hub mcp install --client mcporter --as smithers   # makes the Hub the server registered under the name `smithers`, replacing the local smithers-orchestrator MCP for sessions that already key off that name",
+      autoDetect: "smithers-hub mcp install --all"
+    },
     discovery: [
-      { surface: "MCP", action: "Call get_menu, then list_capabilities or describe_capability." },
+      { surface: "do-X", action: "For any 'do X' user request, call search_capabilities with the verb/noun from the ask before writing code by hand. If a capability matches, run it with run_capability. Only fall back to bespoke work when search_capabilities returns nothing relevant." },
+      { surface: "MCP", action: "Call get_menu, then list_capabilities or search_capabilities; describe_capability for input schemas. Use run_capability — list_workflows/run_workflow are compatibility aliases that route here." },
       { surface: "CLI", action: "Run smithers-hub menu, then smithers-hub capabilities or smithers-hub capability <slug>." },
       { surface: "Web", action: "Open /app and use Workflows, Runs, Approvals, and Connect." }
     ],
@@ -945,13 +968,21 @@ function hubMenuPayload(req) {
     tools: [
       "get_menu",
       "list_capabilities",
+      "search_capabilities",
       "describe_capability",
       "run_capability",
+      "list_runs",
       "get_run_status",
       "get_run_logs",
       "get_run_artifacts",
       "list_runners",
-      "list_pending_approvals"
+      "list_pending_approvals",
+      // Compatibility aliases — listed so a curious agent sees them in the
+      // menu and trusts that calling the smithers-orchestrator names still
+      // lands on the Hub catalog.
+      "list_workflows",
+      "run_workflow",
+      "watch_run"
     ],
     capabilities,
     pool: runnerPoolStats()

@@ -39,6 +39,19 @@ pnpm install
 
 Then read **[/docs/quickstart](public/docs.html)** (or visit `/docs/quickstart` on any running Hub) for install, run, topology, CLI, MCP, runner pool, security, env vars, and verification. The landing page (`/`) walks you through your first capability run before you pick a topology or install channel.
 
+## Agents — start here
+
+**Capabilities are the public contract.** When asked to "do X", an agent's first move should be to call the Hub MCP (`list_capabilities` / `search_capabilities`) — not to write the work by hand and not to fall back to the local `smithers` (smithers-orchestrator) MCP, which only sees workflows in the current `.smithers/workspace` and returns `[]` when none are scaffolded. To make the integration unambiguous:
+
+```bash
+smithers-hub mcp-config                           # print the JSON snippet (with footer guidance)
+smithers-hub mcp install --client mcporter        # OpenClaw / mcporter (~/.mcporter/mcporter.json)
+smithers-hub mcp install --client mcporter --as smithers   # override the local smithers-orchestrator MCP
+smithers-hub mcp install --all                    # auto-detect every AI client on this machine
+```
+
+The Hub MCP also exposes `list_workflows` / `run_workflow` / `watch_run` as compatibility aliases that route to `list_capabilities` / `run_capability` / `get_run_status`, so a session that still calls the smithers-orchestrator tool names lands on the Hub catalog instead of an empty result.
+
 ## Improve target repos
 
 The `improve` workflow edits the runner's default repo by default: `IMPROVE_REPO_DIR || GATED_REPO_DIR || process.cwd()`. To improve another repo, pass `repoDir` as an absolute runner-local git repo path and allow it with `IMPROVE_ALLOWED_REPO_ROOTS`, or pass a friendly `repo`/`project` key from `IMPROVE_REPO_MAP` / `IMPROVE_PROJECT_MAP`.
