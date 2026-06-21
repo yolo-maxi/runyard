@@ -115,6 +115,10 @@ describe("Product Workflow capability", () => {
     assert.match(src, /research agent likely returned unparseable\/non-JSON output/);
     assert.match(src, /feature-map agent likely returned unparseable\/non-JSON output/);
     assert.match(src, /prioritization agent likely returned unparseable\/non-JSON output/);
+    assert.match(src, /recoverAgentJsonFromEvents/);
+    assert.match(src, /_smithers_events/);
+    assert.match(src, /hydratedStage\(research/);
+    assert.match(src, /hydratedStage\(featureMap/);
   });
 
   it("is supervised by the run-smithers envelope by default", async () => {

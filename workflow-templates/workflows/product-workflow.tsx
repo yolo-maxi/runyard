@@ -4,6 +4,7 @@
 /** @jsxImportSource smithers-orchestrator */
 import { createSmithers, Sequence, ClaudeCodeAgent } from "smithers-orchestrator";
 import { existsSync } from "node:fs";
+import path from "node:path";
 import { z } from "zod/v4";
 import { resolveImproveRepo } from "./improve-repo.js";
 
@@ -291,6 +292,72 @@ function arrayFromMaybeJson(value) {
   return [];
 }
 
+function objectFromMaybeJson(value) {
+  if (!value) return null;
+  if (typeof value === "object" && !Array.isArray(value)) return value;
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  if (!text) return null;
+  const candidates = [text];
+  const first = text.indexOf("{");
+  const last = text.lastIndexOf("}");
+  if (first >= 0 && last > first) candidates.push(text.slice(first, last + 1));
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+    } catch {
+      // Try the next bounded candidate.
+    }
+  }
+  return null;
+}
+
+function hasStructuredArray(stage, keys) {
+  if (!stage || typeof stage !== "object") return false;
+  return keys.some((key) => arrayFromMaybeJson(stage[key]).length > 0);
+}
+
+function smithersDbPath() {
+  if (process.env.SMITHERS_DB) return process.env.SMITHERS_DB;
+  if (process.env.SMITHERS_WORKSPACE) return path.join(process.env.SMITHERS_WORKSPACE, "smithers.db");
+  return path.join(process.cwd(), "smithers.db");
+}
+
+async function recoverAgentJsonFromEvents(runId, nodeId, expectedKeys) {
+  const dbPath = smithersDbPath();
+  if (!runId || !nodeId || !existsSync(dbPath)) return null;
+  try {
+    const { DatabaseSync } = await import("node:sqlite");
+    const db = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      const rows = db
+        .prepare(
+          `SELECT payload_json FROM _smithers_events
+           WHERE run_id = ? AND type = 'AgentEvent'
+           ORDER BY seq DESC LIMIT 250`
+        )
+        .all(runId);
+      for (const row of rows) {
+        const payload = objectFromMaybeJson(row?.payload_json);
+        if (payload?.nodeId !== nodeId) continue;
+        const recovered = objectFromMaybeJson(payload?.event?.message);
+        if (hasStructuredArray(recovered, expectedKeys)) return recovered;
+      }
+    } finally {
+      db.close();
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+async function hydratedStage(stage, runId, nodeId, expectedKeys) {
+  if (hasStructuredArray(stage, expectedKeys)) return stage;
+  return (await recoverAgentJsonFromEvents(runId, nodeId, expectedKeys)) || stage || {};
+}
+
 function requireNonEmptyStage(stage, items, hint) {
   if (arrayFromMaybeJson(items).length) return;
   throw new TypeError(
@@ -366,17 +433,24 @@ export default smithers((ctx) => {
         {prioritize && (
           <Task id="dispatch" output={outputs.dispatch} retries={0} timeoutMs={POLL_DEADLINE_MS + 60_000}>
             {async () => {
-              // Only the final stage gates dispatch. Upstream agents (research,
-              // featureMap) may legitimately return empty arrays via their loose-
-              // schema defaults even when the strategist still produces a usable
-              // prioritized list — failing on those would refuse a perfectly
-              // valid plan. We keep the upstream diagnostic hints in source so
-              // the same requireNonEmptyStage contract can surface them if we
-              // ever need to re-enable the per-stage guards:
-              //   "The research agent likely returned unparseable/non-JSON output instead of a competitors array."
-              //   "The feature-map agent likely returned unparseable/non-JSON output instead of a features array."
+              const recoveredResearch = await hydratedStage(research, ctx.runId, "research", ["competitors"]);
+              const recoveredFeatureMap = await hydratedStage(featureMap, ctx.runId, "featureMap", ["features"]);
+              const recoveredPrioritize = await hydratedStage(prioritize, ctx.runId, "prioritize", [
+                "prioritizedFeatures",
+                "prioritized_features"
+              ]);
               const prioritizedItems = arrayFromMaybeJson(
-                prioritize?.prioritizedFeatures ?? prioritize?.prioritized_features
+                recoveredPrioritize?.prioritizedFeatures ?? recoveredPrioritize?.prioritized_features
+              );
+              requireNonEmptyStage(
+                "research",
+                recoveredResearch?.competitors,
+                "The research agent likely returned unparseable/non-JSON output instead of a competitors array."
+              );
+              requireNonEmptyStage(
+                "featureMap",
+                recoveredFeatureMap?.features,
+                "The feature-map agent likely returned unparseable/non-JSON output instead of a features array."
               );
               requireNonEmptyStage(
                 "prioritize",
@@ -412,7 +486,7 @@ export default smithers((ctx) => {
                   pushedToMain: false,
                   dispatched,
                   artifactName: "product-workflow-report.md",
-                  report: renderReport(ctx, research, featureMap, features, dispatched, false),
+                  report: renderReport(ctx, recoveredResearch, recoveredFeatureMap, features, dispatched, false),
                   notes: `Plan only. Set execute=true to queue ${features.length} gated implement-change-gated run(s) sequentially.`
                 };
               }
@@ -470,7 +544,7 @@ export default smithers((ctx) => {
                 pushedToMain: anyPushed && targetBranch === "main",
                 dispatched,
                 artifactName: "product-workflow-report.md",
-                report: renderReport(ctx, research, featureMap, features, dispatched, true),
+                report: renderReport(ctx, recoveredResearch, recoveredFeatureMap, features, dispatched, true),
                 notes: `Queued ${dispatched.length} implementation run(s) sequentially; ${
                   dispatched.filter((d) => d.status === "succeeded").length
                 } succeeded.`
