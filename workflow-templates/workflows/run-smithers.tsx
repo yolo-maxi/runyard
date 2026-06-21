@@ -141,7 +141,8 @@ async function resolveRepairTarget(state: ReturnType<typeof createWatcherState>)
 // records via recordRepairAttempt. Never throws.
 async function attemptWorkflowRepair(
   state: ReturnType<typeof createWatcherState>,
-  decision: ReturnType<typeof decideNextAction>
+  decision: ReturnType<typeof decideNextAction>,
+  supervisionToken: string
 ) {
   const target = await resolveRepairTarget(state);
   if (!target) {
@@ -165,6 +166,12 @@ async function attemptWorkflowRepair(
         input: {
           workPrompt,
           deploy: false,
+          // This is still part of the original supervising run-smithers loop.
+          // Without the bypass marker, implement-change-gated is itself wrapped
+          // by run-smithers (because all Smithers workflows default to
+          // supervision), which creates nested repair supervisors and leaves the
+          // parent waiting on the wrapper instead of the actual repair.
+          __supervisedChild: { token: supervisionToken },
           // Repair commits land on a dedicated branch so we never force a fix
           // straight onto main as part of autonomous self-correction.
           targetBranch: process.env.RUN_SMITHERS_REPAIR_BRANCH || "smithers-self-repair",
@@ -283,7 +290,7 @@ export default smithers((ctx) => (
               // One bounded workflow-code repair, then loop to rerun the child
               // against the fix. recordRepairAttempt enforces the per-fingerprint
               // cap, so a failed/again-failing repair escalates next iteration.
-              const repair = await attemptWorkflowRepair(state, decision);
+              const repair = await attemptWorkflowRepair(state, decision, ctx.input.__supervisionToken || "");
               recordRepairAttempt(state, {
                 fingerprint: decision.fingerprint,
                 file: repair.file,

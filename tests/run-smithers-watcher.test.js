@@ -1,6 +1,6 @@
 import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -89,6 +89,14 @@ describe("run-smithers capability", () => {
     const helper = path.join(process.cwd(), "workflow-templates", "workflows", "run-smithers-watcher.js");
     assert.ok(existsSync(tpl));
     assert.ok(existsSync(helper));
+  });
+
+  it("passes the verified supervision bypass token to self-repair children", () => {
+    const tpl = path.join(process.cwd(), "workflow-templates", "workflows", "run-smithers.tsx");
+    const src = readFileSync(tpl, "utf8");
+    assert.match(src, /attemptWorkflowRepair\([^)]*supervisionToken/);
+    assert.match(src, /__supervisedChild:\s*\{\s*token:\s*supervisionToken\s*\}/);
+    assert.match(src, /implement-change-gated\/run/);
   });
 
   it("queues immediately and does not block existing capabilities", async () => {
