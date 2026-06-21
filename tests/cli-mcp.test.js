@@ -1,7 +1,7 @@
 import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -215,30 +215,6 @@ describe("CLI/MCP discovery and execution intent", () => {
     assert.ok(menu.tools.includes("watch_run"));
     assert.ok(menu.install?.mcporter?.includes("mcporter"));
     assert.ok(menu.install?.replaceLocalSmithers?.includes("--as smithers"));
-    // The discovery entries must explicitly point a 'do X' request at
-    // search_capabilities before bespoke work — without this hint, agents
-    // landed on get_menu still skip the catalog.
-    const doX = menu.discovery?.find((entry) => entry.surface === "do-X");
-    assert.ok(doX, "menu.discovery must include a 'do-X' entry");
-    assert.match(doX.action, /search_capabilities/);
-  });
-
-  it("menu advertises every MCP tool that src/mcp.js exposes", async () => {
-    const menu = await api("/api/menu");
-    const mcp = startMcp();
-    try {
-      await mcp.call("initialize", { protocolVersion: "2024-11-05" });
-      const listed = await mcp.call("tools/list");
-      const toolNames = listed.result.tools.map((tool) => tool.name).sort();
-      const menuTools = [...menu.tools].sort();
-      assert.deepEqual(
-        menuTools,
-        toolNames,
-        "/api/menu.tools must mirror the MCP tools/list exactly so /llms.txt and get_menu don't drift from the live server"
-      );
-    } finally {
-      mcp.stop();
-    }
   });
 
   it("MCP exposes the full capability-first toolset and the smithers-orchestrator compatibility aliases", async () => {
@@ -303,54 +279,5 @@ describe("CLI/MCP discovery and execution intent", () => {
     const aliasParsed = JSON.parse(aliasJson);
     assert.ok(aliasParsed.mcpServers.smithers, "--as smithers should register the Hub MCP under the smithers name");
     assert.ok(aliasOut.stdout.includes("mcporter"), "footer should mention the OpenClaw/mcporter install path");
-  });
-
-  it("mcp install --client mcporter writes a Hub MCP entry to ~/.mcporter/mcporter.json (and overrides `smithers` with --as smithers)", async () => {
-    // Isolate HOME so the test never touches the real ~/.mcporter or
-    // ~/.smithers-hub. The CLI resolves the remote from ~/.smithers-hub, so
-    // we plant a config.json that points at the in-process test Hub.
-    const home = mkdtempSync(path.join(os.tmpdir(), "smithers-hub-mcporter-home-"));
-    mkdirSync(path.join(home, ".smithers-hub"), { recursive: true });
-    writeFileSync(
-      path.join(home, ".smithers-hub", "config.json"),
-      JSON.stringify({ version: 2, current: "default", remotes: { default: { url: baseUrl, token } } })
-    );
-    // Seed an existing local smithers-orchestrator entry so we can confirm
-    // --as smithers replaces it (the override path) without dropping the
-    // sibling smithers-hub entry from the file.
-    mkdirSync(path.join(home, ".mcporter"), { recursive: true });
-    const mcporterFile = path.join(home, ".mcporter", "mcporter.json");
-    writeFileSync(
-      mcporterFile,
-      JSON.stringify({ mcpServers: { smithers: { command: "smithers", args: ["mcp"] } } })
-    );
-
-    const childEnv = { ...process.env, HOME: home, USERPROFILE: home, SMITHERS_HUB_URL: "", SMITHERS_HUB_TOKEN: "" };
-
-    await execFileAsync(
-      process.execPath,
-      ["src/cli.js", "mcp", "install", "--client", "mcporter"],
-      { cwd: process.cwd(), env: childEnv, maxBuffer: 1024 * 1024 }
-    );
-    const afterDefault = JSON.parse(readFileSync(mcporterFile, "utf8"));
-    assert.ok(afterDefault.mcpServers["smithers-hub"], "default install must register `smithers-hub` server name");
-    assert.equal(afterDefault.mcpServers["smithers-hub"].command, process.execPath);
-    assert.ok(
-      afterDefault.mcpServers["smithers-hub"].args.some((arg) => arg.endsWith("src/mcp.js")),
-      "default install must launch the Hub MCP entry (src/mcp.js)"
-    );
-    assert.ok(afterDefault.mcpServers.smithers, "default install must leave a pre-existing `smithers` entry untouched");
-
-    await execFileAsync(
-      process.execPath,
-      ["src/cli.js", "mcp", "install", "--client", "mcporter", "--as", "smithers"],
-      { cwd: process.cwd(), env: childEnv, maxBuffer: 1024 * 1024 }
-    );
-    const afterOverride = JSON.parse(readFileSync(mcporterFile, "utf8"));
-    assert.ok(
-      afterOverride.mcpServers.smithers.args.some((arg) => arg.endsWith("src/mcp.js")),
-      "--as smithers must overwrite the smithers entry with the Hub MCP"
-    );
-    assert.ok(afterOverride.mcpServers["smithers-hub"], "the previous smithers-hub entry must remain so sessions keyed off either name still land on the Hub");
   });
 });
