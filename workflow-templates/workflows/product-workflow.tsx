@@ -334,14 +334,14 @@ async function recoverAgentJsonFromEvents(runId, nodeId, expectedKeys) {
       const rows = db
         .prepare(
           `SELECT payload_json FROM _smithers_events
-           WHERE run_id = ? AND type = 'AgentEvent'
+           WHERE run_id = ? AND type IN ('NodeOutput', 'AgentEvent')
            ORDER BY seq DESC LIMIT 250`
         )
         .all(runId);
       for (const row of rows) {
         const payload = objectFromMaybeJson(row?.payload_json);
         if (payload?.nodeId !== nodeId) continue;
-        const recovered = objectFromMaybeJson(payload?.event?.message);
+        const recovered = objectFromMaybeJson(payload?.text ?? payload?.event?.message);
         if (hasStructuredArray(recovered, expectedKeys)) return recovered;
       }
     } finally {
