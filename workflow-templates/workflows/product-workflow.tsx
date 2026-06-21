@@ -132,8 +132,11 @@ const { Workflow, Task, smithers, outputs } = createSmithers({
   input: inputSchema,
   baseline: baselineOut,
   research: researchOut,
+  researchReady: researchOut,
   featureMap: featureMapOut,
+  featureMapReady: featureMapOut,
   prioritize: prioritizeOut,
+  prioritizeReady: prioritizeOut,
   dispatch: dispatchOut
 });
 
@@ -341,7 +344,18 @@ async function recoverAgentJsonFromEvents(runId, nodeId, expectedKeys) {
       for (const row of rows) {
         const payload = objectFromMaybeJson(row?.payload_json);
         if (payload?.nodeId !== nodeId) continue;
-        const recovered = objectFromMaybeJson(payload?.text ?? payload?.event?.message);
+        // AgentEvent payloads carry the agent's final JSON in `event.answer`
+        // for `completed` events; `event.message` only exists on `action`
+        // events (intermediate thoughts/tool chatter). Checking `answer` first
+        // is what lets us recover the structured output the strategist
+        // actually produced when the persisted task output came through empty
+        // (loose-schema defaults + best-effort sibling-DB recovery under
+        // supervision). Without it, dispatch throws
+        // "prioritize produced no structured items" even when the agent did
+        // emit a valid prioritizedFeatures array.
+        const recovered = objectFromMaybeJson(
+          payload?.text ?? payload?.event?.answer ?? payload?.event?.message
+        );
         if (hasStructuredArray(recovered, expectedKeys)) return recovered;
       }
     } finally {
@@ -365,14 +379,24 @@ function requireNonEmptyStage(stage, items, hint) {
   );
 }
 
+function assertStageReady(stage, hydrated, keys, hint) {
+  const found = keys.some((key) => arrayFromMaybeJson(hydrated?.[key]).length > 0);
+  if (found) return hydrated;
+  requireNonEmptyStage(stage, [], hint);
+  return hydrated;
+}
+
 export default smithers((ctx) => {
   const repoDir = resolveImproveRepo(ctx.input, { env: process.env, cwd: process.cwd(), gitBin: GIT, gitEnv: TOOL_ENV });
   const researcher = createResearcher(repoDir);
   const strategist = createStrategist(repoDir);
   const baseline = ctx.outputMaybe("baseline", { nodeId: "baseline" });
   const research = ctx.outputMaybe("research", { nodeId: "research" });
+  const researchReady = ctx.outputMaybe("researchReady", { nodeId: "researchReady" });
   const featureMap = ctx.outputMaybe("featureMap", { nodeId: "featureMap" });
+  const featureMapReady = ctx.outputMaybe("featureMapReady", { nodeId: "featureMapReady" });
   const prioritize = ctx.outputMaybe("prioritize", { nodeId: "prioritize" });
+  const prioritizeReady = ctx.outputMaybe("prioritizeReady", { nodeId: "prioritizeReady" });
 
   const namedCompetitors = parseNamedList(ctx.input.competitors);
 
@@ -403,11 +427,24 @@ export default smithers((ctx) => {
           </Task>
         )}
 
-        {/* 2. Synthesize a feature map against Runyard's current capabilities. */}
         {research && (
+          <Task id="researchReady" output={outputs.researchReady} retries={0}>
+            {async () =>
+              assertStageReady(
+                "research",
+                await hydratedStage(research, ctx.runId, "research", ["competitors"]),
+                ["competitors"],
+                "The research agent likely returned unparseable/non-JSON output instead of a competitors array."
+              )
+            }
+          </Task>
+        )}
+
+        {/* 2. Synthesize a feature map against Runyard's current capabilities. */}
+        {researchReady && (
           <Task id="featureMap" output={outputs.featureMap} agent={strategist} timeoutMs={20 * 60 * 1000}>
             {`Synthesize a feature map for Runyard (repo at ${repoDir}) from the competitor research below.\n\n` +
-              `=== COMPETITOR RESEARCH ===\n${JSON.stringify(research, null, 2).slice(0, 60000)}\n=== END ===\n\n` +
+              `=== COMPETITOR RESEARCH ===\n${JSON.stringify(researchReady, null, 2).slice(0, 60000)}\n=== END ===\n\n` +
               `Inspect the current codebase to decide, for each candidate feature, whether Runyard already has it. ` +
               `Surface the real gaps and opportunities — not generic polish.\n\n` +
               `Return JSON {"summary","features":[{"name","description","competitorsWithIt":[...],"runyardHasIt":true|false,"gap","valueRationale"}],"tableMarkdown"} ` +
@@ -415,11 +452,24 @@ export default smithers((ctx) => {
           </Task>
         )}
 
-        {/* 3. Prioritize the gaps into an ordered, buildable list. */}
         {featureMap && (
+          <Task id="featureMapReady" output={outputs.featureMapReady} retries={0}>
+            {async () =>
+              assertStageReady(
+                "featureMap",
+                await hydratedStage(featureMap, ctx.runId, "featureMap", ["features"]),
+                ["features"],
+                "The feature-map agent likely returned unparseable/non-JSON output instead of a features array."
+              )
+            }
+          </Task>
+        )}
+
+        {/* 3. Prioritize the gaps into an ordered, buildable list. */}
+        {featureMapReady && (
           <Task id="prioritize" output={outputs.prioritize} agent={strategist} timeoutMs={20 * 60 * 1000}>
             {`Prioritize the feature map into at most ${ctx.input.maxFeatures} features to implement for Runyard, ranked by user impact then effort.\n\n` +
-              `=== FEATURE MAP ===\n${JSON.stringify(featureMap, null, 2).slice(0, 60000)}\n=== END ===\n\n` +
+              `=== FEATURE MAP ===\n${JSON.stringify(featureMapReady, null, 2).slice(0, 60000)}\n=== END ===\n\n` +
               `Each prioritized feature must be buildable as ONE focused, gated change against the repo at ${repoDir} that can pass pnpm test and push to ${
                 ctx.input.targetBranch || "main"
               }. ` +
@@ -429,16 +479,26 @@ export default smithers((ctx) => {
           </Task>
         )}
 
-        {/* 4. Dispatch one gated implementation per feature — strictly sequential. */}
         {prioritize && (
+          <Task id="prioritizeReady" output={outputs.prioritizeReady} retries={0}>
+            {async () =>
+              assertStageReady(
+                "prioritize",
+                await hydratedStage(prioritize, ctx.runId, "prioritize", ["prioritizedFeatures", "prioritized_features"]),
+                ["prioritizedFeatures", "prioritized_features"],
+                "The prioritization agent likely returned unparseable/non-JSON output instead of a prioritizedFeatures array."
+              )
+            }
+          </Task>
+        )}
+
+        {/* 4. Dispatch one gated implementation per feature — strictly sequential. */}
+        {prioritizeReady && (
           <Task id="dispatch" output={outputs.dispatch} retries={0} timeoutMs={POLL_DEADLINE_MS + 60_000}>
             {async () => {
-              const recoveredResearch = await hydratedStage(research, ctx.runId, "research", ["competitors"]);
-              const recoveredFeatureMap = await hydratedStage(featureMap, ctx.runId, "featureMap", ["features"]);
-              const recoveredPrioritize = await hydratedStage(prioritize, ctx.runId, "prioritize", [
-                "prioritizedFeatures",
-                "prioritized_features"
-              ]);
+              const recoveredResearch = researchReady;
+              const recoveredFeatureMap = featureMapReady;
+              const recoveredPrioritize = prioritizeReady;
               const prioritizedItems = arrayFromMaybeJson(
                 recoveredPrioritize?.prioritizedFeatures ?? recoveredPrioritize?.prioritized_features
               );
