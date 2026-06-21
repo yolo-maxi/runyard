@@ -107,6 +107,16 @@ describe("Product Workflow capability", () => {
     assert.match(src, /sequential/i);
   });
 
+  it("fails fast instead of reporting a successful zero-feature plan when agent outputs are empty", () => {
+    const tpl = path.join(process.cwd(), "workflow-templates", "workflows", "product-workflow.tsx");
+    const src = readFileSync(tpl, "utf8");
+    assert.match(src, /requireNonEmptyStage/);
+    assert.match(src, /refusing to report a successful zero-feature plan/);
+    assert.match(src, /research agent likely returned unparseable\/non-JSON output/);
+    assert.match(src, /feature-map agent likely returned unparseable\/non-JSON output/);
+    assert.match(src, /prioritization agent likely returned unparseable\/non-JSON output/);
+  });
+
   it("is supervised by the run-smithers envelope by default", async () => {
     const created = await api("/api/capabilities/product-workflow/run", {
       method: "POST",

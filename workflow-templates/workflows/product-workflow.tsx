@@ -223,12 +223,12 @@ function buildChildPayload(feature, input) {
 
 function renderReport(ctx, research, featureMap, prioritized, dispatched, executed) {
   const safeResearch = research || {};
-  const competitors = Array.isArray(safeResearch.competitors) ? safeResearch.competitors : [];
-  const sources = Array.isArray(safeResearch.sources) ? safeResearch.sources : [];
+  const competitors = arrayFromMaybeJson(safeResearch.competitors);
+  const sources = arrayFromMaybeJson(safeResearch.sources);
   const safeFeatureMap = featureMap || {};
-  const mappedFeatures = Array.isArray(safeFeatureMap.features) ? safeFeatureMap.features : [];
-  const prioritizedFeatures = Array.isArray(prioritized) ? prioritized : [];
-  const dispatchedRuns = Array.isArray(dispatched) ? dispatched : [];
+  const mappedFeatures = arrayFromMaybeJson(safeFeatureMap.features);
+  const prioritizedFeatures = arrayFromMaybeJson(prioritized);
+  const dispatchedRuns = arrayFromMaybeJson(dispatched);
   const lines = [];
   lines.push(`# Product Workflow — Runyard\n`);
   lines.push(`Mode: ${executed ? "EXECUTED (gated implementation runs queued sequentially)" : "PLAN ONLY (no runs created)"}`);
@@ -276,6 +276,26 @@ function renderReport(ctx, research, featureMap, prioritized, dispatched, execut
     } at the same time, so prioritized features land on ${ctx.input.targetBranch || "main"} without merge conflicts.`
   );
   return lines.join("\n");
+}
+
+function arrayFromMaybeJson(value) {
+  if (Array.isArray(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function requireNonEmptyStage(stage, items, hint) {
+  if (arrayFromMaybeJson(items).length) return;
+  throw new TypeError(
+    `product-workflow ${stage} produced no structured items; refusing to report a successful zero-feature plan. ${hint}`
+  );
 }
 
 export default smithers((ctx) => {
@@ -346,7 +366,23 @@ export default smithers((ctx) => {
         {prioritize && (
           <Task id="dispatch" output={outputs.dispatch} retries={0} timeoutMs={POLL_DEADLINE_MS + 60_000}>
             {async () => {
-              const features = (prioritize.prioritizedFeatures || [])
+              requireNonEmptyStage(
+                "research",
+                research?.competitors,
+                "The research agent likely returned unparseable/non-JSON output instead of a competitors array."
+              );
+              requireNonEmptyStage(
+                "featureMap",
+                featureMap?.features,
+                "The feature-map agent likely returned unparseable/non-JSON output instead of a features array."
+              );
+              requireNonEmptyStage(
+                "prioritize",
+                prioritize?.prioritizedFeatures,
+                "The prioritization agent likely returned unparseable/non-JSON output instead of a prioritizedFeatures array."
+              );
+
+              const features = arrayFromMaybeJson(prioritize.prioritizedFeatures)
                 .slice()
                 .sort((a, b) => (a.rank || 0) - (b.rank || 0))
                 .slice(0, ctx.input.maxFeatures)
