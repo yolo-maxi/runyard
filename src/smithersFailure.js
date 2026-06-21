@@ -27,6 +27,27 @@ function asText(value) {
   return String(value);
 }
 
+function eventFailure(line) {
+  let obj = line;
+  if (typeof line === "string") {
+    try {
+      obj = JSON.parse(line);
+    } catch {
+      return { failedStep: "", error: ERROR_HINT.test(line) ? line : "" };
+    }
+  }
+  if (!obj || typeof obj !== "object") return { failedStep: "", error: "" };
+  const type = String(obj.type || obj.payload?.type || "");
+  const payload = obj.payload && typeof obj.payload === "object" ? obj.payload : obj;
+  const nodeId = String(payload.nodeId || payload.correlation?.nodeId || "");
+  const errorText = asText(payload.error ?? payload.data?.error ?? obj.error ?? obj.data ?? obj.message);
+  // NodeFailed carries the real workflow/node stack. Prefer it over the later
+  // RunFailed scheduler wrapper, whose stack often starts at Smithers internals.
+  if (/NodeFailed/i.test(type) && errorText) return { failedStep: nodeId, error: errorText };
+  if (errorText && ERROR_HINT.test(errorText)) return { failedStep: nodeId, error: errorText };
+  return { failedStep: "", error: "" };
+}
+
 // Returns { failedStep, error }. `error` is empty when no failure signal can be
 // found, in which case callers should fall back to the generic state message.
 export function extractSmithersFailure(state = {}, eventLines = []) {
@@ -48,24 +69,22 @@ export function extractSmithersFailure(state = {}, eventLines = []) {
 
   if (!error) error = asText(state?.runState?.error ?? state?.error ?? state?.run?.error);
 
-  // Fall back to the most recent error-ish event line when the structured state
-  // did not carry a node error (older Smithers builds surface failures only in
-  // the event stream).
-  if (!error && Array.isArray(eventLines)) {
+  // Event traces often contain a specific NodeFailed payload followed by a
+  // generic RunFailed scheduler wrapper. Always scan for the specific node
+  // failure and prefer it over a generic run-level error when present.
+  if (Array.isArray(eventLines)) {
     for (let i = eventLines.length - 1; i >= 0; i--) {
-      const line = eventLines[i];
-      let text = typeof line === "string" ? line : asText(line);
-      if (typeof line === "string") {
-        try {
-          const obj = JSON.parse(line);
-          text = asText(obj.data ?? obj.error ?? obj.message ?? line);
-        } catch {
-          /* keep raw */
-        }
-      }
-      if (text && ERROR_HINT.test(text)) {
-        error = text;
+      const raw = eventLines[i];
+      const event = eventFailure(eventLines[i]);
+      const isNodeFailure = /NodeFailed/i.test(String(typeof raw === "string" ? raw : raw?.type || raw?.payload?.type || ""));
+      if (event.error && isNodeFailure) {
+        if (event.failedStep) failedStep = event.failedStep;
+        error = event.error;
         break;
+      }
+      if (event.error && !error) {
+        if (event.failedStep) failedStep = event.failedStep;
+        error = event.error;
       }
     }
   }

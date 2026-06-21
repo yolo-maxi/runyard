@@ -43,6 +43,46 @@ describe("extractSmithersFailure", () => {
     assert.match(failure.error, /ReferenceError: foo is not defined/);
   });
 
+  it("prefers a NodeFailed workflow error over a generic RunFailed scheduler wrapper", () => {
+    const state = {
+      runState: {
+        state: "failed",
+        error: {
+          stack: "Error\n    at unhandledFailureDecision (/node_modules/@smithers-orchestrator/scheduler/src/makeWorkflowSession.js:397:32)"
+        }
+      }
+    };
+    const events = [
+      JSON.stringify({
+        type: "NodeFailed",
+        payload: {
+          nodeId: "dispatch",
+          error: {
+            name: "TypeError",
+            message:
+              "product-workflow research produced no structured items; refusing to report a successful zero-feature plan.",
+            stack:
+              "TypeError: product-workflow research produced no structured items; refusing to report a successful zero-feature plan.\n" +
+              "    at requireNonEmptyStage (/home/xiko/smithers-workspace/.smithers/workflows/product-workflow.tsx:296:13)"
+          }
+        }
+      }),
+      JSON.stringify({
+        type: "RunFailed",
+        payload: {
+          error: {
+            stack: "Error\n    at unhandledFailureDecision (/node_modules/@smithers-orchestrator/scheduler/src/makeWorkflowSession.js:397:32)"
+          }
+        }
+      })
+    ];
+    const failure = extractSmithersFailure(state, events);
+    assert.equal(failure.failedStep, "dispatch");
+    assert.match(failure.error, /product-workflow research produced no structured items/);
+    assert.match(failure.error, /product-workflow\.tsx:296/);
+    assert.doesNotMatch(failure.error, /unhandledFailureDecision/);
+  });
+
   it("returns empty error when there is no failure signal", () => {
     const state = { runState: { state: "succeeded" }, steps: [{ id: "a", state: "succeeded" }] };
     const failure = extractSmithersFailure(state, ["all good"]);
