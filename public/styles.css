@@ -3966,7 +3966,10 @@ button.run-id-mono:focus-visible,
   padding: 12px 14px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  /* Tight default gap between same-sender bubbles; the
+   * .support-chat-msg-wrap--sender-change modifier adds a 12px margin-top
+   * on top of this so a who-said-what switch reads as a visible break. */
+  gap: 4px;
   background: var(--soft);
 }
 .support-chat-msg {
