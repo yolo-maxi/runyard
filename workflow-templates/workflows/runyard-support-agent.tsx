@@ -23,7 +23,7 @@ const { Workflow, Task, smithers, outputs } = createSmithers({
   support: supportOutput
 });
 
-const provider = String(process.env.RUNYARD_SUPPORT_AGENT_CLI || "codex").toLowerCase();
+const provider = String(process.env.RUNYARD_SUPPORT_AGENT_CLI || "claude").toLowerCase();
 
 const codex = new CodexAgent({
   model: process.env.RUNYARD_SUPPORT_AGENT_MODEL || "gpt-5.3-codex",
