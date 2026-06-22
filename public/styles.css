@@ -4366,6 +4366,66 @@ button.run-id-mono:focus-visible,
   border-color: var(--brand);
   color: var(--brand);
 }
+
+/* Contextual quick-reply chips — a horizontally scrollable rail just above the
+   composer. Tapping one sends immediately. */
+.support-chat-quickreplies {
+  display: flex;
+  gap: 6px;
+  padding: 8px 10px 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+}
+.support-chat-quickreplies[hidden] {
+  display: none;
+}
+.support-chat-quickreply {
+  flex: 0 0 auto;
+  padding: 6px 11px;
+  border-radius: 999px;
+  background: var(--brand-tint, var(--panel));
+  border: 1px solid var(--line);
+  color: var(--ink);
+  font-size: 12.5px;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+  min-height: 32px;
+}
+.support-chat-quickreply:hover {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+.support-chat-quickreply:focus-visible {
+  outline: 2px solid var(--brand-2);
+  outline-offset: 2px;
+}
+
+/* Animated "thinking" indicator shown inline while a turn is in flight. */
+.support-chat-typing {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 12px;
+}
+.support-chat-typing span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--muted);
+  opacity: 0.4;
+  animation: support-chat-typing-bounce 1.2s infinite ease-in-out both;
+}
+.support-chat-typing span:nth-child(2) { animation-delay: 0.16s; }
+.support-chat-typing span:nth-child(3) { animation-delay: 0.32s; }
+@keyframes support-chat-typing-bounce {
+  0%, 80%, 100% { transform: translateY(0); opacity: 0.35; }
+  40% { transform: translateY(-4px); opacity: 0.9; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .support-chat-typing span { animation: none; opacity: 0.6; }
+}
 .support-chat-starter:focus-visible {
   outline: 2px solid var(--brand-2);
   outline-offset: 2px;

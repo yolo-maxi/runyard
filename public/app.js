@@ -868,6 +868,7 @@ function setView(view) {
     applySidebarBadges();
   }
   render().catch(showError);
+  syncSupportChatToRoute();
 }
 
 function showError(error) {
@@ -1044,6 +1045,15 @@ async function render() {
   if (view === "audit") return renderAudit();
   if (view === "settings") return renderSettings();
   return renderHome();
+}
+
+// Keep the support chat's quick-reply chips in sync with the current route as
+// the operator navigates. Only the chip bar updates — the conversation,
+// scroll, input draft, and open/closed state are untouched, so page swaps
+// never reset or flicker the chat.
+function syncSupportChatToRoute() {
+  if (document.documentElement.dataset.supportChatBooted !== "1") return;
+  renderSupportQuickReplies();
 }
 
 // --- Virtual artifact/log grouping ------------------------------------------
@@ -4354,6 +4364,7 @@ window.addEventListener("hashchange", () => {
     applySidebarBadges();
   }
   render().catch(showError);
+  syncSupportChatToRoute();
 });
 
 // Surface the connected hub/environment chip ASAP — it lives in the topbar
@@ -4461,6 +4472,10 @@ function setActiveSupportTab(id) {
   supportChatState.activeId = id;
   persistSupportChat();
   renderSupportChat();
+  // Swap the draft to the newly active tab's saved text.
+  const input = document.querySelector(".support-chat-input");
+  if (input) input.value = "";
+  restoreSupportDraft();
 }
 
 function addSupportTab() {
@@ -4600,6 +4615,63 @@ function showSupportFab(show) {
   fab.classList.toggle("hidden", !show);
 }
 
+// Context-aware quick-reply chips. Reads the live route so the suggestions on a
+// failed run differ from the Runs list, a workflow page, or Approvals — letting
+// the operator tap a relevant question instead of typing one.
+function supportQuickReplies() {
+  const route = deepLinks.parse(location.hash);
+  const view = route.view;
+  const seg = route.segments;
+  if (view === "runs" && seg[1]) {
+    return ["Why did this run fail?", "Is this a bug in the runner?", "Explain this run", "Re-run with a better prompt"];
+  }
+  if (view === "home" || view === "runs" || view === "dashboard") {
+    return ["What's broken?", "Summarize today's runs", "Show me failing runs"];
+  }
+  if ((view === "workflows" || view === "capabilities") && seg[1]) {
+    return ["What does this workflow do?", "Show recent runs", "How do I run this?"];
+  }
+  if (view === "workflows" || view === "capabilities") {
+    return ["Which workflow should I use?", "What can I run here?"];
+  }
+  if (view === "approvals") return ["What needs my approval?", "Explain this approval"];
+  if (view === "runners") return ["Are my runners healthy?", "Why is a run stuck in the queue?"];
+  if (view === "agents" || view === "skills" || view === "knowledge") return ["What are agents for?", "What page am I on?"];
+  return ["What page am I on?", "What can you do?"];
+}
+
+// Refresh ONLY the quick-reply bar. Safe to call on every navigation — it never
+// touches the conversation body, scroll position, or input draft, so it keeps
+// the chips contextual without re-rendering (or flickering) the open chat.
+function renderSupportQuickReplies() {
+  const bar = document.querySelector(".support-chat-quickreplies");
+  if (!bar) return;
+  if (!supportChatState.configured || supportChatState.busy) {
+    bar.hidden = true;
+    bar.innerHTML = "";
+    return;
+  }
+  const chips = supportQuickReplies();
+  if (!chips.length) {
+    bar.hidden = true;
+    bar.innerHTML = "";
+    return;
+  }
+  bar.innerHTML = chips
+    .map((prompt) => `<button type="button" class="support-chat-quickreply" data-quick-prompt="${esc(prompt)}">${esc(prompt)}</button>`)
+    .join("");
+  bar.hidden = false;
+}
+
+// Restore the saved per-tab draft into the textarea without clobbering text the
+// operator is actively typing.
+function restoreSupportDraft() {
+  const input = document.querySelector(".support-chat-input");
+  const tab = activeSupportTab();
+  if (!input || !tab) return;
+  if (!input.value && tab.draft) input.value = tab.draft;
+}
+
 function setSupportChatOpen(open) {
   supportChatState.open = Boolean(open);
   const panel = document.getElementById("support-chat");
@@ -4608,6 +4680,7 @@ function setSupportChatOpen(open) {
   if (fab) fab.setAttribute("aria-expanded", supportChatState.open ? "true" : "false");
   if (supportChatState.open) {
     renderSupportChat();
+    restoreSupportDraft();
     setTimeout(() => document.querySelector(".support-chat-input")?.focus(), 0);
   }
 }
@@ -4670,6 +4743,16 @@ function renderSupportChat() {
       return renderMessageBubble(message, { showSeparator, senderChanged });
     }).join("");
   }
+  // Animated typing indicator while a turn is in flight — an instant, snappy
+  // signal that the agent is working, shown inline at the end of the thread.
+  if (supportChatState.busy) {
+    body.insertAdjacentHTML(
+      "beforeend",
+      `<div class="support-chat-msg-wrap support-chat-msg-wrap--assistant support-chat-typing-wrap">
+        <div class="support-chat-msg assistant support-chat-typing" role="status" aria-label="Assistant is thinking"><span></span><span></span><span></span></div>
+      </div>`
+    );
+  }
   body.scrollTop = body.scrollHeight;
   const status = panel.querySelector(".support-chat-status");
   if (status) {
@@ -4681,6 +4764,7 @@ function renderSupportChat() {
       delete status.dataset.tone;
     }
   }
+  renderSupportQuickReplies();
 }
 
 // Format an absolute local time for the grouped time separator. Same-day
@@ -4869,8 +4953,12 @@ async function sendSupportMessage(text) {
   const trimmed = String(text || "").trim();
   if (!trimmed) return;
   appendMessage(tab, "user", trimmed);
-  renderSupportChat();
+  // Clear any saved draft for this tab — the text is now sent.
+  tab.draft = "";
   supportChatState.busy = true;
+  // Paint the optimistic user bubble + animated typing indicator immediately so
+  // the chat feels responsive while the runner round-trip is in flight.
+  renderSupportChat();
   // Transient agent state lives in the aria-live status banner (announced
   // once by AT) instead of a body bubble — avoids screen-reader duplication
   // and keeps the conversation log clean.
@@ -4890,13 +4978,12 @@ async function sendSupportMessage(text) {
     const { text: replyText, buttons } = parseAgentResponse(response.reply || "");
     appendMessage(tab, "assistant", replyText || "(empty reply)", { buttons });
     setSupportTransientStatus("");
-    renderSupportChat();
   } catch (error) {
     appendMessage(tab, "assistant", `Sorry — ${error.message || "the support agent failed"}`, { error: true });
     setSupportTransientStatus(`Error: ${error.message || "support agent failed"}`, "warn");
-    renderSupportChat();
   } finally {
     supportChatState.busy = false;
+    renderSupportChat();
   }
 }
 
@@ -4972,6 +5059,22 @@ function bindSupportChat() {
   });
   const form = panel.querySelector(".support-chat-form");
   const input = panel.querySelector(".support-chat-input");
+  // Contextual quick-reply chips send immediately so the operator can answer
+  // with a tap. Delegated because the bar is re-rendered on navigation.
+  panel.querySelector(".support-chat-quickreplies")?.addEventListener("click", (event) => {
+    const chip = event.target.closest("[data-quick-prompt]");
+    if (!chip) return;
+    sendSupportMessage(chip.dataset.quickPrompt || "");
+  });
+  // Persist the in-progress draft per tab so it survives a tab switch, a
+  // re-open, or a full reload — part of keeping the chat feeling continuous.
+  input?.addEventListener("input", () => {
+    const tab = activeSupportTab();
+    if (tab) {
+      tab.draft = input.value;
+      persistSupportChat();
+    }
+  });
   // Empty-state starter chips: tapping one drops the prompt into the textarea
   // so the operator can edit before sending. Delegated on the body because the
   // chips are re-rendered on every renderSupportChat() pass.
