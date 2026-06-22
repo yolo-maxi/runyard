@@ -441,7 +441,7 @@ function bindSecretToggles() {
     button.addEventListener("click", () => {
       const input = document.getElementById(button.dataset.secretCopy);
       if (!input) return;
-      copyText(input.dataset.secretValue || input.value);
+      copyText(input.dataset.secretValue || input.value, button);
     });
   });
 }
@@ -2118,7 +2118,7 @@ async function renderWorkflowCodeTab(slug, cap) {
   }
   pathEl.textContent = `${payload.path} · ${payload.language.toUpperCase()} · ${formatBytes(payload.sizeBytes)}`;
   copyBtn.disabled = false;
-  copyBtn.addEventListener("click", () => copyText(payload.code));
+  copyBtn.addEventListener("click", () => copyText(payload.code, copyBtn));
 
   const sections = payload.sections || {};
   const sectionDefs = [
@@ -2693,10 +2693,21 @@ function renderRunDiagnostics(diagnostics) {
       </div>`
     : "";
   const timeline = Array.isArray(diagnostics.timeline) ? diagnostics.timeline : [];
-  const timelineHtml = timeline.length
+  // A run is "live" while it can still emit new events — anything in the
+  // queued/pending/assigned/running pipeline. Terminal statuses (failed,
+  // succeeded, cancelled, error, waiting_approval) drop the indicator so
+  // the list reads as final. Kept in sync with ACTIVE_STATUSES above
+  // minus waiting_approval, which is paused-not-streaming.
+  const liveStatuses = new Set(["queued", "assigned", "running", "pending"]);
+  const isLive = liveStatuses.has(statusKey);
+  const liveIndicator = isLive
+    ? `<li class="diagnostics-live-indicator" aria-label="Run is streaming events"><span class="diagnostics-live-dot" aria-hidden="true"></span><span>Live</span></li>`
+    : "";
+  const timelineHtml = timeline.length || isLive
     ? `<div class="diagnostics-timeline">
-        <h4>Events around the failure</h4>
+        <h4>${isLive ? "Recent events" : "Events around the failure"}</h4>
         <ol class="diagnostics-event-list">
+          ${liveIndicator}
           ${timeline.map((event) => `<li>
             <time>${esc(formatTimestamp(event.createdAt))}</time>
             <code class="diagnostics-event-type">${esc(event.type)}</code>
@@ -4047,13 +4058,61 @@ function bindRevoke() {
   );
 }
 
-async function copyText(text) {
+async function copyText(text, button = null) {
   try {
     await navigator.clipboard.writeText(text);
-    toast("Copied", "ok");
   } catch {
     toast("Copy failed — select the text and press Ctrl/Cmd+C", "info");
+    return;
   }
+  toast("Copied", "ok");
+  // Politely announce to screen readers — the visual toast alone is silent
+  // to assistive tech that doesn't track .toast role/aria attributes.
+  announceLive("Copied");
+  if (button) flashCopyLabel(button);
+}
+
+// Swap a copy button's label to "Copied ✓" for ~1.5s so the user gets
+// inline confirmation without re-clicking and double-copying. Skipped for
+// icon-only buttons (share-link 🔗, run-id mono) where replacing the icon
+// with text would shift layout and hide the affordance.
+function flashCopyLabel(button) {
+  if (!button || !(button instanceof HTMLElement)) return;
+  if (button.classList.contains("share-link")) return;
+  if (button.classList.contains("run-id-mono-copy")) return;
+  if (button.dataset.copyFlash === "1") return;
+  const original = button.textContent;
+  if (!original || original.trim().length < 2) return;
+  button.dataset.copyFlash = "1";
+  button.dataset.copyOriginalLabel = original;
+  // Lock the current width so the label swap doesn't reflow neighbours.
+  const width = button.getBoundingClientRect().width;
+  if (width > 0) button.style.minWidth = `${Math.ceil(width)}px`;
+  button.textContent = "Copied ✓";
+  setTimeout(() => {
+    if (button.dataset.copyFlash !== "1") return;
+    button.textContent = button.dataset.copyOriginalLabel ?? original;
+    button.style.minWidth = "";
+    delete button.dataset.copyOriginalLabel;
+    delete button.dataset.copyFlash;
+  }, 1500);
+}
+
+// Single shared aria-live region — politely announces transient events
+// (Copied, etc.) without spawning new nodes per call. Clearing then
+// re-setting the text in a microtask forces assistive tech to re-read.
+function announceLive(message) {
+  let region = document.getElementById("aria-live-region");
+  if (!region) {
+    region = document.createElement("div");
+    region.id = "aria-live-region";
+    region.className = "sr-only";
+    region.setAttribute("aria-live", "polite");
+    region.setAttribute("aria-atomic", "true");
+    document.body.appendChild(region);
+  }
+  region.textContent = "";
+  setTimeout(() => { region.textContent = message; }, 30);
 }
 
 function bindCopy() {
@@ -4062,13 +4121,13 @@ function bindCopy() {
     b.dataset.copyBound = "1";
     b.addEventListener("click", (event) => {
       event.preventDefault();
-      copyText(b.dataset.copy);
+      copyText(b.dataset.copy, b);
     });
   });
   document.querySelectorAll("[data-copy-el]").forEach((b) => {
     if (b.dataset.copyBound === "1") return;
     b.dataset.copyBound = "1";
-    b.addEventListener("click", () => copyText(document.getElementById(b.dataset.copyEl).value));
+    b.addEventListener("click", () => copyText(document.getElementById(b.dataset.copyEl).value, b));
   });
 }
 
