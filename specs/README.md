@@ -9,6 +9,7 @@ This folder is the durable product and architecture record for Runyard (public n
 - `acceptance-and-manual-tests.md` — acceptance criteria and manual test coverage.
 - `workflow-hardening-and-optimizer.md` — workflow hardening philosophy, optimizer loop, and agent-to-code gradient.
 - `workflow-endpoints.md` — authenticated fixed-purpose workflow intake endpoints.
+- `run-response-endpoints.md` — optional per-run response endpoint contract (http/telegram); polling by `runId` remains canonical.
 - `product-workflow.md` — sequential product-development pipeline (research → feature map → prioritize → gated implementation) for the Runyard app.
 
 Read in this order:

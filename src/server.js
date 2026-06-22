@@ -19,7 +19,9 @@ import {
   getCapability,
   getWorkflowEndpoint,
   countRuns,
+  createRunResponseEndpoint,
   getRun,
+  listRunResponseEndpointsForRun,
   heartbeatRunner,
   listAccessTokens,
   listAgents,
@@ -59,6 +61,11 @@ import {
   RUN_OBSTRUCTION_ANALYSIS_ARTIFACT_NAME
 } from "./runObstructionAnalysis.js";
 import { executionIntentFromInput, normalizeExecutionIntent } from "./runExecution.js";
+import {
+  parseResponseEndpoint,
+  presentRunResponseEndpoint,
+  safeResponseEndpointAuditDetail
+} from "./runResponseEndpoint.js";
 import { chatWithSupportAgent, supportAgentInfo } from "./runyardSupportAgent.js";
 import { hashToken, parseCookies, sign, timingSafeEqualStr, unsign } from "./security.js";
 import { buildRepoCatalog } from "./repoCatalog.js";
@@ -1811,6 +1818,13 @@ app.get("/llms.txt", (req, res) => {
   lines.push("2. Choose local or remote execution.");
   lines.push("3. Start with run_capability or `smithers-hub run --where local|remote`.");
   lines.push("4. Fetch status, logs, outputs, and artifacts from the Hub.");
+  lines.push("");
+  lines.push("Response endpoints (optional):");
+  lines.push("- POST /api/capabilities/:id/run accepts an optional responseEndpoint:");
+  lines.push("  { type: \"http\"|\"telegram\", config: { ... } }");
+  lines.push("- Polling /api/runs/:id is always available and stays canonical.");
+  lines.push("- Endpoint config is validated server-side; secrets are not echoed");
+  lines.push("  back in API responses, events, or audit log entries.");
   res.type("text/plain").send(`${lines.join("\n")}\n`);
 });
 
@@ -1824,7 +1838,7 @@ app.get("/openapi.json", (req, res) => {
     paths: {
       "/capabilities": { get: { summary: "List capabilities" }, post: { summary: "Create/update capability" } },
       "/capabilities/{id}": { get: { summary: "Describe capability" }, patch: { summary: "Update capability" } },
-      "/capabilities/{id}/run": { post: { summary: "Run capability with optional executionMode local|remote; improve.repoDir selects an allowlisted runner-local repo while logs/artifacts stay in the Hub" } },
+      "/capabilities/{id}/run": { post: { summary: "Run capability with optional executionMode local|remote; improve.repoDir selects an allowlisted runner-local repo while logs/artifacts stay in the Hub. Accepts an optional responseEndpoint ({type: http|telegram, config}) so the caller can have the terminal-state reply delivered when the run finishes — polling /runs/{id} remains the canonical fallback." } },
       "/workflow-endpoints": { get: { summary: "List configured authenticated workflow endpoints" }, post: { summary: "Create/update an authenticated workflow endpoint" } },
       "/workflow-endpoints/{slug}": { get: { summary: "Describe a workflow endpoint" }, post: { summary: "Submit data to a fixed authenticated workflow endpoint" } },
       "/menu": { get: { summary: "Discover the Runyard MCP/CLI menu and local/remote run path" } },
@@ -2492,7 +2506,21 @@ app.patch("/api/capabilities/:id", requireAuth, requireScopes("admin"), (req, re
 app.post("/api/capabilities/:id/run", requireAuth, requireScopes("api", "mcp"), async (req, res) => {
   const capability = getCapability(req.params.id);
   if (!capability || !capability.enabled) return res.status(404).json({ error: "capability not found" });
+  // Optional per-run response endpoint (slice 1 of the response-egress
+  // contract). Validate the caller-supplied shape BEFORE the run is created
+  // so a malformed endpoint fails 400 cleanly and never produces an orphan
+  // run. See specs/run-response-endpoints.md.
+  const responseEndpointResult = parseResponseEndpoint(req.body.responseEndpoint);
+  if (!responseEndpointResult.ok) return res.status(400).json({ error: responseEndpointResult.error });
   const input = req.body.input || req.body || {};
+  // Defense in depth: when the caller posts `{ responseEndpoint: ... }` without
+  // an `input` wrapper, the fallback above aliases `input` to the request body
+  // — which would otherwise dump the raw endpoint config (bearer headers and
+  // all) into the stored run input. Strip it here so the endpoint only ever
+  // lives in `run_response_endpoints`.
+  if (input && typeof input === "object" && !Array.isArray(input) && "responseEndpoint" in input) {
+    delete input.responseEndpoint;
+  }
   if (Array.isArray(req.body.chain) && input && typeof input === "object" && !Array.isArray(input)) {
     input.__chain = normalizeChainSteps(req.body.chain);
     input.__chainIndex = 0;
@@ -2506,12 +2534,38 @@ app.post("/api/capabilities/:id/run", requireAuth, requireScopes("api", "mcp"), 
     execution
   });
   const run = dispatched.run;
+  // Persist the validated endpoint in its own table — never write the raw
+  // config into the run's input where it would leak through workflow events
+  // and audit detail. TODO(slice 2): wire up actual outbound delivery from
+  // the terminal-state transition hooks.
+  let registeredResponseEndpoint = null;
+  if (responseEndpointResult.value) {
+    const stored = createRunResponseEndpoint({
+      runId: run.id,
+      type: responseEndpointResult.value.type,
+      config: responseEndpointResult.value.config,
+      createdBy: req.token?.name || req.token?.id || ""
+    });
+    registeredResponseEndpoint = presentRunResponseEndpoint(stored);
+    const auditDetail = safeResponseEndpointAuditDetail(stored);
+    addRunEvent(
+      run.id,
+      "run.response_endpoint.registered",
+      `Response endpoint registered (${stored.type})`,
+      auditDetail
+    );
+    recordAudit(origin.requestedBy, "run.response_endpoint.registered", run.id, {
+      runId: run.id,
+      ...auditDetail
+    });
+  }
   const pending = listApprovals("pending").find((approval) => approval.runId === run.id);
   if (pending) await notifyTelegram(pending);
   res.status(202).json({
     run: withRunLinks(run),
     ...(dispatched.supervising ? { supervising: dispatched.supervising } : {}),
     ...(dispatched.supervisedChild ? { supervisedChild: dispatched.supervisedChild } : {}),
+    ...(registeredResponseEndpoint ? { responseEndpoint: registeredResponseEndpoint } : {}),
     statusUrl: `/api/runs/${run.id}`,
     logsUrl: `/api/runs/${run.id}/logs`,
     artifactsUrl: `/api/runs/${run.id}/artifacts`,
@@ -2602,10 +2656,14 @@ app.get("/api/runs/:id", requireAuth, (req, res) => {
   if (!run) return res.status(404).json({ error: "run not found" });
   const events = listRunEvents(run.id);
   const artifacts = listArtifacts({ runId: run.id }).map(withArtifactLinks);
+  // Surface attached response endpoints as the redacted summary only — raw
+  // bearer tokens, header values, and chat ids stay server-side.
+  const responseEndpoints = listRunResponseEndpointsForRun(run.id).map(presentRunResponseEndpoint);
   res.json({
     run: decorateSingleRun(run),
     events,
     artifacts,
+    responseEndpoints,
     diagnostics: runDiagnostics(run, events, artifacts),
     logSummary: summarizeRunEvents(events),
     pool: runnerPoolStats()

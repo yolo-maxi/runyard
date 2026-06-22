@@ -557,6 +557,149 @@ describe("Smithers Hub API", () => {
   });
 });
 
+describe("Run response endpoints (slice 1)", () => {
+  it("creates a run without a responseEndpoint unchanged", async () => {
+    const created = await api("/api/capabilities/hello/run", {
+      method: "POST",
+      body: { input: { goal: "no response endpoint" } }
+    });
+    assert.equal(created.run.status, "queued");
+    assert.equal(Object.hasOwn(created, "responseEndpoint"), false);
+    const detail = await api(`/api/runs/${created.run.id}`);
+    assert.deepEqual(detail.responseEndpoints, []);
+  });
+
+  it("persists a valid http response endpoint with a redacted summary", async () => {
+    const secretHeader = "Bearer shub_response_endpoint_secret_token";
+    const created = await api("/api/capabilities/hello/run", {
+      method: "POST",
+      body: {
+        input: { goal: "with http response endpoint" },
+        responseEndpoint: {
+          type: "http",
+          config: {
+            url: "https://app.example.com/webhooks/runyard?token=callback-secret&visible=ok",
+            method: "POST",
+            headers: { authorization: secretHeader, "x-app-tenant": "tenant-42" }
+          }
+        }
+      }
+    });
+    assert.equal(created.run.status, "queued");
+    assert.ok(created.responseEndpoint, "POST run reply should echo the registered endpoint");
+    assert.equal(created.responseEndpoint.type, "http");
+    assert.equal(created.responseEndpoint.deliveryStatus, "pending");
+    assert.equal(created.responseEndpoint.deliveryAttempts, 0);
+    assert.equal(created.responseEndpoint.summary.method, "POST");
+    assert.match(created.responseEndpoint.summary.url, /token=%5Bredacted%5D|token=\[redacted\]/);
+    assert.match(created.responseEndpoint.summary.url, /visible=ok/);
+    assert.equal(created.responseEndpoint.summary.headerCount, 2);
+    const headerNames = created.responseEndpoint.summary.headerNames;
+    assert.ok(headerNames.find((entry) => entry.startsWith("authorization") && entry.includes("[redacted]")));
+    assert.ok(headerNames.includes("x-app-tenant"));
+    // No raw bearer value or callback-secret string leaks anywhere on the wire.
+    const createdJson = JSON.stringify(created);
+    assert.equal(createdJson.includes(secretHeader), false);
+    assert.equal(createdJson.includes("callback-secret"), false);
+
+    const detail = await api(`/api/runs/${created.run.id}`);
+    assert.equal(detail.responseEndpoints.length, 1);
+    assert.equal(detail.responseEndpoints[0].type, "http");
+    assert.equal(detail.responseEndpoints[0].deliveryStatus, "pending");
+    const detailJson = JSON.stringify(detail);
+    assert.equal(detailJson.includes(secretHeader), false);
+    assert.equal(detailJson.includes("callback-secret"), false);
+
+    const events = await api(`/api/runs/${created.run.id}/events`);
+    const registered = events.events.find((event) => event.type === "run.response_endpoint.registered");
+    assert.ok(registered, "should emit a run event when the response endpoint is registered");
+    const eventsJson = JSON.stringify(events);
+    assert.equal(eventsJson.includes(secretHeader), false);
+    assert.equal(eventsJson.includes("callback-secret"), false);
+
+    const audit = await api("/api/audit?limit=200");
+    const entry = audit.audit.find(
+      (item) => item.action === "run.response_endpoint.registered" && item.target === created.run.id
+    );
+    assert.ok(entry, "registering a response endpoint should be audited");
+    const auditJson = JSON.stringify(entry);
+    assert.equal(auditJson.includes(secretHeader), false);
+    assert.equal(auditJson.includes("callback-secret"), false);
+  });
+
+  it("persists a valid telegram response endpoint with a redacted summary", async () => {
+    const created = await api("/api/capabilities/hello/run", {
+      method: "POST",
+      body: {
+        input: { goal: "with telegram response endpoint" },
+        responseEndpoint: {
+          type: "telegram",
+          config: { chatId: "-1009876543210", threadId: 7, parseMode: "MarkdownV2" }
+        }
+      }
+    });
+    assert.equal(created.run.status, "queued");
+    assert.ok(created.responseEndpoint);
+    assert.equal(created.responseEndpoint.type, "telegram");
+    assert.equal(created.responseEndpoint.summary.chatId, "-1009876543210");
+    assert.equal(created.responseEndpoint.summary.threadId, 7);
+    assert.equal(created.responseEndpoint.summary.parseMode, "MarkdownV2");
+
+    const detail = await api(`/api/runs/${created.run.id}`);
+    assert.equal(detail.responseEndpoints.length, 1);
+    assert.equal(detail.responseEndpoints[0].summary.chatId, "-1009876543210");
+  });
+
+  it("rejects malformed responseEndpoint with 400 and does not create a run", async () => {
+    const runsBefore = await api("/api/runs?limit=1");
+    const before = runsBefore.total;
+
+    const cases = [
+      { responseEndpoint: "https://bad.example" }, // not an object
+      { responseEndpoint: { type: "email", config: { to: "a@b.c" } } }, // unsupported type
+      { responseEndpoint: { type: "http" } }, // no config
+      { responseEndpoint: { type: "http", config: { url: "not-a-url" } } }, // bad URL
+      { responseEndpoint: { type: "http", config: { url: "ftp://example.com/x" } } }, // wrong scheme
+      { responseEndpoint: { type: "http", config: { url: "https://example.com", method: "DELETE" } } },
+      {
+        responseEndpoint: {
+          type: "http",
+          config: { url: "https://example.com", headers: { "bad header name!": "x" } }
+        }
+      },
+      {
+        responseEndpoint: {
+          type: "http",
+          config: { url: "https://example.com", headers: { "x-ok": 42 } }
+        }
+      },
+      { responseEndpoint: { type: "telegram", config: {} } }, // missing chatId
+      {
+        responseEndpoint: {
+          type: "telegram",
+          config: { chatId: "123", parseMode: "fancy" }
+        }
+      },
+      {
+        responseEndpoint: {
+          type: "telegram",
+          config: { chatId: "123", threadId: "not-a-number" }
+        }
+      }
+    ];
+    for (const body of cases) {
+      const result = await raw("/api/capabilities/hello/run", {
+        method: "POST",
+        body: { input: { goal: "rejected" }, ...body }
+      });
+      assert.equal(result.status, 400, `expected 400 for ${JSON.stringify(body.responseEndpoint)}`);
+    }
+
+    const runsAfter = await api("/api/runs?limit=1");
+    assert.equal(runsAfter.total, before, "rejected responseEndpoint requests must not create runs");
+  });
+});
+
 describe("Hardening: scopes, tokens, run state, webhook, health", () => {
   it("exposes an unauthenticated health endpoint", async () => {
     const res = await raw("/healthz", {}, null);

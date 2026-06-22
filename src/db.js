@@ -230,6 +230,21 @@ export function initDb() {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS run_response_endpoints (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+      type TEXT NOT NULL,
+      config TEXT NOT NULL DEFAULT '{}',
+      created_by TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      delivery_status TEXT NOT NULL DEFAULT 'pending',
+      delivery_attempts INTEGER NOT NULL DEFAULT 0,
+      last_attempt_at TEXT,
+      delivered_at TEXT,
+      last_error TEXT,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS workflow_endpoint_invocations (
       id TEXT PRIMARY KEY,
       endpoint_id TEXT NOT NULL REFERENCES workflow_endpoints(id) ON DELETE CASCADE,
@@ -251,6 +266,8 @@ export function initDb() {
     CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status);
     CREATE INDEX IF NOT EXISTS idx_workflow_endpoint_invocations_payload ON workflow_endpoint_invocations(endpoint_id, payload_hash, created_at);
     CREATE INDEX IF NOT EXISTS idx_workflow_endpoint_invocations_endpoint ON workflow_endpoint_invocations(endpoint_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_run_response_endpoints_run ON run_response_endpoints(run_id);
+    CREATE INDEX IF NOT EXISTS idx_run_response_endpoints_status ON run_response_endpoints(delivery_status);
   `);
 
   migrateRunnersPoolColumns();
@@ -668,6 +685,120 @@ export function recordWorkflowEndpointInvocation({ endpoint, payloadHash, source
     status,
     createdAt: record.created_at
   };
+}
+
+// --- Per-run response endpoints --------------------------------------------
+// Slice 1 of the response-egress contract (see specs/run-response-endpoints.md).
+// Callers may attach an optional `responseEndpoint` to a run at creation time.
+// We store it here, normalized, so delivery (slice 2) can read it back without
+// having to scrape the run's `input` field — keeping the raw config out of
+// workflow context, logs, and audit detail.
+
+const VALID_RESPONSE_ENDPOINT_DELIVERY_STATUSES = new Set([
+  "pending",
+  "in_flight",
+  "delivered",
+  "failed",
+  "abandoned"
+]);
+
+function normalizeRunResponseEndpoint(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    runId: row.run_id,
+    type: row.type,
+    config: parseJson(row.config, {}),
+    createdBy: row.created_by || "",
+    createdAt: row.created_at,
+    deliveryStatus: row.delivery_status || "pending",
+    deliveryAttempts: row.delivery_attempts || 0,
+    lastAttemptAt: row.last_attempt_at,
+    deliveredAt: row.delivered_at,
+    lastError: row.last_error,
+    updatedAt: row.updated_at
+  };
+}
+
+// Insert a new endpoint row attached to `runId`. The caller (HTTP route) is
+// responsible for validating type/config first via parseResponseEndpoint;
+// this function trusts both fields.
+export function createRunResponseEndpoint({ runId, type, config, createdBy = "" }) {
+  if (!runId) throw new Error("createRunResponseEndpoint: runId is required");
+  if (!type) throw new Error("createRunResponseEndpoint: type is required");
+  const timestamp = now();
+  const record = {
+    id: id("rres"),
+    run_id: runId,
+    type,
+    config: json(config || {}, {}),
+    created_by: createdBy || "",
+    created_at: timestamp,
+    delivery_status: "pending",
+    delivery_attempts: 0,
+    last_attempt_at: null,
+    delivered_at: null,
+    last_error: null,
+    updated_at: timestamp
+  };
+  run(
+    `INSERT INTO run_response_endpoints
+     (id, run_id, type, config, created_by, created_at, delivery_status,
+      delivery_attempts, last_attempt_at, delivered_at, last_error, updated_at)
+     VALUES ($id, $run_id, $type, $config, $created_by, $created_at, $delivery_status,
+      $delivery_attempts, $last_attempt_at, $delivered_at, $last_error, $updated_at)`,
+    record
+  );
+  return normalizeRunResponseEndpoint(one("SELECT * FROM run_response_endpoints WHERE id = ?", [record.id]));
+}
+
+export function listRunResponseEndpointsForRun(runId) {
+  if (!runId) return [];
+  return all(
+    "SELECT * FROM run_response_endpoints WHERE run_id = ? ORDER BY created_at ASC",
+    [runId]
+  ).map(normalizeRunResponseEndpoint);
+}
+
+// Slice 2 will use this for the delivery loop. Left here so the schema and
+// helper surface are complete in slice 1.
+export function listPendingRunResponseEndpoints(limit = 100) {
+  const capped = Math.min(Math.max(Number(limit) || 100, 1), 1000);
+  return all(
+    "SELECT * FROM run_response_endpoints WHERE delivery_status = 'pending' ORDER BY created_at ASC LIMIT ?",
+    [capped]
+  ).map(normalizeRunResponseEndpoint);
+}
+
+export function updateRunResponseEndpointDelivery(id, updates = {}) {
+  if (!id) throw new Error("updateRunResponseEndpointDelivery: id is required");
+  if (updates.status && !VALID_RESPONSE_ENDPOINT_DELIVERY_STATUSES.has(updates.status)) {
+    throw new Error(`updateRunResponseEndpointDelivery: unknown status '${updates.status}'`);
+  }
+  const sets = ["updated_at = $updated_at"];
+  const params = { id, updated_at: now() };
+  if (updates.status != null) {
+    sets.push("delivery_status = $delivery_status");
+    params.delivery_status = updates.status;
+  }
+  if (updates.attempts != null) {
+    sets.push("delivery_attempts = $delivery_attempts");
+    params.delivery_attempts = Math.max(0, Math.floor(Number(updates.attempts) || 0));
+  }
+  if (updates.lastAttemptAt !== undefined) {
+    sets.push("last_attempt_at = $last_attempt_at");
+    params.last_attempt_at = updates.lastAttemptAt || null;
+  }
+  if (updates.deliveredAt !== undefined) {
+    sets.push("delivered_at = $delivered_at");
+    params.delivered_at = updates.deliveredAt || null;
+  }
+  if (updates.lastError !== undefined) {
+    sets.push("last_error = $last_error");
+    params.last_error = updates.lastError ? String(updates.lastError).slice(0, 2000) : null;
+  }
+  run(`UPDATE run_response_endpoints SET ${sets.join(", ")} WHERE id = $id`, params);
+  return normalizeRunResponseEndpoint(one("SELECT * FROM run_response_endpoints WHERE id = ?", [id]));
 }
 
 function snapshotCapability(capabilityId) {
