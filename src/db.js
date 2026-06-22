@@ -11,6 +11,7 @@ import {
 } from "./runExecution.js";
 import { hashToken, randomToken } from "./security.js";
 import { seedAgents, seedCapabilities, seedKnowledge, seedSkills } from "./seeds.js";
+import { nextRun as cronNextRun } from "./cron.js";
 
 export const db = new DatabaseSync(env.dbPath);
 db.exec("PRAGMA journal_mode = WAL");
@@ -258,6 +259,25 @@ export function initDb() {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS schedules (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      capability_slug TEXT NOT NULL,
+      cron TEXT NOT NULL DEFAULT '',
+      timezone TEXT NOT NULL DEFAULT 'UTC',
+      input TEXT NOT NULL DEFAULT '{}',
+      enabled INTEGER NOT NULL DEFAULT 1,
+      run_at TEXT,
+      next_run_at TEXT,
+      last_run_at TEXT,
+      last_run_id TEXT,
+      last_status TEXT NOT NULL DEFAULT '',
+      created_by TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
     CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
     CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at);
@@ -268,6 +288,7 @@ export function initDb() {
     CREATE INDEX IF NOT EXISTS idx_workflow_endpoint_invocations_endpoint ON workflow_endpoint_invocations(endpoint_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_run_response_endpoints_run ON run_response_endpoints(run_id);
     CREATE INDEX IF NOT EXISTS idx_run_response_endpoints_status ON run_response_endpoints(delivery_status);
+    CREATE INDEX IF NOT EXISTS idx_schedules_due ON schedules(enabled, next_run_at);
   `);
 
   migrateRunnersPoolColumns();
@@ -1669,6 +1690,174 @@ export function listAudit({ limit = 100 } = {}) {
     detail: parseJson(row.detail, {}),
     createdAt: row.created_at
   }));
+}
+
+// --- Schedules (cron jobs) --------------------------------------------------
+// First-class recurring (cron) and one-shot (run_at) triggers. The server-side
+// ticker (fireDueSchedules in src/server.js) evaluates due rows and creates
+// runs through the same dispatch path as a manual run, so approvals,
+// supervision, and audit behave identically. `next_run_at` is the single
+// source of truth for "when does this fire next"; we recompute it whenever the
+// cron/timezone/run_at changes and after every fire. Missed ticks (Hub was
+// down) collapse to a single catch-up fire rather than a backfill storm.
+
+const SCHEDULE_TIMEZONE_DEFAULT = "UTC";
+
+export function normalizeSchedule(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description || "",
+    capabilitySlug: row.capability_slug,
+    cron: row.cron || "",
+    timezone: row.timezone || SCHEDULE_TIMEZONE_DEFAULT,
+    input: parseJson(row.input, {}),
+    enabled: Boolean(row.enabled),
+    kind: row.cron ? "cron" : "once",
+    runAt: row.run_at || null,
+    nextRunAt: row.next_run_at || null,
+    lastRunAt: row.last_run_at || null,
+    lastRunId: row.last_run_id || null,
+    lastStatus: row.last_status || "",
+    createdBy: row.created_by || "",
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+// Next fire instant (ISO) for a schedule definition. Cron schedules use the
+// expression; one-shot schedules use run_at while it is still in the future.
+// Returns null when there is nothing further to fire.
+function computeScheduleNext(def, fromIso = now()) {
+  if (def.cron) {
+    const next = cronNextRun(def.cron, new Date(fromIso), def.timezone || SCHEDULE_TIMEZONE_DEFAULT);
+    return next ? next.toISOString() : null;
+  }
+  if (def.runAt) return def.runAt > fromIso ? def.runAt : null;
+  return null;
+}
+
+export function createSchedule(input) {
+  const timestamp = now();
+  const cron = String(input.cron || "").trim();
+  const runAt = input.runAt ? new Date(input.runAt).toISOString() : null;
+  const timezone = input.timezone || SCHEDULE_TIMEZONE_DEFAULT;
+  const enabled = input.enabled === false ? 0 : 1;
+  const nextRunAt = enabled ? computeScheduleNext({ cron, runAt, timezone }, timestamp) : null;
+  const record = {
+    id: id("sched"),
+    name: input.name,
+    description: input.description || "",
+    capability_slug: input.capabilitySlug,
+    cron,
+    timezone,
+    input: json(input.input || {}, {}),
+    enabled,
+    run_at: runAt,
+    next_run_at: nextRunAt,
+    last_run_at: null,
+    last_run_id: null,
+    last_status: "",
+    created_by: input.createdBy || "",
+    created_at: timestamp,
+    updated_at: timestamp
+  };
+  run(
+    `INSERT INTO schedules
+     (id, name, description, capability_slug, cron, timezone, input, enabled, run_at, next_run_at,
+      last_run_at, last_run_id, last_status, created_by, created_at, updated_at)
+     VALUES ($id, $name, $description, $capability_slug, $cron, $timezone, $input, $enabled, $run_at, $next_run_at,
+      $last_run_at, $last_run_id, $last_status, $created_by, $created_at, $updated_at)`,
+    record
+  );
+  return getSchedule(record.id);
+}
+
+export function getSchedule(idValue) {
+  return normalizeSchedule(one("SELECT * FROM schedules WHERE id = ?", [idValue]));
+}
+
+export function listSchedules({ includeDisabled = true } = {}) {
+  const rows = includeDisabled
+    ? all("SELECT * FROM schedules ORDER BY created_at DESC")
+    : all("SELECT * FROM schedules WHERE enabled = 1 ORDER BY created_at DESC");
+  return rows.map(normalizeSchedule);
+}
+
+export function updateSchedule(idValue, updates = {}) {
+  const existing = one("SELECT * FROM schedules WHERE id = ?", [idValue]);
+  if (!existing) return null;
+  const timestamp = now();
+  const merged = {
+    name: updates.name != null ? updates.name : existing.name,
+    description: updates.description != null ? updates.description : existing.description,
+    capability_slug: updates.capabilitySlug != null ? updates.capabilitySlug : existing.capability_slug,
+    cron: updates.cron != null ? String(updates.cron).trim() : existing.cron,
+    timezone: updates.timezone != null ? updates.timezone : existing.timezone,
+    input: updates.input !== undefined ? json(updates.input || {}, {}) : existing.input,
+    enabled: updates.enabled == null ? existing.enabled : updates.enabled === false ? 0 : 1,
+    run_at: updates.runAt !== undefined ? (updates.runAt ? new Date(updates.runAt).toISOString() : null) : existing.run_at
+  };
+  const nextRunAt = merged.enabled
+    ? computeScheduleNext({ cron: merged.cron, runAt: merged.run_at, timezone: merged.timezone }, timestamp)
+    : null;
+  run(
+    `UPDATE schedules SET name=?, description=?, capability_slug=?, cron=?, timezone=?, input=?, enabled=?,
+       run_at=?, next_run_at=?, updated_at=? WHERE id=?`,
+    [merged.name, merged.description, merged.capability_slug, merged.cron, merged.timezone, merged.input,
+      merged.enabled, merged.run_at, nextRunAt, timestamp, idValue]
+  );
+  return getSchedule(idValue);
+}
+
+export function setScheduleEnabled(idValue, enabled) {
+  return updateSchedule(idValue, { enabled: Boolean(enabled) });
+}
+
+export function deleteSchedule(idValue) {
+  const existing = getSchedule(idValue);
+  if (!existing) return null;
+  run("DELETE FROM schedules WHERE id = ?", [idValue]);
+  return existing;
+}
+
+export function listDueSchedules(nowIso = now()) {
+  return all(
+    "SELECT * FROM schedules WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ? ORDER BY next_run_at ASC",
+    [nowIso]
+  ).map(normalizeSchedule);
+}
+
+// Atomically claim a due schedule for firing. Recomputes next_run_at strictly
+// after `nowIso` (so a backlog of missed ticks collapses to a single fire) and
+// writes it only if the row still holds the next_run_at we observed — making
+// concurrent or overlapping ticks idempotent: exactly one caller gets ok:true
+// per due tick. One-shot (run_at) schedules are disabled once they fire.
+export function claimScheduleFire(idValue, expectedNextRunAt, nowIso = now()) {
+  const row = one("SELECT * FROM schedules WHERE id = ?", [idValue]);
+  if (!row) return { ok: false, reason: "not_found" };
+  if (!row.enabled) return { ok: false, reason: "disabled" };
+  if (row.next_run_at !== expectedNextRunAt) return { ok: false, reason: "raced" };
+  const oneShot = !row.cron;
+  const newNext = oneShot ? null : computeScheduleNext({ cron: row.cron, runAt: row.run_at, timezone: row.timezone }, nowIso);
+  const newEnabled = oneShot ? 0 : 1;
+  const result = run(
+    "UPDATE schedules SET next_run_at = ?, enabled = ?, updated_at = ? WHERE id = ? AND next_run_at = ? AND enabled = 1",
+    [newNext, newEnabled, nowIso, idValue, expectedNextRunAt]
+  );
+  if (!result.changes) return { ok: false, reason: "raced" };
+  return { ok: true, schedule: getSchedule(idValue) };
+}
+
+// Record the outcome of a fire (manual run-now or ticker) on the schedule row
+// without touching next_run_at — that is owned by claimScheduleFire.
+export function recordScheduleFireResult(idValue, runId, status = "queued", firedAtIso = now()) {
+  run(
+    "UPDATE schedules SET last_run_at = ?, last_run_id = ?, last_status = ?, updated_at = ? WHERE id = ?",
+    [firedAtIso, runId || null, status, now(), idValue]
+  );
+  return getSchedule(idValue);
 }
 
 export function dashboardStats() {

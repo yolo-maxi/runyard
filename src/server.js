@@ -20,6 +20,15 @@ import {
   getWorkflowEndpoint,
   countRuns,
   createRunResponseEndpoint,
+  createSchedule,
+  listSchedules,
+  getSchedule,
+  updateSchedule,
+  setScheduleEnabled,
+  deleteSchedule,
+  listDueSchedules,
+  claimScheduleFire,
+  recordScheduleFireResult,
   getRun,
   listRunResponseEndpointsForRun,
   heartbeatRunner,
@@ -54,6 +63,7 @@ import {
 } from "./db.js";
 import { env } from "./env.js";
 import { now, slugify } from "./ids.js";
+import { describeCron, isValidTimezone, nextRuns, validateCron } from "./cron.js";
 import { buildRunRetrospectiveArtifact, RUN_RETROSPECTIVE_ARTIFACT_NAME } from "./runRetrospective.js";
 import {
   analyzeRunObstructions,
@@ -1971,6 +1981,19 @@ app.get("/openapi.json", (req, res) => {
       "/chat": { post: { summary: "Ask the in-app Assistant. Body: {messages, context}. Answers first; any app-changing action is returned as a confirmation button, never executed server-side." } },
       "/workflow-endpoints": { get: { summary: "List configured authenticated workflow endpoints (admin)" }, post: { summary: "Create/update an authenticated workflow endpoint (admin)" } },
       "/workflow-endpoints/{slug}": { get: { summary: "Describe a workflow endpoint (admin)" }, post: { summary: "Submit data to a fixed authenticated workflow endpoint (per-endpoint secret, rate-limited, deduped)" } },
+      "/schedules": {
+        get: { summary: "List schedules (cron jobs) with next/last run and a human-readable preview" },
+        post: { summary: "Create a schedule (admin). Body: {name, capabilitySlug, cron|runAt, timezone, input, enabled}. Cron schedules fire recurringly; runAt fires once. Fires honor the capability's approval policy and supervision." }
+      },
+      "/schedules/preview": { get: { summary: "Validate a cron expression (query: cron, timezone) and return a description plus the next fire times" } },
+      "/schedules/{id}": {
+        get: { summary: "Get a schedule" },
+        patch: { summary: "Update a schedule (admin)" },
+        delete: { summary: "Delete a schedule (admin)" }
+      },
+      "/schedules/{id}/enable": { post: { summary: "Enable a schedule (admin)" } },
+      "/schedules/{id}/disable": { post: { summary: "Disable a schedule (admin)" } },
+      "/schedules/{id}/run-now": { post: { summary: "Fire a schedule immediately without changing its cadence" } },
       "/runners/register": { post: { summary: "Register runner" } },
       "/runners/{id}/next-run": { get: { summary: "Claim next run for runner" } }
     }
@@ -2736,6 +2759,272 @@ app.get("/api/repo-options", requireAuth, (_req, res) => {
   res.json(buildRepoCatalog(process.env));
 });
 
+// --- Schedules (cron jobs) --------------------------------------------------
+// Operators schedule recurring (cron) or one-shot (runAt) runs of a capability.
+// Firing goes through the same dispatchRun() choke point as a manual run, so a
+// scheduled run honors the capability's approval policy and supervision
+// envelope — a schedule can never escalate past what a manual run of the same
+// capability would do. The created run's origin records the schedule + creator
+// for audit. See src/cron.js (parser) and src/db.js (storage + idempotent claim).
+
+const SCHEDULE_NAME_MAX = 120;
+const SCHEDULE_INPUT_MAX_BYTES = 16 * 1024;
+
+function validateScheduleBody(body = {}, { partial = false } = {}) {
+  const out = {};
+  const has = (key) => Object.prototype.hasOwnProperty.call(body, key);
+
+  if (!partial || has("name")) {
+    const name = String(body.name || "").trim();
+    if (!name) return { ok: false, error: "name is required" };
+    if (name.length > SCHEDULE_NAME_MAX) return { ok: false, error: `name must be <= ${SCHEDULE_NAME_MAX} characters` };
+    out.name = name;
+  }
+  if (has("description")) out.description = String(body.description || "").slice(0, 2000);
+
+  if (!partial || has("capabilitySlug") || has("capability")) {
+    const slug = String(body.capabilitySlug || body.capability || "").trim();
+    if (!slug) return { ok: false, error: "capabilitySlug is required" };
+    const capability = getCapability(slug);
+    if (!capability || !capability.enabled) return { ok: false, error: `unknown or disabled capability "${slug}"` };
+    out.capabilitySlug = capability.slug;
+  }
+
+  let timezone = "UTC";
+  if (has("timezone")) {
+    timezone = String(body.timezone || "UTC").trim() || "UTC";
+    if (!isValidTimezone(timezone)) return { ok: false, error: `invalid timezone "${timezone}"` };
+    out.timezone = timezone;
+  }
+
+  if (has("cron")) {
+    const cron = String(body.cron || "").trim();
+    if (cron) {
+      const check = validateCron(cron, out.timezone || timezone);
+      if (!check.ok) return { ok: false, error: `invalid cron expression: ${check.error}` };
+    }
+    out.cron = cron;
+  }
+  if (has("runAt")) {
+    if (body.runAt) {
+      const when = new Date(body.runAt);
+      if (Number.isNaN(when.getTime())) return { ok: false, error: "runAt is not a valid date" };
+      out.runAt = when.toISOString();
+    } else {
+      out.runAt = null;
+    }
+  }
+
+  if (!partial) {
+    const cron = out.cron || "";
+    const runAt = out.runAt || null;
+    if (!cron && !runAt) return { ok: false, error: "a cron expression or a runAt time is required" };
+    if (runAt && !cron && runAt <= now()) return { ok: false, error: "runAt must be in the future" };
+  }
+
+  if (has("input")) {
+    const input = body.input;
+    if (input != null && (typeof input !== "object" || Array.isArray(input))) {
+      return { ok: false, error: "input must be a JSON object" };
+    }
+    const obj = input || {};
+    if (Buffer.byteLength(JSON.stringify(obj), "utf8") > SCHEDULE_INPUT_MAX_BYTES) {
+      return { ok: false, error: "input payload too large" };
+    }
+    out.input = obj;
+  } else if (!partial) {
+    out.input = {};
+  }
+
+  if (has("enabled")) {
+    out.enabled = !(body.enabled === false || body.enabled === "false" || body.enabled === 0);
+  }
+
+  return { ok: true, value: out };
+}
+
+// Decorate a schedule with a human-readable preview (description + the next few
+// fire times) and a deep link, computed server-side so the cron logic stays
+// single-sourced and the UI never has to re-implement it.
+function withScheduleView(schedule) {
+  if (!schedule) return schedule;
+  let preview = null;
+  if (schedule.cron) {
+    try {
+      preview = {
+        description: describeCron(schedule.cron, schedule.timezone),
+        nextRuns: nextRuns(schedule.cron, 3, new Date(), schedule.timezone)
+      };
+    } catch {
+      preview = null;
+    }
+  } else if (schedule.runAt) {
+    preview = {
+      description: `Once at ${schedule.runAt}`,
+      nextRuns: schedule.enabled && schedule.nextRunAt ? [schedule.nextRunAt] : []
+    };
+  }
+  return { ...schedule, preview, deepLink: `/app#schedules/${encodeURIComponent(schedule.id)}` };
+}
+
+// Fire a single schedule: create a run via the shared dispatch path and record
+// the outcome on the schedule row + audit log. Does NOT advance next_run_at
+// (claimScheduleFire owns that). Returns { ok, run } or { ok:false, error }.
+function runScheduleNow(schedule, { trigger = "manual", actor = "" } = {}) {
+  const capability = getCapability(schedule.capabilitySlug);
+  if (!capability || !capability.enabled) {
+    return { ok: false, error: `capability "${schedule.capabilitySlug}" is unavailable` };
+  }
+  const input = schedule.input && typeof schedule.input === "object" && !Array.isArray(schedule.input)
+    ? { ...schedule.input }
+    : {};
+  const requestedBy = `schedule: ${schedule.name}`;
+  const origin = {
+    type: "schedule",
+    label: `schedule: ${schedule.name}`,
+    scheduleId: schedule.id,
+    scheduleName: schedule.name,
+    trigger
+  };
+  const dispatched = dispatchRun(capability, input, { requestedBy, origin });
+  const runRecord = dispatched.run;
+  addRunEvent(runRecord.id, "run.scheduled", `Created by schedule "${schedule.name}"`, {
+    scheduleId: schedule.id,
+    cron: schedule.cron || "",
+    timezone: schedule.timezone,
+    trigger
+  });
+  recordScheduleFireResult(schedule.id, runRecord.id, runRecord.status);
+  recordAudit(actor || requestedBy, "schedule.fired", schedule.id, {
+    runId: runRecord.id,
+    capability: schedule.capabilitySlug,
+    trigger
+  });
+  return { ok: true, run: runRecord, dispatched };
+}
+
+// Evaluate all due schedules and fire each exactly once. Safe to call from the
+// ticker on every tick (idempotent via claimScheduleFire) and from tests.
+function fireDueSchedules(nowIso = now()) {
+  const due = listDueSchedules(nowIso);
+  const firedRunIds = [];
+  for (const schedule of due) {
+    try {
+      const claim = claimScheduleFire(schedule.id, schedule.nextRunAt, nowIso);
+      if (!claim.ok) continue; // already fired this tick, raced, or disabled
+      const result = runScheduleNow(schedule, { trigger: "ticker", actor: `schedule:${schedule.id}` });
+      if (result.ok) {
+        firedRunIds.push(result.run.id);
+        const pending = listApprovals("pending").find((approval) => approval.runId === result.run.id);
+        if (pending) notifyTelegram(pending).catch(() => {});
+      } else {
+        recordScheduleFireResult(schedule.id, null, `error: ${result.error}`.slice(0, 80));
+        recordAudit(`schedule:${schedule.id}`, "schedule.fire_failed", schedule.id, { error: result.error });
+      }
+    } catch (error) {
+      recordAudit(`schedule:${schedule.id}`, "schedule.fire_failed", schedule.id, { error: error.message });
+    }
+  }
+  return firedRunIds;
+}
+
+app.get("/api/schedules", requireAuth, (_req, res) => {
+  res.json({ schedules: listSchedules().map(withScheduleView) });
+});
+
+// Validate a cron expression (and optional timezone) and return a description +
+// the next few fire times. Powers the live preview in the Schedules form.
+app.get("/api/schedules/preview", requireAuth, (req, res) => {
+  const cron = String(req.query.cron || "").trim();
+  const timezone = String(req.query.timezone || "UTC").trim() || "UTC";
+  if (!cron) return res.status(400).json({ error: "cron query parameter is required" });
+  if (!isValidTimezone(timezone)) return res.status(400).json({ error: `invalid timezone "${timezone}"` });
+  const check = validateCron(cron, timezone);
+  if (!check.ok) return res.json({ valid: false, error: check.error });
+  res.json({
+    valid: true,
+    timezone,
+    description: describeCron(cron, timezone),
+    nextRuns: nextRuns(cron, 5, new Date(), timezone)
+  });
+});
+
+app.get("/api/schedules/:id", requireAuth, (req, res) => {
+  const schedule = getSchedule(req.params.id);
+  if (!schedule) return res.status(404).json({ error: "schedule not found" });
+  res.json({ schedule: withScheduleView(schedule) });
+});
+
+app.post("/api/schedules", requireAuth, requireScopes("admin"), (req, res) => {
+  const validated = validateScheduleBody(req.body || {}, { partial: false });
+  if (!validated.ok) return res.status(400).json({ error: validated.error });
+  const schedule = createSchedule({
+    ...validated.value,
+    createdBy: req.token?.name || req.token?.id || ""
+  });
+  recordAudit(req.token.name, "schedule.created", schedule.id, {
+    capability: schedule.capabilitySlug,
+    cron: schedule.cron || "",
+    runAt: schedule.runAt || ""
+  });
+  res.status(201).json({ schedule: withScheduleView(schedule) });
+});
+
+app.patch("/api/schedules/:id", requireAuth, requireScopes("admin"), (req, res) => {
+  const existing = getSchedule(req.params.id);
+  if (!existing) return res.status(404).json({ error: "schedule not found" });
+  const validated = validateScheduleBody(req.body || {}, { partial: true });
+  if (!validated.ok) return res.status(400).json({ error: validated.error });
+  const schedule = updateSchedule(req.params.id, validated.value);
+  recordAudit(req.token.name, "schedule.updated", schedule.id, { fields: Object.keys(validated.value) });
+  res.json({ schedule: withScheduleView(schedule) });
+});
+
+app.post("/api/schedules/:id/enable", requireAuth, requireScopes("admin"), (req, res) => {
+  if (!getSchedule(req.params.id)) return res.status(404).json({ error: "schedule not found" });
+  const schedule = setScheduleEnabled(req.params.id, true);
+  recordAudit(req.token.name, "schedule.enabled", schedule.id, {});
+  res.json({ schedule: withScheduleView(schedule) });
+});
+
+app.post("/api/schedules/:id/disable", requireAuth, requireScopes("admin"), (req, res) => {
+  if (!getSchedule(req.params.id)) return res.status(404).json({ error: "schedule not found" });
+  const schedule = setScheduleEnabled(req.params.id, false);
+  recordAudit(req.token.name, "schedule.disabled", schedule.id, {});
+  res.json({ schedule: withScheduleView(schedule) });
+});
+
+app.delete("/api/schedules/:id", requireAuth, requireScopes("admin"), (req, res) => {
+  const deleted = deleteSchedule(req.params.id);
+  if (!deleted) return res.status(404).json({ error: "schedule not found" });
+  recordAudit(req.token.name, "schedule.deleted", req.params.id, { name: deleted.name });
+  res.json({ deleted: true, schedule: withScheduleView(deleted) });
+});
+
+// Fire a schedule immediately without disturbing its cron cadence (next_run_at
+// is left untouched). Requires run scope since it creates a real run.
+app.post(
+  "/api/schedules/:id/run-now",
+  requireAuth,
+  requireScopes("api", "mcp", "admin"),
+  rateLimit({ bucket: "schedule-run-now", max: 60, windowMs: 60_000 }),
+  async (req, res) => {
+    const schedule = getSchedule(req.params.id);
+    if (!schedule) return res.status(404).json({ error: "schedule not found" });
+    const result = runScheduleNow(schedule, { trigger: "manual", actor: req.token?.name || req.token?.id || "" });
+    if (!result.ok) return res.status(409).json({ error: result.error });
+    const pending = listApprovals("pending").find((approval) => approval.runId === result.run.id);
+    if (pending) await notifyTelegram(pending);
+    res.status(202).json({
+      run: withRunLinks(result.run),
+      ...(result.dispatched.supervising ? { supervising: result.dispatched.supervising } : {}),
+      schedule: withScheduleView(getSchedule(req.params.id)),
+      statusUrl: `/api/runs/${result.run.id}`,
+      deepLink: deepLinks.run(result.run.id)
+    });
+  }
+);
+
 app.get("/api/agents", requireAuth, (req, res) => res.json({ agents: listAgents(req.query.q || "").map(withAgentLinks) }));
 app.post("/api/agents", requireAuth, requireScopes("admin"), (req, res) => res.json({ agent: upsertAgent({ ...req.body, slug: requireBodySlug(req.body, "agent") }) }));
 app.patch("/api/agents/:slug", requireAuth, requireScopes("admin"), (req, res) => res.json({ agent: upsertAgent({ ...req.body, slug: req.params.slug }) }));
@@ -3346,6 +3635,25 @@ if (process.argv[1]?.endsWith("server.js")) {
     }
   }, 60_000);
   reaper.unref?.();
+
+  // Evaluate due cron/one-shot schedules and fire them. We tick every 30s so a
+  // minute-granular schedule fires within ~30s of its boundary; firing is
+  // idempotent (claimScheduleFire) and missed ticks collapse to a single run.
+  const scheduler = setInterval(() => {
+    try {
+      fireDueSchedules();
+    } catch (error) {
+      console.error("Schedule ticker failed:", error.message);
+    }
+  }, 30_000);
+  scheduler.unref?.();
 }
 
-export { app, notifyTelegram, parseTelegramApprovalCallback, telegramApprovalTarget, telegramApprovalText };
+export {
+  app,
+  fireDueSchedules,
+  notifyTelegram,
+  parseTelegramApprovalCallback,
+  telegramApprovalTarget,
+  telegramApprovalText
+};
