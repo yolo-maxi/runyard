@@ -4491,7 +4491,27 @@ function renderSupportChat() {
       <ul class="support-chat-starters" aria-label="Starter prompts">${chips}</ul>
     </div>`;
   } else {
-    body.innerHTML = tab.messages.map((message) => renderMessageBubble(message)).join("");
+    // Track the previous user/assistant message so renderMessageBubble can
+    // decide when to emit a time separator (gap > 5 min or first message) and
+    // when to flag a sender change. tool/system messages are diagnostic noise
+    // and shouldn't reset the sender / separator state.
+    let prevUserlikeAt = null;
+    let prevUserlikeRole = null;
+    body.innerHTML = tab.messages.map((message) => {
+      const role = message.role || "assistant";
+      const isMeta = role === "tool" || role === "system";
+      let showSeparator = false;
+      let senderChanged = false;
+      if (!isMeta) {
+        const at = message.at || null;
+        const gapMs = prevUserlikeAt && at ? Date.parse(at) - Date.parse(prevUserlikeAt) : Infinity;
+        showSeparator = !prevUserlikeAt || (Number.isFinite(gapMs) && gapMs > 5 * 60_000);
+        senderChanged = prevUserlikeRole != null && prevUserlikeRole !== role;
+        prevUserlikeAt = at || prevUserlikeAt;
+        prevUserlikeRole = role;
+      }
+      return renderMessageBubble(message, { showSeparator, senderChanged });
+    }).join("");
   }
   body.scrollTop = body.scrollHeight;
   const status = panel.querySelector(".support-chat-status");
@@ -4506,27 +4526,50 @@ function renderSupportChat() {
   }
 }
 
-function renderMessageBubble(message) {
+// Format an absolute local time for the grouped time separator. Same-day
+// messages get just "10:34 AM"; older ones include "Jun 21" so a long-lived
+// conversation can be skimmed without ambiguity.
+function formatChatGroupTime(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  if (sameDay) return time;
+  const date = d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return `${date} · ${time}`;
+}
+
+function renderMessageBubble(message, opts = {}) {
   const role = message.role || "assistant";
-  // System and tool bubbles are transient/diagnostic — a timestamp on each
-  // one would add noise without information, so they stay unstamped.
+  // System and tool bubbles are transient/diagnostic — they don't get a
+  // wrapper, timestamp, separator, or sender-change treatment.
   if (role === "tool") {
     return `<div class="support-chat-msg tool">${esc(message.content)}</div>`;
   }
   if (role === "system") {
     return `<div class="support-chat-msg system">${esc(message.content)}</div>`;
   }
-  // Relative timestamp sits beneath the user/assistant bubble so the operator
-  // can tell "did the agent answer this five seconds ago or yesterday".
+  // The relative stamp is hidden by CSS by default and revealed on hover/
+  // focus so operators can still get the exact time without the always-on
+  // ladder of repeated timestamps cluttering the conversation.
   const stamp = message.at ? relativeTime(message.at) : "";
   const meta = stamp ? `<div class="support-chat-msg-meta muted" title="${esc(message.at || "")}">${esc(stamp)}</div>` : "";
+  // Time separator anchors a new conversation group (first message, or a
+  // gap > 5 minutes from the previous user/assistant turn).
+  const sepLabel = opts.showSeparator && message.at ? formatChatGroupTime(message.at) : "";
+  const separator = sepLabel
+    ? `<div class="support-chat-time-separator" role="separator" aria-label="${esc(message.at)}"><span>${esc(sepLabel)}</span></div>`
+    : "";
+  const senderChange = opts.senderChanged ? " support-chat-msg-wrap--sender-change" : "";
   if (message.error) {
-    return `<div class="support-chat-msg-wrap support-chat-msg-wrap--error">
+    return `${separator}<div class="support-chat-msg-wrap support-chat-msg-wrap--error${senderChange}">
       <div class="support-chat-msg error">${esc(message.content)}</div>
       ${meta}
     </div>`;
   }
-  return `<div class="support-chat-msg-wrap support-chat-msg-wrap--${esc(role)}">
+  return `${separator}<div class="support-chat-msg-wrap support-chat-msg-wrap--${esc(role)}${senderChange}">
     <div class="support-chat-msg ${esc(role)}">${esc(message.content)}</div>
     ${meta}
   </div>`;
