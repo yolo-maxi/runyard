@@ -3254,15 +3254,40 @@ button.run-id-mono:focus-visible,
 
 /* ---- Incident card: plain-English failure summary on the Runs landing ---- */
 .incident-card {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 14px 16px;
+  padding: 0;
   border: 1px solid #fecaca;
   border-left: 4px solid var(--danger);
   background: #fef2f2;
   border-radius: 12px;
   margin: 0 0 16px;
+}
+
+/* The summary is the collapsed one-liner: cause label + impact on a single
+   row, with the disclosure caret on the right so it reads as expandable. */
+.incident-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 11px 14px;
+  cursor: pointer;
+  list-style: none;
+}
+.incident-summary::-webkit-details-marker { display: none; }
+.incident-summary::after {
+  content: "▸";
+  margin-left: auto;
+  color: var(--danger);
+  font-size: 12px;
+  transition: transform 0.15s ease;
+}
+.incident-card[open] > .incident-summary::after { transform: rotate(90deg); }
+
+.incident-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 14px 14px;
 }
 
 .incident-head {
@@ -3411,17 +3436,91 @@ button.run-id-mono:focus-visible,
 }
 
 /* ---- Runs filter bar (Home: search + status + time range) ---- */
+/* Collapsible filter shell — the "Filters" summary is the only thing visible
+   until clicked (or until a filter is active, which auto-opens it). */
+.runs-filter-details {
+  margin: 0 0 12px;
+}
+.runs-filter-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--soft);
+  width: fit-content;
+}
+.runs-filter-summary::-webkit-details-marker { display: none; }
+.runs-filter-summary::before {
+  content: "▸";
+  font-size: 11px;
+  transition: transform 0.15s ease;
+}
+.runs-filter-details[open] > .runs-filter-summary::before { transform: rotate(90deg); }
+.filter-active-count {
+  font-weight: 600;
+  color: var(--brand-2);
+}
+.runs-filter-details[open] > .runs-filter-summary {
+  margin-bottom: 10px;
+}
+
 .runs-filter-bar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
   padding: 10px 12px;
-  margin: 0 0 12px;
+  margin: 0;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--panel);
 }
+
+/* Single condensed totals strip — replaces the old runner-pool chip row plus
+   the seven stat pills. Wraps on narrow screens but stays one logical line. */
+.home-stat-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 14px;
+}
+.home-stat-strip .hstat {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--soft);
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.home-stat-strip .hstat strong {
+  color: var(--ink);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.home-stat-strip .hstat .hstat-label {
+  font-size: 11px;
+}
+.home-stat-strip .hstat .ic {
+  width: 13px;
+  height: 13px;
+  opacity: 0.7;
+}
+.home-stat-strip .hstat.hot {
+  border-color: var(--brand-2);
+  background: color-mix(in srgb, var(--brand-2) 12%, var(--soft));
+}
+.home-stat-strip .hstat.hot strong { color: var(--brand-2); }
 
 .runs-filter-bar label {
   display: inline-flex;

@@ -336,27 +336,29 @@ function incidentCard({ run, failed24h = 1, onlineRunners = 0 } = {}) {
       ? `Not blocking — new runs can still start. ${failed24h} failures in the last 24h.`
       : "Not blocking — new runs can still start.";
   const copyBtn = (value, what) => `<button type="button" class="incident-copy" data-copy="${esc(value)}" title="Copy ${esc(what)}" aria-label="Copy ${esc(what)}">⧉</button>`;
-  return `<section class="incident-card" data-tone="danger" role="alert" aria-label="Most recent failure">
-    <div class="incident-head">
+  // Collapsed by default to one line — only auto-expands when it's actually
+  // blocking new runs. The whole card is a <details> so the failure summary
+  // stays a glanceable strip until the operator wants the actions + ids.
+  return `<details class="incident-card" data-tone="danger"${blocking ? " open" : ""}>
+    <summary class="incident-summary" aria-label="Most recent failure">
       <span class="incident-cause-label">${esc(f.label)}</span>
       <span class="incident-impact">${esc(impact)}</span>
-    </div>
-    <p class="incident-sentence">${esc(f.sentence)}</p>
-    <div class="incident-actions">
-      <a class="button primary" href="${esc(deepLinks.runLogs(run.id))}">Inspect failure</a>
-      <button type="button" class="button" data-rerun="${esc(run.id)}">Re-run with same input</button>
-      <a class="button ghost" href="${esc(deepLinks.run(run.id))}">Open run</a>
-    </div>
-    <details class="incident-tech">
-      <summary>Technical details</summary>
-      <dl class="incident-tech-grid">
+    </summary>
+    <div class="incident-body">
+      <p class="incident-sentence">${esc(f.sentence)}</p>
+      <div class="incident-actions">
+        <a class="button primary" href="${esc(deepLinks.runLogs(run.id))}">Inspect failure</a>
+        <button type="button" class="button" data-rerun="${esc(run.id)}">Re-run with same input</button>
+        <a class="button ghost" href="${esc(deepLinks.run(run.id))}">Open run</a>
+      </div>
+      <dl class="incident-tech-grid incident-tech">
         <div><dt>Run</dt><dd><code>${esc(run.id)}</code> ${copyBtn(run.id, "run id")}</dd></div>
         ${f.step ? `<div><dt>Step</dt><dd><code>${esc(f.step)}</code></dd></div>` : ""}
         ${f.runnerId ? `<div><dt>Runner</dt><dd><code>${esc(f.runnerId)}</code></dd></div>` : ""}
         ${f.raw ? `<div class="incident-tech-raw"><dt>Error</dt><dd><code>${esc(f.raw)}</code> ${copyBtn(f.raw, "error text")}</dd></div>` : ""}
       </dl>
-    </details>
-  </section>`;
+    </div>
+  </details>`;
 }
 
 // --- Sample workflow templates -----------------------------------------------
@@ -1720,7 +1722,7 @@ function setHomeFilters(updates) {
   render().catch(showError);
 }
 
-function renderHomeFilterBar(filters) {
+function renderHomeFilterBar(filters, { open = false } = {}) {
   const statusOptions = RUN_STATUS_OPTIONS.map(
     (opt) => `<option value="${esc(opt.value)}"${opt.value === filters.status ? " selected" : ""}>${esc(opt.label)}</option>`
   ).join("");
@@ -1737,20 +1739,49 @@ function renderHomeFilterBar(filters) {
       .map((c) => `<span class="runs-filter-chip" data-filter-chip="${esc(c.kind)}">${esc(c.label)} <button type="button" aria-label="Clear ${esc(c.kind)} filter" data-clear-filter="${esc(c.kind)}">×</button></span>`)
       .join("")}</div>`
     : "";
-  return `<form class="runs-filter-bar" id="runs-filter-bar" role="search" aria-label="Filter runs">
-    <label><span class="muted">Search</span>
-      <input type="search" id="runs-filter-q" name="q" value="${esc(filters.q)}" placeholder="workflow, step, error, run id" autocomplete="off" />
-    </label>
-    <label><span class="muted">Status</span>
-      <select id="runs-filter-status" name="status">${statusOptions}</select>
-    </label>
-    <label><span class="muted">Time</span>
-      <select id="runs-filter-range" name="range">${rangeOptions}</select>
-    </label>
-    <button type="submit" class="button">Apply</button>
-    ${activeChips.length ? `<button type="button" class="button" id="runs-filter-clear">Clear filters</button>` : ""}
-    ${chipsHtml}
-  </form>`;
+  // Collapsed by default — the summary line stays a single "Filters" toggle
+  // unless a filter is actually applied, in which case it auto-opens and shows
+  // an active count so the operator knows the list is filtered.
+  return `<details class="runs-filter-details"${open || activeChips.length ? " open" : ""}>
+    <summary class="runs-filter-summary">Filters${activeChips.length ? ` <span class="filter-active-count">${activeChips.length} active</span>` : ""}</summary>
+    <form class="runs-filter-bar" id="runs-filter-bar" role="search" aria-label="Filter runs">
+      <label><span class="muted">Search</span>
+        <input type="search" id="runs-filter-q" name="q" value="${esc(filters.q)}" placeholder="workflow, step, error, run id" autocomplete="off" />
+      </label>
+      <label><span class="muted">Status</span>
+        <select id="runs-filter-status" name="status">${statusOptions}</select>
+      </label>
+      <label><span class="muted">Time</span>
+        <select id="runs-filter-range" name="range">${rangeOptions}</select>
+      </label>
+      <button type="submit" class="button">Apply</button>
+      ${activeChips.length ? `<button type="button" class="button" id="runs-filter-clear">Clear filters</button>` : ""}
+      ${chipsHtml}
+    </form>
+  </details>`;
+}
+
+// One tight strip that replaces the old two rows (runner-pool chips + the
+// seven home-stat pills). Same numbers, a quarter of the vertical space:
+// icon where one fits, value-forward labels, tooltips for the full meaning,
+// and a "hot" accent only when a count actually wants attention.
+function renderHomeStatStrip({ active, queued, capacityLabel, stats, runs, pending, pool }) {
+  const available = pool
+    ? (pool.availableSlots != null ? pool.availableSlots : Math.max(0, (pool.totalCapacity || 0) - (pool.totalActive || 0)))
+    : null;
+  const items = [
+    { v: active.length, label: "active", title: "Runs in flight right now", hot: active.length > 0 },
+    { v: queued, label: "queued", title: "Runs waiting for a free slot", icon: "queue", hot: queued > 0 },
+    { v: capacityLabel, label: "", title: "Active slots / total runner capacity", icon: "runner" },
+    available != null ? { v: available, label: "free", title: "Free runner slots", icon: "free" } : null,
+    { v: stats.capabilities ?? 0, label: "workflows", title: "Workflows defined" },
+    { v: stats.runs ?? runs.length, label: "total", title: "Total runs" },
+    { v: stats.artifacts ?? 0, label: "artifacts", title: "Artifacts stored" },
+    { v: pending.length, label: "approvals", title: "Pending approvals", hot: pending.length > 0 }
+  ].filter(Boolean);
+  return `<div class="home-stat-strip" aria-label="Hub totals">
+    ${items.map((it) => `<span class="hstat${it.hot ? " hot" : ""}" title="${esc(it.title)}">${it.icon ? icon(it.icon) : ""}<strong>${esc(String(it.v))}</strong>${it.label ? ` <span class="hstat-label">${esc(it.label)}</span>` : ""}</span>`).join("")}
+  </div>`;
 }
 
 function bindHomeFilterBar() {
@@ -1851,13 +1882,11 @@ async function renderHome() {
       </nav>`
     : "";
   const pendingDraft = peekRerunDraft();
-  content.innerHTML = `${toolbar("Runs", `<button id="home-new-run">Run a workflow</button>`, deepLinks.home())}
-    ${lastFailedRun
+  content.innerHTML = `${lastFailedRun
       ? incidentCard({ run: lastFailedRun, failed24h, onlineRunners })
       : primaryActionBar({ runners, capabilities })}
     ${rerunDraftBanner(pendingDraft, { context: "list" })}
-    <p class="muted deep-link-hint">Every page, run, workflow, and artifact has a stable URL — click 🔗 to copy a shareable link.</p>
-    ${renderHomeFilterBar(filters)}
+    ${renderHomeFilterBar(filters, { open: filtersActive })}
     ${gettingStarted ? `<div class="empty empty-runs" role="region" aria-label="No runs yet">
         <p class="empty-runs-headline"><strong>No runs yet</strong></p>
         <p class="muted">Workflows you trigger will appear here with logs, artifacts, and re-run controls. Start with the quickstart, or pick a workflow to launch.</p>
@@ -1866,22 +1895,11 @@ async function renderHome() {
           <button type="button" class="button" id="empty-runs-pick-workflow">Pick a workflow</button>
         </div>
       </div>` : ""}
-    ${renderRunnerPoolSummary(pool, { context: "home" })}
+    ${renderHomeStatStrip({ active, queued, capacityLabel, stats, runs, pending, pool })}
     ${(!filtersActive && active.length)
       ? `<h2 class="section-heading in-flight-heading">In flight <span class="muted">${active.length} live</span></h2>
          <section class="run-grid live in-flight">${active.map((run) => runCard(run, artifactsByRun.get(run.id) || [])).join("")}</section>`
       : ""}
-    <section class="stats home-stats compact" aria-label="Hub totals">
-      ${Object.entries({
-        "Active runs": active.length,
-        Queued: queued,
-        "Runner capacity": capacityLabel,
-        Workflows: stats.capabilities ?? 0,
-        "Total runs": stats.runs ?? runs.length,
-        Artifacts: stats.artifacts ?? 0,
-        "Pending approvals": pending.length
-      }).map(([label, value]) => `<div class="stat"><strong>${esc(String(value))}</strong><span class="muted">${esc(label)}</span></div>`).join("")}
-    </section>
     ${filtersActive
       ? `<h2 class="section-heading">Matching runs <span class="muted">${esc(totalMatching)} total</span></h2>
          ${runs.length
@@ -1895,7 +1913,6 @@ async function renderHome() {
            : `<p class="muted">Completed runs and their artifacts will appear here.</p>`}`}
     ${pending.length ? `<h2 class="section-heading">Pending approvals</h2>
       <section class="panel">${approvalList(pending)}</section>` : ""}`;
-  $("#home-new-run").addEventListener("click", () => setView("workflows"));
   $("#empty-runs-pick-workflow")?.addEventListener("click", () => setView("workflows"));
   document.querySelectorAll("[data-approve]").forEach((button) => button.addEventListener("click", () => resolveApproval(button.dataset.approve, "approve", { rerender: "none" }).then(() => render().catch(showError))));
   document.querySelectorAll("[data-reject]").forEach((button) => button.addEventListener("click", () => resolveApproval(button.dataset.reject, "reject", { rerender: "none" }).then(() => render().catch(showError))));
