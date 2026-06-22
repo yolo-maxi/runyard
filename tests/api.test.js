@@ -2273,6 +2273,23 @@ describe("Run log usability", () => {
     assert.match(code, /run-log-highlights/);
     assert.match(code, /\/log-summary/);
   });
+
+  it("makes run inputs and outputs the first-class detail section", async () => {
+    const response = await raw("/public/app.js");
+    assert.equal(response.status, 200);
+    const code = response.data;
+    assert.match(code, /Inputs &amp; outputs/);
+    assert.match(code, /renderRunInputsOutputs/);
+    assert.match(code, /data-run-section="io"/);
+    assert.match(code, /inputs\/outputs · log · artifacts · context/);
+    assert.doesNotMatch(code, /Raw payload/);
+
+    const styles = await raw("/public/styles.css");
+    assert.equal(styles.status, 200);
+    assert.match(styles.data, /run-io-section/);
+    assert.match(styles.data, /run-io-grid/);
+    assert.match(styles.data, /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
+  });
 });
 
 // --- Runner pool & queue visibility -----------------------------------------

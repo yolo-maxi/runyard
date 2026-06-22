@@ -4173,7 +4173,7 @@ button.run-id-mono:focus-visible,
   margin-right: 8px;
 }
 
-/* ---- Collapsible run sections (log / artifacts / context / payload) -----
+/* ---- Collapsible run sections (I/O / log / artifacts / context) ---------
  * Replaces the old split panel. Each card is a <details> so toggle state is
  * native; JS persists the open/closed override per-run in sessionStorage.
  */
@@ -4255,6 +4255,61 @@ button.run-id-mono:focus-visible,
 
 .run-section-body {
   padding: 0 16px 12px;
+}
+
+.run-io-section {
+  border-color: #bfd2f4;
+  background: linear-gradient(180deg, #f2f6fd, var(--panel) 42%);
+}
+
+.run-io-section > .run-section-summary {
+  padding-top: 14px;
+  padding-bottom: 14px;
+}
+
+.run-io-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.run-io-card {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  overflow: hidden;
+}
+
+.run-io-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.run-io-card h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.run-io-card-meta {
+  min-width: 0;
+  font-size: 12px;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-io-card .json {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  max-height: 420px;
+  overflow: auto;
 }
 
 .run-log-wrap-toggle {
@@ -4471,6 +4526,20 @@ button.run-id-mono:focus-visible,
 
   .run-section-body {
     padding: 0 12px 12px;
+  }
+
+  .run-io-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .run-io-card-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .run-io-card-meta {
+    text-align: left;
+    white-space: normal;
   }
 
   .run-detail-meta-summary {

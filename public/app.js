@@ -3011,6 +3011,7 @@ const RUN_DETAIL_SUCCESS_STATUSES = new Set(["succeeded", "recovered", "approved
 const RUN_DETAIL_FAILURE_STATUSES = new Set(["failed", "error", "cancelled", "rejected"]);
 
 function runDetailSectionDefaultOpen(name, status) {
+  if (name === "io") return true;
   if (RUN_DETAIL_FAILURE_STATUSES.has(status)) {
     return name === "log" || name === "diagnostics";
   }
@@ -3034,15 +3035,44 @@ function runLogWrapStored() {
   try { return localStorage.getItem("runDetail.logWrap") === "1"; } catch { return false; }
 }
 
-// Approximate bytes of the raw input+output blob — lets us tell power users
-// up-front whether expanding the payload section will dump 2KB or 2MB.
-function runRawPayloadBytes(run) {
+function payloadBytes(value) {
   try {
-    const s = JSON.stringify({ input: run?.input ?? null, output: run?.output ?? null });
+    const s = JSON.stringify(value ?? null);
     if (!s) return 0;
     if (typeof Blob === "function") return new Blob([s]).size;
     return s.length;
   } catch { return 0; }
+}
+
+function payloadSummary(value) {
+  if (value == null) return "empty";
+  if (Array.isArray(value)) return `${value.length} item${value.length === 1 ? "" : "s"}`;
+  if (typeof value === "object") {
+    const keys = Object.keys(value);
+    if (!keys.length) return "empty object";
+    const visible = keys.slice(0, 5).join(", ");
+    return `${keys.length} key${keys.length === 1 ? "" : "s"}: ${visible}${keys.length > 5 ? ", …" : ""}`;
+  }
+  if (typeof value === "string") return `${value.length} character${value.length === 1 ? "" : "s"}`;
+  return typeof value;
+}
+
+function renderRunPayloadBlock(label, value) {
+  const byteLabel = formatBytes(payloadBytes(value));
+  return `<article class="run-io-card">
+    <header class="run-io-card-head">
+      <h3>${esc(label)}</h3>
+      <span class="run-io-card-meta muted">${esc(payloadSummary(value))} · ${esc(byteLabel)}</span>
+    </header>
+    ${json(value ?? null)}
+  </article>`;
+}
+
+function renderRunInputsOutputs(run) {
+  return `<div class="run-io-grid">
+    ${renderRunPayloadBlock("Input", run?.input ?? null)}
+    ${renderRunPayloadBlock("Output", run?.output ?? null)}
+  </div>`;
 }
 
 const ARTIFACT_TEXT_EXTS = new Set(["txt", "md", "markdown", "log", "csv", "tsv", "yaml", "yml", "html", "xml", "js", "ts", "jsx", "tsx", "css", "sh", "py", "rb", "go", "rs", "java", "c", "h"]);
@@ -3286,9 +3316,9 @@ async function renderRunDetail(runId, { focus = "", focusId = "" } = {}) {
   const logOpen = runDetailSectionOpen(run.id, "log", statusKey);
   const artifactsOpen = runDetailSectionOpen(run.id, "artifacts", statusKey);
   const contextOpen = runDetailSectionOpen(run.id, "context", statusKey);
-  const payloadOpen = runDetailSectionOpen(run.id, "payload", statusKey);
-  const payloadBytes = runRawPayloadBytes(run);
-  const payloadSizeLabel = payloadBytes ? formatBytes(payloadBytes) : "empty";
+  const ioOpen = runDetailSectionOpen(run.id, "io", statusKey);
+  const ioBytes = payloadBytes({ input: run.input ?? null, output: run.output ?? null });
+  const ioSizeLabel = ioBytes ? formatBytes(ioBytes) : "empty";
   const artifactCount = (data.artifacts || []).length;
   // The timing strip (Started/Ended/Duration/Attempt/Trigger) stays visible
   // above the fold so an operator can answer "what happened, how long" with
@@ -3327,8 +3357,15 @@ async function renderRunDetail(runId, { focus = "", focusId = "" } = {}) {
     <div class="run-sections-toolbar" role="toolbar" aria-label="Run detail sections">
       <button type="button" class="button" id="run-sections-expand" title="Open every run-detail section">Expand all</button>
       <button type="button" class="button" id="run-sections-collapse" title="Close every run-detail section">Collapse all</button>
-      <span class="run-sections-toolbar-hint" aria-hidden="true">log · artifacts · context · payload</span>
+      <span class="run-sections-toolbar-hint" aria-hidden="true">inputs/outputs · log · artifacts · context</span>
     </div>
+    <details class="panel run-section run-io-section" data-run-section="io"${ioOpen ? " open" : ""} id="panel-io">
+      <summary class="run-section-summary">
+        <span class="run-section-title">Inputs &amp; outputs</span>
+        <span class="run-section-meta muted">${esc(ioSizeLabel)} total</span>
+      </summary>
+      <div class="run-section-body">${renderRunInputsOutputs(run)}</div>
+    </details>
     <details class="panel run-section" data-run-section="log"${logOpen ? " open" : ""} id="panel-logs">
       <summary class="run-section-summary">
         <span class="run-section-title">Run log</span>
@@ -3359,16 +3396,6 @@ async function renderRunDetail(runId, { focus = "", focusId = "" } = {}) {
         ${description ? `<p class="run-detail-desc">${esc(description)}</p>` : ""}
         <p class="run-origin-detail"><strong>Origin</strong> ${esc(origin)}</p>
         <p class="run-folder-banner"><span class="run-folder">📁 ${esc(folder)}</span> <span class="muted">— display-only grouping for this run's artifacts &amp; logs</span></p>
-      </div>
-    </details>
-    <details class="panel run-section" data-run-section="payload"${payloadOpen ? " open" : ""}>
-      <summary class="run-section-summary">
-        <span class="run-section-title">Raw payload</span>
-        <span class="run-section-meta muted">${esc(payloadSizeLabel)}</span>
-      </summary>
-      <div class="run-section-body">
-        <h3>Input</h3>${json(run.input)}
-        <h3>Output</h3>${json(run.output)}
       </div>
     </details>`;
   // Cancel only present when the run is still cancellable.
