@@ -13,7 +13,7 @@ introduces an optional per-run *response endpoint* — a small piece of caller-
 supplied config attached to the run when it is created, telling the Hub where
 to deliver the final reply once the run reaches a terminal state.
 
-## Slice 1 scope (this doc)
+## Slice 1 scope
 
 - Contract for the optional `responseEndpoint` field on the run-creation API.
 - Validation rules for endpoint type and shape.
@@ -23,8 +23,34 @@ to deliver the final reply once the run reaches a terminal state.
   only a redacted summary of the endpoint, never the raw bearer tokens or
   header values the caller provided.
 
-Slice 2 — out of scope for this doc — adds the actual outbound delivery
-(retry policy, payload shape, signing) over `http` and `telegram`.
+## Slice 2 scope (this doc, current)
+
+- Actual outbound delivery when a run reaches a terminal state.
+- `http` provider: `POST`/`PUT` JSON payload to the configured URL, with the
+  configured headers forwarded blind, a 10 s default timeout, and non-2xx
+  treated as a failure (no retry policy — attempts are recorded so a future
+  slice can add one).
+- `telegram` provider: short terminal-state message sent via
+  `api.telegram.org/bot<token>/sendMessage` with the configured `chatId`,
+  optional `threadId` (mapped to `message_thread_id`), and optional
+  `parseMode`. The Hub bot token is reused from `TELEGRAM_BOT_TOKEN` (or
+  `SMITHERS_TELEGRAM_BOT_TOKEN`); when neither is set, delivery is recorded
+  as failed (`last_error` explains why) — the run itself is not affected.
+- Delivery is triggered from the same server-side terminal hooks the
+  retrospective artifact uses (`/api/runs/:id/{complete,fail,cancel}`, the
+  stale-run reaper, and approval-driven cancellation in `/api/approvals/:id/*`
+  and the Telegram approval webhook), so any path that lands a run in a
+  terminal state also notifies its registered endpoints.
+- Idempotency: only `pending` endpoints are picked up; an endpoint that is
+  already `delivered` / `in_flight` / `failed` / `abandoned` is skipped, so
+  repeated terminal updates never fan out a second delivery. The row is
+  flipped to `in_flight` *before* the outbound call so a concurrent attempt
+  is a no-op too.
+
+Future work (out of scope for this slice):
+
+- Retry policy / exponential backoff for `failed` rows.
+- `email` provider and any signed-payload variant.
 
 ## Contract at run-creation time
 
@@ -79,25 +105,72 @@ request body, alongside the existing `input` / `chain` / `runnerId` fields:
 `email` is intentionally out of scope for this slice. Adding it later follows
 the same model: new `type`, new `config` validator, no change to the contract.
 
-## Delivery (slice 2 contract — not implemented here)
+## Delivery payload (slice 2)
 
-When delivery lands it will:
+Delivery fires once when the run reaches a terminal state: `succeeded`,
+`failed`, or `cancelled`. The Hub builds a single sanitized payload per run
+and sends it to every endpoint attached to that run.
 
-- Fire once when the run reaches a terminal state: `succeeded`, `failed`, or
-  `cancelled`.
-- Send a structured payload containing:
-  - `runId`, `status`, `currentStep`
-  - `capabilitySlug`, `capabilityName`, `workflowVersion`
-  - safe summary / output metadata (size, top-level keys; not a full input
-    echo and not secret-shaped values)
-  - artifact pointers (id, name, mimeType, sizeBytes, deepLink, download URL)
-  - log/event pointers (`/api/runs/:id/events`, `/api/runs/:id/logs`)
-  - Hub deep links (`/app#runs/:id`)
-- Record each attempt in `run_response_endpoints` (`delivery_attempts`,
-  `last_attempt_at`, `last_error`) and stamp `delivered_at` on success.
-- Forward the caller-supplied `config.headers` blind on the outbound request
-  (that is what they are for). Those values are **not** transcribed back into
-  any Hub record visible via the API, events, or audit log.
+```jsonc
+{
+  "schemaVersion": "runyard.run.response.v1",
+  "runId": "run_…",
+  "status": "succeeded" | "failed" | "cancelled",
+  "currentStep": "…",
+  "capability": {
+    "id": "cap_…",
+    "slug": "…",
+    "name": "…",
+    "workflowVersion": 7
+  },
+  "timestamps": {
+    "createdAt": "…",
+    "startedAt": "…",
+    "completedAt": "…",
+    "durationMs": 12345
+  },
+  "error": "…concise message when status === failed…",
+  "output": {
+    "kind": "object",
+    "keyCount": 3,
+    "keys": ["ok", "report", "links"],
+    "sizeBytes": 412
+  },
+  "artifacts": [
+    { "id": "art_…", "name": "…", "mimeType": "…",
+      "sizeBytes": 0, "deepLink": "/app#runs/run_…/artifacts/art_…",
+      "downloadUrl": "<base>/api/artifacts/art_…/download" }
+  ],
+  "links": {
+    "run": "/app#runs/run_…",
+    "runDetail": "<base>/api/runs/run_…",
+    "logs": "<base>/api/runs/run_…/logs",
+    "events": "<base>/api/runs/run_…/events",
+    "artifacts": "<base>/api/runs/run_…/artifacts"
+  },
+  "deliveredAt": "…"
+}
+```
+
+The Hub also:
+
+- Records each attempt in `run_response_endpoints` (`delivery_status`,
+  `delivery_attempts`, `last_attempt_at`, `last_error`) and stamps
+  `delivered_at` on success.
+- Forwards the caller-supplied `config.headers` blind on the outbound `http`
+  request (that is what they are for). Those values are **not** transcribed
+  back into any Hub record visible via the API, events, or audit log — the
+  redacted `summary` shape is the only thing surfaced.
+- For `telegram` delivery: the configured `chatId`, `threadId`
+  (`message_thread_id`), and optional `parseMode` are sent to
+  `api.telegram.org/bot<token>/sendMessage`. The bot token is sourced from
+  `TELEGRAM_BOT_TOKEN` or `SMITHERS_TELEGRAM_BOT_TOKEN`; missing token
+  becomes a recorded delivery failure (the run is unaffected). No bot token
+  is hardcoded.
+
+The output summary deliberately reports only key *names* (no values),
+top-level type, and a byte size — so a workflow that returns
+`{ ok: true, secret: "…" }` cannot leak `"…"` through delivery.
 
 ## Audit / log safety
 
@@ -135,8 +208,18 @@ CREATE INDEX idx_run_response_endpoints_run ON run_response_endpoints(run_id);
 CREATE INDEX idx_run_response_endpoints_status ON run_response_endpoints(delivery_status);
 ```
 
-`delivery_status` values used by slice 1: `pending`. Slice 2 will introduce
-`in_flight`, `delivered`, `failed`, `abandoned`.
+`delivery_status` values:
+
+- `pending` — registered, not yet attempted (slice 1 default).
+- `in_flight` — claimed by the delivery loop; another concurrent attempt
+  skips the row.
+- `delivered` — outbound call returned 2xx; `delivered_at` is stamped and
+  the row is never picked up again.
+- `failed` — outbound call returned non-2xx, timed out, or a provider
+  precondition is missing (e.g. telegram bot token unset). `last_error`
+  holds a redacted, length-bounded message. Slice 2 records but does not
+  retry; a future slice may add backoff.
+- `abandoned` — reserved for future use (e.g. retry budget exhausted).
 
 ## Helper functions (db layer)
 

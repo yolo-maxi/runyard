@@ -62,6 +62,35 @@ function captureTelegramFetch(calls) {
   };
 }
 
+// Generic outbound-fetch interceptor for response-endpoint delivery tests.
+// Each handler matches by URL prefix or regex; unmatched calls pass through
+// to the previous fetch so the in-process test API itself keeps working.
+function captureOutboundFetch(handlers) {
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    const href = String(url);
+    for (const [match, handler] of handlers) {
+      const hit = match instanceof RegExp ? match.test(href) : href.startsWith(match);
+      if (hit) return handler({ url: href, options });
+    }
+    return previousFetch(url, options);
+  };
+  return () => {
+    globalThis.fetch = previousFetch;
+  };
+}
+
+async function waitForResponseEndpointStatus(runId, status, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const detail = await api(`/api/runs/${runId}`);
+    const found = (detail.responseEndpoints || []).find((entry) => entry.deliveryStatus === status);
+    if (found) return found;
+    await sleep(20);
+  }
+  throw new Error(`timed out waiting for response endpoint deliveryStatus=${status}`);
+}
+
 function api(pathname, options = {}) {
   return fetch(`${baseUrl}${pathname}`, {
     ...options,
@@ -650,6 +679,32 @@ describe("Run response endpoints (slice 1)", () => {
     assert.equal(detail.responseEndpoints[0].summary.chatId, "-1009876543210");
   });
 
+  it("does not schedule delivery for runs without a responseEndpoint", async () => {
+    let outboundCalls = 0;
+    const restoreFetch = captureOutboundFetch([
+      [/^https:\/\/.*\/runyard-no-endpoint/, async () => {
+        outboundCalls += 1;
+        return new Response("", { status: 200 });
+      }]
+    ]);
+    try {
+      const created = await api("/api/capabilities/hello/run", {
+        method: "POST",
+        body: { input: { goal: "no endpoint = no delivery" } }
+      });
+      await api(`/api/runs/${created.run.id}/start`, { method: "POST", body: {} });
+      await api(`/api/runs/${created.run.id}/complete`, { method: "POST", body: { output: { ok: true } } });
+      await sleep(60);
+      const detail = await api(`/api/runs/${created.run.id}`);
+      assert.deepEqual(detail.responseEndpoints, []);
+      assert.equal(outboundCalls, 0);
+      const events = await api(`/api/runs/${created.run.id}/events`);
+      assert.equal(events.events.some((event) => event.type.startsWith("run.response_endpoint.")), false);
+    } finally {
+      restoreFetch();
+    }
+  });
+
   it("rejects malformed responseEndpoint with 400 and does not create a run", async () => {
     const runsBefore = await api("/api/runs?limit=1");
     const before = runsBefore.total;
@@ -697,6 +752,221 @@ describe("Run response endpoints (slice 1)", () => {
 
     const runsAfter = await api("/api/runs?limit=1");
     assert.equal(runsAfter.total, before, "rejected responseEndpoint requests must not create runs");
+  });
+});
+
+describe("Run response endpoints (slice 2 — delivery)", () => {
+  // Slice 2 only needs a run that reaches a terminal state. The bootstrap
+  // admin token bypasses runner-ownership, so we can drive a queued → running
+  // transition directly instead of registering a runner and racing the global
+  // queue ordering. /complete after /start lands the run in `succeeded` and
+  // fires the terminal-state hooks.
+  async function startedRun(body) {
+    const created = await api("/api/capabilities/hello/run", { method: "POST", body });
+    await api(`/api/runs/${created.run.id}/start`, { method: "POST", body: {} });
+    return created;
+  }
+
+  it("delivers a sanitized payload to an http endpoint and stamps delivered_at", async () => {
+    const secretHeader = "Bearer shub_delivery_http_secret_value_xyz";
+    const calls = [];
+    const restoreFetch = captureOutboundFetch([
+      ["https://app.example.com/webhooks/delivery-ok", async ({ url, options }) => {
+        calls.push({
+          url,
+          method: options.method,
+          headers: options.headers,
+          body: options.body ? JSON.parse(options.body) : null
+        });
+        return new Response(JSON.stringify({ received: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }]
+    ]);
+    try {
+      const created = await startedRun({
+        input: { goal: "http delivery", secret: "shub_run_input_secret_should_not_leak" },
+        responseEndpoint: {
+          type: "http",
+          config: {
+            url: "https://app.example.com/webhooks/delivery-ok?token=callback-token-secret",
+            method: "POST",
+            headers: { authorization: secretHeader, "x-app-tenant": "tenant-1" }
+          }
+        }
+      });
+      await api(`/api/runs/${created.run.id}/complete`, {
+        method: "POST",
+        body: { output: { ok: true, secret: "shub_output_secret_leaks_here_no" } }
+      });
+      const delivered = await waitForResponseEndpointStatus(created.run.id, "delivered");
+      assert.equal(delivered.type, "http");
+      assert.equal(delivered.deliveryStatus, "delivered");
+      assert.equal(delivered.deliveryAttempts, 1);
+      assert.ok(delivered.lastAttemptAt);
+      assert.ok(delivered.deliveredAt);
+      assert.equal(delivered.lastError, null);
+
+      assert.equal(calls.length, 1);
+      const call = calls[0];
+      assert.equal(call.method, "POST");
+      // The configured headers are forwarded blind on the outbound request
+      // (that's what they're for) but never echoed into any Hub record.
+      assert.equal(call.headers.authorization, secretHeader);
+      assert.equal(call.headers["x-app-tenant"], "tenant-1");
+      // Payload-side: schema fields and pointers, no raw config / no secret values.
+      assert.equal(call.body.schemaVersion, "runyard.run.response.v1");
+      assert.equal(call.body.runId, created.run.id);
+      assert.equal(call.body.status, "succeeded");
+      assert.equal(call.body.capability.slug, "hello");
+      assert.ok(call.body.links.run.includes(created.run.id));
+      // Output is summarized — key names only, no raw values.
+      assert.equal(call.body.output.kind, "object");
+      assert.deepEqual(call.body.output.keys.sort(), ["ok", "secret"]);
+      const bodyJson = JSON.stringify(call.body);
+      assert.equal(bodyJson.includes("shub_output_secret_leaks_here_no"), false);
+      assert.equal(bodyJson.includes("shub_run_input_secret_should_not_leak"), false);
+      assert.equal(bodyJson.includes(secretHeader), false);
+      assert.equal(bodyJson.includes("callback-token-secret"), false);
+
+      // Run event + audit refer to the redacted endpoint summary, not the body.
+      const events = await api(`/api/runs/${created.run.id}/events`);
+      const ok = events.events.find((event) => event.type === "run.response_endpoint.delivered");
+      assert.ok(ok);
+      const eventJson = JSON.stringify(ok);
+      assert.equal(eventJson.includes(secretHeader), false);
+      assert.equal(eventJson.includes("callback-token-secret"), false);
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("records http delivery failure with status and attempt metadata", async () => {
+    const calls = [];
+    const restoreFetch = captureOutboundFetch([
+      ["https://app.example.com/webhooks/delivery-fail", async ({ url }) => {
+        calls.push({ url });
+        return new Response("nope", { status: 502 });
+      }]
+    ]);
+    try {
+      const created = await startedRun({
+        input: { goal: "http delivery failure" },
+        responseEndpoint: {
+          type: "http",
+          config: { url: "https://app.example.com/webhooks/delivery-fail", method: "POST" }
+        }
+      });
+      await api(`/api/runs/${created.run.id}/complete`, { method: "POST", body: { output: { ok: true } } });
+      const failed = await waitForResponseEndpointStatus(created.run.id, "failed");
+      assert.equal(failed.type, "http");
+      assert.equal(failed.deliveryAttempts, 1);
+      assert.ok(failed.lastAttemptAt);
+      assert.equal(failed.deliveredAt, null);
+      assert.match(failed.lastError || "", /502/);
+      assert.equal(calls.length, 1);
+      const events = await api(`/api/runs/${created.run.id}/events`);
+      const fail = events.events.find((event) => event.type === "run.response_endpoint.delivery_failed");
+      assert.ok(fail);
+      assert.equal(fail.data.httpStatus, 502);
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  it("delivers a concise telegram message when the bot token is configured", async () => {
+    const calls = [];
+    const restoreFetch = captureTelegramFetch(calls);
+    const restoreEnv = withTelegramEnv({
+      telegramBotToken: "123:test-bot-token-for-delivery",
+      baseUrl: "https://hub.example"
+    });
+    try {
+      const created = await startedRun({
+        input: { goal: "telegram delivery" },
+        responseEndpoint: {
+          type: "telegram",
+          config: { chatId: "-1009998887", threadId: 11, parseMode: "MarkdownV2" }
+        }
+      });
+      await api(`/api/runs/${created.run.id}/complete`, { method: "POST", body: { output: { ok: true } } });
+      const delivered = await waitForResponseEndpointStatus(created.run.id, "delivered");
+      assert.equal(delivered.type, "telegram");
+      const send = calls.find((call) => call.url.endsWith("/sendMessage"));
+      assert.ok(send, "telegram delivery should hit sendMessage");
+      assert.equal(send.body.chat_id, "-1009998887");
+      assert.equal(send.body.message_thread_id, 11);
+      assert.equal(send.body.parse_mode, "MarkdownV2");
+      assert.match(send.body.text, /SUCCEEDED/);
+      assert.match(send.body.text, new RegExp(created.run.id));
+      assert.match(send.body.text, /https:\/\/hub\.example\/app#runs\//);
+    } finally {
+      restoreEnv();
+      restoreFetch();
+    }
+  });
+
+  it("records telegram delivery failure when the bot token is not configured", async () => {
+    const calls = [];
+    const restoreFetch = captureTelegramFetch(calls);
+    const restoreEnv = withTelegramEnv({ telegramBotToken: "" });
+    try {
+      const created = await startedRun({
+        input: { goal: "telegram delivery missing token" },
+        responseEndpoint: {
+          type: "telegram",
+          config: { chatId: "-1001112223334" }
+        }
+      });
+      await api(`/api/runs/${created.run.id}/complete`, { method: "POST", body: { output: { ok: true } } });
+      const failed = await waitForResponseEndpointStatus(created.run.id, "failed");
+      assert.equal(failed.type, "telegram");
+      assert.equal(failed.deliveryAttempts, 1);
+      assert.equal(failed.deliveredAt, null);
+      assert.match(failed.lastError || "", /TELEGRAM_BOT_TOKEN/);
+      assert.equal(calls.length, 0, "missing token must not hit api.telegram.org");
+      // The run itself is still succeeded — delivery failure does not affect the run.
+      const detail = await api(`/api/runs/${created.run.id}`);
+      assert.equal(detail.run.status, "succeeded");
+    } finally {
+      restoreEnv();
+      restoreFetch();
+    }
+  });
+
+  it("does not redeliver an endpoint that is already delivered", async () => {
+    const calls = [];
+    const restoreFetch = captureOutboundFetch([
+      ["https://app.example.com/webhooks/delivery-once", async ({ url, options }) => {
+        calls.push({ url, body: options.body ? JSON.parse(options.body) : null });
+        return new Response("", { status: 200 });
+      }]
+    ]);
+    try {
+      const created = await startedRun({
+        input: { goal: "no duplicate" },
+        responseEndpoint: {
+          type: "http",
+          config: { url: "https://app.example.com/webhooks/delivery-once" }
+        }
+      });
+      await api(`/api/runs/${created.run.id}/complete`, { method: "POST", body: { output: { ok: true } } });
+      await waitForResponseEndpointStatus(created.run.id, "delivered");
+      assert.equal(calls.length, 1);
+
+      // A repeated terminal-state POST is idempotent; no second outbound call.
+      const retried = await raw(`/api/runs/${created.run.id}/complete`, { method: "POST", body: { output: { ok: true } } });
+      assert.equal(retried.status, 200);
+      await sleep(100);
+      assert.equal(calls.length, 1, "delivered endpoint must not receive a duplicate delivery");
+
+      const detail = await api(`/api/runs/${created.run.id}`);
+      assert.equal(detail.responseEndpoints[0].deliveryStatus, "delivered");
+      assert.equal(detail.responseEndpoints[0].deliveryAttempts, 1);
+    } finally {
+      restoreFetch();
+    }
   });
 });
 

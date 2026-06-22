@@ -66,6 +66,7 @@ import {
   presentRunResponseEndpoint,
   safeResponseEndpointAuditDetail
 } from "./runResponseEndpoint.js";
+import { scheduleRunResponseEndpointDelivery } from "./runResponseEndpointDelivery.js";
 import { chatWithSupportAgent, supportAgentInfo } from "./runyardSupportAgent.js";
 import { hashToken, parseCookies, sign, timingSafeEqualStr, unsign } from "./security.js";
 import { buildRepoCatalog } from "./repoCatalog.js";
@@ -1825,6 +1826,13 @@ app.get("/llms.txt", (req, res) => {
   lines.push("- Polling /api/runs/:id is always available and stays canonical.");
   lines.push("- Endpoint config is validated server-side; secrets are not echoed");
   lines.push("  back in API responses, events, or audit log entries.");
+  lines.push("- When the run reaches a terminal state (succeeded/failed/cancelled)");
+  lines.push("  the Hub posts a sanitized payload to http endpoints and a concise");
+  lines.push("  message to telegram endpoints; telegram delivery requires");
+  lines.push("  TELEGRAM_BOT_TOKEN (or SMITHERS_TELEGRAM_BOT_TOKEN) to be set on");
+  lines.push("  the Hub. Delivery state (status / attempts / last_error /");
+  lines.push("  delivered_at) is visible on GET /api/runs/:id under");
+  lines.push("  responseEndpoints[].");
   res.type("text/plain").send(`${lines.join("\n")}\n`);
 });
 
@@ -1838,7 +1846,7 @@ app.get("/openapi.json", (req, res) => {
     paths: {
       "/capabilities": { get: { summary: "List capabilities" }, post: { summary: "Create/update capability" } },
       "/capabilities/{id}": { get: { summary: "Describe capability" }, patch: { summary: "Update capability" } },
-      "/capabilities/{id}/run": { post: { summary: "Run capability with optional executionMode local|remote; improve.repoDir selects an allowlisted runner-local repo while logs/artifacts stay in the Hub. Accepts an optional responseEndpoint ({type: http|telegram, config}) so the caller can have the terminal-state reply delivered when the run finishes — polling /runs/{id} remains the canonical fallback." } },
+      "/capabilities/{id}/run": { post: { summary: "Run capability with optional executionMode local|remote; improve.repoDir selects an allowlisted runner-local repo while logs/artifacts stay in the Hub. Accepts an optional responseEndpoint ({type: http|telegram, config}) so the caller can have the terminal-state reply delivered when the run finishes (http endpoints receive a sanitized JSON payload; telegram endpoints receive a concise message and require TELEGRAM_BOT_TOKEN on the Hub). Polling /runs/{id} remains the canonical fallback; delivery state is exposed on /runs/{id}.responseEndpoints[]." } },
       "/workflow-endpoints": { get: { summary: "List configured authenticated workflow endpoints" }, post: { summary: "Create/update an authenticated workflow endpoint" } },
       "/workflow-endpoints/{slug}": { get: { summary: "Describe a workflow endpoint" }, post: { summary: "Submit data to a fixed authenticated workflow endpoint" } },
       "/menu": { get: { summary: "Discover the Runyard MCP/CLI menu and local/remote run path" } },
@@ -2947,9 +2955,25 @@ function scheduleRunObstructionAnalysisArtifact(runId) {
   });
 }
 
+// Best-effort outbound delivery of a terminal run's response endpoints
+// (slice 2 of the response-egress contract). Polling /api/runs/:id remains
+// the canonical fallback; this is fire-and-forget so it never blocks the
+// HTTP terminal-state response. Idempotency lives inside the delivery
+// module — already-delivered endpoints are skipped, so re-running this for
+// a repeated terminal update produces no duplicates.
+function dispatchRunResponseEndpointDelivery(runId) {
+  if (!runId) return;
+  setImmediate(() => {
+    scheduleRunResponseEndpointDelivery(runId).catch((error) => {
+      console.error(`Run response endpoint delivery failed for ${runId}:`, error?.message || error);
+    });
+  });
+}
+
 function recordRunTerminalArtifacts(runId) {
   const retrospective = recordRunRetrospectiveArtifact(runId);
   scheduleRunObstructionAnalysisArtifact(runId);
+  dispatchRunResponseEndpointDelivery(runId);
   return retrospective;
 }
 
@@ -2993,7 +3017,15 @@ function resolveApprovalHttp(req, res, decision) {
   if (approval.status !== "pending") return res.status(409).json({ error: "approval is not pending", approval: withApprovalLinks(approval) });
   const defaultComment =
     decision === "approved" ? "Approved from Web/API" : decision === "changes_requested" ? "Changes requested from Web/API" : "Rejected from Web/API";
-  res.json({ approval: withApprovalLinks(resolveApproval(req.params.id, decision, req.token.name, req.body.comment || defaultComment)) });
+  const resolved = resolveApproval(req.params.id, decision, req.token.name, req.body.comment || defaultComment);
+  // Approval rejection / changes_requested transitions the linked run to
+  // `cancelled` via resolveApproval's direct updateRun call. Fire response-
+  // endpoint delivery here so an approval-driven terminal state behaves the
+  // same as /api/runs/:id/{complete,fail,cancel} for slice 2 egress.
+  if (resolved?.runId && (decision === "rejected" || decision === "changes_requested")) {
+    dispatchRunResponseEndpointDelivery(resolved.runId);
+  }
+  res.json({ approval: withApprovalLinks(resolved) });
 }
 app.post("/api/approvals/:id/approve", requireAuth, requireScopes("api", "mcp", "approvals"), (req, res) => resolveApprovalHttp(req, res, "approved"));
 app.post("/api/approvals/:id/reject", requireAuth, requireScopes("api", "mcp", "approvals"), (req, res) => resolveApprovalHttp(req, res, "rejected"));
@@ -3082,6 +3114,12 @@ app.post("/api/telegram/webhook", async (req, res) => {
     const who = `telegram:${callback.from?.username || callback.from?.id || "user"}`;
     const comment = parsed.decision === "changes_requested" ? "Changes requested from Telegram" : `${approvalDecisionLabel(parsed.decision)} from Telegram`;
     const resolved = resolveApproval(parsed.approvalId, parsed.decision, who, comment);
+    // Same approval-driven terminal hook as the HTTP path: rejection /
+    // changes_requested cancels the linked run; fire response-endpoint
+    // delivery so the caller's webhook/telegram chat sees the result.
+    if (resolved?.runId && (parsed.decision === "rejected" || parsed.decision === "changes_requested")) {
+      dispatchRunResponseEndpointDelivery(resolved.runId);
+    }
     await answerTelegramCallbackQuery(callback.id, `${approvalDecisionLabel(parsed.decision)}.`);
     await clearTelegramApprovalButtons(callback);
     return res.json({ ok: true, approval: withApprovalLinks(resolved) });
