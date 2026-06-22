@@ -9,7 +9,7 @@
     <link rel="stylesheet" href="/public/vendor/reactflow.css" />
     <script src="https://telegram.org/js/telegram-web-app.js?62"></script>
   </head>
-  <body>
+  <body class="logged-out">
     <header class="topbar">
       <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Runyard</span><span class="brand-pill" title="Runyard Hub — the control plane">Hub</span><span class="env-chip env-chip-loading" id="env-chip" aria-label="Connected hub" title="Which Runyard hub you are connected to"><span class="env-chip-dot" aria-hidden="true"></span><span class="env-chip-host">connecting…</span><span class="env-chip-tag"></span></span></div>
       <nav class="mobile-primary-nav" aria-label="Primary navigation">
@@ -58,7 +58,9 @@
     <!-- Hovering support chat. Mounted globally so it persists across views.
          JS in app.js hydrates the tabs, threads, and input. -->
     <button id="support-chat-fab" type="button" class="support-chat-fab hidden" aria-label="Open Runyard support chat" title="Runyard support agent (Ctrl+/)">
-      <span aria-hidden="true">✨</span>
+      <!-- Inline sparkle SVG (not the sparkle emoji): renders identically on every
+           platform and in headless/minimal envs where emoji degrade to tofu boxes. -->
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 3v4M12 17v4M3 12h4M17 12h4"/><path d="M12 8.5 13 11l2.5 1-2.5 1-1 2.5-1-2.5L8.5 12 11 11z"/></svg>
     </button>
     <aside id="support-chat" class="support-chat hidden" role="dialog" aria-label="Runyard user support agent" aria-modal="false">
       <header class="support-chat-head">

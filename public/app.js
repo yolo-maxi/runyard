@@ -54,6 +54,26 @@ function json(value) {
   return `<pre class="json">${esc(JSON.stringify(value, null, 2))}</pre>`;
 }
 
+// --- Inline icons -----------------------------------------------------------
+// Monochrome, currentColor SVGs used for chips and icon-buttons. Inline SVG
+// renders identically on every platform (unlike emoji, whose glyph coverage
+// varies by OS/font and degrades to tofu boxes in headless/minimal envs), and
+// it inherits the surrounding text colour so chips stay visually cohesive.
+const ICON_PATHS = {
+  link: '<path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 0 1 0 10h-2"/><line x1="8" y1="12" x2="16" y2="12"/>',
+  sparkle: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4" /><path d="M12 8.5 13 11l2.5 1-2.5 1-1 2.5-1-2.5L8.5 12 11 11z"/>',
+  queue: '<path d="M6 2h12M6 22h12"/><path d="M7 2c0 4 3 5 5 7 2-2 5-3 5-7M7 22c0-4 3-5 5-7 2 2 5 3 5 7"/>',
+  runner: '<rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/><line x1="6.5" y1="7" x2="6.5" y2="7"/><line x1="6.5" y1="17" x2="6.5" y2="17"/>',
+  free: '<circle cx="12" cy="12" r="9"/><path d="m8.5 12 2.2 2.2L15.5 9.5"/>',
+  project: '<path d="M21 8 12 3 3 8l9 5 9-5Z"/><path d="M3 8v8l9 5 9-5V8"/><line x1="12" y1="13" x2="12" y2="21"/>',
+  branch: '<circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7M18 10.5c0 4-4 4.5-8 4.5"/>'
+};
+function icon(name, { cls = "", size = "1em" } = {}) {
+  const path = ICON_PATHS[name];
+  if (!path) return "";
+  return `<svg class="ic${cls ? ` ${cls}` : ""}" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${path}</svg>`;
+}
+
 // --- Deep links --------------------------------------------------------------
 // Stable hash-routed deep links for every primary view. All helpers return the
 // hash (e.g. `#runs/abc`) so anchor tags can drop them straight into `href`.
@@ -110,7 +130,7 @@ if (typeof window !== "undefined") {
 // Inline "copy share link" button — emits an absolute URL for the given hash.
 function shareButton(hash, label = "Copy link") {
   const url = deepLinks.abs(hash);
-  return `<button type="button" class="share-link" data-copy="${esc(url)}" title="Copy shareable link" aria-label="${esc(label)}">🔗</button>`;
+  return `<button type="button" class="share-link" data-copy="${esc(url)}" title="Copy shareable link" aria-label="${esc(label)}">${icon("link")}</button>`;
 }
 
 // --- Transient notifications -------------------------------------------------
@@ -918,6 +938,7 @@ function showAuthFallback() {
   }
   $("#login").classList.remove("hidden");
   $("#app").classList.add("hidden");
+  document.body.classList.add("logged-out");
 }
 
 // --- Header env chip --------------------------------------------------------
@@ -950,6 +971,9 @@ async function bootAuthenticated(data) {
   state.me = data.token;
   $("#login").classList.add("hidden");
   $("#app").classList.remove("hidden");
+  // Reveal the authenticated topbar nav (hidden by default so the login
+  // screen isn't cluttered with Logout / Admin / primary-nav chrome).
+  document.body.classList.remove("logged-out");
   refreshEnvChip();
   state.view = location.hash.slice(1) || "home";
   // Bind every nav button (sidebar + admin dropdown) that declares a view.
@@ -1474,8 +1498,8 @@ function runCard(run, artifacts = []) {
   const created = relativeTime(run.createdAt);
   const chipsHtml = (project || branch || run.workflowVersion || execution)
     ? `<div class="run-card-chips">
-        ${project ? `<span class="chip chip-project" title="Project / target">📦 ${esc(project)}</span>` : ""}
-        ${branch ? `<span class="chip chip-branch" title="Branch">🌿 ${esc(branch)}</span>` : ""}
+        ${project ? `<span class="chip chip-project" title="Project / target">${icon("project")} ${esc(project)}</span>` : ""}
+        ${branch ? `<span class="chip chip-branch" title="Branch">${icon("branch")} ${esc(branch)}</span>` : ""}
         ${run.workflowVersion ? `<span class="chip chip-version" title="Workflow version">v${esc(run.workflowVersion)}</span>` : ""}
         ${execution ? `<span class="chip chip-runner" title="Execution target">${esc(execution)}</span>` : ""}
       </div>`
@@ -2575,8 +2599,8 @@ function workflowRunsList(runs) {
           <a href="${esc(deepLinks.run(run.id))}" class="wf-run-title">${esc(title)}</a>
           <span class="wf-run-status">${status(run.status)}</span>
           <span class="muted wf-run-when">${esc(relativeTime(run.createdAt))}${dur ? ` · ${esc(dur)}` : ""}</span>
-          ${project ? `<span class="chip chip-project">📦 ${esc(project)}</span>` : ""}
-          ${branch ? `<span class="chip chip-branch">🌿 ${esc(branch)}</span>` : ""}
+          ${project ? `<span class="chip chip-project">${icon("project")} ${esc(project)}</span>` : ""}
+          ${branch ? `<span class="chip chip-branch">${icon("branch")} ${esc(branch)}</span>` : ""}
         </summary>
         <div class="wf-run-progress-body">
           ${runProgressStrip(run)}
@@ -3492,11 +3516,11 @@ async function renderRunDetail(runId, { focus = "", focusId = "" } = {}) {
   // modifier classes (.chip--id) give id-like values a quieter, monospaced
   // treatment so the prominent banner status pill stays the focal point.
   const chips = [];
-  if (project) chips.push(`<span class="chip chip-project" title="Project: ${esc(project)}">📦 ${esc(project)}</span>`);
-  if (branch) chips.push(`<span class="chip chip-branch" title="Branch: ${esc(branch)}">🌿 ${esc(branch)}</span>`);
+  if (project) chips.push(`<span class="chip chip-project" title="Project: ${esc(project)}">${icon("project")} ${esc(project)}</span>`);
+  if (branch) chips.push(`<span class="chip chip-branch" title="Branch: ${esc(branch)}">${icon("branch")} ${esc(branch)}</span>`);
   if (run.workflowVersion) chips.push(`<span class="chip chip-version chip--id" title="Workflow version ${esc(run.workflowVersion)}">workflow v${esc(run.workflowVersion)}</span>`);
   if (execution) chips.push(`<span class="chip chip-runner" title="Execution mode: ${esc(execution)}">execution ${esc(execution)}</span>`);
-  if (run.runnerId) chips.push(`<span class="chip chip-runner chip--id" title="Runner: ${esc(run.runnerId)}">🛠 ${esc(run.runnerId)}</span>`);
+  if (run.runnerId) chips.push(`<span class="chip chip-runner chip--id" title="Runner: ${esc(run.runnerId)}">${icon("runner")} ${esc(run.runnerId)}</span>`);
   const crumbNav = breadcrumbs([
     { label: "Runs", href: deepLinks.runs() },
     { label: run.capabilityName || slug || "Workflow", href: slug ? deepLinks.workflow(slug) : deepLinks.workflows() },
@@ -3748,7 +3772,12 @@ function approvalDecisionLabel(approval) {
 }
 
 function approvalList(approvals) {
-  if (!approvals.length) return `<p class="muted">No pending approvals.</p>`;
+  if (!approvals.length) {
+    return `<div class="empty">
+      <p class="empty-runs-headline">No pending approvals</p>
+      <p class="muted">You're all caught up. When a workflow pauses for human sign-off it lands here with full context and Approve / Reject controls.</p>
+    </div>`;
+  }
   return `<div class="approval-list">${approvals.map((approval) => `<article class="item approval-card" id="approval-${esc(approval.id)}">
     <header class="approval-card-head">
       ${status(approval.status)}
@@ -3928,12 +3957,12 @@ function renderRunnerPoolSummary(pool, { context = "runners-admin" } = {}) {
   const active = pool.totalActive || 0;
   const available = pool.availableSlots != null ? pool.availableSlots : Math.max(0, capacity - active);
   const queueChip = queued
-    ? `<span class="chip chip-queue" title="Runs waiting for a free runner slot">⏳ ${esc(queued)} queued</span>`
-    : `<span class="chip chip-queue empty" title="Queue is empty">⏳ queue empty</span>`;
+    ? `<span class="chip chip-queue" title="Runs waiting for a free runner slot">${icon("queue")} ${esc(queued)} queued</span>`
+    : `<span class="chip chip-queue empty" title="Queue is empty">${icon("queue")} queue empty</span>`;
   const capacityChip = context === "runners-admin"
-    ? `<span class="chip chip-runner" title="Active slots / total capacity across online runners">🛠 ${esc(active)} / ${esc(capacity)} slots</span>`
+    ? `<span class="chip chip-runner" title="Active slots / total capacity across online runners">${icon("runner")} ${esc(active)} / ${esc(capacity)} slots</span>`
     : "";
-  const availableChip = `<span class="chip ${available ? "chip-branch" : "chip-version"}" title="Free slots across the pool">🟢 ${esc(available)} free</span>`;
+  const availableChip = `<span class="chip ${available ? "chip-branch" : "chip-version"}" title="Free slots across the pool">${icon("free")} ${esc(available)} free</span>`;
   return `<p class="runner-pool-summary">${queueChip}${capacityChip}${availableChip}</p>`;
 }
 
@@ -4091,7 +4120,7 @@ const TOKEN_SCOPES = ["api", "mcp", "runner", "admin"];
 async function renderTokens() {
   const data = await api("/api/tokens");
   content.innerHTML = `${toolbar("Access Tokens", "", deepLinks.tokens())}
-    <section class="split">
+    <section class="split split-even">
       <div class="panel">
         <h2>Create Token</h2>
         <form id="token-form" class="form-grid">

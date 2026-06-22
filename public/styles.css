@@ -236,6 +236,15 @@ code {
   flex-wrap: wrap;
 }
 
+/* Logged-out (login screen): keep only the orienting brand + env chip in the
+ * topbar. The primary nav, admin menu, and Logout are meaningless without a
+ * session, so hide them to keep the login screen focused on the token form.
+ * !important overrides the mobile media query that flexes .mobile-primary-nav. */
+body.logged-out .nav,
+body.logged-out .mobile-primary-nav {
+  display: none !important;
+}
+
 .mobile-primary-nav {
   display: none;
 }
@@ -553,6 +562,19 @@ code {
   gap: 16px;
   align-items: start;
 }
+
+/* Balanced two-column split for peer panels (e.g. Tokens: Create | Existing).
+ * The asymmetric 1fr/380px above is tuned for a main+sidebar layout; a fixed
+ * 380px rail is too narrow for the Existing Tokens table and forced it to
+ * overflow the panel (and the viewport) on desktop. Equal minmax(0,1fr)
+ * tracks give each panel room and still collapse cleanly on phones. */
+.split-even {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+/* Long monospace ids (token ids, run ids) must wrap inside table cells rather
+ * than push the table wider than its container. */
+.table .muted { overflow-wrap: anywhere; }
 
 .timeline {
   display: grid;
@@ -1436,6 +1458,14 @@ details.advanced[open] summary {
   text-overflow: ellipsis;
 }
 
+/* Inline currentColor icons (chips, buttons). Never let a flex container
+ * squash the glyph when the label is long, and nudge baseline-positioned
+ * uses (outside flex) up so they sit on the text's optical centre. */
+.ic {
+  flex: none;
+  vertical-align: -0.125em;
+}
+
 .chip-project {
   background: #ecfeff;
   border-color: #bae6fd;
@@ -2027,6 +2057,10 @@ button.run-id-mono:focus-visible,
 
   .content {
     padding: 16px;
+    /* Clear the floating support FAB (48px + bottom inset) so the last row of
+       content — e.g. a Revoke button or settings text — is never hidden under
+       it on phones. */
+    padding-bottom: calc(80px + env(safe-area-inset-bottom));
   }
 
   /* Two explicit rows: brand + account menu share the top row; the primary
