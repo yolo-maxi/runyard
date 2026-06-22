@@ -4244,6 +4244,7 @@ const supportChatState = {
   activeId: null,
   configured: false,
   statusMessage: "",
+  statusTone: "info",
   busy: false
 };
 
@@ -4391,26 +4392,48 @@ function describeContext() {
   };
 }
 
-function setSupportStatus(message) {
+function setSupportStatus(message, tone = "info") {
   supportChatState.statusMessage = message || "";
+  supportChatState.statusTone = message ? tone : "info";
   const node = document.querySelector(".support-chat-status");
   if (!node) return;
   node.textContent = supportChatState.statusMessage;
   node.hidden = !supportChatState.statusMessage;
+  if (message) {
+    node.dataset.tone = tone;
+  } else {
+    delete node.dataset.tone;
+  }
+}
+
+// Persistent (non-transient) status — recomputed from the configured/offline
+// state. Used to restore the banner after a transient "Thinking…" or error
+// state clears, so the offline warning doesn't get wiped by a chat round-trip.
+function persistentSupportStatus() {
+  if (!supportChatState.configured) {
+    return "Support agent is offline — install the Runyard support workflow and keep a smithers runner online.";
+  }
+  return "";
+}
+
+// Transient status (thinking / error). Passing falsy restores the persistent
+// status (offline warning if applicable, otherwise empty).
+function setSupportTransientStatus(message, tone = "info") {
+  if (message) {
+    setSupportStatus(message, tone);
+  } else {
+    setSupportStatus(persistentSupportStatus(), "warn");
+  }
 }
 
 async function refreshSupportChatStatus() {
   try {
     const info = await api("/api/chat/status");
     supportChatState.configured = Boolean(info?.configured);
-    if (!supportChatState.configured) {
-      setSupportStatus("Support agent is offline — set OPENAI_API_KEY or ANTHROPIC_API_KEY on the Hub to enable it.");
-    } else {
-      setSupportStatus("");
-    }
+    setSupportStatus(persistentSupportStatus(), "warn");
   } catch {
     supportChatState.configured = false;
-    setSupportStatus("Support agent status unavailable.");
+    setSupportStatus("Support agent status unavailable.", "warn");
   }
 }
 
@@ -4451,9 +4474,21 @@ function renderSupportChat() {
     return;
   }
   if (!tab.messages.length) {
+    // Starter chips give a first-time operator something concrete to tap
+    // instead of an abstract placeholder. They vanish as soon as the first
+    // user message lands (the empty branch stops rendering).
+    const starters = [
+      "Open the most recent failed run",
+      "Summarize today's runs",
+      "Why did the last capability fail?"
+    ];
+    const chips = starters
+      .map((prompt) => `<li><button type="button" class="support-chat-starter" data-starter-prompt="${esc(prompt)}">${esc(prompt)}</button></li>`)
+      .join("");
     body.innerHTML = `<div class="support-chat-empty">
       <strong>Runyard support agent</strong>
-      <div style="margin-top:6px">Ask in natural language — e.g. <em>"open the most recent failed run"</em>, <em>"start a hello-world run"</em>, or <em>"explain this page"</em>. The agent sees the page you're on.</div>
+      <div class="support-chat-empty-lead">Ask in natural language. The agent sees the page you're on.</div>
+      <ul class="support-chat-starters" aria-label="Starter prompts">${chips}</ul>
     </div>`;
   } else {
     body.innerHTML = tab.messages.map((message) => renderMessageBubble(message)).join("");
@@ -4463,6 +4498,11 @@ function renderSupportChat() {
   if (status) {
     status.textContent = supportChatState.statusMessage;
     status.hidden = !supportChatState.statusMessage;
+    if (supportChatState.statusMessage) {
+      status.dataset.tone = supportChatState.statusTone || "info";
+    } else {
+      delete status.dataset.tone;
+    }
   }
 }
 
@@ -4590,8 +4630,10 @@ async function sendSupportMessage(text) {
   appendMessage(tab, "user", trimmed);
   renderSupportChat();
   supportChatState.busy = true;
-  appendMessage(tab, "system", "…thinking");
-  renderSupportChat();
+  // Transient agent state lives in the aria-live status banner (announced
+  // once by AT) instead of a body bubble — avoids screen-reader duplication
+  // and keeps the conversation log clean.
+  setSupportTransientStatus("Thinking…");
   try {
     const history = tab.messages
       .filter((m) => m.role === "user" || m.role === "assistant")
@@ -4604,21 +4646,16 @@ async function sendSupportMessage(text) {
         context: describeContext()
       }
     });
-    // Drop the trailing "…thinking" system placeholder before saving the reply.
-    if (tab.messages.length && tab.messages[tab.messages.length - 1].role === "system") {
-      tab.messages.pop();
-    }
     const { text: replyText, actions } = parseAgentActions(response.reply || "");
     appendMessage(tab, "assistant", replyText || "(empty reply)");
+    setSupportTransientStatus("");
     renderSupportChat();
     if (actions.length) {
       await runActions(tab, actions);
     }
   } catch (error) {
-    if (tab.messages.length && tab.messages[tab.messages.length - 1].role === "system") {
-      tab.messages.pop();
-    }
     appendMessage(tab, "assistant", `Sorry — ${error.message || "the support agent failed"}`, { error: true });
+    setSupportTransientStatus(`Error: ${error.message || "support agent failed"}`, "warn");
     renderSupportChat();
   } finally {
     supportChatState.busy = false;
@@ -4666,6 +4703,18 @@ function bindSupportChat() {
   });
   const form = panel.querySelector(".support-chat-form");
   const input = panel.querySelector(".support-chat-input");
+  // Empty-state starter chips: tapping one drops the prompt into the textarea
+  // so the operator can edit before sending. Delegated on the body because the
+  // chips are re-rendered on every renderSupportChat() pass.
+  panel.querySelector(".support-chat-body")?.addEventListener("click", (event) => {
+    const chip = event.target.closest("[data-starter-prompt]");
+    if (!chip || !input) return;
+    input.value = chip.dataset.starterPrompt || "";
+    input.focus();
+    // Move caret to end so a quick Enter sends as-typed.
+    const end = input.value.length;
+    try { input.setSelectionRange(end, end); } catch { /* ignore */ }
+  });
   form?.addEventListener("submit", (event) => {
     event.preventDefault();
     const value = input.value;

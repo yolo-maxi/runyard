@@ -234,6 +234,33 @@ export const seedCapabilities = [
     workflow: { engine: "smithers", entry: ".smithers/workflows/hello.tsx" }
   },
   {
+    slug: "runyard-support-agent",
+    name: "Runyard Support Agent",
+    description:
+      "Internal in-app support chat workflow. It answers the Hub floating assistant through the subscribed on-runner CLI agent instead of requiring OpenAI or Anthropic API keys on the Hub.",
+    category: "Internal",
+    keywords: ["support", "chat", "assistant", "subscription", "runner", "internal"],
+    inputSchema: {
+      type: "object",
+      required: ["messages"],
+      properties: {
+        system: { type: "string", description: "System prompt and current operator context prepared by the Hub." },
+        messages: { type: "array", description: "Recent user/assistant chat turns." },
+        context: { type: "object", description: "Current browser route/hash/page context." }
+      }
+    },
+    outputSchema: {
+      type: "object",
+      properties: {
+        reply: { type: "string", description: "Assistant reply, optionally ending with the support action JSON block." }
+      }
+    },
+    requiredRunnerTags: ["smithers"],
+    approvalPolicy: { required: false },
+    supervision: { default: false, internal: true },
+    workflow: { engine: "smithers", entry: ".smithers/workflows/runyard-support-agent.tsx" }
+  },
+  {
     slug: "research",
     name: "Research",
     description: "Smithers research workflow — the local Claude/Codex agent gathers context and returns a summary with key findings.",

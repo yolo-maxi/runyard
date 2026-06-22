@@ -75,11 +75,12 @@
           <button type="button" class="support-chat-close" title="Hide chat" aria-label="Close chat">✕</button>
         </div>
       </header>
-      <div class="support-chat-status" hidden></div>
+      <div class="support-chat-status" role="status" aria-live="polite" hidden></div>
       <div class="support-chat-body" aria-live="polite"></div>
-      <form class="support-chat-form" autocomplete="off">
-        <textarea class="support-chat-input" rows="2" placeholder="Ask the Runyard agent — e.g. ‘open the failed run’" aria-label="Message"></textarea>
+      <form class="support-chat-form" autocomplete="off" aria-describedby="support-chat-hint">
+        <textarea class="support-chat-input" rows="2" placeholder='Ask the Runyard agent — e.g. "open the failed run"' aria-label="Message"></textarea>
         <button type="submit" class="primary support-chat-send" title="Send (Enter)">Send</button>
+        <p class="support-chat-hint" id="support-chat-hint">Enter to send · Shift+Enter for newline</p>
       </form>
     </aside>
     <script type="module" src="/public/app.js"></script>

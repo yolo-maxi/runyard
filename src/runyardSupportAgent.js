@@ -7,15 +7,20 @@
 // "omnipotent" inside the app because the api action proxies through the
 // caller's own session cookie — every action inherits their scopes.
 //
-// Two providers are supported and auto-selected from env:
+// The default provider is the Hub runner pool: /api/chat queues a tiny
+// internal Smithers workflow and the subscribed on-runner CLI agent answers it.
+// Direct HTTP providers remain as explicit opt-ins for installs that want them:
 //   - openai     POST https://api.openai.com/v1/chat/completions  (Codex/GPT)
 //   - anthropic  POST https://api.anthropic.com/v1/messages       (Claude)
 //
-// The same pattern as runObstructionAnalysis.js — pluggable backend, single
+// The HTTP path follows runObstructionAnalysis.js — pluggable backend, single
 // HTTP fetch, no streaming, with a generous JSON response budget.
+
+import { addRunEvent, createRun, getCapability, getRun } from "./db.js";
 
 const DEFAULT_TIMEOUT_MS = 45_000;
 const DEFAULT_MAX_OUTPUT_TOKENS = 1500;
+const SUPPORT_AGENT_CAPABILITY_SLUG = "runyard-support-agent";
 
 const PERSONA = `You are the Runyard user support agent — a hovering in-app copilot for Runyard, a self-hosted control plane for agent runs (codebase: smithers-hub).
 
@@ -53,6 +58,8 @@ function safeNumber(value, fallback) {
 
 function pickProvider({ explicit, model, hasOpenAi, hasAnthropic }) {
   const want = String(explicit || "").toLowerCase();
+  if (!want) return "runner";
+  if (want === "runner" || want === "smithers" || want === "subscription") return "runner";
   if (want === "anthropic" || want === "claude") return "anthropic";
   if (want === "openai" || want === "codex" || want === "gpt") return "openai";
   if (/^claude/i.test(String(model || "")) && hasAnthropic) return "anthropic";
@@ -64,7 +71,7 @@ function pickProvider({ explicit, model, hasOpenAi, hasAnthropic }) {
 function resolveConfig(config = {}) {
   const enabled = config.supportAgentEnabled ?? parseBool(process.env.SMITHERS_HUB_SUPPORT_AGENT_ENABLED, true);
   const explicitUrl = config.supportAgentUrl || process.env.SMITHERS_HUB_SUPPORT_AGENT_URL || "";
-  const explicitProvider = config.supportAgentProvider || process.env.SMITHERS_HUB_SUPPORT_AGENT_PROVIDER || "";
+  const explicitProvider = config.supportAgentProvider || process.env.SMITHERS_HUB_SUPPORT_AGENT_PROVIDER || "runner";
   const openAiKey = config.openAiKey || process.env.OPENAI_API_KEY || "";
   const anthropicKey = config.anthropicKey || process.env.ANTHROPIC_API_KEY || "";
   const explicitKey = config.supportAgentApiKey || process.env.SMITHERS_HUB_SUPPORT_AGENT_API_KEY || "";
@@ -93,6 +100,8 @@ function resolveConfig(config = {}) {
 export function supportAgentConfigured(config = {}) {
   if (injectedChat) return true;
   const c = resolveConfig(config);
+  if (!c.enabled) return false;
+  if (c.provider === "runner") return Boolean(getCapability(SUPPORT_AGENT_CAPABILITY_SLUG)?.enabled);
   return Boolean(c.enabled && c.url && c.apiKey && c.model);
 }
 
@@ -101,7 +110,7 @@ export function supportAgentInfo(config = {}) {
   return {
     configured: supportAgentConfigured(config),
     provider: c.provider,
-    model: c.model,
+    model: c.provider === "runner" ? SUPPORT_AGENT_CAPABILITY_SLUG : c.model,
     enabled: c.enabled
   };
 }
@@ -201,6 +210,71 @@ async function callAnthropic(provider, { messages, system, signal }) {
   return { reply, raw: data };
 }
 
+function extractRunnerReply(run) {
+  const output = run?.output && typeof run.output === "object" ? run.output : {};
+  const outputs = output.outputs && typeof output.outputs === "object" ? output.outputs : {};
+  const support = outputs.support && typeof outputs.support === "object" ? outputs.support : {};
+  const candidates = [
+    support.reply,
+    support.answer,
+    output.reply,
+    output.answer
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+  }
+  return "";
+}
+
+async function callRunnerProvider(provider, { messages, system, context, signal }) {
+  const capability = getCapability(SUPPORT_AGENT_CAPABILITY_SLUG);
+  if (!capability || !capability.enabled) {
+    throw new Error("support agent runner capability is not installed");
+  }
+  const run = createRun(capability, {
+    system,
+    messages,
+    context,
+    __origin: {
+      type: "support-chat",
+      label: "Runyard support chat"
+    }
+  }, {
+    requestedBy: "support-chat",
+    origin: {
+      type: "support-chat",
+      label: "Runyard support chat"
+    }
+  });
+  addRunEvent(run.id, "support_chat.queued", "Queued Runyard support agent chat", {
+    turns: messages.length,
+    view: context?.view || ""
+  });
+
+  const deadline = Date.now() + provider.timeoutMs;
+  while (Date.now() < deadline) {
+    if (signal?.aborted) throw new Error("support agent request aborted");
+    const current = getRun(run.id);
+    if (current?.status === "succeeded") {
+      const reply = extractRunnerReply(current);
+      return {
+        reply: reply || "I finished the support run, but it did not return a reply.",
+        raw: { runId: run.id, status: current.status }
+      };
+    }
+    if (["failed", "cancelled", "errored"].includes(current?.status)) {
+      throw new Error(`support agent run ${current.status}: ${truncate(current.error || "no error reported", 240)}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  return {
+    reply:
+      `I queued this as Runyard support run ${run.id}, but it is still waiting on the runner pool. ` +
+      `Open #runs/${run.id} for progress.`,
+    raw: { runId: run.id, status: getRun(run.id)?.status || "unknown", timeout: true }
+  };
+}
+
 function truncate(text, max = 240) {
   const value = String(text ?? "").replace(/\s+/g, " ").trim();
   if (value.length <= max) return value;
@@ -222,8 +296,16 @@ export async function chatWithSupportAgent({ messages, context, config = {}, sig
     };
   }
   if (!resolved.enabled) throw new Error("support agent is disabled");
+  if (resolved.provider === "runner") {
+    const out = await callRunnerProvider(resolved, { messages: safeMessages, system, context, signal });
+    return {
+      reply: out.reply,
+      provider: "runner",
+      model: SUPPORT_AGENT_CAPABILITY_SLUG
+    };
+  }
   if (!resolved.url || !resolved.apiKey || !resolved.model) {
-    throw new Error("support agent is not configured (set OPENAI_API_KEY or ANTHROPIC_API_KEY)");
+    throw new Error("support agent HTTP provider is not configured");
   }
   const controller = new AbortController();
   const onAbort = () => controller.abort();
@@ -244,4 +326,4 @@ export async function chatWithSupportAgent({ messages, context, config = {}, sig
   }
 }
 
-export const __test = { resolveConfig, sanitizeMessages, buildContextLine, PERSONA };
+export const __test = { resolveConfig, sanitizeMessages, buildContextLine, extractRunnerReply, PERSONA, SUPPORT_AGENT_CAPABILITY_SLUG };

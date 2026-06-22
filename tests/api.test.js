@@ -16,7 +16,7 @@ process.env.SMITHERS_OBSTRUCTION_ANALYSIS_ENABLED = "0";
 
 const { app, notifyTelegram } = await import("../src/server.js");
 const { env } = await import("../src/env.js");
-const { addRunEvent, autoQueueLegacyRunStartApprovals, createApproval, transitionRun, updateRun } = await import("../src/db.js");
+const { addRunEvent, autoQueueLegacyRunStartApprovals, createApproval, listRuns, transitionRun, updateRun } = await import("../src/db.js");
 const {
   RUN_OBSTRUCTION_ANALYSIS_ARTIFACT_NAME,
   setRunObstructionAnalyzerForTest
@@ -128,6 +128,16 @@ function raw(pathname, options = {}, bearer = token) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForLatestRunByCapability(capabilitySlug, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const run = listRuns({ limit: 200 }).find((entry) => entry.capabilitySlug === capabilitySlug);
+    if (run) return run;
+    await sleep(20);
+  }
+  throw new Error(`timed out waiting for capability run ${capabilitySlug}`);
 }
 
 async function waitForArtifact(runId, name, timeoutMs = 2000) {
@@ -242,9 +252,41 @@ describe("Smithers Hub API", () => {
     const skills = await api("/api/skills");
     const knowledge = await api("/api/knowledge");
     assert.ok(caps.capabilities.find((cap) => cap.slug === "hello"));
+    assert.ok(caps.capabilities.find((cap) => cap.slug === "runyard-support-agent"));
     assert.ok(agents.agents.length >= 4);
     assert.ok(skills.skills.length >= 4);
     assert.ok(knowledge.knowledge.length >= 1);
+  });
+
+  it("answers support chat through an internal runner-backed workflow without API keys", async () => {
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+
+    const status = await api("/api/chat/status");
+    assert.equal(status.configured, true);
+    assert.equal(status.provider, "runner");
+    assert.equal(status.model, "runyard-support-agent");
+
+    const pending = api("/api/chat", {
+      method: "POST",
+      body: {
+        messages: [{ role: "user", content: "what page am I on?" }],
+        context: { view: "runs", hash: "#runs", title: "Runyard" }
+      }
+    });
+
+    const run = await waitForLatestRunByCapability("runyard-support-agent");
+    assert.equal(run.status, "queued");
+    transitionRun(run.id, "running", { current_step: "test runner" });
+    transitionRun(run.id, "succeeded", {
+      current_step: "done",
+      output: { outputs: { support: { reply: "You are on the runs page." } } }
+    });
+
+    const result = await pending;
+    assert.equal(result.provider, "runner");
+    assert.equal(result.model, "runyard-support-agent");
+    assert.equal(result.reply, "You are on the runs page.");
   });
 
   it("creates a run, registers a runner, claims it, stores events and artifacts, and completes", async () => {
