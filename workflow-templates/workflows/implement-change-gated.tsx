@@ -73,7 +73,14 @@ function createBuilder(repoDir) {
 }
 
 export default smithers((ctx) => {
-  const repoDir = resolveImproveRepo(ctx.input, { env: process.env, cwd: process.cwd(), gitBin: GIT, gitEnv: TOOL_ENV });
+  // Collapse the friendly selector to a single field so resolveImproveRepo doesn't reject
+  // callers that fill in both `repo` and `project` (e.g. an alias pair) with different values.
+  const improveInput = {
+    ...ctx.input,
+    repo: ctx.input.repo || ctx.input.project,
+    project: ""
+  };
+  const repoDir = resolveImproveRepo(improveInput, { env: process.env, cwd: process.cwd(), gitBin: GIT, gitEnv: TOOL_ENV });
   const builder = createBuilder(repoDir);
   const baseline = ctx.outputMaybe("baseline", { nodeId: "baseline" });
   const impl = ctx.outputMaybe("implement", { nodeId: "implement" });
