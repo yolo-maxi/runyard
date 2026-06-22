@@ -2303,6 +2303,21 @@ describe("Run log usability", () => {
     assert.match(styles.data, /run-io-raw/);
     assert.match(styles.data, /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
   });
+
+  it("keeps supervised child attempts out of the default top-level runs view", async () => {
+    const response = await raw("/public/app.js");
+    assert.equal(response.status, 200);
+    const code = response.data;
+    assert.match(code, /isSupervisedChildRun/);
+    assert.match(code, /topLevelRuns/);
+    assert.match(code, /supervisedChildRunsNotice/);
+    assert.match(code, /run-smithers wrapper/);
+    assert.match(code, /supervised child attempt/);
+
+    const styles = await raw("/public/styles.css");
+    assert.equal(styles.status, 200);
+    assert.match(styles.data, /supervised-child-summary/);
+  });
 });
 
 // --- Runner pool & queue visibility -----------------------------------------

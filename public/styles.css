@@ -3075,6 +3075,15 @@ button.run-id-mono:focus-visible,
   flex-wrap: wrap;
 }
 
+.supervised-child-summary {
+  margin: -4px 0 12px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #f8fafc;
+  font-size: 13px;
+}
+
 /* ---- Per-run-card failure detail (step + cause snippet + timeline link) ---- */
 .run-card-failure {
   border-top: 1px dashed #fecaca;

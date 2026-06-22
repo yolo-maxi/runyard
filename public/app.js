@@ -1061,6 +1061,33 @@ function isUnresolvedFailure(run) {
   return run && UNRESOLVED_FAILURE_STATUSES.has(run.status);
 }
 
+function isSupervisedChildRun(run) {
+  if (!run) return false;
+  const origin = String(run.originLabel || run.origin?.label || "").toLowerCase();
+  if (origin === "run-smithers wrapper") return true;
+  if (origin.startsWith("run-smithers self-repair")) return true;
+  const internalOrigin = run.input?.__origin;
+  return Boolean(internalOrigin?.parentRunId && String(internalOrigin?.label || "").toLowerCase().startsWith("run-smithers"));
+}
+
+function topLevelRuns(runs) {
+  return (runs || []).filter((run) => !isSupervisedChildRun(run));
+}
+
+function supervisedChildRuns(runs) {
+  return (runs || []).filter(isSupervisedChildRun);
+}
+
+function supervisedChildRunsNotice(hiddenRuns) {
+  if (!hiddenRuns?.length) return "";
+  const failed = hiddenRuns.filter(isUnresolvedFailure).length;
+  const failureText = failed ? `, including ${failed} failed retry${failed === 1 ? "" : "ies"}` : "";
+  return `<p class="supervised-child-summary muted">
+    ${esc(hiddenRuns.length)} supervised child attempt${hiddenRuns.length === 1 ? "" : "s"} hidden from this top-level view${failureText}.
+    Open the parent run to inspect wrapper retries and repair lineage.
+  </p>`;
+}
+
 // --- Run summary fallbacks (client-side mirror of server.js helpers) --------
 // The API now sends derived `title` / `description` / `project` / `branch`
 // fields, but we keep these locally too so cards rendered from stale clients
@@ -1630,6 +1657,8 @@ async function renderHome() {
     api("/api/capabilities").catch(() => ({ capabilities: [] }))
   ]);
   const runs = runsData.runs || [];
+  const visibleRuns = filtersActive ? runs : topLevelRuns(runs);
+  const hiddenSupervisedChildren = filtersActive ? [] : supervisedChildRuns(runs);
   const totalMatching = typeof runsData.total === "number" ? runsData.total : runs.length;
   const nextCursor = runsData.nextCursor || "";
   const runners = runnersData.runners || [];
@@ -1641,19 +1670,19 @@ async function renderHome() {
     setView("onboarding");
     return;
   }
-  const active = runs.filter(isActiveRun);
-  const completed = runs.filter((r) => !isActiveRun(r));
+  const active = visibleRuns.filter(isActiveRun);
+  const completed = visibleRuns.filter((r) => !isActiveRun(r));
   // Compute the failed-in-24h count once so both the action bar and sidebar
   // badge agree on what "needs attention".
   const cutoff = Date.now() - 24 * 3600 * 1000;
-  const recentlyFailed = runs.filter((r) => {
+  const recentlyFailed = visibleRuns.filter((r) => {
     if (!isUnresolvedFailure(r)) return false;
     const t = Date.parse(r.completedAt || r.createdAt || "");
     return Number.isNaN(t) ? true : t >= cutoff;
   });
   const failed24h = recentlyFailed.length;
   const lastFailedRun = recentlyFailed[0]
-    || runs.find(isUnresolvedFailure)
+    || visibleRuns.find(isUnresolvedFailure)
     || null;
   // Best-effort artifact bucket — if the call fails we just skip the preview.
   const artifactsByRun = new Map();
@@ -1723,6 +1752,7 @@ async function renderHome() {
            : `<p class="muted">No runs match the current filters. <a href="#runs">Clear filters</a> to see everything.</p>`}
          ${paginationHtml}`
       : `<h2 class="section-heading">Recent &amp; completed</h2>
+         ${supervisedChildRunsNotice(hiddenSupervisedChildren)}
          ${completed.length
            ? `<section class="run-grid">${completed.slice(0, 30).map((run) => runCard(run, artifactsByRun.get(run.id) || [])).join("")}</section>`
            : `<p class="muted">Completed runs and their artifacts will appear here.</p>`}`}
