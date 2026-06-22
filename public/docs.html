@@ -87,22 +87,23 @@ open http://127.0.0.1:43117/app</pre>
         <p>Runyard uses long-lived access tokens. On first boot the server writes <code>data/bootstrap-token.txt</code> — that becomes the operator key for Web login, CLI, MCP, API, and runner registration. Issue additional tokens from the <strong>Connect</strong> tab inside the Hub.</p>
 
         <h2 id="cli">CLI</h2>
-        <pre class="json">smithers-hub login --url https://hub.example.com --token shub_...
-smithers-hub menu
-smithers-hub capabilities
-smithers-hub capability hello
-smithers-hub run hello --where local --input '{"topic":"Prepare a rollout spec"}'
-smithers-hub run hello --where remote --input '{"topic":"Prepare a rollout spec"}'
-smithers-hub runs
-smithers-hub runners
-smithers-hub approvals
-smithers-hub approve appr_...</pre>
-        <p class="muted">Use <code>--where local</code> for a laptop/workstation runner and <code>--where remote</code> for the VPS runner pool. The Hub records the run, logs, outputs, and artifacts either way.</p>
+        <pre class="json">runyard login --url https://hub.example.com --token shub_...
+runyard menu
+runyard capabilities
+runyard capability hello
+runyard run hello --where local --input '{"topic":"Prepare a rollout spec"}'
+runyard run hello --where remote --input '{"topic":"Prepare a rollout spec"}'
+runyard runs
+runyard tail run_... --once
+runyard runners
+runyard approvals
+runyard approve appr_...</pre>
+        <p class="muted">Use <code>--where local</code> for a laptop/workstation runner and <code>--where remote</code> for the VPS runner pool. The Hub records the run, logs, outputs, artifacts, and a unified timeline either way. <code>runyard tail &lt;run-id&gt;</code> streams that timeline as NDJSON.</p>
         <p class="muted">Multiple orgs work like git remotes:</p>
-        <pre class="json">smithers-hub login --remote acme --url https://acme-hub.example
-smithers-hub mcp install --all --remote acme   # installs as smithers-hub-acme
-smithers-hub remote use acme
-smithers-hub remotes</pre>
+        <pre class="json">runyard login --remote acme --url https://acme-hub.example
+runyard mcp install --all --remote acme   # installs as smithers-hub-acme
+runyard remote use acme
+runyard remotes</pre>
 
         <h2 id="mcp">MCP config</h2>
         <pre class="json">{
@@ -112,8 +113,8 @@ smithers-hub remotes</pre>
     "SMITHERS_HUB_TOKEN": "shub_..."
   }
 }</pre>
-        <p class="muted">From a running Hub, <code>smithers-hub mcp install --all</code> writes this config into every detected agent — Claude Code/Desktop, Codex, Cursor, Windsurf, Gemini, VS Code.</p>
-        <p class="muted">MCP agents should call <code>get_menu</code>, choose <code>executionMode: "local"</code> or <code>"remote"</code> on <code>run_capability</code>, then fetch status, logs, and artifacts from the Hub tools.</p>
+        <p class="muted">From a running Hub, <code>runyard mcp install --all</code> writes this config into every detected agent — Claude Code/Desktop, Codex, Cursor, Windsurf, Gemini, VS Code.</p>
+        <p class="muted">MCP agents should call <code>get_menu</code>, choose <code>executionMode: "local"</code> or <code>"remote"</code> on <code>run_capability</code>, then fetch status, logs, artifacts, and timeline entries from the Hub tools.</p>
 
         <h2 id="runners">Runner pool</h2>
         <p>Runners are stateless processes that poll the Hub for queued work. Each runner advertises a tag set and an optional capacity:</p>

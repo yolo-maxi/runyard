@@ -1073,7 +1073,9 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
     const body = await r1.text();
     assert.match(body, /Installing Smithers Hub client/);
     assert.match(body, /\/cli\.tgz/);
-    assert.match(body, /smithers-hub mcp install/);
+    assert.match(body, /runyard tail <run-id>/);
+    assert.match(body, /runyard mcp install/);
+    assert.match(body, /"\$BIN\/runyard"/);
     const r2 = await fetch(`${baseUrl}/cli.tgz`);
     assert.equal(r2.status, 200);
     const buf = Buffer.from(await r2.arrayBuffer());
@@ -1093,6 +1095,13 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
     assert.match(appCode, /\/api\/auth\/telegram-webapp/);
     assert.match(appCode, /window\.Telegram\?\.WebApp/);
     assert.match(appCode, /ready\?\.\(\)/);
+  });
+
+  it("documents the unified run timeline endpoint in OpenAPI", async () => {
+    const apiSpec = await raw("/openapi.json");
+    assert.equal(apiSpec.status, 200);
+    assert.ok(apiSpec.data.paths["/runs/{id}/timeline"]);
+    assert.match(apiSpec.data.paths["/runs/{id}/timeline"].get.summary, /unified ascending run timeline/);
   });
 
   it("rejects unconfigured / unauthenticated Telegram webhook calls", async () => {

@@ -100,6 +100,7 @@ This file captures user-facing acceptance criteria and manual tests for Runyard.
 - `smithers-hub run <capability-id> --where local|remote` starts a run and records execution intent.
 - `smithers-hub runs` lists runs.
 - `smithers-hub logs <run-id>` prints event logs.
+- `runyard tail <run-id>` streams the unified run timeline; `--once` prints a bounded snapshot.
 - `smithers-hub artifacts <run-id>` lists artifacts.
 - `smithers-hub approvals` lists pending approvals.
 - `smithers-hub approve <approval-id>` and `smithers-hub reject <approval-id>` resolve approvals.

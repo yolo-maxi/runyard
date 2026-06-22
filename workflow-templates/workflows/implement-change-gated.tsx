@@ -120,10 +120,13 @@ export default smithers((ctx) => {
                 out = execFileSync(PNPM, ["test"], { cwd: repoDir, encoding: "utf8", env: TOOL_ENV, maxBuffer: 1024 * 1024 * 64 });
                 passed = true;
               } catch (e) {
-                out = `${e.stdout || ""}${e.stderr || ""}${e.message || ""}`;
+                // execFileSync errors may surface stdout/stderr as Buffers, undefined,
+                // or be missing entirely (ENOENT) — coerce defensively so the gate
+                // never crashes on .split before it can report the real failure.
+                out = `${e?.stdout ?? ""}${e?.stderr ?? ""}${e?.message ?? ""}`;
                 passed = false;
               }
-              const tail = out.split("\n").slice(-30).join("\n");
+              const tail = String(out || "").split("\n").slice(-30).join("\n");
               if (!passed) throw new Error(`GATE FAILED: pnpm test did not pass.\n${tail}`);
               return { passed, tail };
             }}

@@ -907,6 +907,84 @@ function withArtifactLinks(artifact) {
   return { ...artifact, deepLink: deepLinks.artifact(artifact), deepLinkRun: deepLinks.run(artifact.runId) };
 }
 
+// Build the unified per-run timeline backing GET /api/runs/:id/timeline.
+// Pulls only from existing helpers — runs row, run_events, and the artifacts
+// table — so the timeline is always derived (no extra writes, nothing to
+// re-index). Each source is normalized into `{ts, kind, source, payload}`:
+//   * status transitions come from the runs row's create/assign/start/complete
+//     timestamps so the tail still shows the lifecycle even if a runner
+//     forgot to emit the matching run.* event.
+//   * run events are passed through as kind=event.
+//   * artifacts split into retrospective / obstruction / artifact based on
+//     either the canonical filename or metadata.kind, matching the same
+//     logic the storage layer already uses.
+function buildRunTimeline(run) {
+  const entries = [];
+  const transitions = [
+    ["created", run.createdAt, "queued"],
+    ["assigned", run.assignedAt, "assigned"],
+    ["started", run.startedAt, "running"],
+    ["completed", run.completedAt, run.status]
+  ];
+  for (const [transition, ts, status] of transitions) {
+    if (!ts) continue;
+    entries.push({
+      ts,
+      kind: "status",
+      source: "runs",
+      payload: {
+        runId: run.id,
+        transition,
+        status,
+        currentStep: run.currentStep || null,
+        ...(transition === "completed" && run.error ? { error: run.error } : {})
+      }
+    });
+  }
+  for (const event of listRunEvents(run.id)) {
+    entries.push({
+      ts: event.createdAt,
+      kind: "event",
+      source: "run_events",
+      payload: {
+        id: event.id,
+        type: event.type,
+        message: event.message,
+        data: event.data
+      }
+    });
+  }
+  for (const artifact of listArtifacts({ runId: run.id })) {
+    const linked = withArtifactLinks(artifact);
+    const metaKind = artifact.metadata && typeof artifact.metadata === "object" ? artifact.metadata.kind || "" : "";
+    let kind = "artifact";
+    let source = "artifacts:runner";
+    if (artifact.name === RUN_RETROSPECTIVE_ARTIFACT_NAME || metaKind === "run-retrospective") {
+      kind = "retrospective";
+      source = "artifacts:retrospective";
+    } else if (artifact.name === RUN_OBSTRUCTION_ANALYSIS_ARTIFACT_NAME || metaKind === "run-obstruction-analysis") {
+      kind = "obstruction";
+      source = "artifacts:obstruction";
+    }
+    entries.push({
+      ts: artifact.createdAt,
+      kind,
+      source,
+      payload: {
+        id: artifact.id,
+        name: artifact.name,
+        mimeType: artifact.mimeType,
+        sizeBytes: artifact.sizeBytes,
+        metadata: artifact.metadata || {},
+        deepLink: linked.deepLink || null,
+        deepLinkRun: linked.deepLinkRun || null
+      }
+    });
+  }
+  entries.sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
+  return entries;
+}
+
 function hubMenuPayload(req) {
   const capabilities = listCapabilities().map((capability) => {
     const linked = withCapabilityLinks(capability);
@@ -1744,11 +1822,15 @@ cat > "$BIN/smithers-hub" <<WRAP
 #!/usr/bin/env bash
 exec node "$APP/src/cli.js" "\\$@"
 WRAP
+cat > "$BIN/runyard" <<WRAP
+#!/usr/bin/env bash
+exec node "$APP/src/cli.js" "\\$@"
+WRAP
 cat > "$BIN/smithers-hub-mcp" <<WRAP
 #!/usr/bin/env bash
 exec node "$APP/src/mcp.js" "\\$@"
 WRAP
-chmod +x "$BIN/smithers-hub" "$BIN/smithers-hub-mcp"
+chmod +x "$BIN/runyard" "$BIN/smithers-hub" "$BIN/smithers-hub-mcp"
 TOKEN="\${SMITHERS_HUB_TOKEN:-}"
 REMOTE="\${SMITHERS_HUB_REMOTE:-}"
 # Ask for the token + a name for this connection (org) on first run.
@@ -1764,7 +1846,7 @@ REMOTE="\${REMOTE:-default}"
 if [ -n "$TOKEN" ]; then
   node "$APP/src/cli.js" login --remote "$REMOTE" --url "$HUB_URL" --token "$TOKEN" >/dev/null && echo "Logged in to $HUB_URL (remote: $REMOTE)"
 else
-  echo "No token entered. Log in later with:  smithers-hub login --url $HUB_URL"
+  echo "No token entered. Log in later with:  runyard login --url $HUB_URL"
 fi
 case ":$PATH:" in
   *":$BIN:"*) ;;
@@ -1772,8 +1854,9 @@ case ":$PATH:" in
 esac
 echo ""
 echo "Installed. Next:"
-echo "  smithers-hub capabilities      # see what you can run"
-echo "  smithers-hub mcp install --all # connect every AI agent on this machine"
+echo "  runyard capabilities      # see what you can run"
+echo "  runyard tail <run-id>     # watch a run's unified timeline"
+echo "  runyard mcp install --all # connect every AI agent on this machine"
 `);
 });
 
@@ -1824,7 +1907,8 @@ app.get("/llms.txt", (req, res) => {
   lines.push("1. Discover with get_menu / list_capabilities.");
   lines.push("2. Choose local or remote execution.");
   lines.push("3. Start with run_capability or `smithers-hub run --where local|remote`.");
-  lines.push("4. Fetch status, logs, outputs, and artifacts from the Hub.");
+  lines.push("4. Fetch status, logs, outputs, artifacts, and the unified timeline from the Hub.");
+  lines.push("5. Operators can run `runyard tail <run-id>` for an NDJSON timeline stream.");
   lines.push("");
   lines.push("Response endpoints (optional):");
   lines.push("- POST /api/capabilities/:id/run accepts an optional responseEndpoint:");
@@ -1859,6 +1943,7 @@ app.get("/openapi.json", (req, res) => {
       "/runs": { get: { summary: "List runs" } },
       "/runs/{id}": { get: { summary: "Get run" } },
       "/runs/{id}/events": { get: { summary: "Get run events" }, post: { summary: "Append run event" } },
+      "/runs/{id}/timeline": { get: { summary: "Get a unified ascending run timeline built from status transitions, events, and artifacts. Supports since=<iso> and limit=<n>; used by `runyard tail`." } },
       "/runs/{id}/artifacts": { get: { summary: "List run artifacts" }, post: { summary: "Upload artifact" } },
       "/approvals": { get: { summary: "List approvals" } },
       "/approvals/{id}/approve": { post: { summary: "Approve request" } },
@@ -2737,6 +2822,55 @@ app.get("/api/runs/:id/logs", requireAuth, (req, res) => {
     .map((event) => `[${event.createdAt}] ${event.type}: ${redactSnippet(event.message, 4000)}`)
     .join("\n");
   res.type("text/plain").send(logs);
+});
+
+// Unified run timeline (feature-flagged by RUNYARD_RUN_TIMELINE). Merges the
+// four existing sources of per-run truth — runs row status transitions, run
+// events, runner artifacts, and the two generated terminal artifacts
+// (retrospective + obstruction analysis) — into a single ascending stream of
+// `{ts, kind, source, payload}` rows. The endpoint reuses the existing DB
+// and artifact helpers; no new storage is introduced. Auth is the unchanged
+// scoped-token `requireAuth` middleware. `since` is exclusive (ts > since)
+// and `limit` is clamped to 1000 to keep payloads bounded for tail clients.
+app.get("/api/runs/:id/timeline", requireAuth, (req, res) => {
+  if (!env.runTimelineEnabled) return res.status(404).json({ error: "run timeline disabled" });
+  const run = getRun(req.params.id);
+  if (!run) return res.status(404).json({ error: "run not found" });
+  const since = String(req.query.since || "").trim();
+  const limitRaw = Number(req.query.limit);
+  const limit = Math.max(1, Math.min(Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : 200, 1000));
+
+  const sorted = buildRunTimeline(run);
+  const filtered = since ? sorted.filter((entry) => entry.ts > since) : sorted;
+  let slice = filtered.slice(0, limit);
+  let truncated = filtered.length > slice.length;
+  // Tie-handling: if the page boundary splits entries that share the same ts,
+  // either drop the trailing ties (so the next `since=lastTs` call picks them
+  // up cleanly) or, when the entire page is a single tie, expand past the
+  // limit so the cursor can advance.
+  if (truncated && slice.length) {
+    const lastTs = slice[slice.length - 1].ts;
+    if (filtered[slice.length] && filtered[slice.length].ts === lastTs) {
+      let trim = slice.length;
+      while (trim > 0 && slice[trim - 1].ts === lastTs) trim -= 1;
+      if (trim > 0) {
+        slice = slice.slice(0, trim);
+      } else {
+        let extend = slice.length;
+        while (filtered[extend] && filtered[extend].ts === lastTs) extend += 1;
+        slice = filtered.slice(0, extend);
+        truncated = filtered.length > slice.length;
+      }
+    }
+  }
+  res.json({
+    runId: run.id,
+    entries: slice,
+    limit,
+    since: since || null,
+    nextSince: slice.length ? slice[slice.length - 1].ts : since || null,
+    truncated
+  });
 });
 app.post("/api/runs/:id/events", requireAuth, requireScopes("runner"), requireRunOwnerOrAdmin, (req, res) => {
   const event = addRunEvent(req.params.id, req.body.type || "log", req.body.message || "", req.body.data || {});

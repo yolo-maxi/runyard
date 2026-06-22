@@ -27,6 +27,47 @@ by `tests/run-smithers-watcher.test.js`. Existing capabilities continue to
 work standalone and are migrating to run behind `run-smithers` so every
 long-running goal carries the same lineage and recovery semantics.
 
+## Smithers samples reference corpus
+
+Runyard uses `https://github.com/dennisonbertram/smithers-samples` as a
+reference corpus for Smithers 0.24.x workflow behavior. The repo is not
+vendored into Runyard; instead, high-signal patterns and gotchas are translated
+into Runyard docs, helper functions, and regression tests.
+
+Patterns to keep:
+
+- `durable-fix-until-green`: agent edit, deterministic test, bounded retry,
+  resumable continuation. This is the desired shape for implementation and
+  repair loops.
+- `content-quality-loop`: writer, judge, revise until threshold. Loop logic
+  must read the latest iteration output, not the first row.
+- `cost-aware-model-router`: cheap-first model attempts with verifier gates,
+  escalation, and explicit cost attribution. This is the future direction for
+  `run-smithers` and `improve` model policy.
+- `multi-agent-code-review`: parallel specialist review, judge synthesis, then
+  human approval before posting/applying a decision.
+- `resilient-etl-saga`: side effects should have compensation or a terminal
+  audit record; response endpoints and webhooks should not be fire-and-forget.
+
+Gotchas to enforce:
+
+- Smithers approval exit code `3` means paused for approval, not failed.
+- Resume, replay, and fork depend on stable workflow source/hash; Runyard
+  should pin capability versions and avoid mutating a workflow mid-resume.
+- Scorer output is not guaranteed to appear in event NDJSON; tooling that needs
+  scorer data must read scorer storage or an explicit scorer API.
+- Fractional values persisted through Smithers/SQLite should use strings unless
+  integer truncation is intended.
+- Output fields named `nodeId`, `runId`, or `iteration` collide with Smithers
+  internal columns; use domain-specific names instead.
+- Non-Anthropic agents may need `nativeStructuredOutput: true` when a workflow
+  expects pure structured rows.
+- Loop exits and revisions should use latest-output semantics.
+
+The deterministic guardrails for these lessons live in
+`src/smithersHardening.js` with coverage in
+`tests/smithers-hardening.test.js`.
+
 
 The guiding process order is:
 

@@ -10,6 +10,11 @@ import { HubClient } from "./apiClient.js";
 import { readConfig, writeConfig, setRemote, resolveRemote } from "./config.js";
 import { normalizeRunnerTags } from "./runExecution.js";
 
+process.stdout.on("error", (error) => {
+  if (error.code === "EPIPE") process.exit(0);
+  throw error;
+});
+
 function client(options = {}) {
   const remoteName = options.remote || program.opts().remote;
   const remote = resolveRemote(remoteName);
@@ -75,8 +80,9 @@ function ask(query, { hidden = false } = {}) {
   });
 }
 
+const invokedName = path.basename(process.argv[1] || "smithers-hub").replace(/\.js$/, "");
 const program = new Command();
-program.name("smithers-hub").description("Runyard CLI (smithers-hub) — self-hosted control plane for agent runs").version("0.1.0");
+program.name(invokedName === "runyard" ? "runyard" : "smithers-hub").description("Runyard CLI (smithers-hub) — self-hosted control plane for agent runs").version("0.1.0");
 program
   .option("--url <url>", "Hub URL")
   .option("--token <token>", "Hub access token")
@@ -273,6 +279,59 @@ program.command("logs <id>").description("Print run logs").action(async (id) => 
   const response = await fetch(`${hub.baseUrl}/api/runs/${id}/logs`, { headers: { authorization: `Bearer ${hub.token}` } });
   console.log(await response.text());
 });
+
+// Unified run timeline tail. Streams normalized {ts, kind, source, payload}
+// entries as NDJSON so operators (and downstream pipes) can watch a run's
+// lifecycle without polling status + events + artifacts independently. Backed
+// by /api/runs/:id/timeline. --once does a single
+// snapshot; without it the loop polls every 2s using the last seen ts as the
+// `since` cursor so the server never re-sends rows we already emitted.
+program
+  .command("tail <runId>")
+  .description("Tail the unified run timeline as NDJSON ({ts, kind, source, payload})")
+  .option("--once", "fetch the current timeline once and exit")
+  .option("--since <iso>", "only emit entries newer than this ISO timestamp")
+  .action(async (runId, opts) => {
+    const hub = client(program.opts());
+    const once = Boolean(opts.once || process.argv.includes("--once"));
+    let since = opts.since || "";
+    const fetchAll = async () => {
+      // Drain pages until the server stops setting `truncated`. Each page
+      // advances `since` to its last ts so the next page is contiguous.
+      while (true) {
+        const query = since ? `?since=${encodeURIComponent(since)}` : "";
+        const page = await hub.get(`/api/runs/${runId}/timeline${query}`);
+        for (const entry of page.entries || []) {
+          console.log(JSON.stringify(entry));
+          if (entry.ts) since = entry.ts;
+        }
+        if (page.nextSince && page.nextSince > since) since = page.nextSince;
+        if (!page.truncated) break;
+      }
+    };
+    await fetchAll();
+    if (once) {
+      process.exit(0);
+    }
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      try {
+        await fetchAll();
+      } catch (error) {
+        // Surface transient errors as NDJSON so the tail stream stays
+        // machine-parseable; the loop keeps polling.
+        console.log(
+          JSON.stringify({
+            ts: new Date().toISOString(),
+            kind: "error",
+            source: "cli",
+            payload: { message: String(error.message || error) }
+          })
+        );
+      }
+    }
+  });
 
 program.command("artifacts [runId]").description("List artifacts").action(async (runId) => {
   const apiPath = runId ? `/api/runs/${runId}/artifacts` : "/api/artifacts";

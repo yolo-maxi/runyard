@@ -152,5 +152,9 @@ export const env = {
   obstructionAnalysisModel: process.env.SMITHERS_OBSTRUCTION_ANALYSIS_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini",
   obstructionAnalysisTimeoutMs: Number(process.env.SMITHERS_OBSTRUCTION_ANALYSIS_TIMEOUT_MS || 20_000),
   obstructionAnalysisMaxPromptChars: Number(process.env.SMITHERS_OBSTRUCTION_ANALYSIS_MAX_PROMPT_CHARS || 12_000),
+  // Unified per-run timeline endpoint and `runyard tail` CLI. Enabled by
+  // default because it is a read-only view over existing run/event/artifact
+  // state; operators can still disable it with RUNYARD_RUN_TIMELINE=0.
+  runTimelineEnabled: parseBool(process.env.RUNYARD_RUN_TIMELINE, true),
   version: "0.1.0"
 };

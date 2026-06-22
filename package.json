@@ -14,6 +14,7 @@
   },
   "type": "module",
   "bin": {
+    "runyard": "./bin/smithers-hub.js",
     "smithers-hub": "./bin/smithers-hub.js",
     "smithers-hub-mcp": "./bin/smithers-hub-mcp.js",
     "smithers-hub-runner": "./bin/smithers-hub-runner.js"
