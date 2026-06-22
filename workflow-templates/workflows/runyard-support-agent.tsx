@@ -31,7 +31,7 @@ const codex = new CodexAgent({
   timeoutMs: 2 * 60 * 1000,
   systemPrompt:
     "You are answering inside Runyard's floating support chat. Return only JSON with a string field named reply. " +
-    "Keep the reply concise and preserve any valid trailing action block requested by the system prompt."
+    "Keep the reply concise and preserve any valid trailing buttons JSON block requested by the system prompt."
 });
 
 const claude = new ClaudeCodeAgent({
@@ -40,7 +40,7 @@ const claude = new ClaudeCodeAgent({
   timeoutMs: 2 * 60 * 1000,
   systemPrompt:
     "You are answering inside Runyard's floating support chat. Return only JSON with a string field named reply. " +
-    "Keep the reply concise and preserve any valid trailing action block requested by the system prompt."
+    "Keep the reply concise and preserve any valid trailing buttons JSON block requested by the system prompt."
 });
 
 function transcript(messages: Array<{ role?: string; content?: string }>) {

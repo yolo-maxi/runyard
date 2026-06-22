@@ -289,6 +289,19 @@ describe("Smithers Hub API", () => {
     assert.equal(result.reply, "You are on the runs page.");
   });
 
+  it("renders support chat actions as explicit choice buttons instead of auto-running them", async () => {
+    const response = await raw("/public/app.js");
+    assert.equal(response.status, 200);
+    const code = response.data;
+    assert.match(code, /parseAgentResponse/);
+    assert.match(code, /normalizeSupportButtons/);
+    assert.match(code, /support-chat-choice/);
+    assert.match(code, /activateSupportButton/);
+    assert.match(code, /legacyActions/);
+    assert.match(code, /label: "Do it"/);
+    assert.doesNotMatch(code, /parseAgentActions/);
+  });
+
   it("creates a run, registers a runner, claims it, stores events and artifacts, and completes", async () => {
     const created = await api("/api/capabilities/hello/run", {
       method: "POST",

@@ -4014,6 +4014,39 @@ button.run-id-mono:focus-visible,
   border: 1px solid #f2c5c5;
   color: var(--danger);
 }
+.support-chat-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.support-chat-choice {
+  min-height: 34px;
+  padding: 7px 11px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+.support-chat-choice--primary {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+}
+.support-chat-choice--secondary {
+  background: var(--panel);
+  color: var(--ink-soft);
+}
+.support-chat-choice:hover {
+  filter: brightness(1.03);
+}
+.support-chat-choice:focus-visible {
+  outline: 2px solid var(--brand-2);
+  outline-offset: 2px;
+}
 .support-chat-form {
   display: flex;
   flex-wrap: wrap;

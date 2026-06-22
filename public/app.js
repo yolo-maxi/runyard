@@ -4368,7 +4368,13 @@ function closeSupportTab(id) {
 
 function appendMessage(tab, role, content, extras = {}) {
   if (!tab) return;
-  tab.messages.push({ role, content: String(content ?? ""), at: new Date().toISOString(), ...extras });
+  tab.messages.push({
+    id: `m_${Math.random().toString(36).slice(2, 8)}${Date.now().toString(36).slice(-4)}`,
+    role,
+    content: String(content ?? ""),
+    at: new Date().toISOString(),
+    ...extras
+  });
   // Title the tab from the first user prompt so the tab strip stays scannable.
   if (role === "user" && (tab.title === "New chat" || !tab.title)) {
     tab.title = content.split(/\n/)[0].slice(0, 40).trim() || "Chat";
@@ -4541,6 +4547,21 @@ function formatChatGroupTime(iso) {
   return `${date} · ${time}`;
 }
 
+function renderSupportButtons(message) {
+  const buttons = Array.isArray(message.buttons) ? message.buttons : [];
+  const available = buttons
+    .map((button, index) => ({ button, index }))
+    .filter(({ button }) => button && !button.used && button.label);
+  if (!available.length) return "";
+  const items = available.map(({ button, index }) => {
+    const tone = button.tone === "secondary" ? "secondary" : "primary";
+    return `<button type="button" class="support-chat-choice support-chat-choice--${tone}" data-message-id="${esc(message.id || "")}" data-button-index="${index}">
+      ${esc(button.label)}
+    </button>`;
+  }).join("");
+  return `<div class="support-chat-choices">${items}</div>`;
+}
+
 function renderMessageBubble(message, opts = {}) {
   const role = message.role || "assistant";
   // System and tool bubbles are transient/diagnostic — they don't get a
@@ -4567,18 +4588,44 @@ function renderMessageBubble(message, opts = {}) {
     return `${separator}<div class="support-chat-msg-wrap support-chat-msg-wrap--error${senderChange}">
       <div class="support-chat-msg error">${esc(message.content)}</div>
       ${meta}
+      ${renderSupportButtons(message)}
     </div>`;
   }
   return `${separator}<div class="support-chat-msg-wrap support-chat-msg-wrap--${esc(role)}${senderChange}">
     <div class="support-chat-msg ${esc(role)}">${esc(message.content)}</div>
     ${meta}
+    ${renderSupportButtons(message)}
   </div>`;
 }
 
-// Pulls the trailing ```json {"actions":[...]}``` block out of a reply (if any)
-// and returns { text, actions }. We intentionally accept either a fenced block
-// or a bare trailing JSON object so the model gets some slack.
-function parseAgentActions(reply) {
+function normalizeSupportButtons(payload) {
+  const out = [];
+  const buttons = Array.isArray(payload?.buttons) ? payload.buttons : [];
+  for (const entry of buttons.slice(0, 4)) {
+    if (!entry || typeof entry !== "object") continue;
+    const label = String(entry.label || entry.title || "").trim().slice(0, 32);
+    if (!label) continue;
+    const message = String(entry.message || entry.prompt || label).trim().slice(0, 2000);
+    const actions = Array.isArray(entry.actions) ? entry.actions.slice(0, 6) : [];
+    out.push({
+      label,
+      message,
+      actions,
+      tone: /^(no|cancel|stop|leave)/i.test(label) ? "secondary" : "primary"
+    });
+  }
+  const legacyActions = Array.isArray(payload?.actions) ? payload.actions.slice(0, 6) : [];
+  if (!out.length && legacyActions.length) {
+    out.push({ label: "Do it", message: "Do it.", actions: legacyActions, tone: "primary" });
+    out.push({ label: "No", message: "No, leave it.", actions: [], tone: "secondary" });
+  }
+  return out;
+}
+
+// Pulls the trailing ```json {"buttons":[...]}``` block out of a reply (if
+// any) and returns { text, buttons }. We intentionally accept either a fenced
+// block or a bare trailing JSON object so the model gets some slack.
+function parseAgentResponse(reply) {
   const text = String(reply || "");
   const fence = text.match(/```(?:json)?\s*([\s\S]+?)\s*```\s*$/i);
   let payload = null;
@@ -4592,16 +4639,16 @@ function parseAgentActions(reply) {
       const tail = text.slice(brace).trim();
       try {
         const candidate = JSON.parse(tail);
-        if (candidate && Array.isArray(candidate.actions)) {
+        if (candidate && (Array.isArray(candidate.buttons) || Array.isArray(candidate.actions))) {
           payload = candidate;
           head = text.slice(0, brace).trim();
         }
       } catch { /* not JSON */ }
     }
   }
-  const actions = Array.isArray(payload?.actions) ? payload.actions.slice(0, 8) : [];
+  const buttons = normalizeSupportButtons(payload);
   const replyText = payload?.reply ? String(payload.reply) : head || "";
-  return { text: replyText.trim(), actions };
+  return { text: replyText.trim(), buttons };
 }
 
 async function executeAgentAction(action) {
@@ -4689,13 +4736,10 @@ async function sendSupportMessage(text) {
         context: describeContext()
       }
     });
-    const { text: replyText, actions } = parseAgentActions(response.reply || "");
-    appendMessage(tab, "assistant", replyText || "(empty reply)");
+    const { text: replyText, buttons } = parseAgentResponse(response.reply || "");
+    appendMessage(tab, "assistant", replyText || "(empty reply)", { buttons });
     setSupportTransientStatus("");
     renderSupportChat();
-    if (actions.length) {
-      await runActions(tab, actions);
-    }
   } catch (error) {
     appendMessage(tab, "assistant", `Sorry — ${error.message || "the support agent failed"}`, { error: true });
     setSupportTransientStatus(`Error: ${error.message || "support agent failed"}`, "warn");
@@ -4703,6 +4747,37 @@ async function sendSupportMessage(text) {
   } finally {
     supportChatState.busy = false;
   }
+}
+
+async function activateSupportButton(messageId, buttonIndex) {
+  const tab = activeSupportTab();
+  if (!tab || supportChatState.busy) return;
+  const message = tab.messages.find((entry) => entry.id === messageId);
+  const button = message?.buttons?.[Number(buttonIndex)];
+  if (!button || button.used) return;
+  button.used = true;
+  persistSupportChat();
+  renderSupportChat();
+  const label = button.message || button.label || "Yes";
+  const actions = Array.isArray(button.actions) ? button.actions : [];
+  if (actions.length) {
+    appendMessage(tab, "user", label);
+    renderSupportChat();
+    supportChatState.busy = true;
+    setSupportTransientStatus("Working…");
+    try {
+      await runActions(tab, actions);
+      setSupportTransientStatus("");
+    } catch (error) {
+      appendMessage(tab, "assistant", `Sorry — ${error.message || "that action failed"}`, { error: true });
+      setSupportTransientStatus(`Error: ${error.message || "action failed"}`, "warn");
+    } finally {
+      supportChatState.busy = false;
+      renderSupportChat();
+    }
+    return;
+  }
+  sendSupportMessage(label);
 }
 
 function bindSupportChat() {
@@ -4750,6 +4825,11 @@ function bindSupportChat() {
   // so the operator can edit before sending. Delegated on the body because the
   // chips are re-rendered on every renderSupportChat() pass.
   panel.querySelector(".support-chat-body")?.addEventListener("click", (event) => {
+    const choice = event.target.closest("[data-message-id][data-button-index]");
+    if (choice) {
+      activateSupportButton(choice.dataset.messageId, choice.dataset.buttonIndex);
+      return;
+    }
     const chip = event.target.closest("[data-starter-prompt]");
     if (!chip || !input) return;
     input.value = chip.dataset.starterPrompt || "";
