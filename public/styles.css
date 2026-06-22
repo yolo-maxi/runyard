@@ -2011,13 +2011,16 @@ button.run-id-mono:focus-visible,
 }
 
 /* ---- Tablet / phone: stack the console and move primary nav into the topbar ---- */
-@media (max-width: 850px) {
+@media (max-width: 900px) {
   .shell,
   .split,
   .approval-detail-grid {
     grid-template-columns: 1fr;
   }
 
+  /* The .mobile-primary-nav row replaces the sidebar on phones/tablets — never
+     show both (no duplicate Runs/Workflows/Agents row). The sidebar is the
+     desktop-only nav; a later 900px block must NOT re-display it. */
   .sidebar {
     display: none;
   }
@@ -2026,21 +2029,28 @@ button.run-id-mono:focus-visible,
     padding: 16px;
   }
 
-  /* Topbar may need to breathe; let it grow rather than clip. */
+  /* Two explicit rows: brand + account menu share the top row; the primary
+     tabs get their own full-width row below — so "More / Logout" never eats a
+     whole separate row of its own. Honour the notch / safe-area inset. */
   .topbar {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
     height: auto;
     min-height: 58px;
-    padding: 8px 16px;
+    padding: max(8px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 8px max(12px, env(safe-area-inset-left));
     gap: 8px 10px;
   }
 
   .brand {
+    grid-row: 1;
+    grid-column: 1;
     min-width: 0;
   }
 
   .nav {
+    grid-row: 1;
+    grid-column: 2;
     justify-self: end;
     flex-wrap: nowrap;
     gap: 6px;
@@ -2048,6 +2058,20 @@ button.run-id-mono:focus-visible,
 
   .nav .support-link {
     display: none;
+  }
+
+  /* Dial the environment chrome down so HUB / host / PROD don't dominate the
+     first screen — keep just the status dot + a compact tag. */
+  .brand-pill {
+    display: none;
+  }
+
+  .env-chip-host {
+    display: none;
+  }
+
+  .env-chip {
+    padding: 2px 6px;
   }
 
   .admin-label-full {
@@ -2061,6 +2085,7 @@ button.run-id-mono:focus-visible,
 
   .mobile-primary-nav {
     display: flex;
+    grid-row: 2;
     grid-column: 1 / -1;
     gap: 6px;
     overflow-x: auto;
@@ -2068,9 +2093,21 @@ button.run-id-mono:focus-visible,
     padding-bottom: 2px;
   }
 
+  /* Shrink-to-fit equal columns so all four tabs (incl. "Approvals") stay
+     readable without clipping to "Ap…" or forcing a horizontal page scrollbar. */
   .mobile-primary-nav a {
-    flex: 1 0 auto;
-    min-width: 96px;
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 8px 6px;
+    font-size: 13px;
+    justify-content: center;
+    text-align: center;
+  }
+
+  /* The deep-link hint is desktop nicety chrome; hide it on phones so the first
+     viewport leads with status, not instructions. */
+  .deep-link-hint {
+    display: none;
   }
 
   /* Touch-friendly targets. */
@@ -3103,6 +3140,32 @@ button.run-id-mono:focus-visible,
   pointer-events: none;
 }
 
+/* Quieter, text-style secondary action so the one recommended button stays the
+   visual lead instead of competing with equally-loud CTAs. */
+.primary-action-secondary {
+  align-self: center;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--brand-2);
+  text-decoration: none;
+  padding: 6px 4px;
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+}
+.primary-action-secondary:hover { text-decoration: underline; }
+
+/* Low-emphasis button variant used for tertiary actions (e.g. "Open run"). */
+.button.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+}
+.button.ghost:hover {
+  border-color: var(--line);
+  color: var(--ink);
+}
+
 /* ---- Failure banner above the run grid ---- */
 .failure-banner {
   display: flex;
@@ -3154,6 +3217,118 @@ button.run-id-mono:focus-visible,
   align-items: center;
   flex-wrap: wrap;
 }
+
+/* ---- Incident card: plain-English failure summary on the Runs landing ---- */
+.incident-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid #fecaca;
+  border-left: 4px solid var(--danger);
+  background: #fef2f2;
+  border-radius: 12px;
+  margin: 0 0 16px;
+}
+
+.incident-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.incident-cause-label {
+  font-weight: 700;
+  font-size: 14px;
+  color: #fff;
+  background: var(--danger);
+  border-radius: 6px;
+  padding: 3px 9px;
+}
+
+.incident-impact {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--danger);
+}
+
+.incident-sentence {
+  margin: 0;
+  font-size: 14px;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.incident-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.incident-tech {
+  border-top: 1px dashed #fecaca;
+  padding-top: 8px;
+}
+
+.incident-tech > summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+  list-style: revert;
+}
+
+.incident-tech-grid {
+  margin: 8px 0 0;
+  display: grid;
+  gap: 6px 14px;
+  font-size: 12px;
+}
+
+.incident-tech-grid > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.incident-tech-grid dt {
+  color: var(--muted);
+  min-width: 52px;
+  font-weight: 600;
+}
+
+.incident-tech-grid dd {
+  margin: 0;
+  min-width: 0;
+}
+
+.incident-tech-grid code {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
+.incident-tech-raw dd {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  flex: 1 1 100%;
+}
+
+.incident-copy {
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 5px;
+  padding: 0 6px;
+  min-height: 22px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+.incident-copy:hover { color: var(--ink); border-color: var(--brand-2); }
 
 .supervised-child-summary {
   margin: -4px 0 12px;
@@ -3471,15 +3646,9 @@ button.run-id-mono:focus-visible,
 /* ---- Narrow viewport: sidebar collapses, tables scroll ---- */
 @media (max-width: 900px) {
   .shell { grid-template-columns: 1fr !important; }
-  .sidebar {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    padding: 8px;
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
-  }
-  .sidebar button { width: auto; margin: 0; }
+  /* The sidebar stays hidden on mobile (see the primary mobile block above);
+     the .mobile-primary-nav row is the single source of primary navigation.
+     Re-displaying it here is what caused the duplicate nav row. */
   .nba-card { flex-direction: column; align-items: flex-start; }
   .table { display: block; overflow-x: auto; }
 
@@ -3744,8 +3913,8 @@ button.run-id-mono:focus-visible,
  * reset any one of them to a fresh context without losing the others. */
 .support-chat-fab {
   position: fixed;
-  right: 18px;
-  bottom: 18px;
+  right: max(18px, env(safe-area-inset-right));
+  bottom: max(18px, env(safe-area-inset-bottom));
   width: 48px;
   height: 48px;
   border-radius: 999px;
@@ -4209,7 +4378,12 @@ button.run-id-mono:focus-visible,
     width: auto;
     height: min(70vh, 560px);
   }
-  .support-chat-fab { right: 12px; bottom: 12px; }
+  /* Lift the FAB above the phone's bottom browser chrome / home indicator so it
+     is never hidden below the safe area on the first viewport. */
+  .support-chat-fab {
+    right: max(14px, env(safe-area-inset-right));
+    bottom: max(20px, calc(env(safe-area-inset-bottom) + 12px));
+  }
 }
 /* Phone-sized viewports: the prior 88% bubble + zero gutter left bubbles
  * nearly flush with the chat rail and pushed the (hover-revealed) stamp out

@@ -184,85 +184,148 @@ function onboardingCard() {
 }
 
 // --- Primary action bar ------------------------------------------------------
-// Pinned at the top of the dashboard in every state (empty, healthy, failing).
-// Three CTAs that adapt label/route but never disappear:
-//   - Trigger run        → workflows (or onboarding if zero workflows)
-//   - Open last failed   → last failed run detail (disabled-but-visible if none)
-//   - View runners       → runners admin (or onboarding if zero runners)
-// Replaces the older conditional "next best action" card so the operator
-// always sees a primary path above the fold.
-function primaryActionBar({ runners = [], capabilities = [], lastFailedRun = null, failed24h = 0 } = {}) {
+// Shown at the top of the dashboard when there is NO unresolved failure to
+// report. Surfaces the single most useful next action for the current fleet
+// state plus a couple of quieter secondary links — instead of three equally
+// loud CTAs. (When a run has failed, renderHome shows the incident card below
+// instead, so the failure — not "Trigger run" — leads the page.)
+function primaryActionBar({ runners = [], capabilities = [] } = {}) {
   const offlineRunners = runners.filter((r) => !r.online).length;
   const onlineRunners = runners.length - offlineRunners;
   let tone = "primary";
   let headline = "Ready to run";
   let sub = "Everything is wired up — trigger a run, or check on the fleet.";
+  let primary = { label: "Trigger run", href: "#workflows" };
+  let secondary = [{ label: "View runners", href: "#runners" }];
   if (!runners.length) {
     tone = "warn";
     headline = "Connect your first runner";
     sub = "A runner executes workflows on a machine you control. Without one, queued work can't move.";
+    primary = { label: "Connect a runner", href: "#onboarding" };
+    secondary = [{ label: "Read the quickstart", href: "/docs#quickstart" }];
   } else if (!capabilities.length) {
-    tone = "primary";
     headline = "Publish your first workflow";
     sub = "Workflows are the actions agents and humans can trigger. Start from a template.";
-  } else if (failed24h > 0) {
-    tone = "danger";
-    headline = `${failed24h} failed run${failed24h === 1 ? "" : "s"} in the last 24h`;
-    sub = "Open the most recent failure to read the diagnostic timeline and re-run.";
+    primary = { label: "Publish a workflow", href: "#workflows" };
+    secondary = [{ label: "Browse templates", href: "/workflow-templates/" }];
   } else if (onlineRunners === 0) {
+    // The fleet is registered but nothing is heartbeating. "Trigger run" is the
+    // wrong move here — queued work would just pile up — so the recommended
+    // action is to check runner health, not to start more work.
     tone = "warn";
-    headline = "All runners are offline";
-    sub = "No runner has heartbeated recently. Start a runner process to begin executing queued work.";
+    headline = "No active runners";
+    sub = "Queued work waits until a runner reconnects. Runs that already finished are unaffected.";
+    primary = { label: "View runner health", href: "#runners" };
+    secondary = [{ label: "Start a runner", href: "#onboarding" }];
   }
-  const triggerHref = capabilities.length ? "#workflows" : "#onboarding";
-  const triggerLabel = capabilities.length ? "Trigger run" : "Publish a workflow";
-  const runnersHref = runners.length ? "#runners" : "#onboarding";
-  const runnersLabel = runners.length ? `View runners${offlineRunners ? ` (${offlineRunners} offline)` : ""}` : "Connect a runner";
-  // "Open last failed run" is the disabled-but-visible CTA when nothing has
-  // failed yet — important for the acceptance check that the bar never
-  // collapses on healthy state.
-  const failedHref = lastFailedRun ? deepLinks.run(lastFailedRun.id) : "#runs";
-  const failedLabel = lastFailedRun
-    ? `Open last failed run${failed24h > 0 ? ` · ${failed24h}` : ""}`
-    : "No failed runs";
-  const failedDisabled = lastFailedRun ? "" : ' aria-disabled="true" tabindex="-1"';
-  return `<section class="primary-action-bar" data-tone="${esc(tone)}" role="region" aria-label="Primary actions">
+  return `<section class="primary-action-bar" data-tone="${esc(tone)}" role="region" aria-label="Recommended next action">
     <div class="primary-action-headline">
       <span>${esc(headline)}</span>
       <small>${esc(sub)}</small>
     </div>
     <div class="primary-action-actions">
-      <a class="button primary" href="${esc(triggerHref)}" id="pab-trigger">${esc(triggerLabel)}</a>
-      <a class="button${lastFailedRun ? " danger" : ""}" href="${esc(failedHref)}"${failedDisabled}>${esc(failedLabel)}</a>
-      <a class="button" href="${esc(runnersHref)}">${esc(runnersLabel)}</a>
+      <a class="button primary" href="${esc(primary.href)}" id="pab-trigger">${esc(primary.label)}</a>
+      ${secondary.map((link) => `<a class="primary-action-secondary" href="${esc(link.href)}">${esc(link.label)}</a>`).join("")}
     </div>
   </section>`;
 }
 
-// --- Failure banner ----------------------------------------------------------
-// Renders directly above the run grid when the dashboard has a recent failed
-// run. Surfaces the failing step name, exit category, and first ~140 chars of
-// the root cause with a deep link straight to the run's timeline anchor — so
-// the operator never has to click into a run just to learn "what broke and
-// where". Empty when there are no failures.
-function failureBanner(lastFailedRun) {
-  if (!lastFailedRun) return "";
-  const step = lastFailedRun.failedStep || lastFailedRun.currentStep || "";
-  const cause = truncate(lastFailedRun.reasonHint || lastFailedRun.error || "", 140);
-  const failureType = lastFailedRun.failureType || "";
-  return `<section class="failure-banner" role="alert" aria-label="Most recent failure">
-    <div class="failure-banner-body">
-      <div class="failure-banner-title">
-        <span>Last failure</span>
-        ${step ? `<span class="failure-banner-step">step ${esc(step)}</span>` : ""}
-        ${failureType ? `<code class="diagnostics-event-type">${esc(failureType)}</code>` : ""}
-      </div>
-      ${cause ? `<p class="failure-banner-cause">${esc(cause)}</p>` : `<p class="failure-banner-cause muted">No root-cause snippet yet — open the timeline to read the failing events.</p>`}
+// --- Failure summarization (plain-English) -----------------------------------
+// Turns a raw failed-run row into an operator-readable summary: a short cause
+// label for the chip, a one-line plain sentence with internal ids / UUIDs /
+// error-class prefixes stripped out, and the raw identifiers kept aside for the
+// "Technical details" disclosure. Pure string work over the fields the list API
+// already ships (run.error / run.reasonHint / run.failedStep) — no extra fetch.
+function cleanFailureText(raw) {
+  let s = String(raw || "");
+  // Drop a leading "SomethingError:" / "SomethingException:" class prefix or a
+  // bare scheduler marker like "NodeFailed" / "RunCancelled".
+  s = s.replace(/^[\s>*•-]*[A-Za-z][A-Za-z0-9_.]*(?:Error|Exception):\s*/, "");
+  s = s.replace(/^(?:Node|Run|Task|Step)(?:Failed|Cancelled|Errored)\b[:\s-]*/i, "");
+  // Remove whole "[at|during] <kind> <id>" phrases (id = name_xxxxxx or a UUID)
+  // so connective words like "at agent:" don't dangle once the id is gone. The
+  // human-readable step name in `step 'generate-spec'` is kept (not an id).
+  s = s.replace(/\b(?:at\s+|during\s+(?:step\s+)?|on\s+)?(?:runs?|nodes?|tasks?|agents?|caps?|runners?|wf|jobs?)\b\s*[:#]?\s*(?:[A-Za-z0-9]*_[A-Za-z0-9]{6,}|[0-9a-f]{8}-[0-9a-f-]{8,})\b['"]?/gi, " ");
+  // Any remaining bare ids / UUIDs.
+  s = s.replace(/\b[A-Za-z0-9]*_[A-Za-z0-9]{6,}\b/g, " ");
+  s = s.replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, " ");
+  // First line only; tidy whitespace, empty brackets, dangling punctuation.
+  s = s.split(/\r?\n/)[0];
+  s = s.replace(/[([{]\s*[)\]}]/g, "").replace(/\s{2,}/g, " ").replace(/\s+([.,;:)])/g, "$1");
+  s = s.replace(/^[\s:·,;-]+/, "").replace(/[\s:·,;-]+$/, "").trim();
+  return s;
+}
+
+function summarizeFailure(run) {
+  if (!run) return null;
+  const raw = String(run.error || run.reasonHint || "").trim();
+  const step = String(run.failedStep || run.currentStep || "").trim();
+  const low = raw.toLowerCase();
+  let label;
+  if (run.status === "rejected") label = "Approval rejected";
+  else if (run.status === "cancelled") label = "Cancelled";
+  else if (/\b(?:timed?\s*out|timeout|etimedout|deadline)\b/.test(low)) label = "Timed out";
+  else if (/\b(?:econnrefused|enotfound|socket hang|fetch failed|getaddrinfo)\b/.test(low) || /\bnetwork\b/.test(low)) label = "Network error";
+  else if (/\b(?:type|reference|syntax|range)error\b/.test(low)) label = "Workflow code error";
+  else if (/\b(?:eacces|eperm|permission|denied|unauthor|forbidden|401|403)\b/.test(low)) label = "Permission denied";
+  else if (/\b(?:exit code|non-zero|command failed|enoent|spawn)\b/.test(low)) label = "Command failed";
+  else if (/\bno runner\b/.test(low) || /\bheartbeat\b/.test(low) || /\brunner\b.*\b(?:offline|unavailable|lost|disconnect)/.test(low)) label = "Runner unavailable";
+  else if (/\bout of memory\b|\boom\b|\bheap\b/.test(low)) label = "Out of memory";
+  else if (step && step !== "completed") label = `Failed at “${step}”`;
+  else label = "Run failed";
+  let sentence = cleanFailureText(raw);
+  if (!sentence) {
+    sentence = step && step !== "completed"
+      ? `The “${step}” step stopped without a captured error message.`
+      : "This run stopped before completing — open the timeline to read the failing events.";
+  }
+  return {
+    label,
+    sentence: truncate(sentence, 180),
+    step,
+    raw: truncate(raw, 600),
+    runId: run.id || "",
+    runnerId: run.runnerId || ""
+  };
+}
+
+// --- Incident card -----------------------------------------------------------
+// Replaces the action bar whenever there is an unresolved failed run. Answers
+// the three questions an operator has in the first viewport: what broke (plain
+// cause + sentence), is it blocking me (impact line), and what do I do next
+// (one loud recommended action — inspect the failing timeline — with quieter
+// secondary actions). Raw run id / runner id / error text live in a copyable
+// "Technical details" disclosure so the card never leads with id soup.
+function incidentCard({ run, failed24h = 1, onlineRunners = 0 } = {}) {
+  if (!run) return "";
+  const f = summarizeFailure(run);
+  const blocking = onlineRunners === 0;
+  const impact = blocking
+    ? "Blocking — no active runner is available to re-run it."
+    : failed24h > 1
+      ? `Not blocking — new runs can still start. ${failed24h} failures in the last 24h.`
+      : "Not blocking — new runs can still start.";
+  const copyBtn = (value, what) => `<button type="button" class="incident-copy" data-copy="${esc(value)}" title="Copy ${esc(what)}" aria-label="Copy ${esc(what)}">⧉</button>`;
+  return `<section class="incident-card" data-tone="danger" role="alert" aria-label="Most recent failure">
+    <div class="incident-head">
+      <span class="incident-cause-label">${esc(f.label)}</span>
+      <span class="incident-impact">${esc(impact)}</span>
     </div>
-    <div class="failure-banner-actions">
-      <a class="button danger" href="${esc(deepLinks.runLogs(lastFailedRun.id))}">Open timeline →</a>
-      <a class="button" href="${esc(deepLinks.run(lastFailedRun.id))}">Open run</a>
+    <p class="incident-sentence">${esc(f.sentence)}</p>
+    <div class="incident-actions">
+      <a class="button primary" href="${esc(deepLinks.runLogs(run.id))}">Inspect failure</a>
+      <button type="button" class="button" data-rerun="${esc(run.id)}">Re-run with same input</button>
+      <a class="button ghost" href="${esc(deepLinks.run(run.id))}">Open run</a>
     </div>
+    <details class="incident-tech">
+      <summary>Technical details</summary>
+      <dl class="incident-tech-grid">
+        <div><dt>Run</dt><dd><code>${esc(run.id)}</code> ${copyBtn(run.id, "run id")}</dd></div>
+        ${f.step ? `<div><dt>Step</dt><dd><code>${esc(f.step)}</code></dd></div>` : ""}
+        ${f.runnerId ? `<div><dt>Runner</dt><dd><code>${esc(f.runnerId)}</code></dd></div>` : ""}
+        ${f.raw ? `<div class="incident-tech-raw"><dt>Error</dt><dd><code>${esc(f.raw)}</code> ${copyBtn(f.raw, "error text")}</dd></div>` : ""}
+      </dl>
+    </details>
   </section>`;
 }
 
@@ -350,11 +413,27 @@ function bindTemplateButtons() {
 // refreshed every 30s and on every navigation; visiting the tab clears it.
 const SIDEBAR_BADGE_STATE = { runners: 0, runs: 0, approvals: 0 };
 
+// The label that disambiguates the failed-runs badge from the total-runs count
+// shown lower on the page (item: "Runs 19" badge vs "9 failed runs" mismatch).
+function failedRunsBadgeLabel(count) {
+  return `${count} failed run${count === 1 ? "" : "s"} in the last 24h — needs attention`;
+}
+
 function applyMobileNavBadges() {
   document.querySelectorAll('.mobile-primary-nav [data-badge="approvals"]').forEach((badge) => {
     const count = SIDEBAR_BADGE_STATE.approvals || 0;
     badge.textContent = String(count);
     badge.hidden = count <= 0;
+  });
+  document.querySelectorAll('.mobile-primary-nav [data-badge="runs"]').forEach((badge) => {
+    const count = SIDEBAR_BADGE_STATE.runs || 0;
+    badge.textContent = String(count);
+    badge.hidden = count <= 0;
+    if (count > 0) {
+      badge.dataset.tone = "danger";
+      badge.setAttribute("aria-label", failedRunsBadgeLabel(count));
+      badge.setAttribute("title", failedRunsBadgeLabel(count));
+    }
   });
 }
 
@@ -374,14 +453,17 @@ function applySidebarBadges() {
       if (existing) existing.remove();
       return;
     }
+    const label = view === "home" ? failedRunsBadgeLabel(count) : "";
     if (existing) {
       existing.textContent = String(count);
       existing.dataset.tone = tone;
+      if (label) { existing.setAttribute("aria-label", label); existing.setAttribute("title", label); }
     } else {
       const badge = document.createElement("span");
       badge.className = "sidebar-badge";
       badge.dataset.tone = tone;
       badge.textContent = String(count);
+      if (label) { badge.setAttribute("aria-label", label); badge.setAttribute("title", label); }
       button.appendChild(badge);
     }
   });
@@ -391,7 +473,7 @@ function applySidebarBadges() {
 async function refreshSidebarBadges() {
   try {
     const [runsData, runnersData, dashboardData] = await Promise.all([
-      api("/api/runs?limit=50").catch(() => ({ runs: [] })),
+      api("/api/runs?limit=100").catch(() => ({ runs: [] })),
       api("/api/runners").catch(() => ({ runners: [] })),
       api("/api/dashboard").catch(() => ({ stats: {}, pendingApprovals: [] }))
     ]);
@@ -1684,6 +1766,7 @@ async function renderHome() {
   const lastFailedRun = recentlyFailed[0]
     || visibleRuns.find(isUnresolvedFailure)
     || null;
+  const onlineRunners = runners.filter((r) => r.online).length;
   // Best-effort artifact bucket — if the call fails we just skip the preview.
   const artifactsByRun = new Map();
   try {
@@ -1716,8 +1799,9 @@ async function renderHome() {
     : "";
   const pendingDraft = peekRerunDraft();
   content.innerHTML = `${toolbar("Runs", `<button id="home-new-run">Run a workflow</button>`, deepLinks.home())}
-    ${primaryActionBar({ runners, capabilities, lastFailedRun, failed24h })}
-    ${failureBanner(lastFailedRun)}
+    ${lastFailedRun
+      ? incidentCard({ run: lastFailedRun, failed24h, onlineRunners })
+      : primaryActionBar({ runners, capabilities })}
     ${rerunDraftBanner(pendingDraft, { context: "list" })}
     <p class="muted deep-link-hint">Every page, run, workflow, and artifact has a stable URL — click 🔗 to copy a shareable link.</p>
     ${renderHomeFilterBar(filters)}
