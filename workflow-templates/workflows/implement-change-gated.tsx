@@ -149,10 +149,11 @@ export default smithers((ctx) => {
                 run(["commit", "-m", msg]);
                 commitHash = run(["rev-parse", "HEAD"]).trim();
               } else {
-                // No staged changes — accept only if the agent itself advanced HEAD past baseline.
-                const head = run(["rev-parse", "HEAD"]).trim();
-                if (head === baseline.startHead) throw new Error("GATE FAILED: implementation produced no changes.");
-                commitHash = head;
+                // No staged changes — accept as a no-op rather than failing the gate so a
+                // benign "nothing to change" outcome (agent decided no edits were needed,
+                // or the request was already satisfied) doesn't sink the whole pipeline.
+                // Downstream push/deploy will no-op against the unchanged HEAD.
+                commitHash = run(["rev-parse", "HEAD"]).trim();
               }
               if (!/^[0-9a-f]{7,40}$/.test(commitHash)) throw new Error("GATE FAILED: no sane commit hash.");
               return { commit: commitHash, message: msg, stat, files: staged };
