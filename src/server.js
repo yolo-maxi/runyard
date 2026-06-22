@@ -74,6 +74,7 @@ import {
 } from "./runResponseEndpoint.js";
 import { scheduleRunResponseEndpointDelivery } from "./runResponseEndpointDelivery.js";
 import { chatWithSupportAgent, supportAgentInfo } from "./runyardSupportAgent.js";
+import { buildSupportLiveContext } from "./supportContext.js";
 import { hashToken, parseCookies, sign, timingSafeEqualStr, unsign } from "./security.js";
 import { buildRepoCatalog, resolveCapabilityRef } from "./repoCatalog.js";
 import {
@@ -3231,15 +3232,20 @@ app.post("/api/chat", requireAuth, rateLimit({ bucket: "support-chat", max: 60, 
   const messages = Array.isArray(body.messages) ? body.messages : [];
   if (!messages.length) return res.status(400).json({ error: "messages array required" });
   try {
+    // Resolve the operator's route into real, redacted app data server-side so
+    // the agent answers from the actual run/event/workflow state rather than
+    // the thin route descriptor the browser sends. Read-only; never throws.
+    const baseContext = body.context && typeof body.context === "object" ? body.context : {};
+    const live = buildSupportLiveContext(baseContext);
     const result = await chatWithSupportAgent({
       messages,
-      context: body.context || {}
+      context: { ...baseContext, live: live.text || "" }
     });
     recordAudit(
       req.token?.name || req.token?.id || "unknown",
       "chat.message",
       `support-agent:${result.provider}/${result.model}`,
-      { view: body.context?.view || "", turns: messages.length }
+      { view: baseContext.view || "", turns: messages.length, contextKind: live.kind || "" }
     );
     res.json({
       reply: result.reply,

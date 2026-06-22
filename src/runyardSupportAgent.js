@@ -139,13 +139,20 @@ function buildContextLine(context = {}) {
     .slice(0, 8)
     .map(([key, value]) => `${key}=${String(value).slice(0, 80)}`)
     .join(", ");
-  return [
+  // `live` is the server-resolved snapshot of what the operator is actually
+  // looking at (real run/event/workflow data, already redacted + capped by
+  // src/supportContext.js). It's the difference between the agent knowing the
+  // route and knowing the screen.
+  const live = typeof context.live === "string" ? context.live.trim() : "";
+  const route = [
     `Current view: ${view || "unknown"}`,
     hash ? `Hash: ${hash}` : "",
     title ? `Title: ${title}` : "",
     url ? `URL: ${url}` : "",
     paramSummary ? `Params: ${paramSummary}` : ""
   ].filter(Boolean).join("\n");
+  if (!live) return route;
+  return `${route}\n\n--- Live app data (read-only, resolved from the operator's current screen) ---\n${live}`;
 }
 
 function sanitizeMessages(messages = []) {
@@ -261,6 +268,12 @@ async function callRunnerProvider(provider, { messages, system, context, signal 
   });
 
   const deadline = Date.now() + provider.timeoutMs;
+  // Snappy poll ramp: most support answers come back in the first couple of
+  // seconds, so we poll tightly at first (catching a fast reply within ~75ms of
+  // completion) and back off to 500ms for the long tail. This shaves the
+  // perceived latency off the common case without hammering the DB on slow runs.
+  let poll = 0;
+  const pollDelay = () => (poll < 12 ? 75 : poll < 24 ? 200 : 500);
   while (Date.now() < deadline) {
     if (signal?.aborted) throw new Error("support agent request aborted");
     const current = getRun(run.id);
@@ -274,7 +287,8 @@ async function callRunnerProvider(provider, { messages, system, context, signal 
     if (["failed", "cancelled", "errored"].includes(current?.status)) {
       throw new Error(`support agent run ${current.status}: ${truncate(current.error || "no error reported", 240)}`);
     }
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await new Promise((resolve) => setTimeout(resolve, pollDelay()));
+    poll += 1;
   }
   return {
     reply:
