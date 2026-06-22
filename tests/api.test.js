@@ -2082,6 +2082,51 @@ describe("Idea to Product capability", () => {
     assert.match(src, /pnpm build/);
     assert.match(src, /ClaudeCodeAgent/);
   });
+
+  it("encodes the narrow-output, copywriter, and live-app guards in the workflow template", () => {
+    const tpl = path.join(process.cwd(), "workflow-templates", "workflows", "idea-to-product.tsx");
+    const src = readFileSync(tpl, "utf8");
+    // Strategist narrow-output contract: echo the ask verbatim and emit
+    // explicit inScope / outOfScope / locale.
+    assert.match(src, /originalAsk/);
+    assert.match(src, /inScope/);
+    assert.match(src, /outOfScope/);
+    assert.match(src, /BCP-47/);
+    // Builder copy rule: one language per page.
+    assert.ok(src.includes("one language per page"), "builder/copywriter prompt must contain the 'one language per page' rule");
+    // Copywriter step exists as a Task between build and verify.
+    assert.match(src, /id="copy"/);
+    assert.match(src, /copywriter/);
+    // Personality copy uses neutral meaning → neutral translation → independent rewrites.
+    assert.ok(src.includes("neutral meaning"), "copywriter prompt must contain the 'neutral meaning' translation pattern");
+    // Live-app replacement guard.
+    assert.ok(
+      src.includes("already hosts a live app"),
+      "live-app guard message 'already hosts a live app' must be present"
+    );
+    assert.match(src, /replaceLive/);
+    assert.match(src, /--replace-live/);
+    // Mobile-first acceptance checks in verify.
+    assert.match(src, /360px/);
+    assert.match(src, /tap-target>=44px|tap target/i);
+    assert.match(src, /body-text>=16px|>=16px/);
+    assert.match(src, /CTA-above-fold|above the fold/i);
+    assert.match(src, /no-horizontal-scroll|horizontal scroll/i);
+    // Summary lines surfaced before deploy URL.
+    assert.match(src, /Locale: /);
+    assert.match(src, /In scope: /);
+    assert.match(src, /Out of scope: /);
+  });
+
+  it("surfaces locale and replaceLive on the idea-to-product capability schema", async () => {
+    const { capabilities } = await api("/api/capabilities");
+    const cap = capabilities.find((c) => c.slug === "idea-to-product");
+    assert.ok(cap, "idea-to-product capability should be in the catalog");
+    assert.equal(cap.inputSchema.properties.locale.type, "string");
+    assert.equal(cap.inputSchema.properties.replaceLive.type, "boolean");
+    assert.ok(cap.outputSchema.properties.liveAppGuard, "liveAppGuard output should be advertised");
+    assert.ok(cap.outputSchema.properties.copy, "copywriter output should be advertised");
+  });
 });
 
 describe("App Skinner capability", () => {

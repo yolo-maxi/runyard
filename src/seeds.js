@@ -364,9 +364,9 @@ export const seedCapabilities = [
     slug: "idea-to-product",
     name: "Idea to Product",
     description:
-      "Turns a raw product idea into a scoped MVP spec, builds it with an implementation agent, verifies the basics, deploys it to a configured static host, and returns the URL. Private by default; public access is explicit.",
+      "Turns a raw product idea into a scoped MVP spec, builds it with an implementation agent, runs a copywriter/localization pass, verifies the basics (including mobile-first checks at 360px), guards the live-app slot, deploys it to a configured static host, and returns the URL plus a Locale / In scope / Out of scope summary. Private by default; public access is explicit.",
     category: "Product",
-    keywords: ["idea", "product", "mvp", "build", "test", "deploy", "static-site", "smithers"],
+    keywords: ["idea", "product", "mvp", "build", "test", "deploy", "static-site", "smithers", "locale", "copywriter", "localization"],
     inputSchema: {
       type: "object",
       required: ["idea"],
@@ -374,8 +374,10 @@ export const seedCapabilities = [
         idea: { type: "string", description: "The raw product idea." },
         preferredSubdomain: { type: "string", description: "Optional preferred static-site subdomain prefix." },
         constraints: { type: "string", description: "Optional product, design, stack, or business constraints." },
+        locale: { type: "string", description: "Optional BCP-47 locale override (e.g. en-US, it-IT). Strategist infers from the ask and falls back to en-US when empty." },
         deploy: { type: "boolean", description: "Deploy after gates pass (default true)." },
-        publicAccess: { type: "boolean", description: "Deploy without auth if true. Default false." }
+        publicAccess: { type: "boolean", description: "Deploy without auth if true. Default false." },
+        replaceLive: { type: "boolean", description: "Live-app replacement guard: required to overwrite a STATIC_ROOT slot that already hosts a live app. Equivalent to --replace-live." }
       }
     },
     outputSchema: {
@@ -383,7 +385,9 @@ export const seedCapabilities = [
       properties: {
         expand: { type: "object" },
         narrow: { type: "object" },
+        liveAppGuard: { type: "object" },
         build: { type: "object" },
+        copy: { type: "object" },
         verify: { type: "object" },
         deploy: { type: "object" }
       }
