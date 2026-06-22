@@ -1900,9 +1900,10 @@ app.get("/llms.txt", (req, res) => {
   lines.push("Execution modes:");
   for (const mode of menu.executionModes || []) lines.push(`- ${mode.id} → runners tagged ${mode.runnerLocation}`);
   lines.push("");
-  lines.push("Authenticate with a Hub access token using Bearer auth. Tokens can be");
-  lines.push("scoped (api, mcp, approvals); the first one is written to");
-  lines.push("data/bootstrap-token.txt on the server's machine on first boot.");
+  lines.push("Authenticate with a Hub access token using Bearer auth. Tokens carry");
+  lines.push("scopes (api, mcp, runner, admin); the first one is written to");
+  lines.push("data/bootstrap-token.txt on the server's machine on first boot and is");
+  lines.push("full admin.");
   lines.push("");
   lines.push("Run path:");
   lines.push("1. Discover with get_menu / list_capabilities.");
@@ -1930,26 +1931,46 @@ app.get("/llms.txt", (req, res) => {
 app.get("/openapi.json", (req, res) => {
   res.json({
     openapi: "3.1.0",
-    info: { title: "Runyard API (smithers-hub)", version: "0.1.0" },
+    info: {
+      title: "Runyard API (smithers-hub)",
+      version: "0.1.0",
+      description:
+        "Self-hosted control plane for agent runs. The Web Hub, CLI, and MCP server all drive this same JSON API. " +
+        "Authenticate every request with `Authorization: Bearer shub_...`; tokens carry scopes (api, mcp, runner, admin) and the bootstrap token is full admin. " +
+        "Typical flow: discover capabilities (GET /menu or /capabilities), start a run (POST /capabilities/{id}/run with executionMode local|remote), then poll /runs/{id} and read /runs/{id}/timeline, /logs, and /artifacts. " +
+        "Runs that need a human checkpoint enter waiting_approval and are resolved via /approvals/{id}/approve|reject|request-changes. " +
+        "Liveness endpoints (/healthz, /readyz, /api/version) and discovery copy (/llms.txt, this document) are unauthenticated and served from the repo root, not under /api."
+    },
     servers: [{ url: `${publicUrl(req)}/api` }],
     security: [{ bearerAuth: [] }],
     components: { securitySchemes: { bearerAuth: { type: "http", scheme: "bearer" } } },
     paths: {
-      "/capabilities": { get: { summary: "List capabilities" }, post: { summary: "Create/update capability" } },
-      "/capabilities/{id}": { get: { summary: "Describe capability" }, patch: { summary: "Update capability" } },
-      "/capabilities/{id}/run": { post: { summary: "Run capability with optional executionMode local|remote; improve.repoDir selects an allowlisted runner-local repo while logs/artifacts stay in the Hub. Accepts an optional responseEndpoint ({type: http|telegram, config}) so the caller can have the terminal-state reply delivered when the run finishes (http endpoints receive a sanitized JSON payload; telegram endpoints receive a concise message and require TELEGRAM_BOT_TOKEN on the Hub). Polling /runs/{id} remains the canonical fallback; delivery state is exposed on /runs/{id}.responseEndpoints[]." } },
-      "/workflow-endpoints": { get: { summary: "List configured authenticated workflow endpoints" }, post: { summary: "Create/update an authenticated workflow endpoint" } },
-      "/workflow-endpoints/{slug}": { get: { summary: "Describe a workflow endpoint" }, post: { summary: "Submit data to a fixed authenticated workflow endpoint" } },
-      "/menu": { get: { summary: "Discover the Runyard MCP/CLI menu and local/remote run path" } },
-      "/runs": { get: { summary: "List runs" } },
-      "/runs/{id}": { get: { summary: "Get run" } },
-      "/runs/{id}/events": { get: { summary: "Get run events" }, post: { summary: "Append run event" } },
+      "/menu": { get: { summary: "Discover the Runyard MCP/CLI menu: tools, capability catalog, and local/remote execution modes (same source as get_menu and /llms.txt)" } },
+      "/capabilities": { get: { summary: "List capabilities" }, post: { summary: "Create/update capability (admin)" } },
+      "/capabilities/{id}": { get: { summary: "Describe capability and its input schema" }, patch: { summary: "Update capability (admin)" } },
+      "/capabilities/{id}/run": { post: { summary: "Run capability. Body: {input, executionMode: local|remote}. improve.repoDir selects an allowlisted runner-local repo while logs/artifacts stay in the Hub. Accepts an optional responseEndpoint ({type: http|telegram, config}) so the caller can have the terminal-state reply delivered when the run finishes (http endpoints receive a sanitized JSON payload; telegram endpoints receive a concise message and require TELEGRAM_BOT_TOKEN on the Hub). Polling /runs/{id} remains the canonical fallback; delivery state is exposed on /runs/{id}.responseEndpoints[]." } },
+      "/runs": { get: { summary: "List runs (filter by status, q, capability)" } },
+      "/runs/{id}": { get: { summary: "Get run: status, outputs, error, and responseEndpoints[] delivery state" } },
+      "/runs/{id}/events": { get: { summary: "Get run events" }, post: { summary: "Append run event (runner)" } },
       "/runs/{id}/timeline": { get: { summary: "Get a unified ascending run timeline built from status transitions, events, and artifacts. Supports since=<iso> and limit=<n>; used by `runyard tail`." } },
-      "/runs/{id}/artifacts": { get: { summary: "List run artifacts" }, post: { summary: "Upload artifact" } },
+      "/runs/{id}/logs": { get: { summary: "Get run log lines" } },
+      "/runs/{id}/artifacts": { get: { summary: "List run artifacts" }, post: { summary: "Upload artifact (runner)" } },
+      "/runs/{id}/rerun": { post: { summary: "Re-queue the run with the same or edited input" } },
+      "/runs/{id}/cancel": { post: { summary: "Cancel a queued or running run" } },
+      "/artifacts/{id}/download": { get: { summary: "Download an artifact's bytes" } },
       "/approvals": { get: { summary: "List approvals" } },
       "/approvals/{id}/approve": { post: { summary: "Approve request" } },
       "/approvals/{id}/reject": { post: { summary: "Reject request" } },
       "/approvals/{id}/request-changes": { post: { summary: "Request changes" } },
+      "/agents": { get: { summary: "List reusable agent roles" }, post: { summary: "Create/update agent (admin)" } },
+      "/skills": { get: { summary: "List skills" }, post: { summary: "Create/update skill (admin)" } },
+      "/knowledge": { get: { summary: "List knowledge resources" }, post: { summary: "Create/update knowledge resource (admin)" } },
+      "/tokens": { get: { summary: "List access tokens (admin)" }, post: { summary: "Issue a scoped access token (admin)" } },
+      "/audit": { get: { summary: "Read the audit log (admin)" } },
+      "/chat/status": { get: { summary: "In-app Assistant status: resolved provider (runner|anthropic|openai) and whether it is configured" } },
+      "/chat": { post: { summary: "Ask the in-app Assistant. Body: {messages, context}. Answers first; any app-changing action is returned as a confirmation button, never executed server-side." } },
+      "/workflow-endpoints": { get: { summary: "List configured authenticated workflow endpoints (admin)" }, post: { summary: "Create/update an authenticated workflow endpoint (admin)" } },
+      "/workflow-endpoints/{slug}": { get: { summary: "Describe a workflow endpoint (admin)" }, post: { summary: "Submit data to a fixed authenticated workflow endpoint (per-endpoint secret, rate-limited, deduped)" } },
       "/runners/register": { post: { summary: "Register runner" } },
       "/runners/{id}/next-run": { get: { summary: "Claim next run for runner" } }
     }
