@@ -16,7 +16,7 @@ process.env.SMITHERS_OBSTRUCTION_ANALYSIS_ENABLED = "0";
 
 const { app, notifyTelegram } = await import("../src/server.js");
 const { env } = await import("../src/env.js");
-const { addRunEvent, autoQueueLegacyRunStartApprovals, createApproval, listRuns, transitionRun, updateRun } = await import("../src/db.js");
+const { addRunEvent, autoQueueLegacyRunStartApprovals, createApproval, getRun, listRuns, transitionRun, updateRun } = await import("../src/db.js");
 const {
   RUN_OBSTRUCTION_ANALYSIS_ARTIFACT_NAME,
   setRunObstructionAnalyzerForTest
@@ -300,6 +300,73 @@ describe("Smithers Hub API", () => {
     assert.match(code, /legacyActions/);
     assert.match(code, /label: "Do it"/);
     assert.doesNotMatch(code, /parseAgentActions/);
+  });
+
+  it("enriches the support chat prompt with real, redacted run data from the operator's screen", async () => {
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+
+    // Seed a failed run with a secret-shaped input field the agent must not see.
+    const created = await api("/api/capabilities/hello/run", {
+      method: "POST",
+      body: { input: { goal: "Probe the failure", apiKey: "sk-leak-me-please-1234567890" } }
+    });
+    const targetRunId = created.run.id;
+    transitionRun(targetRunId, "running", { current_step: "build" });
+    addRunEvent(targetRunId, "run.failed", "Run failed: boom in build", {});
+    transitionRun(targetRunId, "failed", { current_step: "build", error: "boom in build" });
+
+    // Snapshot existing support runs so we wait for OUR new one, not a stale
+    // support run left queued/succeeded by an earlier test.
+    const existing = new Set(
+      listRuns({ limit: 500 }).filter((r) => r.capabilitySlug === "runyard-support-agent").map((r) => r.id)
+    );
+    const pending = api("/api/chat", {
+      method: "POST",
+      body: {
+        messages: [{ role: "user", content: "why did this fail?" }],
+        context: { view: "runs", hash: `#runs/${targetRunId}`, title: "Runyard" }
+      }
+    });
+
+    let supportRun = null;
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline && !supportRun) {
+      supportRun = listRuns({ limit: 500 }).find(
+        (r) => r.capabilitySlug === "runyard-support-agent" && !existing.has(r.id)
+      );
+      if (!supportRun) await sleep(20);
+    }
+    assert.ok(supportRun, "expected a new support-agent run to be created");
+    const system = String(getRun(supportRun.id)?.input?.system || "");
+    assert.match(system, /Live app data/);
+    assert.match(system, new RegExp(targetRunId));
+    assert.match(system, /boom in build/);
+    // The seeded secret must never reach the model prompt.
+    assert.doesNotMatch(system, /sk-leak-me-please/);
+
+    transitionRun(supportRun.id, "running", { current_step: "test runner" });
+    transitionRun(supportRun.id, "succeeded", {
+      current_step: "done",
+      output: { outputs: { support: { reply: "It failed because the build threw." } } }
+    });
+    const result = await pending;
+    assert.equal(result.reply, "It failed because the build threw.");
+  });
+
+  it("ships the snappy persistent-chat + contextual quick-reply code paths in the bundle", async () => {
+    const response = await raw("/public/app.js");
+    assert.equal(response.status, 200);
+    const code = response.data;
+    // Contextual quick replies + the bar that renders them.
+    assert.match(code, /supportQuickReplies/);
+    assert.match(code, /renderSupportQuickReplies/);
+    assert.match(code, /data-quick-prompt/);
+    // Snappiness: optimistic typing indicator.
+    assert.match(code, /support-chat-typing/);
+    // No-flicker: route sync only touches the chip bar, draft persists per tab.
+    assert.match(code, /syncSupportChatToRoute/);
+    assert.match(code, /restoreSupportDraft/);
   });
 
   it("creates a run, registers a runner, claims it, stores events and artifacts, and completes", async () => {
