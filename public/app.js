@@ -114,6 +114,8 @@ const deepLinks = {
     : "#runs",
   tokens: () => "#tokens",
   runners: () => "#runners",
+  schedules: () => "#schedules",
+  schedule: (id) => `#schedules/${encodeURIComponent(id)}`,
   audit: () => "#audit",
   connect: () => "#connect",
   approvals: () => "#approvals",
@@ -1065,6 +1067,7 @@ async function render() {
   if (view === "onboarding") return renderOnboarding();
   if (view === "approvals") return segments[1] ? renderApprovalDetail(segments[1]) : renderApprovals();
   if (view === "runners") return renderRunners();
+  if (view === "schedules") return segments[1] ? renderScheduleDetail(segments[1]) : renderSchedules();
   if (view === "tokens") return renderTokens();
   if (view === "audit") return renderAudit();
   if (view === "settings") return renderSettings();
@@ -1297,6 +1300,14 @@ function relativeTime(iso) {
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return iso;
   const diff = Date.now() - t;
+  // Future timestamps (e.g. a schedule's next run) read as "in 5m" / "in 2d".
+  if (diff < 0) {
+    const ahead = -diff;
+    if (ahead < 60_000) return "in <1m";
+    if (ahead < 3_600_000) return `in ${Math.round(ahead / 60_000)}m`;
+    if (ahead < 86_400_000) return `in ${Math.round(ahead / 3_600_000)}h`;
+    return `in ${Math.round(ahead / 86_400_000)}d`;
+  }
   if (diff < 60_000) return "just now";
   if (diff < 3_600_000) return `${Math.round(diff / 60_000)}m ago`;
   if (diff < 86_400_000) return `${Math.round(diff / 3_600_000)}h ago`;
@@ -2779,6 +2790,331 @@ function formatTimestamp(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
   return date.toISOString().replace("T", " ").replace(/\.\d+Z$/, "Z");
+}
+
+// --- Schedules (cron jobs) --------------------------------------------------
+// Operators schedule recurring (cron) or one-shot runs of a workflow. Firing
+// goes through the same dispatch path as a manual run, so approvals and
+// supervision behave identically. The cron preview/next-run forecast is
+// computed server-side (/api/schedules/preview) so the browser never has to
+// re-implement the parser.
+
+const CRON_PRESETS = [
+  { label: "Every 15 min", cron: "*/15 * * * *" },
+  { label: "Hourly", cron: "0 * * * *" },
+  { label: "Daily 09:00", cron: "0 9 * * *" },
+  { label: "Weekdays 09:00", cron: "0 9 * * 1-5" },
+  { label: "Weekly Mon 09:00", cron: "0 9 * * 1" }
+];
+
+function scheduleNextChip(schedule) {
+  if (!schedule.enabled) return `<span class="chip muted" title="Disabled — will not fire">paused</span>`;
+  if (!schedule.nextRunAt) return `<span class="chip muted" title="Nothing scheduled">no next run</span>`;
+  return `<span class="chip chip-next" title="Next run ${esc(formatTimestamp(schedule.nextRunAt))}">⏭ ${esc(relativeTime(schedule.nextRunAt))}</span>`;
+}
+
+function scheduleLastChip(schedule) {
+  if (!schedule.lastRunAt) return `<span class="chip chip-last-run muted" title="Never fired">never run</span>`;
+  const statusChip = schedule.lastStatus ? ` ${status(schedule.lastStatus)}` : "";
+  const link = schedule.lastRunId ? `<a href="${esc(deepLinks.run(schedule.lastRunId))}">⏱ ${esc(relativeTime(schedule.lastRunAt))}</a>` : `⏱ ${esc(relativeTime(schedule.lastRunAt))}`;
+  return `<span class="chip chip-last-run" title="Last run ${esc(formatTimestamp(schedule.lastRunAt))}">${link}</span>${statusChip}`;
+}
+
+function scheduleCadenceLabel(schedule) {
+  if (schedule.kind === "once") return schedule.runAt ? `Once at ${esc(formatTimestamp(schedule.runAt))}` : "One-time";
+  const desc = schedule.preview?.description || `cron ${schedule.cron}`;
+  const tz = schedule.timezone && schedule.timezone !== "UTC" ? "" : "";
+  return `${esc(desc)}${tz}`;
+}
+
+async function renderSchedules() {
+  let data;
+  try {
+    data = await api("/api/schedules");
+  } catch (error) {
+    content.innerHTML = `${toolbar("Schedules")}<section class="panel"><p class="muted">${esc(error.message)}</p></section>`;
+    return;
+  }
+  const schedules = data.schedules || [];
+  content.innerHTML = `${toolbar("Schedules", `<button id="new-schedule" class="primary">New Schedule</button>`, deepLinks.schedules())}
+    <p class="muted">Schedules run a workflow automatically on a cron schedule (or once at a future time). A scheduled run honors the workflow's approval policy and supervision — exactly like running it by hand.</p>
+    ${schedules.length ? `<div class="grid">
+      ${schedules.map((sched) => `<article class="item schedule-card" id="schedule-${esc(sched.id)}">
+        <h3><a href="${esc(deepLinks.schedule(sched.id))}">${esc(sched.name)}</a> ${shareButton(deepLinks.schedule(sched.id), `Copy share link to ${sched.name}`)}</h3>
+        ${sched.description ? `<p class="muted workflow-desc">${esc(sched.description)}</p>` : ""}
+        <p class="workflow-meta">${esc(sched.capabilitySlug)} · ${scheduleCadenceLabel(sched)}${sched.timezone && sched.timezone !== "UTC" ? ` · ${esc(sched.timezone)}` : ""} · ${sched.enabled ? "enabled" : "disabled"}</p>
+        <p class="workflow-run-chips">${scheduleNextChip(sched)}${scheduleLastChip(sched)}</p>
+        <div class="toolbar-actions">
+          <a class="button" href="${esc(deepLinks.schedule(sched.id))}">Open</a>
+          <button data-run-schedule="${esc(sched.id)}" class="primary" title="Run this schedule now">▶ Run now</button>
+          <button data-toggle-schedule="${esc(sched.id)}" data-enabled="${sched.enabled ? "1" : "0"}">${sched.enabled ? "Disable" : "Enable"}</button>
+          <button data-edit-schedule="${esc(sched.id)}">Edit</button>
+          <button data-delete-schedule="${esc(sched.id)}" class="danger">Delete</button>
+        </div>
+      </article>`).join("")}
+    </div>` : empty("No schedules yet.", "Create one to run a workflow on a recurring cron schedule.")}
+    <section id="editor" class="panel hidden"></section>`;
+  $("#new-schedule").addEventListener("click", () => editSchedule());
+  bindScheduleActions();
+  bindCopy();
+}
+
+// Shared wiring for the per-schedule action buttons used by both the list and
+// the detail view.
+function bindScheduleActions() {
+  document.querySelectorAll("[data-edit-schedule]").forEach((b) => b.addEventListener("click", () => editSchedule(b.dataset.editSchedule)));
+  document.querySelectorAll("[data-run-schedule]").forEach((b) => b.addEventListener("click", () => runScheduleNow(b.dataset.runSchedule, b)));
+  document.querySelectorAll("[data-toggle-schedule]").forEach((b) => b.addEventListener("click", () => toggleSchedule(b.dataset.toggleSchedule, b.dataset.enabled === "1")));
+  document.querySelectorAll("[data-delete-schedule]").forEach((b) => b.addEventListener("click", () => deleteScheduleUI(b.dataset.deleteSchedule)));
+}
+
+async function runScheduleNow(id, button) {
+  if (button) button.disabled = true;
+  try {
+    const result = await api(`/api/schedules/${id}/run-now`, { method: "POST", body: {} });
+    toast("Run created from schedule", "ok");
+    if (result?.run?.id) {
+      location.hash = deepLinks.run(result.run.id).slice(1);
+      state.view = `runs/${result.run.id}`;
+      await render();
+    }
+  } catch (error) {
+    toast(error.message, "error");
+    if (button) button.disabled = false;
+  }
+}
+
+async function toggleSchedule(id, currentlyEnabled) {
+  try {
+    await api(`/api/schedules/${id}/${currentlyEnabled ? "disable" : "enable"}`, { method: "POST", body: {} });
+    toast(currentlyEnabled ? "Schedule disabled" : "Schedule enabled", "ok");
+    await render();
+  } catch (error) {
+    toast(error.message, "error");
+  }
+}
+
+async function deleteScheduleUI(id) {
+  if (!window.confirm("Delete this schedule? This cannot be undone.")) return;
+  try {
+    await api(`/api/schedules/${id}`, { method: "DELETE" });
+    toast("Schedule deleted", "ok");
+    // If we were on the detail page for this schedule, go back to the list.
+    const segments = deepLinks.parse().segments;
+    if (segments[0] === "schedules" && segments[1] === id) {
+      setView("schedules");
+    } else {
+      await render();
+    }
+  } catch (error) {
+    toast(error.message, "error");
+  }
+}
+
+async function renderScheduleDetail(id) {
+  let schedule;
+  try {
+    schedule = (await api(`/api/schedules/${id}`)).schedule;
+  } catch (error) {
+    content.innerHTML = `${breadcrumbs([{ label: "Schedules", href: deepLinks.schedules() }, { label: "Schedule", current: true }])}
+      ${toolbar("Schedule")}<section class="panel"><p class="muted">${esc(error.message)}</p></section>`;
+    return;
+  }
+  const nextRuns = schedule.preview?.nextRuns || [];
+  const actions = `
+    <button data-run-schedule="${esc(schedule.id)}" class="primary">▶ Run now</button>
+    <button data-toggle-schedule="${esc(schedule.id)}" data-enabled="${schedule.enabled ? "1" : "0"}">${schedule.enabled ? "Disable" : "Enable"}</button>
+    <button data-edit-schedule="${esc(schedule.id)}">Edit</button>
+    <button data-delete-schedule="${esc(schedule.id)}" class="danger">Delete</button>`;
+  content.innerHTML = `${breadcrumbs([{ label: "Schedules", href: deepLinks.schedules() }, { label: schedule.name, current: true }])}
+    ${toolbar(schedule.name, actions, deepLinks.schedule(schedule.id))}
+    <p class="schedule-detail-sub">${scheduleNextChip(schedule)}${scheduleLastChip(schedule)}</p>
+    <section class="split">
+      <div class="panel schedule-main">
+        ${schedule.description ? `<p>${esc(schedule.description)}</p>` : ""}
+        <dl class="schedule-facts">
+          <dt>Workflow</dt><dd><a href="${esc(deepLinks.workflow(schedule.capabilitySlug))}">${esc(schedule.capabilitySlug)}</a></dd>
+          <dt>Cadence</dt><dd>${scheduleCadenceLabel(schedule)}</dd>
+          ${schedule.kind === "cron" ? `<dt>Cron</dt><dd><span class="kbd">${esc(schedule.cron)}</span></dd>` : ""}
+          <dt>Timezone</dt><dd>${esc(schedule.timezone)}</dd>
+          <dt>Status</dt><dd>${schedule.enabled ? "Enabled" : "Disabled"}</dd>
+          <dt>Created by</dt><dd>${esc(schedule.createdBy || "—")}</dd>
+        </dl>
+        <h3>Input</h3>
+        ${json(schedule.input || {})}
+      </div>
+      <aside class="panel schedule-side">
+        <h3>Next runs</h3>
+        ${nextRuns.length ? `<ul class="schedule-next-list">${nextRuns.map((iso) => `<li><span title="${esc(iso)}">${esc(formatTimestamp(iso))}</span> <span class="muted">${esc(relativeTime(iso))}</span></li>`).join("")}</ul>` : `<p class="muted">${schedule.enabled ? "No upcoming runs." : "Schedule is disabled."}</p>`}
+      </aside>
+    </section>
+    <section id="editor" class="panel hidden"></section>`;
+  bindScheduleActions();
+  bindCopy();
+}
+
+// Debounced live cron preview: validates the expression server-side and shows
+// the human description + next fire times as the operator types.
+function bindCronPreview(form) {
+  const cronEl = form.querySelector("#sched-cron");
+  const tzEl = form.querySelector("#sched-timezone");
+  const box = form.querySelector("#schedule-preview");
+  if (!cronEl || !box) return;
+  let timer = null;
+  const update = async () => {
+    const cron = cronEl.value.trim();
+    const timezone = (tzEl?.value || "UTC").trim() || "UTC";
+    if (!cron) {
+      box.className = "schedule-preview muted";
+      box.textContent = "Enter a cron expression to preview the schedule.";
+      return;
+    }
+    try {
+      const result = await api(`/api/schedules/preview?cron=${encodeURIComponent(cron)}&timezone=${encodeURIComponent(timezone)}`);
+      if (!result.valid) {
+        box.className = "schedule-preview invalid";
+        box.textContent = `Invalid: ${result.error}`;
+        return;
+      }
+      box.className = "schedule-preview valid";
+      box.innerHTML = `<strong>${esc(result.description)}</strong>
+        <ul class="schedule-next-list">${(result.nextRuns || []).map((iso) => `<li><span title="${esc(iso)}">${esc(formatTimestamp(iso))}</span> <span class="muted">${esc(relativeTime(iso))}</span></li>`).join("")}</ul>`;
+    } catch (error) {
+      box.className = "schedule-preview invalid";
+      box.textContent = error.message;
+    }
+  };
+  const debounced = () => {
+    clearTimeout(timer);
+    timer = setTimeout(update, 250);
+  };
+  cronEl.addEventListener("input", debounced);
+  tzEl?.addEventListener("input", debounced);
+  update();
+}
+
+async function editSchedule(id = "") {
+  let schedule;
+  let capabilities = [];
+  try {
+    [schedule, capabilities] = await Promise.all([
+      id ? api(`/api/schedules/${id}`).then((r) => r.schedule) : Promise.resolve(null),
+      api("/api/capabilities").then((r) => r.capabilities || [])
+    ]);
+  } catch (error) {
+    toast(error.message, "error");
+    return;
+  }
+  const draft = schedule || { name: "", description: "", capabilitySlug: "", cron: "", timezone: "UTC", input: {}, kind: "cron", runAt: "", enabled: true };
+  const isOnce = draft.kind === "once";
+  const editor = $("#editor");
+  if (!editor) return;
+  editor.classList.remove("hidden");
+  editor.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  const capOptions = capabilities
+    .map((cap) => `<option value="${esc(cap.slug)}" ${cap.slug === draft.capabilitySlug ? "selected" : ""}>${esc(cap.name)} (${esc(cap.slug)})</option>`)
+    .join("");
+  editor.innerHTML = `<h2>${id ? "Edit" : "New"} Schedule</h2>
+    <form id="schedule-form" class="form-grid">
+      <label>Name <span class="req">*</span><input id="sched-name" value="${esc(draft.name)}" required></label>
+      <label>Description<input id="sched-description" value="${esc(draft.description || "")}"></label>
+      <label>Workflow <span class="req">*</span>
+        <select id="sched-cap" required>
+          <option value="">Choose a workflow…</option>
+          ${capOptions}
+        </select>
+      </label>
+      <label>Schedule type
+        <select id="sched-kind">
+          <option value="cron" ${isOnce ? "" : "selected"}>Recurring (cron)</option>
+          <option value="once" ${isOnce ? "selected" : ""}>One-time</option>
+        </select>
+      </label>
+      <div id="sched-cron-group" class="${isOnce ? "hidden" : ""}">
+        <label>Cron expression <span class="req">*</span><input id="sched-cron" placeholder="0 9 * * 1-5" value="${esc(draft.cron || "")}"><span class="field-hint">minute hour day-of-month month day-of-week. Names &amp; @aliases (@daily, @hourly) are supported.</span></label>
+        <div class="cron-presets">${CRON_PRESETS.map((p) => `<button type="button" class="chip cron-preset" data-cron="${esc(p.cron)}">${esc(p.label)}</button>`).join("")}</div>
+        <label>Timezone<input id="sched-timezone" value="${esc(draft.timezone || "UTC")}" placeholder="UTC"><span class="field-hint">IANA timezone, e.g. UTC, America/New_York, Europe/Rome.</span></label>
+        <div id="schedule-preview" class="schedule-preview muted">Enter a cron expression to preview the schedule.</div>
+      </div>
+      <div id="sched-once-group" class="${isOnce ? "" : "hidden"}">
+        <label>Run at <span class="req">*</span><input id="sched-runat" type="datetime-local" value="${esc(toLocalDatetimeValue(draft.runAt))}"><span class="field-hint">Fires once at this local time, then disables itself.</span></label>
+      </div>
+      <label>Input (JSON)<textarea id="sched-input" data-ftype="json" placeholder="{}">${esc(JSON.stringify(draft.input || {}, null, 2))}</textarea><span class="field-hint">Forwarded to the workflow on each run.</span></label>
+      <label class="inline"><input type="checkbox" id="sched-enabled" ${draft.enabled === false ? "" : "checked"}> Enabled</label>
+      <button class="primary" type="submit">${id ? "Save schedule" : "Create schedule"}</button>
+    </form>`;
+  const form = $("#schedule-form");
+  // Toggle cron vs one-time field groups.
+  const kindEl = form.querySelector("#sched-kind");
+  const cronGroup = form.querySelector("#sched-cron-group");
+  const onceGroup = form.querySelector("#sched-once-group");
+  kindEl.addEventListener("change", () => {
+    const once = kindEl.value === "once";
+    cronGroup.classList.toggle("hidden", once);
+    onceGroup.classList.toggle("hidden", !once);
+  });
+  // Preset chips fill the cron input and refresh the preview.
+  form.querySelectorAll(".cron-preset").forEach((chip) => chip.addEventListener("click", () => {
+    form.querySelector("#sched-cron").value = chip.dataset.cron;
+    form.querySelector("#sched-cron").dispatchEvent(new Event("input"));
+  }));
+  bindCronPreview(form);
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const name = form.querySelector("#sched-name").value.trim();
+    const capabilitySlug = form.querySelector("#sched-cap").value;
+    if (!name) return toast("Name is required", "error");
+    if (!capabilitySlug) return toast("Choose a workflow", "error");
+    let input;
+    try {
+      input = JSON.parse(form.querySelector("#sched-input").value || "{}");
+    } catch {
+      return toast("Input is not valid JSON", "error");
+    }
+    const kind = kindEl.value;
+    const payload = {
+      name,
+      description: form.querySelector("#sched-description").value.trim(),
+      capabilitySlug,
+      input,
+      enabled: form.querySelector("#sched-enabled").checked
+    };
+    if (kind === "once") {
+      const runAtLocal = form.querySelector("#sched-runat").value;
+      if (!runAtLocal) return toast("Pick a run-at time", "error");
+      payload.runAt = new Date(runAtLocal).toISOString();
+      payload.cron = "";
+    } else {
+      payload.cron = form.querySelector("#sched-cron").value.trim();
+      payload.timezone = (form.querySelector("#sched-timezone").value || "UTC").trim() || "UTC";
+      payload.runAt = null;
+      if (!payload.cron) return toast("Cron expression is required", "error");
+    }
+    try {
+      const saved = id
+        ? await api(`/api/schedules/${id}`, { method: "PATCH", body: payload })
+        : await api("/api/schedules", { method: "POST", body: payload });
+      toast("Schedule saved", "ok");
+      const segments = deepLinks.parse().segments;
+      if (segments[0] === "schedules" && segments[1]) {
+        await renderScheduleDetail(saved.schedule.id);
+      } else {
+        await renderSchedules();
+      }
+    } catch (error) {
+      toast(error.message, "error");
+    }
+  });
+}
+
+// Convert an ISO timestamp to a value usable by <input type="datetime-local">
+// (local time, no timezone suffix). Empty string when absent/invalid.
+function toLocalDatetimeValue(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 // --- Diagnostic panel for failed/cancelled/error/waiting_approval runs -----

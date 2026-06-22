@@ -5188,3 +5188,97 @@ button.run-id-mono:focus-visible,
     font-size: 14px;
   }
 }
+
+/* ---- Schedules (cron jobs) ------------------------------------------------
+ * Reuse the workflow-card grid/chip language; these add only the cron-specific
+ * bits: a next-run chip tone, the preset chip row, the live preview box, and
+ * the detail-page fact list + next-run list. */
+.chip-next {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+  color: #3730a3;
+}
+
+.cron-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 2px;
+}
+
+button.cron-preset {
+  cursor: pointer;
+  background: var(--soft);
+  border: 1px solid var(--line);
+  color: var(--ink);
+}
+
+button.cron-preset:hover {
+  background: var(--brand-tint);
+}
+
+.schedule-preview {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--soft);
+  font-size: 13px;
+}
+
+.schedule-preview.valid {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #166534;
+}
+
+.schedule-preview.invalid {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: var(--danger);
+}
+
+.schedule-preview .schedule-next-list {
+  margin: 6px 0 0;
+}
+
+.schedule-detail-sub {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 4px 0 12px;
+}
+
+.schedule-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 16px;
+  margin: 0 0 8px;
+}
+
+.schedule-facts dt {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.schedule-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.schedule-next-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.schedule-next-list li {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
