@@ -29,6 +29,7 @@ import {
   listAudit,
   listArtifacts,
   listCapabilities,
+  listCapabilityVersionsFromRuns,
   listKnowledge,
   listRunEvents,
   listRunners,
@@ -60,7 +61,12 @@ import {
   redactAnalysisText,
   RUN_OBSTRUCTION_ANALYSIS_ARTIFACT_NAME
 } from "./runObstructionAnalysis.js";
-import { executionIntentFromInput, normalizeExecutionIntent } from "./runExecution.js";
+import {
+  capabilityVersioningEnabled,
+  executionIntentFromInput,
+  normalizeExecutionIntent,
+  resolveCapabilityVersionOptions
+} from "./runExecution.js";
 import {
   parseResponseEndpoint,
   presentRunResponseEndpoint,
@@ -69,7 +75,7 @@ import {
 import { scheduleRunResponseEndpointDelivery } from "./runResponseEndpointDelivery.js";
 import { chatWithSupportAgent, supportAgentInfo } from "./runyardSupportAgent.js";
 import { hashToken, parseCookies, sign, timingSafeEqualStr, unsign } from "./security.js";
-import { buildRepoCatalog } from "./repoCatalog.js";
+import { buildRepoCatalog, resolveCapabilityRef } from "./repoCatalog.js";
 import {
   SUPERVISOR_CAPABILITY_SLUG,
   buildSupervisorInput,
@@ -2113,6 +2119,22 @@ app.get("/api/capabilities/:id", requireAuth, (req, res) => {
   res.json({ capability: withCapabilityLinks(capability) });
 });
 
+// Distinct capability_sha values observed across this capability's runs —
+// the source-of-truth list for "what can I roll back to?". Empty unless
+// RUNYARD_CAPABILITY_VERSIONING has been enabled at least once and runs were
+// recorded with a non-null sha. We intentionally derive from the runs table
+// (not the existing `capability_versions` snapshot table, which tracks
+// in-DB capability config bumps and is unrelated to git SHAs).
+app.get("/api/capabilities/:name/versions", requireAuth, (req, res) => {
+  const capability = getCapability(req.params.name);
+  if (!capability) return res.status(404).json({ error: "capability not found" });
+  res.json({
+    capability: { slug: capability.slug, name: capability.name },
+    versioningEnabled: capabilityVersioningEnabled(process.env),
+    versions: listCapabilityVersionsFromRuns(capability.slug)
+  });
+});
+
 // --- Workflow source + graph ------------------------------------------------
 // Serves the actual workflow code (the source-of-truth template authored in
 // `workflow-templates/workflows/<slug>.tsx`) together with a parsed metadata
@@ -2535,11 +2557,25 @@ app.post("/api/capabilities/:id/run", requireAuth, requireScopes("api", "mcp"), 
   }
   const execution = normalizeExecutionIntent(input, req.body || {});
   const origin = requestOrigin(req, input);
+  // Capability version pinning + rollback (RUNYARD_CAPABILITY_VERSIONING).
+  // We resolve the ref here so an explicit `pin` (e.g. CLI `--pin <sha>` or
+  // `capability rollback`) overrides the workspace HEAD; without the flag
+  // both values resolve to null and the legacy path is unchanged.
+  const { capabilitySha: resolvedSha } = resolveCapabilityRef(capability, {
+    pin: req.body.pin,
+    env: process.env
+  });
+  const versionOptions = resolveCapabilityVersionOptions(
+    { capabilitySha: req.body.pin || resolvedSha, parentRunId: req.body.parentRunId },
+    process.env
+  );
   const dispatched = dispatchRun(capability, input, {
     runnerId: req.body.runnerId,
     requestedBy: origin.requestedBy,
     origin: origin.origin,
-    execution
+    execution,
+    capabilitySha: versionOptions.capabilitySha,
+    parentRunId: versionOptions.parentRunId
   });
   const run = dispatched.run;
   // Persist the validated endpoint in its own table — never write the raw

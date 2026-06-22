@@ -14,7 +14,17 @@
 //   - Never scan the filesystem. The catalog is purely what an operator
 //     configured.
 
+import { execFileSync } from "node:child_process";
+
 const DEFAULT_REPO_KEY = "smithers-hub";
+
+// Match a git SHA1 (or short SHA1). Used to validate operator-supplied pins
+// before we shell out to git so a bad value can never reach the runtime.
+const GIT_SHA_RE = /^[0-9a-f]{7,40}$/i;
+
+export function isGitSha(value) {
+  return GIT_SHA_RE.test(String(value || "").trim());
+}
 
 function cleanString(value) {
   return String(value ?? "").trim();
@@ -110,4 +120,38 @@ export function buildRepoCatalog(env = process.env) {
         "Advanced: repoDir must be an absolute path that is runner-local and inside the runner's allowlisted improve roots. Prefer a configured repo/project above."
     }
   };
+}
+
+// Capability version pinning (RUNYARD_CAPABILITY_VERSIONING).
+// Once a capability ref is resolved, we capture the resolved git SHA of the
+// workspace the capability was loaded from so a run can be re-played (rolled
+// back) at exactly that source revision. When the env flag is unset OR no SHA
+// can be derived (cwd is not a git repo, an explicit pin was provided, etc.)
+// the returned `capabilitySha` is null and the caller stores null — keeping
+// the legacy path byte-for-byte unchanged. The original capability payload is
+// always returned untouched alongside the SHA.
+export function resolveCapabilityRef(capability, options = {}) {
+  const env = options.env || process.env;
+  const versioningEnabled = String(env.RUNYARD_CAPABILITY_VERSIONING || "").trim() === "1";
+  // A caller-supplied pin always wins (operator opted in explicitly), even with
+  // the flag off, because the CLI already validated the SHA shape. The flag
+  // only governs *automatic* capture from the workspace HEAD.
+  const explicitPin = options.pin ? String(options.pin).trim() : "";
+  if (explicitPin && isGitSha(explicitPin)) {
+    return { capability, capabilitySha: explicitPin };
+  }
+  if (!versioningEnabled) return { capability, capabilitySha: null };
+  const cwd = options.cwd || env.SMITHERS_HUB_ROOT || process.cwd();
+  let capabilitySha = null;
+  try {
+    const out = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd,
+      stdio: ["ignore", "pipe", "ignore"],
+      encoding: "utf8"
+    }).trim();
+    if (isGitSha(out)) capabilitySha = out;
+  } catch {
+    /* not a git checkout, or git missing — leave capabilitySha null */
+  }
+  return { capability, capabilitySha };
 }

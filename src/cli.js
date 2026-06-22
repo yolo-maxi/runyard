@@ -178,9 +178,51 @@ program.command("capabilities").description("List capabilities").option("-q, --q
   print(data.capabilities, program.opts().json);
 });
 
-program.command("capability <id>").description("Describe a capability").action(async (id) => {
-  print(await client(program.opts()).get(`/api/capabilities/${id}`), program.opts().json);
-});
+// `capability` is now a parent command with subcommands so we can hang the
+// new `rollback` action off it cleanly. `describe` keeps the old `capability
+// <id>` behavior; we register a top-level alias below so existing operator
+// muscle memory (`smithers-hub capability <id>`) keeps working.
+const capabilityCommand = program.command("capability").description("Capability commands");
+capabilityCommand
+  .command("describe <id>")
+  .description("Describe a capability")
+  .action(async (id) => {
+    print(await client(program.opts()).get(`/api/capabilities/${id}`), program.opts().json);
+  });
+capabilityCommand
+  .command("versions <capability>")
+  .description("List capability SHAs seen across runs (RUNYARD_CAPABILITY_VERSIONING)")
+  .action(async (capability) => {
+    print(await client(program.opts()).get(`/api/capabilities/${capability}/versions`), program.opts().json);
+  });
+capabilityCommand
+  .command("rollback <capability> <sha>")
+  .description("Re-run a capability pinned to a prior git SHA (requires RUNYARD_CAPABILITY_VERSIONING)")
+  .option("--from-run <id>", "mark the new run as a rollback of an existing run id (parentRunId)")
+  .option("-i, --input <json>", "JSON input", "{}")
+  .option("--where <mode>", "execution mode: local | remote")
+  .option("--execution-mode <mode>", "execution mode alias: local | remote")
+  .option("--runner-location <location>", "specific runner location tag")
+  .action(async (capability, sha, opts) => {
+    const input = JSON.parse(opts.input);
+    const remote = resolveRemote(program.opts().remote);
+    const body = {
+      input,
+      pin: sha,
+      origin: {
+        type: "cli",
+        label: `CLI${remote.name ? `: ${remote.name}` : ""}`,
+        remote: remote.name || "",
+        command: "smithers-hub capability rollback",
+        pin: sha,
+        ...(opts.fromRun ? { rollbackOf: opts.fromRun } : {})
+      }
+    };
+    if (opts.fromRun) body.parentRunId = opts.fromRun;
+    if (opts.where || opts.executionMode) body.executionMode = opts.where || opts.executionMode;
+    if (opts.runnerLocation) body.runnerLocation = opts.runnerLocation;
+    printRunCreated(await client(program.opts()).post(`/api/capabilities/${capability}/run`, body), program.opts().json);
+  });
 
 program
   .command("run <capability>")
@@ -190,6 +232,7 @@ program
   .option("--where <mode>", "execution mode: local | remote")
   .option("--execution-mode <mode>", "execution mode alias: local | remote")
   .option("--runner-location <location>", "specific runner location tag")
+  .option("--pin <sha>", "pin this run to a specific capability git SHA (RUNYARD_CAPABILITY_VERSIONING)")
   .action(async (capability, opts) => {
     const input = JSON.parse(opts.input);
     const remote = resolveRemote(program.opts().remote);
@@ -205,6 +248,10 @@ program
     if (opts.chain) body.chain = JSON.parse(opts.chain);
     if (opts.where || opts.executionMode) body.executionMode = opts.where || opts.executionMode;
     if (opts.runnerLocation) body.runnerLocation = opts.runnerLocation;
+    if (opts.pin) {
+      body.pin = opts.pin;
+      body.origin.pin = opts.pin;
+    }
     printRunCreated(await client(program.opts()).post(`/api/capabilities/${capability}/run`, body), program.opts().json);
   });
 

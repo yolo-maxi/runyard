@@ -92,6 +92,28 @@ export function executionIntentMatchesRunnerTags(intent = {}, tags = []) {
   return normalized.has(location);
 }
 
+// Capability version pinning + rollback (RUNYARD_CAPABILITY_VERSIONING).
+// Run creation in db.js takes optional `capabilitySha` / `parentRunId` options
+// and writes them into the new nullable columns. Both helpers below are the
+// single choke point that decides "is the flag on?" — when it's off the
+// caller-supplied values are dropped and the columns persist as NULL, leaving
+// the legacy path (and every existing test) byte-for-byte unchanged.
+export function capabilityVersioningEnabled(env = process.env) {
+  return String(env?.RUNYARD_CAPABILITY_VERSIONING || "").trim() === "1";
+}
+
+// Returns `{ capabilitySha, parentRunId }` already gated by the flag, so the
+// caller can spread them straight into createRun options. Either field is null
+// when the flag is off or when nothing meaningful was provided.
+export function resolveCapabilityVersionOptions(input = {}, env = process.env) {
+  if (!capabilityVersioningEnabled(env)) {
+    return { capabilitySha: null, parentRunId: null };
+  }
+  const capabilitySha = input?.capabilitySha ? String(input.capabilitySha).trim() || null : null;
+  const parentRunId = input?.parentRunId ? String(input.parentRunId).trim() || null : null;
+  return { capabilitySha, parentRunId };
+}
+
 export function normalizeRunnerTags(tags = [], location = "") {
   const out = [];
   const seen = new Set();

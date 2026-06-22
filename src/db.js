@@ -272,6 +272,7 @@ export function initDb() {
 
   migrateRunnersPoolColumns();
   migrateCapabilitySupervisionColumn();
+  migrateRunsCapabilityVersioningColumns();
   setSettingDefault("instance_name", env.instanceName);
   seedAll();
   seedWorkflowEndpoints();
@@ -299,6 +300,19 @@ function migrateCapabilitySupervisionColumn() {
   const columns = all("PRAGMA table_info(capabilities)").map((row) => row.name);
   if (!columns.includes("supervision")) {
     db.exec("ALTER TABLE capabilities ADD COLUMN supervision TEXT NOT NULL DEFAULT '{}'");
+  }
+}
+
+// Capability version pinning + rollback (behind RUNYARD_CAPABILITY_VERSIONING).
+// Both columns are nullable — the flag-off path stores NULL and the existing
+// run flow is unchanged. ALTER TABLE is idempotent via PRAGMA table_info.
+function migrateRunsCapabilityVersioningColumns() {
+  const columns = all("PRAGMA table_info(runs)").map((row) => row.name);
+  if (!columns.includes("capability_sha")) {
+    db.exec("ALTER TABLE runs ADD COLUMN capability_sha TEXT");
+  }
+  if (!columns.includes("parent_run_id")) {
+    db.exec("ALTER TABLE runs ADD COLUMN parent_run_id TEXT");
   }
 }
 
@@ -1000,10 +1014,14 @@ export function createRun(capability, input, options = {}) {
       ...options.origin
     };
   }
+  // Optional capability version pinning + rollback parentage. Both columns are
+  // nullable; the legacy path (flag off in src/runExecution.js) passes neither.
+  const capabilitySha = options.capabilitySha ? String(options.capabilitySha).trim() || null : null;
+  const parentRunId = options.parentRunId ? String(options.parentRunId).trim() || null : null;
   run(
     `INSERT INTO runs (id, capability_id, capability_slug, capability_name, workflow_version, runner_id, status,
-      current_step, input, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      current_step, input, capability_sha, parent_run_id, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       runId,
       capability.id,
@@ -1014,6 +1032,8 @@ export function createRun(capability, input, options = {}) {
       status,
       approvalRequired ? "waiting for approval" : "queued",
       json(storedInput, {}),
+      capabilitySha,
+      parentRunId,
       timestamp,
       timestamp
     ]
@@ -1130,6 +1150,32 @@ export function countRuns({ status = "", q = "", since = "", until = "" } = {}) 
   return one(sql, params).count;
 }
 
+// Distinct `capability_sha` values seen across this capability's runs, with
+// first/last timestamps and run counts. Used by GET /api/capabilities/:name/versions
+// to surface the rollback target list. Returns an empty array when capability
+// versioning has never been enabled (no run ever stored a non-null sha).
+export function listCapabilityVersionsFromRuns(slug) {
+  if (!slug) return [];
+  return all(
+    `SELECT capability_sha AS sha,
+            COUNT(*) AS runCount,
+            MIN(created_at) AS firstSeenAt,
+            MAX(created_at) AS lastSeenAt
+       FROM runs
+      WHERE capability_slug = ?
+        AND capability_sha IS NOT NULL
+        AND capability_sha <> ''
+      GROUP BY capability_sha
+      ORDER BY lastSeenAt DESC`,
+    [slug]
+  ).map((row) => ({
+    sha: row.sha,
+    runCount: row.runCount,
+    firstSeenAt: row.firstSeenAt,
+    lastSeenAt: row.lastSeenAt
+  }));
+}
+
 // Token id that owns a run, via the runner it was assigned to. Null if unassigned.
 export function runOwnerTokenId(runId) {
   const r = one("SELECT runner_id FROM runs WHERE id = ?", [runId]);
@@ -1175,6 +1221,10 @@ export function normalizeRun(row) {
     input: parseJson(row.input, {}),
     output: parseJson(row.output, null),
     error: row.error,
+    // Capability version pinning + rollback parentage. Both stay null on the
+    // existing path (RUNYARD_CAPABILITY_VERSIONING unset); see src/runExecution.js.
+    capabilitySha: row.capability_sha || null,
+    parentRunId: row.parent_run_id || null,
     createdAt: row.created_at,
     assignedAt: row.assigned_at,
     startedAt: row.started_at,
