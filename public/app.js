@@ -242,13 +242,16 @@ function cleanFailureText(raw) {
   // bare scheduler marker like "NodeFailed" / "RunCancelled".
   s = s.replace(/^[\s>*•-]*[A-Za-z][A-Za-z0-9_.]*(?:Error|Exception):\s*/, "");
   s = s.replace(/^(?:Node|Run|Task|Step)(?:Failed|Cancelled|Errored)\b[:\s-]*/i, "");
-  // Remove whole "[at|during] <kind> <id>" phrases (id = name_xxxxxx or a UUID)
-  // so connective words like "at agent:" don't dangle once the id is gone. The
-  // human-readable step name in `step 'generate-spec'` is kept (not an id).
-  s = s.replace(/\b(?:at\s+|during\s+(?:step\s+)?|on\s+)?(?:runs?|nodes?|tasks?|agents?|caps?|runners?|wf|jobs?)\b\s*[:#]?\s*(?:[A-Za-z0-9]*_[A-Za-z0-9]{6,}|[0-9a-f]{8}-[0-9a-f-]{8,})\b['"]?/gi, " ");
-  // Any remaining bare ids / UUIDs.
+  // Remove whole "[at|during] <kind> <id>" phrases (id = name_xxxxxx, name-12345,
+  // or a UUID) so connective words like "at agent:" don't dangle once the id is
+  // gone. The human-readable step name in `step 'generate-spec'` is kept.
+  s = s.replace(/\b(?:at\s+|during\s+(?:step\s+)?|on\s+)?(?:runs?|nodes?|tasks?|agents?|caps?|runners?|wf|jobs?)\b\s*[:#]?\s*(?:[A-Za-z0-9]*[-_][A-Za-z0-9]{6,}|[0-9a-f]{8}-[0-9a-f-]{8,})\b['"]?/gi, " ");
+  // Any remaining bare ids: underscore form, kind-prefixed hyphen form (e.g.
+  // smithers `run-1782104753559`), UUIDs, and long bare digit runs.
   s = s.replace(/\b[A-Za-z0-9]*_[A-Za-z0-9]{6,}\b/g, " ");
+  s = s.replace(/\b(?:run|node|task|agent|job|step|cap|runner|wf)-[A-Za-z0-9]{6,}\b/gi, " ");
   s = s.replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, " ");
+  s = s.replace(/\b\d{9,}\b/g, " ");
   // First line only; tidy whitespace, empty brackets, dangling punctuation.
   s = s.split(/\r?\n/)[0];
   s = s.replace(/[([{]\s*[)\]}]/g, "").replace(/\s{2,}/g, " ").replace(/\s+([.,;:)])/g, "$1");
@@ -260,6 +263,10 @@ function summarizeFailure(run) {
   if (!run) return null;
   const raw = String(run.error || run.reasonHint || "").trim();
   const step = String(run.failedStep || run.currentStep || "").trim();
+  // A step whose name is just the terminal status ("failed"/"cancelled"/…) is
+  // bookkeeping, not a real node — don't surface it as `Failed at "failed"`.
+  const GENERIC_STEPS = new Set(["", "completed", "done", "failed", "error", "errored", "cancelled", "canceled", "rejected", "queued", "running"]);
+  const informativeStep = GENERIC_STEPS.has(step.toLowerCase()) ? "" : step;
   const low = raw.toLowerCase();
   let label;
   if (run.status === "rejected") label = "Approval rejected";
@@ -271,18 +278,19 @@ function summarizeFailure(run) {
   else if (/\b(?:exit code|non-zero|command failed|enoent|spawn)\b/.test(low)) label = "Command failed";
   else if (/\bno runner\b/.test(low) || /\bheartbeat\b/.test(low) || /\brunner\b.*\b(?:offline|unavailable|lost|disconnect)/.test(low)) label = "Runner unavailable";
   else if (/\bout of memory\b|\boom\b|\bheap\b/.test(low)) label = "Out of memory";
-  else if (step && step !== "completed") label = `Failed at “${step}”`;
+  else if (informativeStep) label = `Failed at “${informativeStep}”`;
+  else if (run.status === "cancelled") label = "Cancelled";
   else label = "Run failed";
   let sentence = cleanFailureText(raw);
   if (!sentence) {
-    sentence = step && step !== "completed"
-      ? `The “${step}” step stopped without a captured error message.`
+    sentence = informativeStep
+      ? `The “${informativeStep}” step stopped without a captured error message.`
       : "This run stopped before completing — open the timeline to read the failing events.";
   }
   return {
     label,
     sentence: truncate(sentence, 180),
-    step,
+    step: informativeStep,
     raw: truncate(raw, 600),
     runId: run.id || "",
     runnerId: run.runnerId || ""
