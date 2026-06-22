@@ -3057,6 +3057,51 @@ function payloadSummary(value) {
   return typeof value;
 }
 
+function humanizePayloadKey(key) {
+  return String(key || "")
+    .replace(/^__+/, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .trim()
+    .replace(/\b\w/g, (ch) => ch.toUpperCase()) || "Value";
+}
+
+function payloadValuePreview(value) {
+  if (value == null) return "empty";
+  if (typeof value === "string") return value.trim() ? truncate(value.trim(), 180) : "empty string";
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) {
+    if (!value.length) return "empty list";
+    const first = value[0];
+    const sample = first && typeof first === "object" ? payloadSummary(first) : payloadValuePreview(first);
+    return `${value.length} item${value.length === 1 ? "" : "s"}${sample ? ` · first: ${sample}` : ""}`;
+  }
+  if (typeof value === "object") return payloadSummary(value);
+  return String(value);
+}
+
+function payloadEntries(value) {
+  if (value == null) return [];
+  if (Array.isArray(value)) {
+    return value.slice(0, 6).map((item, index) => [`Item ${index + 1}`, item]);
+  }
+  if (typeof value === "object") {
+    const entries = Object.entries(value);
+    const visible = entries.filter(([key]) => !String(key).startsWith("__"));
+    return (visible.length ? visible : entries).slice(0, 8);
+  }
+  return [["Value", value]];
+}
+
+function renderPayloadSummaryList(value) {
+  const entries = payloadEntries(value);
+  if (!entries.length) return `<p class="run-io-empty muted">Nothing returned yet.</p>`;
+  return `<dl class="run-io-summary-list">${entries.map(([key, item]) => `<div class="run-io-summary-row">
+    <dt>${esc(humanizePayloadKey(key))}</dt>
+    <dd>${esc(payloadValuePreview(item))}</dd>
+  </div>`).join("")}</dl>`;
+}
+
 function renderRunPayloadBlock(label, value) {
   const byteLabel = formatBytes(payloadBytes(value));
   return `<article class="run-io-card">
@@ -3064,7 +3109,11 @@ function renderRunPayloadBlock(label, value) {
       <h3>${esc(label)}</h3>
       <span class="run-io-card-meta muted">${esc(payloadSummary(value))} · ${esc(byteLabel)}</span>
     </header>
-    ${json(value ?? null)}
+    <div class="run-io-human">${renderPayloadSummaryList(value)}</div>
+    <details class="run-io-raw">
+      <summary>See raw JSON</summary>
+      ${json(value ?? null)}
+    </details>
   </article>`;
 }
 

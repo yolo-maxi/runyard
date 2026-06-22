@@ -2280,6 +2280,8 @@ describe("Run log usability", () => {
     const code = response.data;
     assert.match(code, /Inputs &amp; outputs/);
     assert.match(code, /renderRunInputsOutputs/);
+    assert.match(code, /renderPayloadSummaryList/);
+    assert.match(code, /See raw JSON/);
     assert.match(code, /data-run-section="io"/);
     assert.match(code, /inputs\/outputs · log · artifacts · context/);
     assert.doesNotMatch(code, /Raw payload/);
@@ -2288,6 +2290,8 @@ describe("Run log usability", () => {
     assert.equal(styles.status, 200);
     assert.match(styles.data, /run-io-section/);
     assert.match(styles.data, /run-io-grid/);
+    assert.match(styles.data, /run-io-summary-list/);
+    assert.match(styles.data, /run-io-raw/);
     assert.match(styles.data, /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
   });
 });

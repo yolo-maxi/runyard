@@ -4304,7 +4304,65 @@ button.run-id-mono:focus-visible,
   white-space: nowrap;
 }
 
-.run-io-card .json {
+.run-io-human {
+  padding: 10px 12px;
+}
+
+.run-io-summary-list {
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.run-io-summary-row {
+  display: grid;
+  grid-template-columns: minmax(100px, 0.36fr) minmax(0, 1fr);
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.run-io-summary-row:last-child {
+  border-bottom: 0;
+}
+
+.run-io-summary-row dt {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.run-io-summary-row dd {
+  margin: 0;
+  min-width: 0;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.run-io-empty {
+  margin: 0;
+  padding: 4px 0;
+}
+
+.run-io-raw {
+  border-top: 1px solid var(--line);
+  background: var(--soft);
+}
+
+.run-io-raw summary {
+  cursor: pointer;
+  min-height: 40px;
+  padding: 9px 12px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.run-io-raw .json {
   margin: 0;
   border: 0;
   border-radius: 0;
@@ -4540,6 +4598,11 @@ button.run-id-mono:focus-visible,
   .run-io-card-meta {
     text-align: left;
     white-space: normal;
+  }
+
+  .run-io-summary-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
   }
 
   .run-detail-meta-summary {
