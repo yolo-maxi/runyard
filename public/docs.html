@@ -26,6 +26,7 @@
           <strong>Jump to:</strong>
           <a href="#quickstart">Quickstart</a>
           <a href="#what">What is Runyard</a>
+          <a href="#concepts">Concepts</a>
           <a href="#install">Install</a>
           <a href="#run-local">Run locally</a>
           <a href="#topology">Topology</a>
@@ -33,7 +34,9 @@
           <a href="#auth">Auth tokens</a>
           <a href="#cli">CLI</a>
           <a href="#mcp">MCP</a>
+          <a href="#api">HTTP API</a>
           <a href="#runners">Runner pool</a>
+          <a href="#assistant">Assistant</a>
           <a href="#hardening">Workflow hardening</a>
           <a href="#telegram">Telegram</a>
           <a href="#env">Environment variables</a>
@@ -49,6 +52,21 @@
 
         <h1 id="what">What is Runyard</h1>
         <p>Runyard is a self-hosted control plane for agent runs. It exposes a capability catalog over MCP, CLI, HTTP API, and a Web Hub; dispatches work to local or remote runners; and stores logs, events, artifacts, approvals, skills, agents, and knowledge centrally. The codebase ships as the <code>smithers-hub</code> package; Runyard is the public product name and the names compose without breakage.</p>
+
+        <h1 id="concepts">Concepts</h1>
+        <p>A handful of objects describe everything Runyard does. The Hub is the durable source of truth for all of them.</p>
+        <ul>
+          <li><strong>Capability.</strong> A public, named action an agent or operator can discover and run (for example <code>hello</code>, <code>improve</code>). Capabilities are what show up in the catalog over MCP, CLI, and the Web Hub. In the app and API they are surfaced under <em>workflows</em>.</li>
+          <li><strong>Workflow.</strong> The implementation behind a capability — the Smithers steps and agents that actually do the work. Most users interact with capabilities; workflows are the editable internals.</li>
+          <li><strong>Run.</strong> One durable execution of a capability. A run moves through states: <code>queued</code> → <code>running</code> → <code>succeeded</code>/<code>failed</code>/<code>cancelled</code>, and pauses in <code>waiting_approval</code> when a human checkpoint is required. Every run keeps its logs, events, outputs, artifacts, and a unified timeline.</li>
+          <li><strong>Runner.</strong> A registered execution environment — a process on a VPS or laptop that polls the Hub, claims matching queued runs, executes them, streams events, and uploads artifacts. Runners are disposable; the Hub holds the state.</li>
+          <li><strong>Approval.</strong> A human checkpoint. A run that needs sign-off enters <code>waiting_approval</code> and is resolved (approve / reject / request changes) from Web, API, CLI, MCP, or Telegram — recorded once no matter the surface.</li>
+          <li><strong>Artifact.</strong> A persistent file output attached to a run, stored on the Hub under <code>data/artifacts/runs/&lt;run-id&gt;/</code> and downloadable from the run detail page or API.</li>
+          <li><strong>Agent.</strong> A reusable role/profile (instructions, model, tools) a workflow step can adopt.</li>
+          <li><strong>Skill.</strong> A reusable instruction/tooling package a workflow or agent can pull in.</li>
+          <li><strong>Knowledge resource.</strong> Shared company context agents can search while they work.</li>
+          <li><strong>Access token.</strong> The single auth primitive. One bearer token authenticates Web, API, CLI, MCP, and runners; scopes narrow what a token can do.</li>
+        </ul>
 
         <h2 id="install">Install</h2>
         <p>Requirements: Node.js 22.5+ (the server uses <code>--experimental-sqlite</code>), <code>pnpm</code>, and a writable <code>data/</code> directory.</p>
@@ -116,6 +134,40 @@ runyard remotes</pre>
         <p class="muted">From a running Hub, <code>runyard mcp install --all</code> writes this config into every detected agent — Claude Code/Desktop, Codex, Cursor, Windsurf, Gemini, VS Code.</p>
         <p class="muted">MCP agents should call <code>get_menu</code>, choose <code>executionMode: "local"</code> or <code>"remote"</code> on <code>run_capability</code>, then fetch status, logs, artifacts, and timeline entries from the Hub tools.</p>
 
+        <h2 id="api">HTTP API</h2>
+        <p>Everything the Web Hub, CLI, and MCP server do runs over the same JSON API under <code>/api</code>. Authenticate every request with <code>Authorization: Bearer shub_...</code>. The machine-readable contract lives at <a href="/openapi.json"><code>/openapi.json</code></a> and the agent-facing summary at <a href="/llms.txt"><code>/llms.txt</code></a>; both are generated from the live Hub so they never drift.</p>
+        <pre class="json"># Discovery (no drift — same source as get_menu)
+GET  /api/menu                       # tools, capabilities, execution modes
+GET  /api/capabilities               # catalog
+GET  /api/capabilities/:id           # one capability + input schema
+
+# Runs
+POST /api/capabilities/:id/run       # body {input, executionMode: "local"|"remote", responseEndpoint?}
+GET  /api/runs                       # list (filter by status, q, capability)
+GET  /api/runs/:id                   # status, outputs, responseEndpoints[]
+GET  /api/runs/:id/timeline          # unified ascending NDJSON-style timeline (since, limit)
+GET  /api/runs/:id/logs              # log lines
+GET  /api/runs/:id/artifacts         # artifacts;  GET /api/artifacts/:id/download
+POST /api/runs/:id/rerun             # re-queue with the same (or edited) input
+POST /api/runs/:id/cancel
+
+# Approvals
+GET  /api/approvals
+POST /api/approvals/:id/approve | /reject | /request-changes
+
+# Catalog editing & ops (admin scope)
+GET/POST/PATCH  /api/agents | /api/skills | /api/knowledge
+GET/POST        /api/tokens          # issue scoped access tokens
+GET             /api/audit           # audit log
+
+# Assistant
+GET  /api/chat/status                # provider + whether it's configured
+POST /api/chat                       # { messages, context } → reply (+ optional action buttons)
+
+# Liveness (unauthenticated)
+GET  /healthz  /readyz  /api/version</pre>
+        <p class="muted">Most run, capability, artifact, and approval responses include a <code>deepLink</code> field — a stable <code>/app#…</code> URL you can hand an operator. A run can carry an optional <code>responseEndpoint</code> (<code>{type: "http"|"telegram", config}</code>) so the Hub delivers the terminal-state reply when the run finishes; polling <code>/api/runs/:id</code> always stays canonical and delivery state shows up under <code>responseEndpoints[]</code>.</p>
+
         <h2 id="runners">Runner pool</h2>
         <p>Runners are stateless processes that poll the Hub for queued work. Each runner advertises a tag set and an optional capacity:</p>
         <pre class="json">SMITHERS_HUB_URL=https://hub.example.com \
@@ -131,6 +183,15 @@ smithers-hub-runner</pre>
           <li><strong>Capacity.</strong> A pool runner with <code>SMITHERS_RUNNER_CONCURRENCY=4</code> can hold four concurrent slots; the Web Hub shows the slot grid live.</li>
           <li><strong>No double-claim.</strong> Two runners polling for the same queued run can never both pick it up — the Hub atomically assigns one and rejects the other.</li>
           <li><strong>Disposable.</strong> Restart freely; the Hub keeps the durable record.</li>
+        </ul>
+
+        <h2 id="assistant">Assistant</h2>
+        <p>Every Hub page has a floating <strong>Assistant</strong> — an in-app support copilot that answers questions about Runyard and what's on your screen. Click the chat button in <code>/app</code> to open it.</p>
+        <ul>
+          <li><strong>Answer-first, never surprise-runs.</strong> The Assistant is a chat agent. It explains what happened before proposing anything. App-changing actions (navigating, triggering a run, calling the API) only execute when you click a confirmation <strong>button</strong> it offers — a question stays a question.</li>
+          <li><strong>Context-aware.</strong> It always receives your current route, and the server resolves a redacted, read-only snapshot of what you're actually looking at — the failing run's recent events, the runner pool's free slots, pending approvals — so it can answer "why did this fail?" from real state, not guesses. Secrets and token-shaped strings are stripped before the model ever sees them.</li>
+          <li><strong>Runner-backed by default.</strong> Out of the box the provider is the Hub runner pool: <code>/api/chat</code> queues a tiny internal <code>runyard-support-agent</code> workflow and your subscribed on-runner CLI agent answers it — no extra API key needed. Direct HTTP providers are opt-in for installs that prefer them: set <code>SMITHERS_HUB_SUPPORT_AGENT_PROVIDER=anthropic</code> (with <code>ANTHROPIC_API_KEY</code>) or <code>=openai</code> (with <code>OPENAI_API_KEY</code>).</li>
+          <li><strong>Configurable.</strong> Disable it with <code>SMITHERS_HUB_SUPPORT_AGENT_ENABLED=0</code>. Tune with <code>SMITHERS_HUB_SUPPORT_AGENT_MODEL</code>, <code>_TIMEOUT_MS</code>, and <code>_MAX_OUTPUT_TOKENS</code>. <code>GET /api/chat/status</code> reports the resolved provider and whether it's configured.</li>
         </ul>
 
         <h2 id="telegram">Telegram approvals</h2>
@@ -149,6 +210,7 @@ smithers-hub-runner</pre>
           <li><code>TELEGRAM_BOT_TOKEN</code>, <code>TELEGRAM_APPROVAL_CHAT_ID</code> (or <code>SMITHERS_TELEGRAM_APPROVAL_CHAT_ID</code>) for approval DMs.</li>
           <li><code>TELEGRAM_CHAT_ID</code> / <code>TELEGRAM_THREAD_ID</code> as a backward-compatible fallback.</li>
           <li><code>SMITHERS_HUB_INSTANCE_NAME</code> to label a deployment in <code>/api/version</code>.</li>
+          <li><code>SMITHERS_HUB_SUPPORT_AGENT_ENABLED</code> (default on), <code>_PROVIDER</code> (<code>runner</code>|<code>anthropic</code>|<code>openai</code>), <code>_MODEL</code>, <code>_TIMEOUT_MS</code>, <code>_MAX_OUTPUT_TOKENS</code> — the in-app <a href="#assistant">Assistant</a>. HTTP providers also read <code>ANTHROPIC_API_KEY</code> / <code>OPENAI_API_KEY</code>.</li>
         </ul>
         <p>Runner-side variables (used by <code>smithers-hub-runner</code>):</p>
         <ul>
@@ -184,7 +246,7 @@ smithers-hub run improve --where remote --input '{"target":"pricing page","repo"
           <li><strong>Private deployment.</strong> Runyard is meant for one org per deployment behind a domain you control. There is no multi-tenant SaaS database.</li>
           <li><strong>Static public docs.</strong> If you publish a marketing/setup site, make it static. Do not expose `/app`, access tokens, SQLite files, artifacts, or environment files.</li>
           <li><strong>Bootstrap token.</strong> The first token is written to <code>data/bootstrap-token.txt</code>; rotate it via the Connect tab once you are logged in.</li>
-          <li><strong>Scopes.</strong> API tokens can be scoped (<code>api</code>, <code>mcp</code>, <code>approvals</code>) so approvers can be issued narrower keys.</li>
+          <li><strong>Scopes.</strong> Access tokens carry scopes — <code>api</code>, <code>mcp</code>, <code>runner</code>, and <code>admin</code> (issue them from the Connect tab) — so a pool host or approver gets only the access it needs. <code>admin</code> is required for token, audit, and workflow-endpoint management and implies the others; the bootstrap token is full admin. Approval-only sessions (e.g. Telegram web-app login) hold just the <code>approvals</code> scope.</li>
           <li><strong>Permissive runners.</strong> Runners execute work on behalf of authenticated requests. Treat the runner host as if it has the privileges of any operator who can submit a capability run; isolate sensitive runners with restricted tag sets.</li>
           <li><strong>Headers.</strong> The server sets strict <code>content-security-policy</code>, <code>x-content-type-options</code>, <code>referrer-policy</code>, and <code>strict-transport-security</code> (when served over HTTPS).</li>
           <li><strong>Rate limiting.</strong> Login and general API buckets are enforced to discourage credential stuffing and scraping.</li>

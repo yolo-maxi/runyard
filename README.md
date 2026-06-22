@@ -6,6 +6,18 @@ Runyard (codebase: `smithers-hub`) is a capability operating system you run on a
 
 One private deployment per company/org — no SaaS dependency, no shared database. The preferred CLI alias is `runyard`; legacy package/bin names (`smithers-hub`, `smithers-hub-mcp`, `smithers-hub-runner`) and `SMITHERS_HUB_*` env vars keep their existing prefix, so deployments and tokens carry over.
 
+## Concepts
+
+- **Capability** — a public, named action agents and operators discover and run (surfaced as *workflows* in the app/API).
+- **Workflow** — the Smithers steps behind a capability.
+- **Run** — one durable execution: `queued → running → succeeded/failed/cancelled`, pausing in `waiting_approval` for human sign-off. Keeps logs, events, outputs, artifacts, and a unified timeline.
+- **Runner** — a disposable process on a VPS or laptop that polls the Hub, claims matching runs, executes them, and uploads artifacts.
+- **Approval** — a human checkpoint resolved from Web, API, CLI, MCP, or Telegram and recorded once.
+- **Artifact / Agent / Skill / Knowledge** — persistent run outputs, reusable roles, reusable tooling packages, and shared company context.
+- **Access token** — the single bearer auth primitive for Web/API/CLI/MCP/runners; scopes (`api`, `mcp`, `runner`, `admin`) narrow what a token can do.
+
+The full concepts overview, setup, API, and the in-app **Assistant** (the context-aware support copilot in `/app`) are documented in **[/docs/quickstart](public/docs.html)**.
+
 ## run-smithers (supervising wrapper)
 
 `run-smithers` is the core Orchestration capability that wraps any other capability/workflow request inside a Smithers-managed supervising run. The watcher:
