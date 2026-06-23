@@ -1233,16 +1233,31 @@ export function reapStuckRunIds(defaultMaxMs) {
   // Each run's deadline is its capability's `max_run_minutes` when set, else the
   // global default — so a long-running workflow (e.g. an audit) can opt into a
   // larger window while everything else keeps the safety-net cap.
+  //
+  // Supervised runs execute under the `run-smithers` wrapper capability, so the
+  // run's own capability is the supervisor (typically no deadline) while the
+  // meaningful budget lives on the WRAPPED capability (the real work, e.g. the
+  // audit). We resolve the wrapped capability via the run's supervision/input
+  // envelope and take the larger of the two windows, so a supervised audit
+  // inherits its 180m leash instead of falling back to the 30m default.
   const candidates = all(
-    `SELECT r.id AS id, COALESCE(r.started_at, r.assigned_at, r.created_at) AS started_at, c.max_run_minutes AS max_run_minutes
-     FROM runs r LEFT JOIN capabilities c ON r.capability_id = c.id
+    `SELECT r.id AS id, COALESCE(r.started_at, r.assigned_at, r.created_at) AS started_at,
+            c.max_run_minutes AS max_run_minutes,
+            wc.max_run_minutes AS wrapped_max_run_minutes
+     FROM runs r
+     LEFT JOIN capabilities c ON r.capability_id = c.id
+     LEFT JOIN capabilities wc
+       ON wc.slug = json_extract(r.input, '$.wrappedCapability')
      WHERE r.status IN ('assigned','running')`
   );
   const reaped = [];
   for (const row of candidates) {
     const startedMs = Date.parse(row.started_at || "");
     if (Number.isNaN(startedMs)) continue;
-    const maxMs = row.max_run_minutes && row.max_run_minutes > 0 ? row.max_run_minutes * 60_000 : defaultMaxMs;
+    const own = row.max_run_minutes && row.max_run_minutes > 0 ? row.max_run_minutes : 0;
+    const wrapped = row.wrapped_max_run_minutes && row.wrapped_max_run_minutes > 0 ? row.wrapped_max_run_minutes : 0;
+    const effectiveMinutes = Math.max(own, wrapped);
+    const maxMs = effectiveMinutes > 0 ? effectiveMinutes * 60_000 : defaultMaxMs;
     if (nowMs - startedMs < maxMs) continue;
     const minutes = Math.round(maxMs / 60_000);
     const result = transitionRun(row.id, "failed", { current_step: "timed out", error: `run exceeded execution deadline (${minutes}m)`, completed_at: now() });
