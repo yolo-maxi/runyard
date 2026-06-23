@@ -255,7 +255,7 @@ export const seedCapabilities = [
         reply: { type: "string", description: "Assistant reply, optionally ending with the support action JSON block." }
       }
     },
-    requiredRunnerTags: ["smithers"],
+    requiredRunnerTags: ["support"],
     approvalPolicy: { required: false },
     supervision: { default: false, internal: true },
     workflow: { engine: "smithers", entry: ".smithers/workflows/runyard-support-agent.tsx" }
