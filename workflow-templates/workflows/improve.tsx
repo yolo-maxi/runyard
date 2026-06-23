@@ -4,6 +4,8 @@
 /** @jsxImportSource smithers-orchestrator */
 import { createSmithers, Sequence, ClaudeCodeAgent } from "smithers-orchestrator";
 import { existsSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { z } from "zod/v4";
 import { resolveImproveRepo } from "./improve-repo.js";
 
@@ -122,6 +124,50 @@ function createBuilder(repoDir) {
   });
 }
 
+// resolveImproveRepo falls back to defaultImproveRepo (cwd) when no explicit
+// repoDir/project is provided. On a stock runner workspace (e.g.
+// /home/xiko/smithers-workspace) the cwd is NOT itself a git repo, so
+// resolveGitTopLevel rejects it as "improve target must be a git repository"
+// and the whole workflow aborts before it can do anything useful. Probe known
+// runner-local locations for the Runyard repo so the default selector keeps
+// working on a freshly provisioned runner. Only used when the caller did not
+// pin an explicit repoDir/project/non-default repo — any explicit selector
+// still surfaces its own configuration error.
+function probeRunyardRepoFallback() {
+  const explicit = [
+    process.env.SMITHERS_HUB_ROOT,
+    process.env.IMPROVE_REPO_DIR,
+    process.env.GATED_REPO_DIR
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+  const cwd = process.cwd();
+  const candidates = [
+    ...explicit,
+    path.resolve(cwd, "..", "smithers-hub"),
+    path.resolve(os.homedir(), "smithers-hub"),
+    path.resolve(os.homedir(), "clawd", "smithers-hub")
+  ];
+  for (const candidate of candidates) {
+    if (candidate && existsSync(path.join(candidate, ".git"))) return candidate;
+  }
+  return "";
+}
+
+function applyRunyardRepoFallback(error, input, options) {
+  const explicitRepoDir = String(input?.repoDir || "").trim();
+  const friendlyKey = String(input?.repo || input?.project || "").trim();
+  if (explicitRepoDir) throw error;
+  if (friendlyKey && friendlyKey !== "smithers-hub") throw error;
+  const fallback = probeRunyardRepoFallback();
+  if (!fallback) throw error;
+  // Backfill IMPROVE_REPO_DIR so improveAllowedRoots also accepts the
+  // fallback path; otherwise it would refuse the retry as "outside allowed
+  // roots" because the default allowed root is still the non-git cwd.
+  const envWithFallback = { ...process.env, IMPROVE_REPO_DIR: fallback };
+  return resolveImproveRepo({ repoDir: fallback }, { ...options, env: envWithFallback });
+}
+
 function improveScopeContract(input) {
   const target = String(input?.target || "").trim();
   const context = String(input?.context || "").trim();
@@ -138,16 +184,24 @@ function improveScopeContract(input) {
 }
 
 export default smithers((ctx) => {
-  // Resolve the target repo lazily: if it fails (e.g. cwd is not a git repo), defer the
-  // error into the baseline task so it surfaces as a normal task failure instead of
-  // crashing the workflow build and landing the run at the synthetic 'failed' node.
+  // Resolve the target repo. If the caller did not pin an explicit repoDir /
+  // project, fall back to a probed runner-local Runyard checkout so a stock
+  // workspace (cwd is not a git repo) keeps working. If resolution still
+  // fails, defer the error into the baseline task so it surfaces as a normal
+  // task failure instead of crashing the workflow build and landing the run
+  // at the synthetic 'failed' node.
   let repoDir;
   let repoResolveError = null;
+  const repoOptions = { env: process.env, cwd: process.cwd(), gitBin: GIT, gitEnv: TOOL_ENV };
   try {
-    repoDir = resolveImproveRepo(ctx.input, { env: process.env, cwd: process.cwd(), gitBin: GIT, gitEnv: TOOL_ENV });
+    repoDir = resolveImproveRepo(ctx.input, repoOptions);
   } catch (err) {
-    repoResolveError = err;
-    repoDir = String(ctx.input?.repoDir || "").trim() || process.cwd();
+    try {
+      repoDir = applyRunyardRepoFallback(err, ctx.input, repoOptions);
+    } catch (finalErr) {
+      repoResolveError = finalErr;
+      repoDir = String(ctx.input?.repoDir || "").trim() || process.cwd();
+    }
   }
   const productManager = createProductManager(repoDir);
   const builder = createBuilder(repoDir);
