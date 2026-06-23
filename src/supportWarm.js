@@ -49,33 +49,46 @@ async function hubGet(apiPath) {
 // prompt so the model has real data to answer from.
 async function gatherRelevantHubData(input) {
   if (!READ_ENABLED) return "";
+  // Match against what the operator actually asked (their last message) plus a
+  // few focused context fields — NOT the whole context blob, which mentions many
+  // capabilities from recent runs and would pull in the wrong/too-many defs and
+  // bloat the prompt (slowing the model badly).
   const lastUser = [...(input.messages || [])].reverse().find((m) => m?.role === "user");
-  const haystack = `${typeof lastUser?.content === "string" ? lastUser.content : ""} ${JSON.stringify(input.context || {})}`;
+  const ctx = input.context || {};
+  const focus = [ctx.view, ctx.route, ctx.hash, ctx.runId, ctx.capabilitySlug, ctx.slug].filter(Boolean).join(" ");
+  const haystack = `${typeof lastUser?.content === "string" ? lastUser.content : ""} ${focus}`;
   const blocks = [];
 
   const capsRaw = await hubGet("capabilities");
-  let slugs = [];
+  let caps = [];
   if (capsRaw) {
     try {
-      slugs = (JSON.parse(capsRaw).capabilities || []).map((c) => c.slug).filter(Boolean);
+      caps = (JSON.parse(capsRaw).capabilities || []).filter((c) => c?.slug);
     } catch {
       /* ignore */
     }
-    blocks.push(`Workflow catalog (all capabilities, summary):\n${capsRaw.slice(0, 4000)}`);
   }
 
-  for (const slug of slugs) {
-    const safe = slug.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
-    if (new RegExp(`\\b${safe}\\b`, "i").test(haystack)) {
-      const def = await hubGet(`capabilities/${encodeURIComponent(slug)}`);
-      if (def) blocks.push(`Full definition of capability "${slug}":\n${def.slice(0, 6000)}`);
-    }
-  }
+  const matched = caps.filter((c) => new RegExp(`\\b${c.slug.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")}\\b`, "i").test(haystack));
+  const runIds = [...new Set(haystack.match(/run_[0-9a-f]{6,}/g) || [])].slice(0, 2);
 
-  const runIds = [...new Set(haystack.match(/run_[0-9a-f]{6,}/g) || [])].slice(0, 3);
+  // Inject the FULL definition of any capability the operator named.
+  for (const c of matched.slice(0, 2)) {
+    const def = await hubGet(`capabilities/${encodeURIComponent(c.slug)}`);
+    if (def) blocks.push(`Full definition of capability "${c.slug}":\n${def.slice(0, 4500)}`);
+  }
   for (const rid of runIds) {
     const run = await hubGet(`runs/${rid}`);
-    if (run) blocks.push(`Run ${rid} detail:\n${run.slice(0, 4000)}`);
+    if (run) blocks.push(`Run ${rid} detail:\n${run.slice(0, 3500)}`);
+  }
+
+  // Only fall back to the compact catalog when nothing specific matched — keeps
+  // the prompt (and so the model latency) small for targeted questions.
+  if (!blocks.length && caps.length) {
+    const list = caps
+      .map((c) => `- ${c.slug}: ${(c.name || "").trim()}${c.description ? ` — ${String(c.description).slice(0, 80)}` : ""}`)
+      .join("\n");
+    blocks.push(`Workflow catalog (${caps.length} capabilities):\n${list.slice(0, 2500)}`);
   }
 
   return blocks.length ? `\n\nLive Hub data fetched for this question:\n${blocks.join("\n\n")}` : "";
@@ -137,7 +150,19 @@ export async function warmSupportReply(input = {}) {
   const hubData = await gatherRelevantHubData(input);
   const prompt = buildPrompt({ messages: input.messages, context: input.context }) + hubData;
 
-  const args = ["-p", prompt, "--output-format", "json", "--model", CLAUDE_MODEL];
+  // Force a single-turn text answer from the injected context. Two guards:
+  //  --strict-mcp-config ignores the host's ambient MCP servers (gdrive, gmail,
+  //    a smithers-hub MCP, ...) so the agent doesn't try to call them.
+  //  --disallowedTools turns off every built-in tool, so it can't burn turns (or
+  //    stall on headless permission prompts) trying to "fetch" — it just answers
+  //    from the live Hub data we already pre-fetched. Cuts latency ~25s -> ~3s.
+  const args = [
+    "-p", prompt,
+    "--output-format", "json",
+    "--model", CLAUDE_MODEL,
+    "--strict-mcp-config",
+    "--disallowedTools", "Bash,Read,Edit,Write,WebFetch,WebSearch,Glob,Grep,Task,TodoWrite,NotebookEdit,BashOutput,KillShell"
+  ];
   if (system) args.push("--append-system-prompt", system);
 
   const stdout = await runClaude(args, { timeoutMs: TIMEOUT_MS });
