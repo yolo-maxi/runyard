@@ -14,6 +14,7 @@ import { HubClient } from "./apiClient.js";
 import { markdownArtifactsFromOutputs } from "./runnerArtifacts.js";
 import { normalizeRunnerTags } from "./runExecution.js";
 import { extractSmithersFailure } from "./smithersFailure.js";
+import { supportWarmEnabled, warmSupportReply } from "./supportWarm.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -151,6 +152,20 @@ async function executeAssignment(assignment) {
   activeRuns.add(run.id);
   try {
     await client.post(`/api/runs/${run.id}/start`, {});
+
+    // Warm support path (dedicated support-runner only, gated by SUPPORT_WARM).
+    // Answer the support-chat capability directly via the local `claude` CLI
+    // instead of a full `smithers up`, completing the run with the same
+    // { outputs.support.reply } shape the Hub already reads. The general runner
+    // pool never sets SUPPORT_WARM, so this branch is inert there.
+    if (supportWarmEnabled() && capability.slug === "runyard-support-agent") {
+      await event(run.id, "runner.warm_support", `Answering support chat via warm claude on ${name}`, { runnerId });
+      const reply = await warmSupportReply(run.input || {});
+      await client.post(`/api/runs/${run.id}/complete`, { output: { outputs: { support: { reply } } } });
+      console.log(`Completed ${run.id} via warm support`);
+      return;
+    }
+
     if (!entry) throw new Error(`capability ${capability.slug} has no workflow.entry`);
     await event(run.id, "runner.started", `Executing Smithers workflow ${entry} on ${name}`, { runnerId, entry, location });
 
