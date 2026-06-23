@@ -246,9 +246,7 @@ export default smithers((ctx) => {
                 commitHash = run(["rev-parse", "HEAD"]).trim();
               } else {
                 const head = run(["rev-parse", "HEAD"]).trim();
-                if (head === baseline.startHead) {
-                  return { commit: head, message: "improve: no changes (empty change set)", stat: "", files: [] };
-                }
+                if (head === baseline.startHead) throw new Error("GATE FAILED: implementation produced no changes.");
                 commitHash = head;
               }
               if (!/^[0-9a-f]{7,40}$/.test(commitHash)) throw new Error("GATE FAILED: no sane commit hash.");
