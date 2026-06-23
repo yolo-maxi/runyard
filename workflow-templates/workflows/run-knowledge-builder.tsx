@@ -275,6 +275,29 @@ function asList(value: unknown) {
   return Array.isArray(value) ? value : [];
 }
 
+// The analyst agent returns its findings as a JSON *string* (often wrapped in
+// prose or ```json fences). Coerce it back to an object before rendering —
+// without this, normalizeAnalysis reads every field off a string, gets
+// `undefined`, and silently renders the all-empty "evidence too sparse"
+// report even when the agent produced a rich, correct analysis.
+function coerceAnalysis(value: any) {
+  if (value && typeof value === "object" && !Array.isArray(value)) return value;
+  if (typeof value !== "string") return {};
+  let text = value.trim();
+  const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence) text = fence[1].trim();
+  if (!text.startsWith("{")) {
+    const start = text.indexOf("{");
+    const end = text.lastIndexOf("}");
+    if (start !== -1 && end > start) text = text.slice(start, end + 1);
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    return {};
+  }
+}
+
 function normalizeAnalysis(value: any) {
   return {
     runSampleSummary: inputText(value?.runSampleSummary) || "The sampled evidence was too small or sparse for a confident summary.",
@@ -392,8 +415,8 @@ export default smithers((ctx) => {
                 tags: Array.isArray(item.tags) ? item.tags.map((tag: string) => redactText(tag, 80)) : []
               })),
               evidenceNotes: [
-                "Run logs were pulled from the Hub redacted logs endpoint and truncated before analysis.",
-                "Artifact contents were not downloaded; only artifact metadata and deep links were used.",
+                "Run logs were pulled from the Hub redacted logs endpoint (up to ~120 lines / 8k chars per run).",
+                "Redacted artifact contents (outputs, reports, diffs, error traces) were downloaded for failed/cancelled runs, budgeted per run.",
                 "Secret-looking fields and local absolute paths were redacted before agent analysis."
               ]
             };
@@ -422,14 +445,14 @@ Rules:
 - Focus area: ${inputText(ctx.input.focusArea) || "general run learning"}.
 
 Redacted run evidence:
-${JSON.stringify(gathered, null, 2).slice(0, 90000)}`}
+${JSON.stringify(gathered, null, 2).slice(0, 150000)}`}
           </Task>
         )}
 
         {gathered && analyzed && (
           <Task id="report" output={outputs.report} retries={0}>
             {async () => {
-              const normalized = normalizeAnalysis(analyzed);
+              const normalized = normalizeAnalysis(coerceAnalysis(analyzed));
               return {
                 artifactName: "run-knowledge-report.md",
                 ...normalized,
