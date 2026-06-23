@@ -1,5 +1,6 @@
 import { existsSync, writeFileSync, chmodSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { env } from "./env.js";
 import { id, now } from "./ids.js";
@@ -118,6 +119,7 @@ export function initDb() {
       supervision TEXT NOT NULL DEFAULT '{}',
       workflow TEXT NOT NULL DEFAULT '{}',
       max_run_minutes INTEGER,
+      definition_hash TEXT NOT NULL DEFAULT '',
       version INTEGER NOT NULL DEFAULT 1,
       enabled INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL,
@@ -295,6 +297,7 @@ export function initDb() {
   migrateRunnersPoolColumns();
   migrateCapabilitySupervisionColumn();
   migrateCapabilityDeadlineColumn();
+  migrateCapabilityDefinitionHashColumn();
   migrateRunsCapabilityVersioningColumns();
   setSettingDefault("instance_name", env.instanceName);
   seedAll();
@@ -333,6 +336,13 @@ function migrateCapabilityDeadlineColumn() {
   const columns = all("PRAGMA table_info(capabilities)").map((row) => row.name);
   if (!columns.includes("max_run_minutes")) {
     db.exec("ALTER TABLE capabilities ADD COLUMN max_run_minutes INTEGER");
+  }
+}
+
+function migrateCapabilityDefinitionHashColumn() {
+  const columns = all("PRAGMA table_info(capabilities)").map((row) => row.name);
+  if (!columns.includes("definition_hash")) {
+    db.exec("ALTER TABLE capabilities ADD COLUMN definition_hash TEXT NOT NULL DEFAULT ''");
   }
 }
 
@@ -503,6 +513,7 @@ export function normalizeCapability(row) {
     supervision: parseJson(row.supervision, {}),
     workflow: parseJson(row.workflow, {}),
     maxRunMinutes: row.max_run_minutes ?? null,
+    definitionHash: row.definition_hash || "",
     version: row.version,
     enabled: Boolean(row.enabled),
     createdAt: row.created_at,
@@ -531,34 +542,89 @@ function normalizeMaxRunMinutes(value) {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-export function upsertCapability(input) {
-  const existing = one("SELECT * FROM capabilities WHERE slug = ?", [input.slug]);
-  const timestamp = now();
-  const payload = {
+function stableValue(value) {
+  if (Array.isArray(value)) return value.map(stableValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, stableValue(value[key])])
+    );
+  }
+  return value;
+}
+
+function stableJson(value) {
+  return JSON.stringify(stableValue(value));
+}
+
+function parseMaybeJson(value, fallback) {
+  if (typeof value !== "string") return value ?? fallback;
+  return parseJson(value, fallback);
+}
+
+function normalizeCapabilityDefinition(input) {
+  return {
     slug: input.slug,
     name: input.name,
     description: input.description || "",
     category: input.category || "General",
-    keywords: json(input.keywords, []),
-    input_schema: json(input.inputSchema || input.input_schema || {}, {}),
-    output_schema: json(input.outputSchema || input.output_schema || {}, {}),
-    required_runner_tags: json(input.requiredRunnerTags || input.required_runner_tags || [], []),
-    required_skills: json(input.requiredSkills || input.required_skills || [], []),
-    required_agents: json(input.requiredAgents || input.required_agents || [], []),
-    approval_policy: json(input.approvalPolicy || input.approval_policy || {}, {}),
-    supervision: json(input.supervision || input.supervision_policy || {}, {}),
-    workflow: json(input.workflow || {}, {}),
-    max_run_minutes: normalizeMaxRunMinutes(input.maxRunMinutes ?? input.max_run_minutes),
-    enabled: input.enabled === false ? 0 : 1,
+    keywords: parseMaybeJson(input.keywords, []),
+    inputSchema: parseMaybeJson(input.inputSchema ?? input.input_schema, {}),
+    outputSchema: parseMaybeJson(input.outputSchema ?? input.output_schema, {}),
+    requiredRunnerTags: parseMaybeJson(input.requiredRunnerTags ?? input.required_runner_tags, []),
+    requiredSkills: parseMaybeJson(input.requiredSkills ?? input.required_skills, []),
+    requiredAgents: parseMaybeJson(input.requiredAgents ?? input.required_agents, []),
+    approvalPolicy: parseMaybeJson(input.approvalPolicy ?? input.approval_policy, {}),
+    supervision: parseMaybeJson(input.supervision ?? input.supervision_policy, {}),
+    workflow: parseMaybeJson(input.workflow, {}),
+    maxRunMinutes: normalizeMaxRunMinutes(input.maxRunMinutes ?? input.max_run_minutes),
+    enabled: input.enabled === false || input.enabled === 0 ? false : true
+  };
+}
+
+function capabilityDefinitionHash(definition) {
+  return createHash("sha256").update(stableJson(definition)).digest("hex");
+}
+
+export function upsertCapability(input) {
+  const existing = one("SELECT * FROM capabilities WHERE slug = ?", [input.slug]);
+  const timestamp = now();
+  const definition = normalizeCapabilityDefinition(input);
+  const definitionHash = capabilityDefinitionHash(definition);
+  const payload = {
+    slug: definition.slug,
+    name: definition.name,
+    description: definition.description,
+    category: definition.category,
+    keywords: json(definition.keywords, []),
+    input_schema: json(definition.inputSchema, {}),
+    output_schema: json(definition.outputSchema, {}),
+    required_runner_tags: json(definition.requiredRunnerTags, []),
+    required_skills: json(definition.requiredSkills, []),
+    required_agents: json(definition.requiredAgents, []),
+    approval_policy: json(definition.approvalPolicy, {}),
+    supervision: json(definition.supervision, {}),
+    workflow: json(definition.workflow, {}),
+    max_run_minutes: definition.maxRunMinutes ?? null,
+    definition_hash: definitionHash,
+    enabled: definition.enabled ? 1 : 0,
     updated_at: timestamp
   };
   if (existing) {
+    const existingHash = existing.definition_hash || capabilityDefinitionHash(normalizeCapabilityDefinition(normalizeCapability(existing)));
+    if (existingHash === definitionHash) {
+      if (existing.definition_hash !== definitionHash) {
+        run("UPDATE capabilities SET definition_hash = ? WHERE slug = ?", [definitionHash, input.slug]);
+      }
+      return getCapability(input.slug);
+    }
     const version = existing.version + 1;
     run(
       `UPDATE capabilities SET name=$name, description=$description, category=$category, keywords=$keywords,
        input_schema=$input_schema, output_schema=$output_schema, required_runner_tags=$required_runner_tags,
        required_skills=$required_skills, required_agents=$required_agents, approval_policy=$approval_policy,
-       supervision=$supervision, workflow=$workflow, max_run_minutes=$max_run_minutes, enabled=$enabled, version=$version, updated_at=$updated_at WHERE slug=$slug`,
+       supervision=$supervision, workflow=$workflow, max_run_minutes=$max_run_minutes, definition_hash=$definition_hash, enabled=$enabled, version=$version, updated_at=$updated_at WHERE slug=$slug`,
       { ...payload, version }
     );
     snapshotCapability(existing.id);
@@ -568,9 +634,9 @@ export function upsertCapability(input) {
   run(
     `INSERT INTO capabilities
      (id, slug, name, description, category, keywords, input_schema, output_schema, required_runner_tags,
-      required_skills, required_agents, approval_policy, supervision, workflow, max_run_minutes, version, enabled, created_at, updated_at)
+      required_skills, required_agents, approval_policy, supervision, workflow, max_run_minutes, definition_hash, version, enabled, created_at, updated_at)
      VALUES ($id, $slug, $name, $description, $category, $keywords, $input_schema, $output_schema,
-      $required_runner_tags, $required_skills, $required_agents, $approval_policy, $supervision, $workflow, $max_run_minutes, $version,
+      $required_runner_tags, $required_skills, $required_agents, $approval_policy, $supervision, $workflow, $max_run_minutes, $definition_hash, $version,
       $enabled, $created_at, $updated_at)`,
     created
   );

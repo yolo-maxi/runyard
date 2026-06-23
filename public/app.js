@@ -2743,6 +2743,7 @@ async function editCapability(slug = "") {
   editor.classList.remove("hidden");
   editor.scrollIntoView({ behavior: "smooth", block: "nearest" });
   editor.innerHTML = `<h2>${slug ? "Edit" : "New"} Workflow</h2>
+    <p class="muted">Workflow definitions are seeded from git. Edits here are operational overrides and can be replaced by the next seeded definition change.</p>
     <form id="cap-form" class="form-grid">
       <label>Name <span class="req">*</span><input id="cap-name" value="${esc(cap.name)}" required></label>
       <label>Slug${slug ? "" : ' <span class="field-hint">Leave blank to derive from the name.</span>'}<input id="cap-slug" value="${esc(cap.slug)}" ${slug ? "disabled" : ""}></label>
