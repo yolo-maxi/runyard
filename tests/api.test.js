@@ -2040,6 +2040,8 @@ describe("Failure / cancellation diagnostics", () => {
 });
 
 describe("Smart Contract Audit capability", () => {
+  const smokeFixture = path.join(process.cwd(), "tests", "fixtures", "smart-contract-audit", "contracts");
+
   it("is seeded as a real Smithers workflow capability", async () => {
     const { capabilities } = await api("/api/capabilities");
     const cap = capabilities.find((c) => c.slug === "smart-contract-audit");
@@ -2051,16 +2053,25 @@ describe("Smart Contract Audit capability", () => {
   });
 
   it("is runnable through the API (creates a queued run)", async () => {
+    assert.ok(existsSync(path.join(smokeFixture, "TinyVault.sol")), "phase-0 smoke fixture should exist");
     const created = await api("/api/capabilities/smart-contract-audit/run", {
       method: "POST",
-      body: { input: { target: "/tmp/does-not-matter-for-queue", maxAgents: 2 } }
+      body: {
+        input: {
+          target: smokeFixture,
+          scope: "Phase-0 smoke baseline",
+          maxAgents: 1
+        },
+        origin: { type: "phase-0-smoke-test", label: "Phase 0 smoke baseline" }
+      }
     });
     assert.equal(created.run.status, "queued");
     assert.equal(created.run.capabilitySlug, "smart-contract-audit");
     assert.equal(created.run.actualCapabilitySlug, "run-smithers");
     assert.equal(created.supervising.wrappedCapability, "smart-contract-audit");
     assert.equal(created.run.supervision.wrappedCapability, "smart-contract-audit");
-    assert.equal(created.run.input.target, "/tmp/does-not-matter-for-queue");
+    assert.equal(created.run.input.target, smokeFixture);
+    assert.equal(created.run.input.maxAgents, 1);
     assert.equal(created.run.input.wrappedCapability, undefined);
   });
 

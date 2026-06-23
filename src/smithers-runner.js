@@ -33,6 +33,7 @@ const tags = normalizeRunnerTags(
 const intervalMs = Number(process.env.SMITHERS_RUNNER_INTERVAL_MS || 2500);
 const pollMs = Number(process.env.SMITHERS_POLL_MS || 2000);
 const maxRunMs = Number(process.env.SMITHERS_MAX_RUN_MS || 2 * 60 * 60_000);
+const exitAfterRuns = Math.max(0, Math.floor(Number(process.env.SMITHERS_RUNNER_EXIT_AFTER_RUNS || 0)));
 
 // Concurrency controls how many Smithers runs this single runner process
 // may execute in parallel. Defaults to 1 to keep existing single-runner
@@ -55,6 +56,8 @@ let runnerId = process.env.SMITHERS_RUNNER_ID || "";
 // against this set instead of a single `busy` flag so multiple runs can
 // progress in parallel.
 const activeRuns = new Set();
+let completedRuns = 0;
+let intervalHandle = null;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const stripAnsi = (s) => String(s).replace(/\[[0-9;]*m/g, "");
@@ -271,10 +274,19 @@ async function executeAssignment(assignment) {
     console.error(`Run ${run.id} failed:`, error.message);
   } finally {
     activeRuns.delete(run.id);
+    completedRuns += 1;
+    maybeExitAfterRuns();
   }
 }
 
 let tickInFlight = false;
+function maybeExitAfterRuns() {
+  if (!exitAfterRuns || completedRuns < exitAfterRuns || activeRuns.size > 0) return;
+  if (intervalHandle) clearInterval(intervalHandle);
+  console.log(`Smithers runner exiting after ${completedRuns} completed run(s).`);
+  process.exit(0);
+}
+
 async function tick() {
   if (!runnerId) return;
   // setInterval doesn't wait for the previous tick to finish — guard against
@@ -302,6 +314,7 @@ async function tick() {
       // its own try/finally so an unexpected throw can't leak a slot.
       executeAssignment(assignment).catch((error) => console.error("executeAssignment failed:", error.message));
     }
+    maybeExitAfterRuns();
   } finally {
     tickInFlight = false;
   }
@@ -310,7 +323,7 @@ async function tick() {
 async function main() {
   await register();
   await tick();
-  setInterval(() => tick().catch((e) => console.error("tick failed:", e.message)), intervalMs);
+  intervalHandle = setInterval(() => tick().catch((e) => console.error("tick failed:", e.message)), intervalMs);
 }
 
 main().catch((error) => {

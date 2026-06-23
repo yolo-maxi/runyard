@@ -25,6 +25,7 @@
     "mcp": "node src/mcp.js",
     "cli": "node src/cli.js",
     "build:vendor": "node bin/build-vendor.mjs",
+    "smoke:smart-contract-audit": "node scripts/smoke-smart-contract-audit.mjs",
     "test": "node --experimental-sqlite --test tests/*.test.js"
   },
   "dependencies": {

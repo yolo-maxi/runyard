@@ -21,4 +21,10 @@ describe("Smithers runner deadline containment", () => {
     assert.match(source, /outputs\?\.supervise\?\.outcome/);
     assert.match(source, /run-smithers ended with outcome/);
   });
+
+  it("can exit after a bounded number of assignments for smoke evaluation", () => {
+    assert.match(source, /SMITHERS_RUNNER_EXIT_AFTER_RUNS/);
+    assert.match(source, /function maybeExitAfterRuns/);
+    assert.match(source, /Smithers runner exiting after/);
+  });
 });
