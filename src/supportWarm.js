@@ -19,6 +19,68 @@ const CLAUDE_MODEL = process.env.SUPPORT_WARM_MODEL || "claude-sonnet-4-6";
 const TIMEOUT_MS = Number(process.env.SUPPORT_WARM_TIMEOUT_MS || 90_000);
 const MAX_BUFFER = 8 * 1024 * 1024;
 
+// Read access via server-side pre-fetch (gated by SUPPORT_WARM_TOOLS=1). Rather
+// than give the headless agent an agentic tool loop (slow + permission-prone),
+// we detect which capability/run the question is about and inject that live
+// data into the prompt, so the agent answers in a single fast turn instead of
+// deflecting with "I can't fetch that". Uses a scope:["read"] token; the server
+// rejects any mutation, so this is read-only by construction.
+const READ_ENABLED = process.env.SUPPORT_WARM_TOOLS === "1" || process.env.SUPPORT_WARM_TOOLS === "true";
+const READ_TOKEN = process.env.RUNYARD_READ_TOKEN || "";
+const READ_HUB_URL = (process.env.RUNYARD_HUB_URL || "https://hub.repo.box").replace(/\/$/, "");
+
+async function hubGet(apiPath) {
+  if (!READ_TOKEN) return null;
+  try {
+    const res = await fetch(`${READ_HUB_URL}/api/${apiPath}`, {
+      headers: { authorization: `Bearer ${READ_TOKEN}` },
+      signal: AbortSignal.timeout(8000)
+    });
+    if (!res.ok) return null;
+    return await res.text();
+  } catch {
+    return null;
+  }
+}
+
+// Pull the live Hub data relevant to this turn: the workflow catalog (always —
+// small + high value), the full definition of any capability the operator named,
+// and any run id they referenced. Returned as a text block appended to the
+// prompt so the model has real data to answer from.
+async function gatherRelevantHubData(input) {
+  if (!READ_ENABLED) return "";
+  const lastUser = [...(input.messages || [])].reverse().find((m) => m?.role === "user");
+  const haystack = `${typeof lastUser?.content === "string" ? lastUser.content : ""} ${JSON.stringify(input.context || {})}`;
+  const blocks = [];
+
+  const capsRaw = await hubGet("capabilities");
+  let slugs = [];
+  if (capsRaw) {
+    try {
+      slugs = (JSON.parse(capsRaw).capabilities || []).map((c) => c.slug).filter(Boolean);
+    } catch {
+      /* ignore */
+    }
+    blocks.push(`Workflow catalog (all capabilities, summary):\n${capsRaw.slice(0, 4000)}`);
+  }
+
+  for (const slug of slugs) {
+    const safe = slug.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
+    if (new RegExp(`\\b${safe}\\b`, "i").test(haystack)) {
+      const def = await hubGet(`capabilities/${encodeURIComponent(slug)}`);
+      if (def) blocks.push(`Full definition of capability "${slug}":\n${def.slice(0, 6000)}`);
+    }
+  }
+
+  const runIds = [...new Set(haystack.match(/run_[0-9a-f]{6,}/g) || [])].slice(0, 3);
+  for (const rid of runIds) {
+    const run = await hubGet(`runs/${rid}`);
+    if (run) blocks.push(`Run ${rid} detail:\n${run.slice(0, 4000)}`);
+  }
+
+  return blocks.length ? `\n\nLive Hub data fetched for this question:\n${blocks.join("\n\n")}` : "";
+}
+
 export function supportWarmEnabled() {
   return process.env.SUPPORT_WARM === "1" || process.env.SUPPORT_WARM === "true";
 }
@@ -72,7 +134,8 @@ function runClaude(args, { timeoutMs }) {
 // a silent empty reply.
 export async function warmSupportReply(input = {}) {
   const system = typeof input.system === "string" ? input.system : "";
-  const prompt = buildPrompt({ messages: input.messages, context: input.context });
+  const hubData = await gatherRelevantHubData(input);
+  const prompt = buildPrompt({ messages: input.messages, context: input.context }) + hubData;
 
   const args = ["-p", prompt, "--output-format", "json", "--model", CLAUDE_MODEL];
   if (system) args.push("--append-system-prompt", system);
