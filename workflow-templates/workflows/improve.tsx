@@ -138,7 +138,17 @@ function improveScopeContract(input) {
 }
 
 export default smithers((ctx) => {
-  const repoDir = resolveImproveRepo(ctx.input, { env: process.env, cwd: process.cwd(), gitBin: GIT, gitEnv: TOOL_ENV });
+  // Resolve the target repo lazily: if it fails (e.g. cwd is not a git repo), defer the
+  // error into the baseline task so it surfaces as a normal task failure instead of
+  // crashing the workflow build and landing the run at the synthetic 'failed' node.
+  let repoDir;
+  let repoResolveError = null;
+  try {
+    repoDir = resolveImproveRepo(ctx.input, { env: process.env, cwd: process.cwd(), gitBin: GIT, gitEnv: TOOL_ENV });
+  } catch (err) {
+    repoResolveError = err;
+    repoDir = String(ctx.input?.repoDir || "").trim() || process.cwd();
+  }
   const productManager = createProductManager(repoDir);
   const builder = createBuilder(repoDir);
   const baseline = ctx.outputMaybe("baseline", { nodeId: "baseline" });
@@ -154,6 +164,7 @@ export default smithers((ctx) => {
         {/* 0. Record the starting HEAD so we can tell what the builder produced. */}
         <Task id="baseline" output={outputs.baseline} retries={0}>
           {async () => {
+            if (repoResolveError) throw repoResolveError;
             const { execFileSync } = await import("node:child_process");
             const startHead = execFileSync(GIT, ["rev-parse", "HEAD"], { cwd: repoDir, encoding: "utf8", env: TOOL_ENV }).trim();
             return { startHead, repoDir };
