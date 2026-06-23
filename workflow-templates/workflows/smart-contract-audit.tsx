@@ -78,6 +78,9 @@ function auditor() {
 export default smithers((ctx) => {
   const prep = ctx.outputMaybe("prepare", { nodeId: "prepare" });
   const maxAgents = Math.max(1, Math.min(ctx.input.maxAgents ?? 3, 12));
+  // Contract with build-bundles.sh: only spawn one auditor per bundle it actually produced.
+  // Asking for more would point an agent at a non-existent agent-<i>-bundle.md and fail the run.
+  const auditCount = prep?.bundles?.length ? Math.min(maxAgents, prep.bundles.length) : maxAgents;
   const audits = ctx.outputs.audit ?? [];
 
   return (
@@ -120,8 +123,8 @@ export default smithers((ctx) => {
 
         {/* 2. AUDIT: read-only specialist agents over the bundles, in parallel. */}
         {prep && (
-          <Parallel maxConcurrency={Math.min(maxAgents, 4)}>
-            {Array.from({ length: maxAgents }).map((_, i) => (
+          <Parallel maxConcurrency={Math.min(auditCount, 4)}>
+            {Array.from({ length: auditCount }).map((_, i) => (
               <Task key={i} id={`audit-${i + 1}`} output={outputs.audit} agent={auditor()} timeoutMs={12 * 60 * 1000} retries={1}>
                 {`You are audit agent ${i + 1} with the "${SPECIALTIES[i]}" specialty.\n` +
                   `Read this bundle fully — it contains the in-scope Solidity source, the senior-auditor SOP, your specialty, and shared rules:\n` +
@@ -136,7 +139,7 @@ export default smithers((ctx) => {
         )}
 
         {/* 3. REPORT: consolidate once every audit agent has reported. */}
-        {prep && audits.length >= maxAgents && (
+        {prep && audits.length >= auditCount && (
           <Task id="report" output={outputs.report} agent={auditor()} timeoutMs={10 * 60 * 1000}>
             {`Consolidate these smart-contract audit results into ONE Markdown report.\n` +
               `Hard rules: deduplicate only within (contract, function) — never merge across functions; preserve distinct fixes as Option A/B. ` +
