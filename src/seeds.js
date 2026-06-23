@@ -319,6 +319,9 @@ export const seedCapabilities = [
     requiredRunnerTags: ["smithers"],
     requiredSkills: ["code-review"],
     approvalPolicy: { required: false },
+    // Audits fan out many agents and legitimately run long — opt out of the
+    // global 30m stuck-run reaper with a 3h window.
+    maxRunMinutes: 180,
     workflow: { engine: "smithers", entry: ".smithers/workflows/smart-contract-audit.tsx" }
   },
   {

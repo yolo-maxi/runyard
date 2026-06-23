@@ -457,7 +457,7 @@ describe("Smithers Hub API", () => {
       const retrospective = detail.artifacts.find((artifact) => artifact.name === "run-retrospective.json");
       assert.ok(retrospective);
       const content = JSON.parse(readFileSync(retrospective.path, "utf8"));
-      assert.equal(content.outcome.diagnostics.reason, "run exceeded execution deadline");
+      assert.match(content.outcome.diagnostics.reason, /^run exceeded execution deadline/);
       const obstruction = await waitForArtifact(created.run.id, RUN_OBSTRUCTION_ANALYSIS_ARTIFACT_NAME);
       const obstructionContent = JSON.parse(readFileSync(obstruction.path, "utf8"));
       assert.equal(obstructionContent.run.status, "failed");

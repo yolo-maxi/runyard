@@ -117,6 +117,7 @@ export function initDb() {
       approval_policy TEXT NOT NULL DEFAULT '{}',
       supervision TEXT NOT NULL DEFAULT '{}',
       workflow TEXT NOT NULL DEFAULT '{}',
+      max_run_minutes INTEGER,
       version INTEGER NOT NULL DEFAULT 1,
       enabled INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL,
@@ -293,6 +294,7 @@ export function initDb() {
 
   migrateRunnersPoolColumns();
   migrateCapabilitySupervisionColumn();
+  migrateCapabilityDeadlineColumn();
   migrateRunsCapabilityVersioningColumns();
   setSettingDefault("instance_name", env.instanceName);
   seedAll();
@@ -321,6 +323,16 @@ function migrateCapabilitySupervisionColumn() {
   const columns = all("PRAGMA table_info(capabilities)").map((row) => row.name);
   if (!columns.includes("supervision")) {
     db.exec("ALTER TABLE capabilities ADD COLUMN supervision TEXT NOT NULL DEFAULT '{}'");
+  }
+}
+
+// Per-capability execution deadline (minutes). NULL means "use the global
+// SMITHERS_RUN_DEADLINE_MS default" — long-running workflows (e.g. audits)
+// declare a larger value so the stuck-run reaper doesn't kill them at 30m.
+function migrateCapabilityDeadlineColumn() {
+  const columns = all("PRAGMA table_info(capabilities)").map((row) => row.name);
+  if (!columns.includes("max_run_minutes")) {
+    db.exec("ALTER TABLE capabilities ADD COLUMN max_run_minutes INTEGER");
   }
 }
 
@@ -490,6 +502,7 @@ export function normalizeCapability(row) {
     approvalPolicy: parseJson(row.approval_policy, {}),
     supervision: parseJson(row.supervision, {}),
     workflow: parseJson(row.workflow, {}),
+    maxRunMinutes: row.max_run_minutes ?? null,
     version: row.version,
     enabled: Boolean(row.enabled),
     createdAt: row.created_at,
@@ -511,6 +524,13 @@ export function getCapability(slugOrId) {
   return normalizeCapability(one("SELECT * FROM capabilities WHERE slug = ? OR id = ?", [slugOrId, slugOrId]));
 }
 
+// A positive integer number of minutes, or null (use the global default).
+function normalizeMaxRunMinutes(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const n = Math.floor(Number(value));
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
 export function upsertCapability(input) {
   const existing = one("SELECT * FROM capabilities WHERE slug = ?", [input.slug]);
   const timestamp = now();
@@ -528,6 +548,7 @@ export function upsertCapability(input) {
     approval_policy: json(input.approvalPolicy || input.approval_policy || {}, {}),
     supervision: json(input.supervision || input.supervision_policy || {}, {}),
     workflow: json(input.workflow || {}, {}),
+    max_run_minutes: normalizeMaxRunMinutes(input.maxRunMinutes ?? input.max_run_minutes),
     enabled: input.enabled === false ? 0 : 1,
     updated_at: timestamp
   };
@@ -537,7 +558,7 @@ export function upsertCapability(input) {
       `UPDATE capabilities SET name=$name, description=$description, category=$category, keywords=$keywords,
        input_schema=$input_schema, output_schema=$output_schema, required_runner_tags=$required_runner_tags,
        required_skills=$required_skills, required_agents=$required_agents, approval_policy=$approval_policy,
-       supervision=$supervision, workflow=$workflow, enabled=$enabled, version=$version, updated_at=$updated_at WHERE slug=$slug`,
+       supervision=$supervision, workflow=$workflow, max_run_minutes=$max_run_minutes, enabled=$enabled, version=$version, updated_at=$updated_at WHERE slug=$slug`,
       { ...payload, version }
     );
     snapshotCapability(existing.id);
@@ -547,9 +568,9 @@ export function upsertCapability(input) {
   run(
     `INSERT INTO capabilities
      (id, slug, name, description, category, keywords, input_schema, output_schema, required_runner_tags,
-      required_skills, required_agents, approval_policy, supervision, workflow, version, enabled, created_at, updated_at)
+      required_skills, required_agents, approval_policy, supervision, workflow, max_run_minutes, version, enabled, created_at, updated_at)
      VALUES ($id, $slug, $name, $description, $category, $keywords, $input_schema, $output_schema,
-      $required_runner_tags, $required_skills, $required_agents, $approval_policy, $supervision, $workflow, $version,
+      $required_runner_tags, $required_skills, $required_agents, $approval_policy, $supervision, $workflow, $max_run_minutes, $version,
       $enabled, $created_at, $updated_at)`,
     created
   );
@@ -1206,18 +1227,27 @@ export function runOwnerTokenId(runId) {
 }
 
 // Auto-fail runs that have been executing past the deadline (e.g. a runner died mid-run).
-export function reapStuckRunIds(maxMs) {
-  if (!maxMs || maxMs <= 0) return [];
-  const cutoff = new Date(Date.now() - maxMs).toISOString();
-  const stuck = all(
-    "SELECT id FROM runs WHERE status IN ('assigned','running') AND COALESCE(started_at, assigned_at, created_at) < ?",
-    [cutoff]
+export function reapStuckRunIds(defaultMaxMs) {
+  if (!defaultMaxMs || defaultMaxMs <= 0) return [];
+  const nowMs = Date.now();
+  // Each run's deadline is its capability's `max_run_minutes` when set, else the
+  // global default — so a long-running workflow (e.g. an audit) can opt into a
+  // larger window while everything else keeps the safety-net cap.
+  const candidates = all(
+    `SELECT r.id AS id, COALESCE(r.started_at, r.assigned_at, r.created_at) AS started_at, c.max_run_minutes AS max_run_minutes
+     FROM runs r LEFT JOIN capabilities c ON r.capability_id = c.id
+     WHERE r.status IN ('assigned','running')`
   );
   const reaped = [];
-  for (const row of stuck) {
-    const result = transitionRun(row.id, "failed", { current_step: "timed out", error: "run exceeded execution deadline", completed_at: now() });
+  for (const row of candidates) {
+    const startedMs = Date.parse(row.started_at || "");
+    if (Number.isNaN(startedMs)) continue;
+    const maxMs = row.max_run_minutes && row.max_run_minutes > 0 ? row.max_run_minutes * 60_000 : defaultMaxMs;
+    if (nowMs - startedMs < maxMs) continue;
+    const minutes = Math.round(maxMs / 60_000);
+    const result = transitionRun(row.id, "failed", { current_step: "timed out", error: `run exceeded execution deadline (${minutes}m)`, completed_at: now() });
     if (result.ok && !result.idempotent) {
-      addRunEvent(row.id, "run.failed", "Run exceeded execution deadline");
+      addRunEvent(row.id, "run.failed", `Run exceeded execution deadline (${minutes}m)`);
       reaped.push(row.id);
     }
   }
