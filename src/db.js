@@ -11,6 +11,7 @@ import {
   storeExecutionIntent
 } from "./runExecution.js";
 import { hashToken, randomToken } from "./security.js";
+import { decrypt as decryptSecret, encrypt as encryptSecret, redactSecrets, secretsEnabled } from "./secretsStore.js";
 import { seedAgents, seedCapabilities, seedKnowledge, seedSkills } from "./seeds.js";
 import { nextRun as cronNextRun } from "./cron.js";
 
@@ -281,6 +282,15 @@ export function initDb() {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS secrets (
+      key TEXT PRIMARY KEY,
+      value_encrypted BLOB NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      created_by TEXT NOT NULL DEFAULT ''
+    );
+
     CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
     CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
     CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at);
@@ -299,6 +309,7 @@ export function initDb() {
   migrateCapabilityDeadlineColumn();
   migrateCapabilityDefinitionHashColumn();
   migrateRunsCapabilityVersioningColumns();
+  migrateRunnerAuthHealthColumn();
   setSettingDefault("instance_name", env.instanceName);
   seedAll();
   seedWorkflowEndpoints();
@@ -356,6 +367,17 @@ function migrateRunsCapabilityVersioningColumns() {
   }
   if (!columns.includes("parent_run_id")) {
     db.exec("ALTER TABLE runs ADD COLUMN parent_run_id TEXT");
+  }
+}
+
+// Per-runner CLI auth health (Codex/Claude subscription auth) rides along on
+// the heartbeat. Stored as a JSON blob; NULL until a runner reports it, so the
+// CREATE TABLE no-op on existing installs is backfilled here. Never holds token
+// material — only {ok, expiresAt?, accountId?} booleans/strings.
+function migrateRunnerAuthHealthColumn() {
+  const columns = all("PRAGMA table_info(runners)").map((row) => row.name);
+  if (!columns.includes("auth_health")) {
+    db.exec("ALTER TABLE runners ADD COLUMN auth_health TEXT");
   }
 }
 
@@ -642,6 +664,113 @@ export function upsertCapability(input) {
   );
   snapshotCapability(created.id);
   return getCapability(input.slug);
+}
+
+// --- Encrypted reusable secrets ---------------------------------------------
+// Values are AES-256-GCM encrypted at rest (see src/secretsStore.js). The only
+// way a plaintext value leaves the DB is via getDecryptedSecretEnv() at run
+// claim time (injected as env into the run's child process) — never through a
+// list/read API. secretsEnabled() gates the whole feature; the server maps a
+// disabled store to a 503.
+
+export { secretsEnabled };
+
+// List names + metadata only. NEVER returns or decrypts values.
+export function listSecretMeta() {
+  return all("SELECT key, description, created_at, updated_at, created_by FROM secrets ORDER BY key").map((row) => ({
+    key: row.key,
+    description: row.description || "",
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    createdBy: row.created_by || ""
+  }));
+}
+
+export function secretExists(key) {
+  return Boolean(one("SELECT key FROM secrets WHERE key = ?", [String(key)]));
+}
+
+// Upsert an encrypted secret. `value` is plaintext; it is encrypted here and
+// the plaintext is never persisted or logged. Throws if the store is disabled.
+export function upsertSecret({ key, value, description = "", createdBy = "" }) {
+  const cleanKey = String(key || "").trim();
+  if (!cleanKey) throw new Error("secret key is required");
+  const blob = encryptSecret(String(value ?? ""));
+  const timestamp = now();
+  const existing = one("SELECT key, created_at, created_by FROM secrets WHERE key = ?", [cleanKey]);
+  if (existing) {
+    run(
+      "UPDATE secrets SET value_encrypted = ?, description = ?, updated_at = ? WHERE key = ?",
+      [blob, String(description || ""), timestamp, cleanKey]
+    );
+  } else {
+    run(
+      "INSERT INTO secrets (key, value_encrypted, description, created_at, updated_at, created_by) VALUES (?, ?, ?, ?, ?, ?)",
+      [cleanKey, blob, String(description || ""), timestamp, timestamp, String(createdBy || "")]
+    );
+  }
+  return getSecretMeta(cleanKey);
+}
+
+export function getSecretMeta(key) {
+  const row = one("SELECT key, description, created_at, updated_at, created_by FROM secrets WHERE key = ?", [String(key)]);
+  if (!row) return null;
+  return {
+    key: row.key,
+    description: row.description || "",
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    createdBy: row.created_by || ""
+  };
+}
+
+export function deleteSecret(key) {
+  const result = run("DELETE FROM secrets WHERE key = ?", [String(key)]);
+  return result.changes > 0;
+}
+
+// Decrypt the secrets named in `names` into a { NAME: value } env map. Used at
+// run claim time to inject only the allowlisted secrets into one run. Unknown
+// names are silently skipped. Returns {} when the store is disabled.
+export function getDecryptedSecretEnv(names = []) {
+  if (!secretsEnabled()) return {};
+  const wanted = [...new Set((Array.isArray(names) ? names : []).map((n) => String(n || "").trim()).filter(Boolean))];
+  const env = {};
+  for (const key of wanted) {
+    const row = one("SELECT value_encrypted FROM secrets WHERE key = ?", [key]);
+    if (!row) continue;
+    try {
+      env[key] = decryptSecret(row.value_encrypted);
+    } catch {
+      // A decrypt failure (rotated/garbage key) must never crash a claim; skip.
+    }
+  }
+  return env;
+}
+
+// Every stored plaintext secret value, used only to scrub run output/artifacts/
+// logs before persistence. Returns [] when disabled. Never exposed via API.
+export function allSecretValues() {
+  if (!secretsEnabled()) return [];
+  const values = [];
+  for (const row of all("SELECT value_encrypted FROM secrets")) {
+    try {
+      values.push(decryptSecret(row.value_encrypted));
+    } catch {
+      /* skip undecryptable rows */
+    }
+  }
+  return values;
+}
+
+// Scrub any stored secret value out of an arbitrary JSON-ish value (run output,
+// artifact content, event data/message). Last line of defense before anything a
+// runner posts is persisted or echoed back through the API. No-op when the
+// store is disabled or empty.
+export function scrubStoredSecrets(value) {
+  const values = allSecretValues();
+  if (!values.length) return value;
+  return redactSecrets(value, values);
 }
 
 function normalizeWorkflowEndpoint(row, { includeSecretHash = false } = {}) {
@@ -1114,6 +1243,10 @@ export function createRun(capability, input, options = {}) {
   const status = approvalRequired ? "waiting_approval" : "queued";
   const runId = id("run");
   let storedInput = input && typeof input === "object" && !Array.isArray(input) ? { ...input } : {};
+  // Defense in depth: a caller could paste a known secret value straight into a
+  // run input. Scrub stored secret values so they never persist in run.input
+  // (the allowlist names in `secretNames` are not values, so they survive).
+  storedInput = scrubStoredSecrets(storedInput);
   const execution = normalizeExecutionIntent(storedInput, options.execution || {});
   storedInput = storeExecutionIntent(storedInput, execution);
   if (options.origin) {
@@ -1559,6 +1692,9 @@ export function getRunner(runnerId) {
     capacity,
     activeRuns,
     availableSlots: Math.max(0, capacity - activeRuns),
+    // Per-runner CLI auth health (Codex/Claude). Booleans + expiry + account id
+    // only — never token material. Null until the runner reports it.
+    authHealth: parseJson(row.auth_health, null),
     createdAt: row.created_at,
     lastHeartbeatAt: row.last_heartbeat_at
   };
@@ -1579,13 +1715,18 @@ export function heartbeatRunner(runnerId, input = {}) {
   const activeProvided = input.activeRuns != null;
   const capacity = capacityProvided ? normalizeCapacity(input.capacity, 1) : null;
   const active = activeProvided ? Math.max(0, Math.floor(Number(input.activeRuns) || 0)) : null;
+  // Auth health is optional and sanitized to a strict shape so a runner can
+  // never push token material into the Hub via the heartbeat. Only present when
+  // the runner reports it; COALESCE keeps the last known reading otherwise.
+  const authHealth = input.auth != null ? json(sanitizeRunnerAuthHealth(input.auth)) : null;
   run(
     `UPDATE runners SET status='online',
        last_heartbeat_at=?,
        tags=COALESCE(?, tags),
        current_run_id=?,
        capacity=COALESCE(?, capacity),
-       active_runs=COALESCE(?, active_runs)
+       active_runs=COALESCE(?, active_runs),
+       auth_health=COALESCE(?, auth_health)
      WHERE id=?`,
     [
       timestamp,
@@ -1593,10 +1734,33 @@ export function heartbeatRunner(runnerId, input = {}) {
       input.currentRunId || null,
       capacity,
       active,
+      authHealth,
       runnerId
     ]
   );
   return getRunner(runnerId);
+}
+
+// Whitelist the auth-health shape the Hub will persist. Defense in depth: even
+// if a runner (or a compromised runner token) posts token material under
+// `auth`, only these scalar fields survive — never an access/refresh token.
+function sanitizeRunnerAuthHealth(auth) {
+  if (!auth || typeof auth !== "object") return {};
+  const pickProvider = (p) => {
+    if (!p || typeof p !== "object") return undefined;
+    const out = { ok: Boolean(p.ok) };
+    if (p.expiresAt != null) out.expiresAt = String(p.expiresAt).slice(0, 64);
+    if (p.accountId != null) out.accountId = String(p.accountId).slice(0, 128);
+    if (p.error != null) out.error = String(p.error).slice(0, 200);
+    return out;
+  };
+  const result = {};
+  const codex = pickProvider(auth.codex);
+  const claude = pickProvider(auth.claude);
+  if (codex) result.codex = codex;
+  if (claude) result.claude = claude;
+  if (auth.checkedAt != null) result.checkedAt = String(auth.checkedAt).slice(0, 64);
+  return result;
 }
 
 // Internal helper — adjust a runner's active-run counter atomically. Used by
@@ -1643,9 +1807,26 @@ export function claimNextRun(runnerId) {
     // Reserve the runner slot before anyone reads its capacity again.
     adjustRunnerActiveRuns(runnerId, 1);
     addRunEvent(candidate.id, "run.assigned", `Assigned to ${runner.name}`, { runnerId });
-    return { run: getRun(candidate.id), capability };
+    const claimedRun = getRun(candidate.id);
+    // Inject only the allowlisted secrets into THIS run as a separate
+    // claim-payload field. It rides the runner-scoped next-run channel and is
+    // never written into run.input/output/artifacts/logs, so secret values
+    // never land in stored state or any non-runner API response.
+    const secretEnv = getDecryptedSecretEnv(secretNamesForRun(capability, claimedRun?.input));
+    const payload = { run: claimedRun, capability };
+    if (Object.keys(secretEnv).length) payload.secretEnv = secretEnv;
+    return payload;
   }
   return null;
+}
+
+// The allowlist of secret names a run may receive: the capability's declared
+// `workflow.secrets` plus any per-run `input.secretNames`. A run never gets
+// every secret — only the names explicitly opted into here.
+export function secretNamesForRun(capability, runInput) {
+  const fromCapability = Array.isArray(capability?.workflow?.secrets) ? capability.workflow.secrets : [];
+  const fromInput = Array.isArray(runInput?.secretNames) ? runInput.secretNames : [];
+  return [...new Set([...fromCapability, ...fromInput].map((n) => String(n || "").trim()).filter(Boolean))];
 }
 
 // Counts queued / assigned / running runs — exposed so the Hub UI can render

@@ -59,7 +59,14 @@ import {
   upsertKnowledge,
   upsertSkill,
   upsertWorkflowEndpoint,
-  updateRun
+  updateRun,
+  listSecretMeta,
+  getSecretMeta,
+  secretExists,
+  upsertSecret,
+  deleteSecret,
+  secretsEnabled,
+  scrubStoredSecrets
 } from "./db.js";
 import { env } from "./env.js";
 import { now, slugify } from "./ids.js";
@@ -2072,6 +2079,55 @@ app.get("/api/audit", requireAuth, requireScopes("admin"), (req, res) => {
   res.json({ audit: listAudit({ limit: Number(req.query.limit || 100) }) });
 });
 
+// --- Encrypted reusable secrets (admin only) --------------------------------
+// Names + metadata are listable; values are write-only and never returned. The
+// whole feature is disabled (503) unless SECRETS_ENC_KEY is configured, so we
+// never silently store plaintext. All routes are admin-scope: a read-scoped
+// token gets 403 from requireScopes before reaching the handler.
+function requireSecretsEnabled(_req, res, next) {
+  if (!secretsEnabled()) {
+    return res.status(503).json({
+      error: "secrets store disabled",
+      message: "Set SECRETS_ENC_KEY (a 32-byte base64/hex key) on the Hub to enable encrypted secrets."
+    });
+  }
+  next();
+}
+
+const SECRET_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/; // env-var-safe names
+const SECRET_VALUE_MAX = 32 * 1024;
+
+app.get("/api/secrets", requireAuth, requireScopes("admin"), requireSecretsEnabled, (_req, res) => {
+  res.json({ secrets: listSecretMeta(), enabled: true });
+});
+
+app.put("/api/secrets/:key", requireAuth, requireScopes("admin"), requireSecretsEnabled, (req, res) => {
+  const key = String(req.params.key || "").trim();
+  if (!SECRET_KEY_RE.test(key)) {
+    return res.status(400).json({ error: "invalid secret key", message: "Use an env-var-safe name: letters, digits, underscore; must not start with a digit." });
+  }
+  const value = req.body?.value;
+  if (typeof value !== "string" || !value.length) {
+    return res.status(400).json({ error: "value is required" });
+  }
+  if (value.length > SECRET_VALUE_MAX) {
+    return res.status(413).json({ error: "secret value too large" });
+  }
+  const created = !secretExists(key);
+  const meta = upsertSecret({ key, value, description: String(req.body?.description || ""), createdBy: req.token?.name || req.token?.id || "" });
+  // Audit records the key + actor only — never the value.
+  recordAudit(req.token.name, created ? "secret.created" : "secret.updated", key, { key });
+  res.status(created ? 201 : 200).json({ secret: meta });
+});
+
+app.delete("/api/secrets/:key", requireAuth, requireScopes("admin"), requireSecretsEnabled, (req, res) => {
+  const key = String(req.params.key || "").trim();
+  if (!secretExists(key)) return res.status(404).json({ error: "secret not found" });
+  deleteSecret(key);
+  recordAudit(req.token.name, "secret.deleted", key, { key });
+  res.json({ ok: true, key });
+});
+
 app.get("/api/workflow-endpoints", requireAuth, requireScopes("admin"), (req, res) => {
   const includeDisabled = req.query.all === "1";
   res.json({ endpoints: listWorkflowEndpoints({ includeDisabled }) });
@@ -2666,6 +2722,12 @@ app.patch("/api/capabilities/:id", requireAuth, requireScopes("admin"), (req, re
 app.post("/api/capabilities/:id/run", requireAuth, requireScopes("api", "mcp"), async (req, res) => {
   const capability = getCapability(req.params.id);
   if (!capability || !capability.enabled) return res.status(404).json({ error: "capability not found" });
+  // Admin-only capabilities (e.g. reauth-cli, which drives a CLI login on the
+  // runner host) can only be triggered by an admin token. The flag rides in the
+  // capability's workflow JSON so it is part of the definition hash.
+  if (capability.workflow?.adminOnly && !(req.token?.scopes || []).includes("admin")) {
+    return res.status(403).json({ error: "admin scope required", capability: capability.slug });
+  }
   // Optional per-run response endpoint (slice 1 of the response-egress
   // contract). Validate the caller-supplied shape BEFORE the run is created
   // so a malformed endpoint fails 400 cleanly and never produces an orphan
@@ -3184,8 +3246,12 @@ app.get("/api/runs/:id/timeline", requireAuth, (req, res) => {
   });
 });
 app.post("/api/runs/:id/events", requireAuth, requireScopes("runner"), requireRunOwnerOrAdmin, (req, res) => {
-  const event = addRunEvent(req.params.id, req.body.type || "log", req.body.message || "", req.body.data || {});
-  if (req.body.type === "workflow.step") updateRun(req.params.id, { current_step: req.body.message || "" });
+  // Scrub any injected secret value out of the event message/data before it is
+  // persisted — an event firehose is the easiest place for a secret to leak.
+  const message = scrubStoredSecrets(req.body.message || "");
+  const data = scrubStoredSecrets(req.body.data || {});
+  const event = addRunEvent(req.params.id, req.body.type || "log", message, data);
+  if (req.body.type === "workflow.step") updateRun(req.params.id, { current_step: message });
   res.json({ event });
 });
 app.post("/api/runs/:id/start", requireAuth, requireScopes("runner"), requireRunOwnerOrAdmin, (req, res) => {
@@ -3250,7 +3316,9 @@ function queueNextChainedRun(parentRun, output, req) {
 }
 
 app.post("/api/runs/:id/complete", requireAuth, requireScopes("runner"), requireRunOwnerOrAdmin, (req, res) => {
-  const output = req.body.output || {};
+  // Scrub injected secret values out of the run output before it is persisted
+  // or echoed back through any read API.
+  const output = scrubStoredSecrets(req.body.output || {});
   const result = transitionRun(req.params.id, "succeeded", { current_step: "completed", output, completed_at: now() });
   if (!result.ok) return res.status(result.code).json({ error: result.error });
   if (result.raced) {
@@ -3262,12 +3330,13 @@ app.post("/api/runs/:id/complete", requireAuth, requireScopes("runner"), require
   res.json({ run: result.run, chainedRun: chainedRun ? withRunLinks(chainedRun) : null });
 });
 app.post("/api/runs/:id/fail", requireAuth, requireScopes("runner"), requireRunOwnerOrAdmin, (req, res) => {
-  const result = transitionRun(req.params.id, "failed", { current_step: "failed", error: req.body.error || "failed", completed_at: now() });
+  const error = scrubStoredSecrets(req.body.error || "failed");
+  const result = transitionRun(req.params.id, "failed", { current_step: "failed", error, completed_at: now() });
   if (!result.ok) return res.status(result.code).json({ error: result.error });
   if (result.raced) {
     addRunEvent(req.params.id, "run.transition_ignored", `Ignored late 'failed' report; run already terminal as '${result.run.status}'`, { attempted: "failed", terminal: result.run.status });
   }
-  if (!result.idempotent) addRunEvent(req.params.id, "run.failed", req.body.error || "Run failed");
+  if (!result.idempotent) addRunEvent(req.params.id, "run.failed", error || "Run failed");
   if (!result.idempotent) recordRunTerminalArtifacts(result.run.id);
   res.json({ run: result.run });
 });
@@ -3331,7 +3400,12 @@ function storeRunArtifact(runRecord, body = {}) {
     .replace(/[\0\r\n]/g, "")
     .trim() || "artifact.txt";
   const filePath = path.join(runDir, safeName);
-  const content = body.contentBase64 ? Buffer.from(body.contentBase64, "base64") : Buffer.from(String(body.content ?? ""));
+  // Scrub injected secret values out of text artifacts before they hit disk.
+  // Base64 (binary) uploads are left as-is — a plaintext secret can only leak
+  // through the textual content path, which is what workflows actually use.
+  const content = body.contentBase64
+    ? Buffer.from(body.contentBase64, "base64")
+    : Buffer.from(String(scrubStoredSecrets(String(body.content ?? ""))));
   writeFileSync(filePath, content);
   const stats = statSync(filePath);
   return createArtifact({

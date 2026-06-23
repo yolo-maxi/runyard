@@ -117,6 +117,7 @@ const deepLinks = {
   schedules: () => "#schedules",
   schedule: (id) => `#schedules/${encodeURIComponent(id)}`,
   audit: () => "#audit",
+  secrets: () => "#secrets",
   connect: () => "#connect",
   approvals: () => "#approvals",
   approval: (id) => `#approvals/${encodeURIComponent(id)}`,
@@ -1072,6 +1073,7 @@ async function render() {
   if (view === "schedules") return segments[1] ? renderScheduleDetail(segments[1]) : renderSchedules();
   if (view === "tokens") return renderTokens();
   if (view === "audit") return renderAudit();
+  if (view === "secrets") return renderSecrets();
   if (view === "settings") return renderSettings();
   return renderHome();
 }
@@ -4368,6 +4370,230 @@ async function renderRunners() {
     });
   });
   bindCopy();
+}
+
+// --- Secrets (admin only): reusable secrets + per-runner CLI auth health -----
+// Three sections: (1) an auth-health strip showing each runner's Codex/Claude
+// subscription validity + expiry (red when expired), (2) a Re-auth button per
+// runner+provider that triggers the reauth-cli capability and polls the run to
+// surface the device-auth URL + code, and (3) reusable secrets CRUD where
+// values are write-only — the API never returns a stored value.
+
+function isAdmin() {
+  return (state.me?.scopes || []).includes("admin");
+}
+
+// Render one provider's auth-health pill. `info` is { ok, expiresAt?, accountId?, error? }.
+function authHealthPill(provider, info) {
+  if (!info) return `<span class="status offline" title="No report yet">${esc(provider)}: unknown</span>`;
+  const expired = info.ok === false;
+  const tone = expired ? "failed" : "succeeded";
+  const label = expired ? "expired" : "valid";
+  const expiry = info.expiresAt ? ` · expires ${esc(relativeTime(info.expiresAt))}` : "";
+  const acct = info.accountId ? ` · ${esc(info.accountId)}` : "";
+  const title = [info.error || "", info.expiresAt || ""].filter(Boolean).join(" ");
+  return `<span class="status ${tone}" title="${esc(title)}">${esc(provider)}: ${label}${expiry}${acct}</span>`;
+}
+
+function runnerAuthStrip(runner) {
+  const auth = runner.authHealth || null;
+  const codex = auth?.codex || null;
+  const claude = auth?.claude || null;
+  const reauthControls = ["codex", "claude"]
+    .map(
+      (provider) =>
+        `<button class="button" data-reauth-runner="${esc(runner.id)}" data-reauth-provider="${provider}">Re-auth ${provider}</button>`
+    )
+    .join(" ");
+  return `<div class="panel secret-runner-card">
+    <div class="toolbar"><h3>${esc(runner.name)} <span class="muted">${esc(runner.id)}</span></h3>
+      <div class="toolbar-actions">${status(runner.online ? "online" : "offline")}</div></div>
+    <p>${authHealthPill("Codex", codex)} ${authHealthPill("Claude", claude)}
+      ${auth?.checkedAt ? `<span class="muted"> · checked ${esc(relativeTime(auth.checkedAt))}</span>` : ""}</p>
+    <div class="toolbar-actions">${reauthControls}</div>
+    <div class="reauth-status" id="reauth-status-${esc(runner.id)}" hidden></div>
+  </div>`;
+}
+
+async function renderSecrets() {
+  if (!isAdmin()) {
+    content.innerHTML = `${toolbar("Secrets", "", deepLinks.secrets())}
+      <section class="panel">${empty("Admin only.", "Sign in with an admin-scoped token to manage secrets and CLI re-auth.")}</section>`;
+    return;
+  }
+
+  let runners = [];
+  try {
+    runners = (await api("/api/runners")).runners || [];
+  } catch {
+    runners = [];
+  }
+
+  // Secrets list — gracefully handle the disabled (503) case.
+  let secretsBlock;
+  let secretsEnabled = true;
+  try {
+    const data = await api("/api/secrets");
+    const rows = data.secrets || [];
+    secretsBlock = rows.length
+      ? `<table class="table"><thead><tr><th>Name</th><th>Description</th><th>Updated</th><th></th></tr></thead><tbody>
+          ${rows
+            .map(
+              (s) => `<tr>
+              <td data-label="Name"><code>${esc(s.key)}</code></td>
+              <td data-label="Description">${esc(s.description || "")}</td>
+              <td data-label="Updated"><span class="muted" title="${esc(s.updatedAt || "")}">${esc(relativeTime(s.updatedAt) || "—")}</span></td>
+              <td data-label="Action"><button class="button" data-secret-edit="${esc(s.key)}" data-secret-desc="${esc(s.description || "")}">Edit value</button>
+                <button class="danger" data-secret-delete="${esc(s.key)}">Delete</button></td>
+            </tr>`
+            )
+            .join("")}
+        </tbody></table>`
+      : empty("No secrets yet.", "Add one below. Values are encrypted at rest and never returned by the API.");
+  } catch (error) {
+    if (/disabled/i.test(error.message) || /503/.test(error.message)) {
+      secretsEnabled = false;
+      secretsBlock = empty(
+        "Secrets store disabled.",
+        "Set <code>SECRETS_ENC_KEY</code> (a 32-byte base64/hex key) on the Hub to enable encrypted secrets, then restart."
+      );
+    } else {
+      secretsBlock = `<p class="muted">${esc(error.message)}</p>`;
+    }
+  }
+
+  content.innerHTML = `${toolbar("Secrets", "", deepLinks.secrets())}
+    <section class="panel">
+      <h2>Runner CLI auth health</h2>
+      <p class="muted">Codex/Claude subscription logins live on each runner host and expire silently. Re-auth from here without SSH.</p>
+      ${runners.length ? runners.map(runnerAuthStrip).join("") : empty("No runners connected.")}
+    </section>
+    <section class="panel">
+      <h2>Reusable secrets</h2>
+      <p class="muted">Admin-managed, encrypted at rest, injected into runs as env only for the secret names a capability/run opts into. Values are write-only.</p>
+      ${secretsBlock}
+      ${secretsEnabled ? `<form id="secret-form" class="form-grid">
+        <label>Name <input id="secret-key" placeholder="GITHUB_TOKEN" autocomplete="off"></label>
+        <label>Description <input id="secret-desc" placeholder="What this is for" autocomplete="off"></label>
+        <label>Value <input id="secret-value" type="password" placeholder="write-only — never shown again" autocomplete="off"></label>
+        <button class="primary" type="submit">Save secret</button>
+      </form>` : ""}
+    </section>`;
+
+  if (secretsEnabled) bindSecretForm();
+  bindReauthButtons();
+  document.querySelectorAll("[data-secret-delete]").forEach((button) =>
+    button.addEventListener("click", async () => {
+      const key = button.dataset.secretDelete;
+      if (!confirm(`Delete secret ${key}? Runs that rely on it will lose the value.`)) return;
+      try {
+        await api(`/api/secrets/${encodeURIComponent(key)}`, { method: "DELETE" });
+        toast("Secret deleted", "ok");
+        await renderSecrets();
+      } catch (error) {
+        toast(error.message || "Delete failed", "error");
+      }
+    })
+  );
+  document.querySelectorAll("[data-secret-edit]").forEach((button) =>
+    button.addEventListener("click", () => {
+      $("#secret-key").value = button.dataset.secretEdit;
+      $("#secret-desc").value = button.dataset.secretDesc || "";
+      $("#secret-value").focus();
+      toast(`Editing ${button.dataset.secretEdit} — enter a new value to overwrite`, "info");
+    })
+  );
+  bindCopy();
+}
+
+function bindSecretForm() {
+  const form = $("#secret-form");
+  if (!form) return;
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const key = $("#secret-key").value.trim();
+    const value = $("#secret-value").value;
+    const description = $("#secret-desc").value.trim();
+    if (!key || !value) return toast("Name and value are required", "error");
+    try {
+      await api(`/api/secrets/${encodeURIComponent(key)}`, { method: "PUT", body: { value, description } });
+      toast(`Secret ${key} saved`, "ok");
+      await renderSecrets();
+    } catch (error) {
+      toast(error.message || "Save failed", "error");
+    }
+  });
+}
+
+function bindReauthButtons() {
+  document.querySelectorAll("[data-reauth-runner]").forEach((button) =>
+    button.addEventListener("click", async () => {
+      const runnerId = button.dataset.reauthRunner;
+      const provider = button.dataset.reauthProvider;
+      const statusEl = document.getElementById(`reauth-status-${runnerId}`);
+      button.disabled = true;
+      if (statusEl) {
+        statusEl.hidden = false;
+        statusEl.innerHTML = `<p class="muted">Starting ${esc(provider)} re-auth…</p>`;
+      }
+      try {
+        const res = await api("/api/capabilities/reauth-cli/run", {
+          method: "POST",
+          body: { input: { provider, runnerTag: "reauth" }, runnerId }
+        });
+        await pollReauthRun(res.run.id, statusEl, provider);
+      } catch (error) {
+        if (statusEl) statusEl.innerHTML = `<p class="status failed">${esc(error.message || "Re-auth failed to start")}</p>`;
+      } finally {
+        button.disabled = false;
+      }
+    })
+  );
+}
+
+// Poll a reauth-cli run: surface the device-auth URL + code the moment they
+// appear (posted as a `reauth.verification` event), then show the final
+// healthy/failed state. Caps at ~5.5 minutes to match the runner-side timeout.
+async function pollReauthRun(runId, statusEl, provider) {
+  const deadline = Date.now() + 5.5 * 60_000;
+  let shownVerification = false;
+  while (Date.now() < deadline) {
+    let detail;
+    try {
+      detail = await api(`/api/runs/${runId}`);
+    } catch {
+      detail = null;
+    }
+    const run = detail?.run || detail || {};
+    const events = detail?.events || [];
+    if (!shownVerification) {
+      const ev = events.find((e) => e.type === "reauth.verification");
+      const info = ev?.data?.reauth;
+      if (info?.verificationUrl && info?.userCode && statusEl) {
+        shownVerification = true;
+        const ttl = info.expiresInSec ? ` (expires in ${Math.round(info.expiresInSec / 60)}m)` : "";
+        statusEl.innerHTML = `<div class="panel"><p>Open <a href="${esc(info.verificationUrl)}" target="_blank" rel="noopener">${esc(info.verificationUrl)}</a>
+          and enter code <code>${esc(info.userCode)}</code>${esc(ttl)}.</p><p class="muted">Waiting for authorization…</p></div>`;
+      }
+    }
+    const status = run.status || "";
+    if (status === "succeeded") {
+      const reauth = run.output?.outputs?.reauth || {};
+      if (statusEl) {
+        statusEl.innerHTML = `<p class="status succeeded">${esc(provider)} re-authenticated${reauth.expiresAt ? ` · expires ${esc(relativeTime(reauth.expiresAt))}` : ""}.</p>`;
+      }
+      toast(`${provider} re-authenticated`, "ok");
+      setTimeout(() => renderSecrets().catch(() => {}), 1500);
+      return;
+    }
+    if (status === "failed" || status === "cancelled") {
+      if (statusEl) statusEl.innerHTML = `<p class="status failed">${esc(provider)} re-auth ${esc(status)}: ${esc(run.error || "")}</p>`;
+      toast(`${provider} re-auth ${status}`, "error");
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  if (statusEl) statusEl.innerHTML = `<p class="status failed">${esc(provider)} re-auth timed out.</p>`;
 }
 
 // --- Agents area folds Agents + Skills + Knowledge into one tabbed view ----

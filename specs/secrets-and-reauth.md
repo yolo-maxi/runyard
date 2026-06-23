@@ -1,0 +1,63 @@
+# Spec: Secrets page + CLI re-auth (Codex/Claude) — "Option B"
+
+Owner: Fran. Driven by Ocean. Build on Hetzner (`/home/xiko/smithers-hub`), deploy to prod (`hub.repo.box`) **manually after Ocean reviews** — NO auto-deploy.
+
+## Why
+1. Reusable secrets: one admin-managed place to store secrets and inject them into runs as env, instead of hand-editing `runner.env`.
+2. CLI re-auth: Codex/Claude subscription auth lives on the **runner host** (`~/.codex/auth.json`, `~/.claude/.credentials.json`). It expires and fails **silently** (this is literally why support chat fell back from Codex to Claude). Fran wants to re-auth from the Hub UI.
+
+## Hard architectural constraints
+- The Hub UI is served from **repo.box**; repo.box **cannot SSH to Hetzner**. Do NOT add an SSH bridge.
+- Everything must ride the **existing runner claim/poll plumbing**: the runner pulls work from the Hub, executes on its host, posts status/outputs/artifacts back. Auth and secret writes happen **on the runner host as part of a run**.
+- Codex paste-token (A) is rejected by Fran and is wrong: `auth.json` is a full OAuth session (`tokens.{id_token,access_token,refresh_token,account_id}`), not a reconstructable single token. Use the real login flow.
+
+## Confirmed CLI facts (installed on Hetzner)
+- `codex-cli 0.140.0` supports `codex login --device-auth` (emits a verification URL + user code, then polls until authorized, then writes `~/.codex/auth.json`). Also `codex login status`.
+- `claude setup-token` issues a long-lived subscription token (interactive OAuth). `claude` credentials live in `~/.claude/.credentials.json` (`claudeAiOauth`).
+
+## Scope of work
+
+### Part 1 — Encrypted reusable-secrets store
+- New SQLite table `secrets` (key TEXT PK, value_encrypted BLOB, description TEXT, created_at, updated_at, created_by). Mirror the existing migration style in `src/db.js`.
+- Encryption at rest: AES-256-GCM. Key from new env `SECRETS_ENC_KEY` (32-byte, base64/hex). If unset, the feature is disabled and the API returns a clear 503 — never store plaintext. Put crypto in a small `src/secretsStore.js` with `encrypt/decrypt` + unit tests; never log plaintext or key.
+- Admin-scope CRUD API (follow `src/security.js` scope model + `requireScopes`/admin override used in `src/server.js`):
+  - `GET /api/secrets` → list **names + metadata only**, NEVER values.
+  - `PUT /api/secrets/:key` (admin) → upsert encrypted value.
+  - `DELETE /api/secrets/:key` (admin).
+  - Non-admin / read-scope token → 403 on all of the above (mutations) and on any value read. Add a test that a `read`-scoped token gets 403.
+- Injection: when a runner claims a run, decrypt and pass selected secrets as **env** to that run. Reuse the assignment payload path the runner already consumes (see `src/smithers-runner.js` `executeAssignment` and how env/inputs reach the child). A run opts into which secret names it needs (allowlist on the capability/run input) — do NOT dump all secrets into every run. Secrets must never appear in stored run input/output/artifacts/logs (scrub).
+
+### Part 2 — Per-runner auth health
+- Each runner reports auth health in its heartbeat (extend the existing heartbeat liveness path — see recent `feat: use heartbeat liveness for run reaping`). Fields: `codex: {ok, expiresAt?, accountId?}`, `claude: {ok, expiresAt?}`. Derive codex from `codex login status` / parsing `~/.codex/auth.json` `last_refresh`+token exp; claude from `~/.claude/.credentials.json` `claudeAiOauth` expiry. Never include token material — booleans + expiry + account id only.
+- Hub stores latest health per runner; `GET /api/runners` (or existing runner list endpoint) surfaces it.
+
+### Part 3 — Re-auth capability (the core ask)
+- New capability `reauth-cli` (workflow-templates/workflows/reauth-cli.tsx), seeded in `src/seeds.js`. `requiredRunnerTags` so it targets a specific runner (input `runnerId`/tag). Input: `{ provider: "codex"|"claude", runnerTag }`.
+- Runner-side execution (gated branch in `src/smithers-runner.js`, mirroring the `supportWarm.js` special-path pattern, gated by an env flag e.g. `REAUTH_ENABLED=1` set only on runner hosts that should allow it):
+  - codex: spawn `codex login --device-auth`, **stream-parse** the verification URL + user code from its stdout, immediately post them back as a run **artifact/output** (`outputs.reauth.verificationUrl`, `userCode`, `expiresInSec`) so the UI can show them while the process keeps polling. On success the process writes `auth.json` and exits 0 → complete run `{outputs.reauth:{status:"ok", provider, accountId, expiresAt}}`. On timeout (cap ~5 min) kill + fail with a clear message.
+  - claude: run `claude setup-token`, surface its URL/code the same way, write credentials on success.
+  - NEVER post token material to outputs/artifacts/logs — only URL, code, status, account id, expiry.
+- The capability must be admin-scope to trigger.
+
+### Part 4 — Secrets page UI (`public/app` / served Hub UI)
+- New "Secrets" nav entry (admin only). Sections:
+  - Auth health strip (per runner: Codex / Claude valid + expiry; red when expired).
+  - "Re-auth" button per runner+provider → triggers `reauth-cli`, then **polls the run**; when `verificationUrl`+`userCode` appear, render "Open <url>, enter code <code>"; on completion show green healthy.
+  - Reusable secrets: list (names+desc only), add/edit (value write-only), delete. Clearly admin-gated.
+- Match existing app UI conventions (vanilla, same patterns as current `/app`).
+
+## Eval gates (must all pass before reporting done)
+- `pnpm test` fully green (add tests: secretsStore encrypt/decrypt roundtrip; secrets API admin-scope 403 for read-token; secret scrubbing from run output; reauth output parser extracts URL/code from a sample codex device-auth stdout fixture; health parser).
+- `git diff --check` clean; `node --check` on changed JS; TSX transforms clean.
+- Grep proof: no secret/token plaintext written to any `outputs`/`artifacts`/`logs` code path (show the scrub function + a test asserting it).
+- `codex login --device-auth` invocation is **dry-runnable** in tests via an injectable spawn (do NOT actually run a live login in tests; mock the child process).
+- Capability seeds idempotently (`smithers workflow inspect reauth-cli` works locally).
+
+## Do NOT
+- Do NOT run a live `codex login` / `claude setup-token` during the build (it would disturb the working auth on this host). Use mocked child processes in tests.
+- Do NOT deploy. Do NOT push to prod. Commit to a branch `feat/secrets-reauth` and stop. Ocean reviews the diff, then deploys.
+- Do NOT add an SSH bridge or call Hetzner from repo.box.
+- Do NOT expose secret values or OAuth tokens in any API response, log, run input/output, or artifact.
+
+## Deliverable
+Branch `feat/secrets-reauth` with all parts implemented, all gates green, and a short SUMMARY at the end listing: files changed, test count, the scrub proof, and exact manual deploy steps for Ocean.

@@ -15,6 +15,8 @@ import { markdownArtifactsFromOutputs } from "./runnerArtifacts.js";
 import { normalizeRunnerTags } from "./runExecution.js";
 import { extractSmithersFailure } from "./smithersFailure.js";
 import { supportWarmEnabled, warmSupportReply } from "./supportWarm.js";
+import { collectAuthHealth } from "./runnerAuthHealth.js";
+import { reauthEnabled, runReauth } from "./reauthCli.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -63,7 +65,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const stripAnsi = (s) => String(s).replace(/\[[0-9;]*m/g, "");
 
 async function smithers(args, opts = {}) {
-  return execFileAsync("smithers", args, { cwd: workspace, timeout: opts.timeout || 60_000, maxBuffer: 1024 * 1024 * 32 });
+  return execFileAsync("smithers", args, {
+    cwd: workspace,
+    timeout: opts.timeout || 60_000,
+    maxBuffer: 1024 * 1024 * 32,
+    ...(opts.env ? { env: opts.env } : {})
+  });
 }
 
 async function cancelSmithersRun(sid, reason = "") {
@@ -101,10 +108,15 @@ async function register() {
   );
 }
 
-// Launch `smithers up` detached and return the Smithers runId.
-async function launch(entry, input) {
+// Launch `smithers up` detached and return the Smithers runId. `secretEnv` is
+// the allowlisted, decrypted secrets the Hub injected with this run's claim;
+// they are merged into the child process env so the workflow's agent can use
+// them, and never written to disk/inputs/logs.
+async function launch(entry, input, secretEnv = {}) {
   const workflowPath = path.isAbsolute(entry) ? entry : path.join(workspace, entry);
-  const { stdout } = await smithers(["up", workflowPath, "--input", JSON.stringify(input || {}), "-d", "--format", "json"]);
+  const { stdout } = await smithers(["up", workflowPath, "--input", JSON.stringify(input || {}), "-d", "--format", "json"], {
+    env: { ...process.env, ...secretEnv }
+  });
   try {
     const parsed = JSON.parse(stdout);
     if (parsed.runId) return parsed.runId;
@@ -151,10 +163,39 @@ function runSmithersSupervisionFailure(capability, outputs) {
 
 async function executeAssignment(assignment) {
   const { run, capability } = assignment;
+  // Allowlisted, decrypted secrets the Hub injected for this run (never stored).
+  const secretEnv = assignment.secretEnv && typeof assignment.secretEnv === "object" ? assignment.secretEnv : {};
   const entry = capability.workflow?.entry || capability.workflow?.file;
   activeRuns.add(run.id);
   try {
     await client.post(`/api/runs/${run.id}/start`, {});
+
+    // Re-auth special path (dedicated runner host only, gated by REAUTH_ENABLED).
+    // Drives `codex login --device-auth` / `claude setup-token` on THIS host and
+    // streams the verification URL + user code back as run output so the Hub UI
+    // can show them. Mirrors the supportWarm special-path pattern; the general
+    // runner pool never sets REAUTH_ENABLED, so this branch is inert there.
+    if (reauthEnabled() && capability.slug === "reauth-cli") {
+      await event(run.id, "runner.reauth", `Starting CLI re-auth on ${name}`, { runnerId, provider: run.input?.provider });
+      const reauth = await runReauth(run.input || {}, {
+        onVerification: (info) =>
+          client
+            .post(`/api/runs/${run.id}/events`, {
+              type: "reauth.verification",
+              message: `Open ${info.verificationUrl} and enter code ${info.userCode}`,
+              data: { reauth: info }
+            })
+            .catch(() => {})
+      });
+      if (reauth.status === "ok") {
+        await client.post(`/api/runs/${run.id}/complete`, { output: { outputs: { reauth } } });
+        console.log(`Completed ${run.id} via reauth (${reauth.provider})`);
+      } else {
+        await client.post(`/api/runs/${run.id}/fail`, { error: reauth.error || `reauth ${reauth.status}` });
+        console.log(`Run ${run.id} reauth ended '${reauth.status}'`);
+      }
+      return;
+    }
 
     // Warm support path (dedicated support-runner only, gated by SUPPORT_WARM).
     // Answer the support-chat capability directly via the local `claude` CLI
@@ -172,7 +213,7 @@ async function executeAssignment(assignment) {
     if (!entry) throw new Error(`capability ${capability.slug} has no workflow.entry`);
     await event(run.id, "runner.started", `Executing Smithers workflow ${entry} on ${name}`, { runnerId, entry, location });
 
-    const sid = await launch(entry, run.input);
+    const sid = await launch(entry, run.input, secretEnv);
     await event(run.id, "smithers.dispatched", `Smithers run ${sid} started`, { smithersRunId: sid });
 
     // Stream Smithers events to the Hub until the run reaches a terminal state.
@@ -279,6 +320,26 @@ async function executeAssignment(assignment) {
   }
 }
 
+// Auth health is read from disk and attached to the heartbeat. Refreshing it on
+// every 2.5s tick would hammer the filesystem, so cache it and re-read at most
+// once per AUTH_HEALTH_TTL_MS. Booleans + expiry + account id only — never token
+// material (see src/runnerAuthHealth.js).
+const AUTH_HEALTH_TTL_MS = Number(process.env.SMITHERS_AUTH_HEALTH_TTL_MS || 30_000);
+let authHealthCache = null;
+let authHealthCheckedAtMs = 0;
+function currentAuthHealth() {
+  const nowMs = Date.now();
+  if (!authHealthCache || nowMs - authHealthCheckedAtMs > AUTH_HEALTH_TTL_MS) {
+    try {
+      authHealthCache = collectAuthHealth({ now: nowMs });
+    } catch {
+      authHealthCache = null;
+    }
+    authHealthCheckedAtMs = nowMs;
+  }
+  return authHealthCache;
+}
+
 let tickInFlight = false;
 function maybeExitAfterRuns() {
   if (!exitAfterRuns || completedRuns < exitAfterRuns || activeRuns.size > 0) return;
@@ -301,7 +362,8 @@ async function tick() {
         tags,
         capacity: concurrency,
         activeRuns: activeRuns.size,
-        currentRunId: activeRuns.size ? [...activeRuns][0] : null
+        currentRunId: activeRuns.size ? [...activeRuns][0] : null,
+        auth: currentAuthHealth()
       })
       .catch(() => {});
     // Fill every empty slot in this tick so a fast-arriving backlog drains as
