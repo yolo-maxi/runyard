@@ -23,7 +23,7 @@ import { syncWorkflowToWorkspace, workflowFileFromEntry } from "./workflow-repai
 const HUB_URL = String(process.env.RUN_SMITHERS_HUB_URL || process.env.SMITHERS_HUB_URL || process.env.HUB_URL || "http://127.0.0.1:43117").replace(/\/$/, "");
 const HUB_TOKEN = process.env.RUN_SMITHERS_HUB_TOKEN || process.env.SMITHERS_HUB_TOKEN || process.env.HUB_TOKEN || "";
 const POLL_INTERVAL_MS = Number(process.env.RUN_SMITHERS_POLL_INTERVAL_MS || 5_000);
-const POLL_DEADLINE_MS = Number(process.env.RUN_SMITHERS_POLL_DEADLINE_MS || 60 * 60 * 1000);
+const POLL_DEADLINE_MS = Number(process.env.RUN_SMITHERS_POLL_DEADLINE_MS || process.env.SMITHERS_RUN_DEADLINE_MS || 0);
 
 const inputSchema = z.object({
   wrappedCapability: z.string().min(1).describe("Slug of the capability/workflow to wrap."),
@@ -110,8 +110,8 @@ async function spawnChildRun(
 }
 
 async function pollChildRun(runId: string) {
-  const deadline = Date.now() + POLL_DEADLINE_MS;
-  while (Date.now() < deadline) {
+  const deadline = POLL_DEADLINE_MS > 0 ? Date.now() + POLL_DEADLINE_MS : 0;
+  while (!deadline || Date.now() < deadline) {
     const detail = await hubJson(`/api/runs/${encodeURIComponent(runId)}`);
     const run = detail?.run;
     const classification = classifyChildState(run);
@@ -272,7 +272,7 @@ export default smithers((ctx) => {
   return (
   <Workflow name="run-smithers">
     <Sequence>
-      <Task id="supervise" output={outputs.supervise} retries={0} timeoutMs={POLL_DEADLINE_MS + 60_000}>
+      <Task id="supervise" output={outputs.supervise} retries={0} timeoutMs={POLL_DEADLINE_MS > 0 ? POLL_DEADLINE_MS + 60_000 : undefined}>
         {async () => {
           const state = createWatcherState({
             goal: ctx.input.goal,

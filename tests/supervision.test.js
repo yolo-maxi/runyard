@@ -58,6 +58,13 @@ after(async () => {
 });
 
 describe("supervision decision (pure)", () => {
+  it("does not carry an independent default supervisor poll deadline", () => {
+    const source = readFileSync(path.join(process.cwd(), "workflow-templates", "workflows", "run-smithers.tsx"), "utf8");
+    assert.match(source, /process\.env\.SMITHERS_RUN_DEADLINE_MS/);
+    assert.match(source, /POLL_DEADLINE_MS > 0 \? POLL_DEADLINE_MS \+ 60_000 : undefined/);
+    assert.doesNotMatch(source, /60 \* 60 \* 1000/);
+  });
+
   it("supervises Smithers workflow capabilities by default, never the wrapper itself", () => {
     assert.equal(capabilityDefaultsToSupervision({ slug: "improve", supervision: { default: true } }), true);
     assert.equal(capabilityDefaultsToSupervision({ slug: "research", workflow: { engine: "smithers" } }), true);

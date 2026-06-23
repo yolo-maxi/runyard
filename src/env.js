@@ -129,6 +129,8 @@ export const env = {
   telegramWebhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET || "",
   // Runners are considered offline if no heartbeat within this window.
   runnerOfflineMs: Number(process.env.SMITHERS_RUNNER_OFFLINE_MS || 30_000),
+  // Running/assigned runs are considered stalled if they emit no event within this window. 0 disables.
+  runStallMs: Number(process.env.SMITHERS_RUN_STALL_MS || 15 * 60_000),
   // Optional allow-list of filesystem roots the runner may operate in. Empty = unrestricted (with a warning).
   runnerAllowedRoots: parseRoots(process.env.SMITHERS_RUNNER_ALLOWED_ROOTS),
   // Express trust-proxy setting. Default 'loopback' so X-Forwarded-For can't be spoofed by clients.
@@ -141,8 +143,8 @@ export const env = {
     if (/^\d+$/.test(raw)) return Number(raw);
     return raw;
   })(),
-  // Runs executing longer than this are auto-failed by the reaper. 0 disables.
-  runDeadlineMs: Number(process.env.SMITHERS_RUN_DEADLINE_MS || 30 * 60_000),
+  // Optional max-runtime backstop for the reaper. Heartbeat/stall liveness is primary; 0 disables.
+  runDeadlineMs: Number(process.env.SMITHERS_RUN_DEADLINE_MS || 0),
   // Best-effort terminal run obstruction analysis. If no provider/API key is
   // configured, the artifact pass is skipped; deterministic retrospectives
   // still run normally.

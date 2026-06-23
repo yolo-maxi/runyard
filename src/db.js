@@ -1292,43 +1292,72 @@ export function runOwnerTokenId(runId) {
   return runner?.token_id || null;
 }
 
-// Auto-fail runs that have been executing past the deadline (e.g. a runner died mid-run).
-export function reapStuckRunIds(defaultMaxMs) {
-  if (!defaultMaxMs || defaultMaxMs <= 0) return [];
+function ageMs(timestamp, nowMs = Date.now()) {
+  if (!timestamp) return Number.POSITIVE_INFINITY;
+  const parsed = Date.parse(timestamp);
+  if (Number.isNaN(parsed)) return Number.POSITIVE_INFINITY;
+  return nowMs - parsed;
+}
+
+function runBackstopExceeded(row, maxMs, nowMs) {
+  if (!maxMs || maxMs <= 0) return false;
+  const started = row.started_at || row.assigned_at || row.created_at;
+  return ageMs(started, nowMs) > maxMs;
+}
+
+function runReapReason(row, { maxMs = 0, stallMs = env.runStallMs, runnerOfflineMs = env.runnerOfflineMs, nowMs = Date.now() } = {}) {
+  if (row.runner_id && ageMs(row.last_heartbeat_at, nowMs) > runnerOfflineMs) {
+    return {
+      currentStep: "runner offline",
+      error: "runner heartbeat expired",
+      message: "Runner stopped heartbeating while the run was active",
+      reason: "runner_offline"
+    };
+  }
+  if (stallMs > 0) {
+    const lastEventAt = row.last_event_at || row.started_at || row.assigned_at || row.created_at;
+    if (ageMs(lastEventAt, nowMs) > stallMs) {
+      return {
+        currentStep: "stalled",
+        error: "run emitted no events within stall window",
+        message: "Run emitted no events within the stall window",
+        reason: "run_stalled"
+      };
+    }
+  }
+  if (runBackstopExceeded(row, maxMs, nowMs)) {
+    return {
+      currentStep: "timed out",
+      error: "run exceeded execution deadline",
+      message: "Run exceeded execution deadline",
+      reason: "max_runtime"
+    };
+  }
+  return null;
+}
+
+// Auto-fail active runs whose runner died, whose event stream stalled, or whose optional max-runtime backstop fired.
+export function reapStuckRunIds(maxMs) {
   const nowMs = Date.now();
-  // Each run's deadline is its capability's `max_run_minutes` when set, else the
-  // global default — so a long-running workflow (e.g. an audit) can opt into a
-  // larger window while everything else keeps the safety-net cap.
-  //
-  // Supervised runs execute under the `run-smithers` wrapper capability, so the
-  // run's own capability is the supervisor (typically no deadline) while the
-  // meaningful budget lives on the WRAPPED capability (the real work, e.g. the
-  // audit). We resolve the wrapped capability via the run's supervision/input
-  // envelope and take the larger of the two windows, so a supervised audit
-  // inherits its 180m leash instead of falling back to the 30m default.
-  const candidates = all(
-    `SELECT r.id AS id, COALESCE(r.started_at, r.assigned_at, r.created_at) AS started_at,
-            c.max_run_minutes AS max_run_minutes,
-            wc.max_run_minutes AS wrapped_max_run_minutes
-     FROM runs r
-     LEFT JOIN capabilities c ON r.capability_id = c.id
-     LEFT JOIN capabilities wc
-       ON wc.slug = json_extract(r.input, '$.wrappedCapability')
-     WHERE r.status IN ('assigned','running')`
+  const active = all(
+    `SELECT runs.id,
+            runs.runner_id,
+            runs.created_at,
+            runs.assigned_at,
+            runs.started_at,
+            runners.last_heartbeat_at,
+            (SELECT MAX(created_at) FROM run_events WHERE run_id = runs.id) AS last_event_at
+       FROM runs
+       LEFT JOIN runners ON runners.id = runs.runner_id
+      WHERE runs.status IN ('assigned','running')`
   );
   const reaped = [];
-  for (const row of candidates) {
-    const startedMs = Date.parse(row.started_at || "");
-    if (Number.isNaN(startedMs)) continue;
-    const own = row.max_run_minutes && row.max_run_minutes > 0 ? row.max_run_minutes : 0;
-    const wrapped = row.wrapped_max_run_minutes && row.wrapped_max_run_minutes > 0 ? row.wrapped_max_run_minutes : 0;
-    const effectiveMinutes = Math.max(own, wrapped);
-    const maxMs = effectiveMinutes > 0 ? effectiveMinutes * 60_000 : defaultMaxMs;
-    if (nowMs - startedMs < maxMs) continue;
-    const minutes = Math.round(maxMs / 60_000);
-    const result = transitionRun(row.id, "failed", { current_step: "timed out", error: `run exceeded execution deadline (${minutes}m)`, completed_at: now() });
+  for (const row of active) {
+    const reason = runReapReason(row, { maxMs, nowMs });
+    if (!reason) continue;
+    const result = transitionRun(row.id, "failed", { current_step: reason.currentStep, error: reason.error, completed_at: now() });
     if (result.ok && !result.idempotent) {
-      addRunEvent(row.id, "run.failed", `Run exceeded execution deadline (${minutes}m)`);
+      addRunEvent(row.id, "run.failed", reason.message, { reason: reason.reason });
       reaped.push(row.id);
     }
   }
