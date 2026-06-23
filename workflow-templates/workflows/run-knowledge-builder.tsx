@@ -159,14 +159,63 @@ async function hubJson(path: string) {
   return text ? JSON.parse(text) : null;
 }
 
-async function hubText(path: string) {
+async function hubText(path: string, cap = 2000) {
   if (!HUB_TOKEN) throw new Error("Run Knowledge Builder needs SMITHERS_HUB_TOKEN or RUN_KNOWLEDGE_HUB_TOKEN on the runner.");
   const response = await fetch(`${HUB_URL}${path}`, {
     headers: { authorization: `Bearer ${HUB_TOKEN}` }
   });
   const text = await response.text();
   if (!response.ok) return "";
-  return redactText(text, 2000);
+  return redactText(text, cap);
+}
+
+// Textual artifacts worth reading in full (diffs, reports, structured output,
+// error traces) vs. opaque blobs we only describe by metadata.
+const TEXTUAL_ARTIFACT_RE = /\.(md|markdown|txt|json|ndjson|log|diff|patch|csv|ya?ml|tsx?|jsx?|mjs|cjs|py|sh|html?)$/i;
+const TEXTUAL_MIME_RE = /(text|json|markdown|xml|x-ndjson|javascript|typescript|yaml|csv|diff|patch)/i;
+const ARTIFACT_CONTENT_PER = 2800;       // max redacted chars per artifact
+const ARTIFACT_CONTENT_RUN_BUDGET = 9000; // max redacted chars of artifact content per run
+
+// Rank the artifacts most likely to explain a run: the workflow's own output
+// and any human-readable report/diff/error first; raw event streams last.
+function artifactSignalScore(name = "") {
+  const n = name.toLowerCase();
+  if (/smithers-output\.json$/.test(n)) return 100;
+  if (/report.*\.md$|\.md$/.test(n)) return 90;
+  if (/\.(diff|patch)$/.test(n)) return 85;
+  if (/error|fail|stderr|trace/.test(n)) return 80;
+  if (/retrospective|summary|outcome/.test(n)) return 70;
+  if (/\.json$/.test(n)) return 50;
+  if (/events?\.ndjson$|smithers-events/.test(n)) return 10;
+  return 40;
+}
+
+// Pull redacted content for the highest-signal textual artifacts. Spend the
+// budget only where the signal is richest — failed/cancelled runs, or when the
+// caller explicitly focuses on artifacts — so successful runs stay cheap.
+async function enrichArtifacts(run: any, artifacts: any[], focusArea = "") {
+  const status = String(run.status || "").toLowerCase();
+  const failed = /fail|cancel|error|reject|timeout/.test(status);
+  const artifactFocus = /artifact|output|diff|report/i.test(focusArea);
+  if (!failed && !artifactFocus) return artifacts;
+  let budget = ARTIFACT_CONTENT_RUN_BUDGET;
+  const ranked = [...artifacts].sort((a, b) => artifactSignalScore(b?.name) - artifactSignalScore(a?.name));
+  const out = [];
+  for (const artifact of ranked) {
+    const id = artifact?.id || artifact?.artifactId;
+    const textual = TEXTUAL_ARTIFACT_RE.test(artifact?.name || "") || TEXTUAL_MIME_RE.test(artifact?.mimeType || "");
+    if (budget > 0 && id && textual) {
+      const raw = await hubText(`/api/artifacts/${encodeURIComponent(id)}/download`, ARTIFACT_CONTENT_PER).catch(() => "");
+      if (raw) {
+        const content = raw.length > budget ? `${raw.slice(0, budget)}...` : raw;
+        budget -= content.length;
+        out.push({ ...artifact, content });
+        continue;
+      }
+    }
+    out.push(artifact);
+  }
+  return out;
 }
 
 function countBy<T>(items: T[], getKey: (item: T) => string) {
@@ -178,8 +227,8 @@ function countBy<T>(items: T[], getKey: (item: T) => string) {
   return out;
 }
 
-function tail(text: string, lines = 14) {
-  return redactText(String(text || "").split(/\r?\n/).slice(-lines).join("\n"), 1600);
+function tail(text: string, lines = 120) {
+  return redactText(String(text || "").split(/\r?\n/).slice(-lines).join("\n"), 8000);
 }
 
 function cleanRun(run: any, diagnostics: any, artifacts: any[], logs: string) {
@@ -202,7 +251,8 @@ function cleanRun(run: any, diagnostics: any, artifacts: any[], logs: string) {
       name: redactText(artifact.name || "artifact", 180),
       mimeType: redactText(artifact.mimeType || "", 120),
       sizeBytes: Number(artifact.sizeBytes || 0),
-      deepLink: absoluteDeepLink(artifact.deepLink || "")
+      deepLink: absoluteDeepLink(artifact.deepLink || ""),
+      ...(artifact.content ? { content: redactText(artifact.content, ARTIFACT_CONTENT_PER) } : {})
     }))
   };
 }
@@ -316,17 +366,18 @@ export default smithers((ctx) => {
               .filter((run: any) => !run.createdAt || Date.parse(run.createdAt) >= cutoff)
               .slice(0, count);
 
+            const focusArea = inputText(ctx.input.focusArea);
             const sampledRuns = [];
             for (const run of allRuns) {
               const [diag, artifactList, logs] = await Promise.all([
                 hubJson(`/api/runs/${encodeURIComponent(run.id)}/diagnostics`).catch(() => ({ diagnostics: null })),
                 hubJson(`/api/runs/${encodeURIComponent(run.id)}/artifacts`).catch(() => ({ artifacts: [] })),
-                hubText(`/api/runs/${encodeURIComponent(run.id)}/logs`).catch(() => "")
+                hubText(`/api/runs/${encodeURIComponent(run.id)}/logs`, 14000).catch(() => "")
               ]);
-              sampledRuns.push(cleanRun(run, diag?.diagnostics || null, artifactList?.artifacts || [], logs));
+              const enriched = await enrichArtifacts(run, artifactList?.artifacts || [], focusArea);
+              sampledRuns.push(cleanRun(run, diag?.diagnostics || null, enriched, logs));
             }
 
-            const focusArea = inputText(ctx.input.focusArea);
             const knowledgeQuery = focusArea || capabilitySlug || "run knowledge";
             const knowledge = await hubJson(`/api/knowledge?q=${encodeURIComponent(knowledgeQuery)}`).catch(() => ({ knowledge: [] }));
             return {
