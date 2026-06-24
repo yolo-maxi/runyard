@@ -4,55 +4,66 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 // Pins the Schedules (cron jobs) browser surface: the nav entry, hash route,
-// deep-link helpers, and the list/detail/form view functions. Content
-// assertions on the shipped static assets, matching the rest of the
-// browser-asset suite.
+// deep-link helpers, and the list/detail/form view components. After the
+// React + TanStack rewrite the real source lives under web/; the legacy
+// public/app.js is now a built bundle. Each assertion below is repointed at
+// the web/ module that now implements the same feature, asserting an
+// equivalent construct that actually exists there. Style assertions stay on
+// the shipped public/styles.css (unchanged).
 const root = process.cwd();
-const appJs = readFileSync(path.join(root, "public", "app.js"), "utf8");
+const shellJsx = readFileSync(path.join(root, "web", "app", "Shell.jsx"), "utf8");
+const routerJs = readFileSync(path.join(root, "web", "lib", "router.js"), "utf8");
+const contentJsx = readFileSync(path.join(root, "web", "app", "Content.jsx"), "utf8");
+const schedulesJsx = readFileSync(path.join(root, "web", "views", "Schedules.jsx"), "utf8");
+const scheduleEditorJsx = readFileSync(path.join(root, "web", "components", "ScheduleEditor.jsx"), "utf8");
 const css = readFileSync(path.join(root, "public", "styles.css"), "utf8");
-const indexHtml = readFileSync(path.join(root, "public", "index.html"), "utf8");
 
 describe("Schedules: nav + routing", () => {
   it("adds a Schedules entry to the Admin menu", () => {
-    assert.match(indexHtml, /data-view="schedules"[^>]*>Schedules</);
+    // Admin menu is the ADMIN_LINKS array in Shell.jsx: ["schedules", "Schedules"].
+    assert.match(shellJsx, /\[\s*"schedules"\s*,\s*"Schedules"\s*\]/);
   });
 
   it("ships deep-link helpers for the schedules list + detail", () => {
-    assert.match(appJs, /schedules:\s*\(\)\s*=>\s*"#schedules"/);
-    assert.match(appJs, /schedule:\s*\(id\)\s*=>\s*`#schedules\//);
+    // deepLinks object in lib/router.js.
+    assert.match(routerJs, /schedules:\s*\(\)\s*=>\s*"#schedules"/);
+    assert.match(routerJs, /schedule:\s*\(id\)\s*=>\s*`#schedules\//);
   });
 
   it("routes #schedules to the list and #schedules/:id to the detail", () => {
-    assert.match(appJs, /view === "schedules"[\s\S]*?renderScheduleDetail\(segments\[1\]\)[\s\S]*?renderSchedules\(\)/);
+    // Route dispatch in app/Content.jsx renders ScheduleDetail for a segment,
+    // otherwise the Schedules list.
+    assert.match(
+      contentJsx,
+      /view === "schedules"[\s\S]*?ScheduleDetail[\s\S]*?<Schedules \/>/
+    );
   });
 });
 
 describe("Schedules: views + form", () => {
   it("renders a list with a New Schedule action and an empty state", () => {
-    const fn = appJs.slice(appJs.indexOf("async function renderSchedules"));
-    const body = fn.slice(0, fn.indexOf("\n}\n") + 2);
-    assert.match(body, /New Schedule/);
-    assert.match(body, /class="empty"|empty\(/);
-    assert.match(body, /data-run-schedule=/);
-    assert.match(body, /data-toggle-schedule=/);
-    assert.match(body, /data-delete-schedule=/);
+    // views/Schedules.jsx is the list view.
+    assert.match(schedulesJsx, /New Schedule/);
+    assert.match(schedulesJsx, /className="empty"/);
+    assert.match(schedulesJsx, /data-run-schedule=/);
+    assert.match(schedulesJsx, /data-toggle-schedule=/);
+    assert.match(schedulesJsx, /data-delete-schedule=/);
   });
 
   it("builds a create/edit form with a workflow picker, cron input, and JSON input", () => {
-    const fn = appJs.slice(appJs.indexOf("async function editSchedule"));
-    const body = fn.slice(0, fn.indexOf("\n}\n") + 2);
-    assert.match(body, /id="sched-cap"/); // workflow picker
-    assert.match(body, /id="sched-cron"/); // cron expression
-    assert.match(body, /id="sched-input"[\s\S]*?data-ftype="json"/); // JSON input
-    assert.match(body, /id="sched-timezone"/);
-    assert.match(body, /type="datetime-local"/); // one-shot support
+    // components/ScheduleEditor.jsx is the create/edit form.
+    assert.match(scheduleEditorJsx, /id="sched-cap"/); // workflow picker
+    assert.match(scheduleEditorJsx, /id="sched-cron"/); // cron expression
+    assert.match(scheduleEditorJsx, /id="sched-input"[\s\S]*?data-ftype="json"/); // JSON input
+    assert.match(scheduleEditorJsx, /id="sched-timezone"/);
+    assert.match(scheduleEditorJsx, /type="datetime-local"/); // one-shot support
   });
 
   it("wires a live, debounced cron preview against the preview endpoint", () => {
-    const fn = appJs.slice(appJs.indexOf("function bindCronPreview"));
-    const body = fn.slice(0, fn.indexOf("\n}\n") + 2);
-    assert.match(body, /\/api\/schedules\/preview\?cron=/);
-    assert.match(body, /setTimeout\(update, \d+\)/); // debounce
+    // CronPreview in components/ScheduleEditor.jsx debounces input via setTimeout
+    // and validates against the preview endpoint.
+    assert.match(scheduleEditorJsx, /\/api\/schedules\/preview\?cron=/);
+    assert.match(scheduleEditorJsx, /setTimeout\(\(\)\s*=>\s*\{[\s\S]*?\},\s*\d+\)/); // debounce
   });
 
   it("styles the schedule preview + chips", () => {
