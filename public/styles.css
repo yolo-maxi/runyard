@@ -5406,3 +5406,94 @@ button.cron-preset:hover {
   gap: 8px;
   flex-wrap: wrap;
 }
+
+/* --- Live event console (Run Detail SSE stream) ---------------------------- */
+/* A terminal-style tail of run events streamed over SSE (TanStack events
+   collection), with a moving auto-scroll body, status indicator, and a
+   pause/resume control. New classes — additive to the existing run-log view. */
+.live-console {
+  border: 1px solid var(--border, #d7dbe3);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #0d1117;
+  color: #d6deeb;
+}
+.live-console-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: #161b22;
+  border-bottom: 1px solid #21262d;
+  font-size: 0.85rem;
+}
+.live-console-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+.live-console-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #8b949e;
+  flex: 0 0 auto;
+}
+.live-console-status-live .live-console-dot {
+  background: #2ea043;
+  box-shadow: 0 0 0 0 rgba(46, 160, 67, 0.6);
+  animation: live-console-pulse 1.6s infinite;
+}
+.live-console-status-polling .live-console-dot { background: #d29922; }
+.live-console-status-reconnecting .live-console-dot { background: #d29922; }
+@keyframes live-console-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(46, 160, 67, 0.5); }
+  70% { box-shadow: 0 0 0 6px rgba(46, 160, 67, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(46, 160, 67, 0); }
+}
+.live-console-count { margin-left: auto; color: #8b949e; }
+.live-console-actions { display: inline-flex; gap: 8px; }
+.live-console-actions .button {
+  padding: 2px 10px;
+  font-size: 0.82rem;
+  background: #21262d;
+  color: #d6deeb;
+  border-color: #30363d;
+}
+.live-console-jump { background: #1f6feb !important; color: #fff !important; }
+.live-console-body {
+  max-height: 360px;
+  overflow-y: auto;
+  padding: 8px 12px;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  scroll-behavior: smooth;
+}
+.live-console-empty { color: #8b949e; padding: 8px 0; }
+.live-console-list { list-style: none; margin: 0; padding: 0; }
+.live-console-line {
+  display: grid;
+  grid-template-columns: auto auto auto 1fr;
+  gap: 8px;
+  align-items: baseline;
+  padding: 1px 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.live-console-time { color: #6e7681; flex: 0 0 auto; }
+.live-console-type { color: #79c0ff; }
+.live-console-node {
+  color: #d2a8ff;
+  font-size: 0.78rem;
+}
+.live-console-msg { color: #d6deeb; }
+.live-console-sev-error .live-console-msg,
+.live-console-sev-error .live-console-type { color: #ff7b72; }
+.live-console-sev-warn .live-console-msg { color: #e3b341; }
+.live-console-cat-noise { opacity: 0.55; }
+@media (prefers-reduced-motion: reduce) {
+  .live-console-body { scroll-behavior: auto; }
+  .live-console-status-live .live-console-dot { animation: none; }
+}
