@@ -10,85 +10,11 @@
     <script src="https://telegram.org/js/telegram-web-app.js?62"></script>
   </head>
   <body class="logged-out">
-    <header class="topbar">
-      <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Runyard</span><span class="brand-pill" title="Runyard Hub — the control plane">Hub</span><span class="env-chip env-chip-loading" id="env-chip" aria-label="Connected hub" title="Which Runyard hub you are connected to"><span class="env-chip-dot" aria-hidden="true"></span><span class="env-chip-host">connecting…</span><span class="env-chip-tag"></span></span></div>
-      <nav class="mobile-primary-nav" aria-label="Primary navigation">
-        <a href="#runs" data-primary-view="home">Runs<span class="nav-badge" data-badge="runs" hidden></span></a>
-        <a href="#workflows" data-primary-view="workflows">Workflows</a>
-        <a href="#agents/agents" data-primary-view="agents">Agents</a>
-        <a href="#approvals" data-primary-view="approvals">Approvals<span class="nav-badge" data-badge="approvals" hidden></span></a>
-      </nav>
-      <nav class="nav" aria-label="Support and admin">
-        <a class="button support-link" href="/docs#deep-links" title="Every URL in the Hub is shareable — see Docs.">Docs</a>
-        <a class="button support-link" href="/llms.txt">llms.txt</a>
-        <button type="button" class="update-badge" id="update-badge" hidden title="A newer RunYard release is available"></button>
-        <details class="admin-menu" id="admin-menu">
-          <summary class="button" aria-haspopup="true"><span class="admin-label-full">Admin</span><span class="admin-label-short">More</span> <span aria-hidden="true">▾</span></summary>
-          <div class="admin-menu-list" role="menu">
-            <a class="mobile-menu-only" href="/docs#deep-links" role="menuitem">Docs</a>
-            <a class="mobile-menu-only" href="/llms.txt" role="menuitem">llms.txt</a>
-            <button data-view="connect" type="button">Connect</button>
-            <button data-view="approvals" type="button">Approvals</button>
-            <button data-view="tokens" type="button">Tokens</button>
-            <button data-view="runners" type="button">Runners</button>
-            <button data-view="schedules" type="button">Schedules</button>
-            <button data-view="secrets" type="button">Secrets</button>
-            <button data-view="audit" type="button">Audit</button>
-            <button data-view="settings" type="button">Settings</button>
-          </div>
-        </details>
-        <button id="logout">Logout</button>
-      </nav>
-    </header>
-    <main id="login" class="login hidden">
-      <section class="panel">
-        <h1>Access Token</h1>
-        <p class="muted">Use a Runyard access token issued by this machine. The first token is written to <code>data/bootstrap-token.txt</code> on server start.</p>
-        <form id="login-form" class="form-grid">
-          <label>Token <input id="token" autocomplete="current-password" type="password" /></label>
-          <button class="primary" type="submit">Login</button>
-        </form>
-      </section>
-    </main>
-    <main id="app" class="shell hidden">
-      <nav class="sidebar" aria-label="Primary navigation">
-        <button data-view="home" class="active">Runs</button>
-        <button data-view="workflows">Workflows</button>
-        <button data-view="agents">Agents</button>
-      </nav>
-      <section id="content" class="content"></section>
-    </main>
-    <!-- Hovering support chat. Mounted globally so it persists across views.
-         JS in app.js hydrates the tabs, threads, and input. -->
-    <button id="support-chat-fab" type="button" class="support-chat-fab hidden" aria-label="Open Runyard support chat" title="Runyard support agent (Ctrl+/)">
-      <!-- Inline sparkle SVG (not the sparkle emoji): renders identically on every
-           platform and in headless/minimal envs where emoji degrade to tofu boxes. -->
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 3v4M12 17v4M3 12h4M17 12h4"/><path d="M12 8.5 13 11l2.5 1-2.5 1-1 2.5-1-2.5L8.5 12 11 11z"/></svg>
-    </button>
-    <aside id="support-chat" class="support-chat hidden" role="dialog" aria-label="Runyard user support agent" aria-modal="false">
-      <header class="support-chat-head">
-        <div class="support-chat-tabs" role="tablist" aria-label="Chat sessions"></div>
-        <div class="support-chat-actions">
-          <button type="button" class="support-chat-new" title="Start a new chat (resets context)" aria-label="New chat">＋</button>
-          <button type="button" class="support-chat-reset" title="Reset the current chat" aria-label="Reset chat">↺</button>
-          <details class="support-chat-overflow">
-            <summary class="support-chat-overflow-trigger" title="Chat options" aria-haspopup="menu" aria-label="Chat options">⋮</summary>
-            <div class="support-chat-overflow-menu" role="menu">
-              <button type="button" class="support-chat-clear-all" role="menuitem">Clear conversation</button>
-            </div>
-          </details>
-          <button type="button" class="support-chat-close" title="Hide chat" aria-label="Close chat">✕</button>
-        </div>
-      </header>
-      <div class="support-chat-status" role="status" aria-live="polite" hidden></div>
-      <div class="support-chat-body" aria-live="polite"></div>
-      <div class="support-chat-quickreplies" role="group" aria-label="Suggested questions" hidden></div>
-      <form class="support-chat-form" autocomplete="off" aria-describedby="support-chat-hint">
-        <textarea class="support-chat-input" rows="2" placeholder='Ask the Runyard agent — e.g. "open the failed run"' aria-label="Message"></textarea>
-        <button type="submit" class="primary support-chat-send" title="Send (Enter)">Send</button>
-        <p class="support-chat-hint" id="support-chat-hint">Enter to send · Shift+Enter for newline</p>
-      </form>
-    </aside>
+    <!-- The React + TanStack app (web/main.jsx, bundled to /public/app.js by
+         `pnpm build:web`) renders the entire UI — topbar, sidebar, login, all
+         views, and the support chat — into #root. The body keeps the
+         `logged-out` class until AuthGate confirms a session. -->
+    <div id="root"></div>
     <script type="module" src="/public/app.js"></script>
   </body>
 </html>
