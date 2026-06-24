@@ -42,22 +42,37 @@ same established pattern.
 - **Phase 3a — Audit + Settings** (commit `feat(web): port Audit + Settings…`):
   small read-only admin views (`useQuery` + shared `Toolbar`/`JsonBlock`/
   `StatusBadge`). Verified headless with real data, zero console errors.
+- **Phase 3b — Run Detail** (commit `feat(web): port Run Detail…`): reactive
+  per-run `useQuery` (refetchInterval only while non-terminal). Breadcrumbs,
+  outcome banner (+overflow actions), meta strip, chips, queue banner,
+  diagnostics, inputs/outputs (summary + raw), structured run log, artifacts,
+  context. Section open state in React+sessionStorage so polling can't snap it.
+- **Phase 3c — Live event console + SSE** (commits `feat(server): additive SSE…`
+  and `feat(web): live event console…`): **additive** `GET /api/runs/:id/events/
+  stream` (SSE) backed by `src/runEventBus.js` hooked into `addRunEvent`; a
+  per-run TanStack events collection (custom sync: initial fetch → SSE →
+  **polling fallback** on drop, dedup by id); `LiveConsole` panel that
+  auto-scrolls on new events, with pause/resume ("N new ↓") and a live/polling
+  status dot. Verified headless: live append + auto-scroll + pause + fallback,
+  zero console errors, backend suite green.
 
 ## Polling → reactive sync (Phase 4, in progress)
 
 Replaced so far: the 4s active-run progress poll and the 30s sidebar-badge poll
-(now derived live queries over the collections). Still polling via per-view
-`useQuery` refetchInterval (acceptable, no manual loops): run detail, reauth,
-update badge — to be wired as those views land.
+(now derived live queries over the collections), and — for run events — the poll
+loop is replaced by a **real SSE stream** consumed through a TanStack events
+collection, with polling kept only as the graceful fallback. Still polling via
+per-view `useQuery` refetchInterval (acceptable, no manual loops): run-detail
+metadata, reauth, update badge — wired as those views land.
 
 ## Remaining (port into the established pattern; commit per view)
 
-Run detail (+ event log/diagnostics) · Workflows list · Workflow detail
-(ReactFlow graph + highlight.js code tab) · Run form + workflow editor ·
-Approvals list/detail · Runners · Schedules (list/detail/editor) ·
-Agents/Skills/Knowledge · Tokens · Secrets (+reauth) · Update/Alerts ·
-Connect/Onboarding · Support chat. Final: delete `legacy-app.js`, prune unused
-vendor JS, full gate pass + screenshots. (Audit + Settings: done, see Phase 3a.)
+Workflows list · Workflow detail (ReactFlow graph + highlight.js code tab) ·
+Run form + workflow editor · Approvals list/detail · Runners · Schedules
+(list/detail/editor) · Agents/Skills/Knowledge · Tokens · Secrets (+reauth) ·
+Update/Alerts · Connect/Onboarding · Support chat. Final: delete `legacy-app.js`,
+prune unused vendor JS, full gate pass + screenshots. (Done so far: Home, Run
+Detail + live console, Audit, Settings.)
 
 ## How to resume
 
