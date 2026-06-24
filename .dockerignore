@@ -1,0 +1,51 @@
+# Keep the Docker build context small and free of secrets / large scratch.
+# Both Dockerfile.hub and Dockerfile.runner share this context.
+
+# Dependencies & build scratch — reinstalled inside the image from the lockfile.
+node_modules
+**/node_modules
+.pnpm-store
+
+# VCS & other worktrees (this repo uses sibling git worktrees — never ship them).
+.git
+.gitignore
+../*-worktrees
+
+# Local runtime state, datastore, and artifacts (belong on the mounted volume).
+data
+.runtime
+test-artifacts
+artifacts
+
+# Secrets & local env — must never enter an attestable image.
+.env
+.env.*
+!.env.example
+*.env
+runner.env
+support-runner.env
+runner.env.bak-*
+**/session-secret.txt
+**/*.pem
+**/*.key
+
+# Logs, screenshots, editor cruft.
+*.log
+logs
+screenshots
+*.png
+*.jpg
+*.jpeg
+.DS_Store
+.vscode
+.idea
+
+# Docker / CI meta — not needed inside the image.
+Dockerfile.hub
+Dockerfile.runner
+docker-compose.yml
+.dockerignore
+
+# Goal/status scratch docs for this packaging task.
+DOCKER-DSTACK-GOAL.md
+DOCKER-DSTACK-STATUS.md
