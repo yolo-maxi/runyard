@@ -163,5 +163,30 @@ export const env = {
   // default because it is a read-only view over existing run/event/artifact
   // state; operators can still disable it with RUNYARD_RUN_TIMELINE=0.
   runTimelineEnabled: parseBool(process.env.RUNYARD_RUN_TIMELINE, true),
+  // --- Self-host update check + apply ---------------------------------------
+  // Passive update CHECK: poll the public GitHub Releases API (outbound-only,
+  // read-only) and surface "update available" in the admin UI. Default ON — it
+  // is low risk (no phone-home, no remote control) — but fully toggleable off.
+  updateCheckEnabled: parseBool(process.env.UPDATE_CHECK_ENABLED, true),
+  // How often the background poller refreshes the latest-release reading. Also
+  // the cache TTL, so the GitHub API is never hammered. Default 1h.
+  updateCheckIntervalMs: Number(process.env.UPDATE_CHECK_INTERVAL_MS || 60 * 60_000),
+  // owner/repo to check releases for. Defaults to the canonical RunYard repo.
+  githubRepo: process.env.GITHUB_REPO || "yolo-maxi/runyard",
+  // Optional operator-owned webhook (their Slack/Discord/etc.) that receives the
+  // update OUTCOME. Generic outbound POST only — never a maintainer endpoint.
+  updateNotifyWebhook: process.env.UPDATE_NOTIFY_WEBHOOK || "",
+  // Allow triggering `runyard update` over HTTP (admin-only endpoint / UI button).
+  // OFF by default: a privileged self-update reachable over the network is
+  // sensitive on a box we never see. When off, the operator runs `runyard update`
+  // (or scripts/runyard-update.sh) on the host. The endpoint stays admin-gated
+  // even when enabled.
+  updateApplyEnabled: parseBool(process.env.UPDATE_APPLY_ENABLED, false),
+  // Bounded grace window the updater waits for runners to drain in-flight work
+  // before swapping code. If work doesn't finish in time the update ABORTS (it
+  // never kills in-flight runs). Default 45 minutes.
+  drainGraceMs: Number(process.env.RUNYARD_DRAIN_GRACE_MS || 45 * 60_000),
+  // Shared drain flag path; the runner checks it before claiming new work.
+  drainFlagPath: path.join(dataDir, ".drain"),
   version: "0.1.0"
 };

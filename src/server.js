@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createHash, createHmac } from "node:crypto";
 import path from "node:path";
 import express from "express";
@@ -67,9 +67,16 @@ import {
   upsertSecret,
   deleteSecret,
   secretsEnabled,
-  scrubStoredSecrets
+  scrubStoredSecrets,
+  recordAlert,
+  listAlerts,
+  latestAlert,
+  countActiveRuns,
+  countRunningRuns
 } from "./db.js";
 import { env } from "./env.js";
+import { getVersionInfo } from "./version.js";
+import { createUpdateChecker } from "./updateCheck.js";
 import { now, slugify } from "./ids.js";
 import { describeCron, isValidTimezone, nextRuns, validateCron } from "./cron.js";
 import { buildRunRetrospectiveArtifact, RUN_RETROSPECTIVE_ARTIFACT_NAME } from "./runRetrospective.js";
@@ -106,6 +113,19 @@ import {
 const app = express();
 app.disable("x-powered-by");
 app.set("trust proxy", env.trustProxy);
+
+// Passive update checker (the CHECK half of CHECK != APPLY). Outbound-only,
+// read-only GitHub Releases poll with a ~1h cache; degrades to "unknown" on any
+// failure and never installs anything. Swappable in tests via
+// setUpdateCheckerForTest so the suite never makes a live network call.
+let updateChecker = createUpdateChecker({
+  repo: env.githubRepo,
+  currentVersion: getVersionInfo().version,
+  ttlMs: env.updateCheckIntervalMs
+});
+export function setUpdateCheckerForTest(checker) {
+  updateChecker = checker;
+}
 
 // Modest global body limit; artifact uploads (which carry base64 file content) get a larger one.
 const ARTIFACT_BODY_LIMIT = "25mb";
@@ -1797,6 +1817,13 @@ app.get("/readyz", (_req, res) => {
   }
 });
 app.get("/api/version", (_req, res) => res.json({ name: "smithers-hub", version: env.version, instanceName: env.instanceName }));
+// Canonical running version. Unauthenticated on purpose — it's just the version
+// the box is running (a public release string + tag + short commit), nothing
+// sensitive. Used by the update-check comparison and by operators/monitoring.
+app.get("/version", (_req, res) => {
+  const info = getVersionInfo();
+  res.json({ version: info.version, gitTag: info.gitTag, gitCommit: info.gitCommit });
+});
 
 // --- Zero-friction client install -------------------------------------------
 // Tarball of the CLI/MCP client (commander is dependency-free, so we vendor it -> no npm needed).
@@ -2078,6 +2105,114 @@ app.post("/api/tokens", requireAuth, requireScopes("admin"), (req, res) => {
 
 app.get("/api/audit", requireAuth, requireScopes("admin"), (req, res) => {
   res.json({ audit: listAudit({ limit: Number(req.query.limit || 100) }) });
+});
+
+// --- Self-host update: status + apply (admin only) --------------------------
+// CHECK (status) is read-only and safe. APPLY is operator-initiated, off over
+// HTTP by default (UPDATE_APPLY_ENABLED), and even when on stays admin-gated.
+// There is no maintainer phone-home anywhere in this surface.
+app.get("/api/update-status", requireAuth, requireScopes("admin"), async (req, res) => {
+  if (req.query.refresh && env.updateCheckEnabled) {
+    try {
+      await updateChecker.check(true);
+    } catch {
+      /* check() is already fail-safe; ignore */
+    }
+  }
+  const info = getVersionInfo();
+  const cached = updateChecker.getCached();
+  res.json({
+    current: info.version,
+    gitTag: info.gitTag,
+    gitCommit: info.gitCommit,
+    repo: env.githubRepo,
+    enabled: env.updateCheckEnabled,
+    applyEnabled: env.updateApplyEnabled,
+    latest: cached?.latest || null,
+    latestTag: cached?.latestTag || (cached?.latest ? `v${cached.latest}` : null),
+    updateAvailable: Boolean(cached?.updateAvailable),
+    status: cached?.status || (env.updateCheckEnabled ? "pending" : "disabled"),
+    checkedAt: cached?.checkedAt ? new Date(cached.checkedAt).toISOString() : null,
+    lastOutcome: latestAlert("update")
+  });
+});
+
+app.get("/api/alerts", requireAuth, requireScopes("admin"), (req, res) => {
+  res.json({ alerts: listAlerts({ kind: req.query.kind ? String(req.query.kind) : "", limit: Number(req.query.limit || 50) }) });
+});
+
+app.post("/api/update/apply", requireAuth, requireScopes("admin"), (req, res) => {
+  if (!env.updateApplyEnabled) {
+    return res.status(503).json({
+      error:
+        "HTTP-triggered update is disabled. Run `runyard update` on the host, or set UPDATE_APPLY_ENABLED=1 to enable this button.",
+      applyEnabled: false
+    });
+  }
+  // Validate the optional explicit target tag before it is passed as an argv to
+  // the update script (never shell-interpolated, but validate defensively).
+  const targetTag = typeof req.body?.tag === "string" ? req.body.tag.trim() : "";
+  if (targetTag && !/^v?\d+\.\d+\.\d+[0-9A-Za-z.+-]*$/.test(targetTag)) {
+    return res.status(400).json({ error: "invalid target tag" });
+  }
+  const script = path.join(env.root, "scripts", "runyard-update.sh");
+  if (!existsSync(script)) return res.status(500).json({ error: "update script not found on this install" });
+
+  recordAudit(req.token.name, "update.apply", targetTag || "latest", { via: "http" });
+  recordAlert({
+    kind: "update",
+    level: "info",
+    title: "Update started",
+    message: `${req.token.name} triggered an update to ${targetTag || "latest"} from the Hub UI.`,
+    data: { targetTag: targetTag || "latest", by: req.token.name, via: "http" }
+  });
+
+  // Launch the updater so it OUTLIVES the imminent restart of THIS very process.
+  // A plain detached child stays in this unit's systemd cgroup and would be
+  // killed when the script runs `systemctl restart runyard`. So when systemd-run
+  // is available we start the updater as a transient unit in ITS OWN cgroup
+  // (returns immediately; survives the restart). Otherwise we fall back to a
+  // detached spawn (fine for non-systemd boxes). The script also re-execs itself
+  // to /tmp before touching the tree, so the code swap can't break it either.
+  // The most robust path of all is `runyard update` from an operator shell,
+  // which is never in the hub's cgroup — that's what non-applyEnabled hubs tell
+  // operators to use.
+  const updaterEnv = {
+    PATH: process.env.PATH || "",
+    RUNYARD_UPDATE_TRIGGER: "http",
+    RUNYARD_REPO_DIR: env.root,
+    RUNYARD_NODE: process.execPath,
+    RUNYARD_DRAIN_GRACE_MS: String(env.drainGraceMs),
+    SMITHERS_HUB_DATA_DIR: env.dataDir,
+    PORT: String(env.port)
+  };
+  if (process.env.RUNYARD_UNITS) updaterEnv.RUNYARD_UNITS = process.env.RUNYARD_UNITS;
+  if (env.updateNotifyWebhook) updaterEnv.UPDATE_NOTIFY_WEBHOOK = env.updateNotifyWebhook;
+
+  let systemdRun = false;
+  try {
+    execFileSync("systemd-run", ["--version"], { stdio: "ignore" });
+    systemdRun = true;
+  } catch {
+    systemdRun = false;
+  }
+
+  try {
+    if (systemdRun) {
+      const unit = `runyard-update-${Date.now()}`;
+      const setenv = Object.entries(updaterEnv).flatMap(([k, v]) => ["--setenv", `${k}=${v}`]);
+      const args = ["--collect", "--quiet", `--unit=${unit}`, ...setenv, "bash", script];
+      if (targetTag) args.push(targetTag);
+      spawn("systemd-run", args, { stdio: "ignore", detached: true }).unref();
+    } else {
+      const args = [script];
+      if (targetTag) args.push(targetTag);
+      spawn("bash", args, { cwd: env.root, detached: true, stdio: "ignore", env: { ...process.env, ...updaterEnv } }).unref();
+    }
+  } catch (error) {
+    return res.status(500).json({ error: `could not start updater: ${error.message}` });
+  }
+  res.json({ started: true, target: targetTag || "latest", launcher: systemdRun ? "systemd-run" : "spawn" });
 });
 
 // --- Encrypted reusable secrets (admin only) --------------------------------
@@ -3730,6 +3865,21 @@ if (process.argv[1]?.endsWith("server.js")) {
     }
   }, 30_000);
   scheduler.unref?.();
+
+  // Passive, outbound-only update check. Refreshes the cached latest-release
+  // reading so the admin badge can show "update available". Never installs
+  // anything; failures degrade to "unknown" inside check(). Toggle with
+  // UPDATE_CHECK_ENABLED. The first check runs shortly after boot, not inline,
+  // so a slow/blocked GitHub never delays startup.
+  if (env.updateCheckEnabled) {
+    const runUpdateCheck = () => {
+      updateChecker.check().catch(() => {});
+    };
+    const kick = setTimeout(runUpdateCheck, 5_000);
+    kick.unref?.();
+    const updatePoll = setInterval(runUpdateCheck, Math.max(60_000, env.updateCheckIntervalMs));
+    updatePoll.unref?.();
+  }
 }
 
 export {

@@ -610,6 +610,41 @@ function printMcpConfig() {
   console.log(JSON.stringify({ mcpServers: { [name]: mcpServerSpec(remote) } }, null, 2));
 }
 
+// `runyard update [tag]` — operator-initiated, self-healing apply ON THIS HOST.
+// Delegates to scripts/runyard-update.sh (drain -> swap -> restart -> health ->
+// auto-rollback). Never automatic; this is the human pulling the trigger. Runs
+// the LOCAL checkout's script, so it only works from a full RunYard checkout
+// (the thin CLI bundle installed via /install.sh does not ship scripts/).
+program
+  .command("update [tag]")
+  .description("Apply a RunYard update on this host (drain, swap, restart, verify, auto-rollback). Operator-initiated.")
+  .option("--units <units>", "space-separated systemd units to restart (default: 'runyard runyard-runner')")
+  .option("--grace-ms <ms>", "bounded drain grace window in ms before aborting (default ~45m)")
+  .option("-y, --yes", "skip the confirmation prompt")
+  .action(async (tag, opts) => {
+    const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+    const script = path.join(root, "scripts", "runyard-update.sh");
+    if (!existsSync(script)) {
+      console.error(`Update script not found at ${script}.`);
+      console.error("`runyard update` runs from a full RunYard checkout on the host, not the thin CLI bundle.");
+      process.exit(1);
+    }
+    if (!opts.yes) {
+      const answer = await ask(`Apply update${tag ? ` to ${tag}` : " to the latest release"} on this host now? Runners drain first. [y/N] `);
+      if (!/^y(es)?$/i.test(String(answer).trim())) {
+        console.log("Aborted.");
+        return;
+      }
+    }
+    const childEnv = { ...process.env };
+    if (opts.units != null) childEnv.RUNYARD_UNITS = opts.units;
+    if (opts.graceMs) childEnv.RUNYARD_DRAIN_GRACE_MS = String(opts.graceMs);
+    const args = [script];
+    if (tag) args.push(tag);
+    const result = spawnSync("bash", args, { cwd: root, stdio: "inherit", env: childEnv });
+    process.exit(result.status == null ? 1 : result.status);
+  });
+
 program.parseAsync(process.argv).catch((error) => {
   console.error(error.message);
   process.exit(1);

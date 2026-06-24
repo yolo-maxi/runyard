@@ -229,6 +229,31 @@ code {
   opacity: 0.6;
 }
 
+/* Admin-only "update available" / update-outcome pill in the topbar. Modeled on
+   the env-chip + status pill styling; hidden unless there is something to say. */
+.update-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid #fde68a;
+  background: #fffbeb;
+  color: #92400e;
+  cursor: pointer;
+}
+.update-badge[hidden] {
+  display: none;
+}
+.update-badge[data-tone="danger"] {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
 .nav {
   display: flex;
   align-items: center;

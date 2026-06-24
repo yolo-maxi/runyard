@@ -291,6 +291,21 @@ export function initDb() {
       created_by TEXT NOT NULL DEFAULT ''
     );
 
+    -- Operator-facing alerts surfaced in the Hub UI (e.g. self-update outcomes:
+    -- "update succeeded -> vX", "update failed, rolled back to vY"). Additive and
+    -- self-contained: older code that predates this table simply never reads it,
+    -- so a rollback to an earlier release boots cleanly against a migrated DB.
+    CREATE TABLE IF NOT EXISTS _smithers_alerts (
+      id TEXT PRIMARY KEY,
+      kind TEXT NOT NULL,
+      level TEXT NOT NULL DEFAULT 'info',
+      title TEXT NOT NULL DEFAULT '',
+      message TEXT NOT NULL DEFAULT '',
+      data TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_alerts_kind_created ON _smithers_alerts(kind, created_at);
     CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
     CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
     CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at);
@@ -1881,6 +1896,70 @@ export function secretNamesForRun(capability, runInput) {
   const fromCapability = Array.isArray(capability?.workflow?.secrets) ? capability.workflow.secrets : [];
   const fromInput = Array.isArray(runInput?.secretNames) ? runInput.secretNames : [];
   return [...new Set([...fromCapability, ...fromInput].map((n) => String(n || "").trim()).filter(Boolean))];
+}
+
+// Count of runs that represent in-flight work on a runner (assigned + running).
+// This is the metric the updater drains to zero before swapping code — finishing
+// in-flight agent work, which (unlike the durable Hub) cannot survive a restart.
+export function countActiveRuns() {
+  return one("SELECT COUNT(*) AS count FROM runs WHERE status IN ('assigned','running')").count;
+}
+
+// Count of runs currently executing. The hub may restart when this is 0 even if
+// queued work is waiting (queued/durable work resumes); see decideHubRestart.
+export function countRunningRuns() {
+  return one("SELECT COUNT(*) AS count FROM runs WHERE status = 'running'").count;
+}
+
+// --- Operator alerts (_smithers_alerts) -------------------------------------
+// Durable, UI-surfaced notices. The self-update flow records its outcome here so
+// the admin update badge can show "update failed, rolled back to vX" even though
+// the process that performed the update has since restarted.
+
+export function recordAlert({ kind, level = "info", title = "", message = "", data = {} }) {
+  if (!kind) throw new Error("recordAlert: kind is required");
+  const record = {
+    id: id("alert"),
+    kind: String(kind),
+    level: String(level || "info"),
+    title: String(title || "").slice(0, 200),
+    message: String(message || "").slice(0, 2000),
+    data: json(data, {}),
+    created_at: now()
+  };
+  run(
+    "INSERT INTO _smithers_alerts (id, kind, level, title, message, data, created_at) VALUES ($id, $kind, $level, $title, $message, $data, $created_at)",
+    record
+  );
+  return normalizeAlert(record);
+}
+
+function normalizeAlert(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    kind: row.kind,
+    level: row.level,
+    title: row.title,
+    message: row.message,
+    data: typeof row.data === "string" ? parseJson(row.data, {}) : row.data || {},
+    createdAt: row.created_at
+  };
+}
+
+export function listAlerts({ kind = "", limit = 50 } = {}) {
+  const capped = Math.min(Math.max(Number(limit) || 50, 1), 500);
+  const rows = kind
+    ? all("SELECT * FROM _smithers_alerts WHERE kind = ? ORDER BY created_at DESC LIMIT ?", [kind, capped])
+    : all("SELECT * FROM _smithers_alerts ORDER BY created_at DESC LIMIT ?", [capped]);
+  return rows.map(normalizeAlert);
+}
+
+export function latestAlert(kind) {
+  const row = kind
+    ? one("SELECT * FROM _smithers_alerts WHERE kind = ? ORDER BY created_at DESC LIMIT 1", [kind])
+    : one("SELECT * FROM _smithers_alerts ORDER BY created_at DESC LIMIT 1");
+  return normalizeAlert(row);
 }
 
 // Counts queued / assigned / running runs — exposed so the Hub UI can render

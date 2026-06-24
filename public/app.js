@@ -972,6 +972,72 @@ async function refreshEnvChip() {
   document.title = `${host} · ${env} — ${setup.instanceName || "Runyard"}`;
 }
 
+// --- Update badge (admin only) ----------------------------------------------
+// Mirrors the auth-health strip: a small, admin-only status pill in the topbar
+// that surfaces "update available -> vX.Y.Z" and any recent update outcome
+// (e.g. "failed, rolled back"). The CHECK is passive and server-side; this only
+// displays it. Applying is operator-initiated and, over HTTP, opt-in.
+async function refreshUpdateBadge() {
+  const badge = document.getElementById("update-badge");
+  if (!badge) return;
+  if (!isAdmin()) {
+    badge.hidden = true;
+    return;
+  }
+  let data;
+  try {
+    data = await api("/api/update-status");
+  } catch {
+    badge.hidden = true;
+    return;
+  }
+  state.updateStatus = data;
+  const outcome = data.lastOutcome;
+  // A recent failed/rolled-back update wins the badge — operators should see it.
+  if (outcome && outcome.level === "error") {
+    badge.hidden = false;
+    badge.dataset.tone = "danger";
+    badge.textContent = `⚠ ${outcome.title || "Update failed"}`;
+    badge.title = outcome.message || "Update failed — see Audit/logs.";
+    return;
+  }
+  if (data.updateAvailable && data.latest) {
+    badge.hidden = false;
+    badge.dataset.tone = "update";
+    badge.textContent = `Update available → v${esc(data.latest)}`;
+    badge.title = `Running v${data.current}${data.gitTag ? ` (${data.gitTag})` : ""} · latest v${data.latest}. ${
+      data.applyEnabled ? "Click to apply." : "Run `runyard update` on the host to apply."
+    }`;
+    return;
+  }
+  badge.hidden = true; // up to date (or unknown): stay subtle
+}
+
+function bindUpdateBadgeOnce() {
+  const badge = document.getElementById("update-badge");
+  if (!badge || badge.dataset.bound) return;
+  badge.dataset.bound = "1";
+  badge.addEventListener("click", async () => {
+    const data = state.updateStatus;
+    if (!data || !data.updateAvailable) return;
+    if (!data.applyEnabled) {
+      window.alert(
+        `A newer release (v${data.latest}) is available.\n\nApply it on the host with:\n    runyard update\n\n(HTTP-triggered apply is disabled. Set UPDATE_APPLY_ENABLED=1 on the hub to enable an Apply button.)`
+      );
+      return;
+    }
+    if (!window.confirm(`Apply update to v${data.latest} now? Runners drain first, then the hub restarts.`)) return;
+    try {
+      await api("/api/update/apply", { method: "POST", body: { tag: data.latestTag || `v${data.latest}` } });
+      badge.dataset.tone = "update";
+      badge.textContent = "Updating… (hub will restart)";
+      badge.title = "Update started: draining runners, then swapping + restarting.";
+    } catch (error) {
+      window.alert(`Could not start update: ${error.message}`);
+    }
+  });
+}
+
 async function bootAuthenticated(data) {
   state.me = data.token;
   $("#login").classList.add("hidden");
@@ -999,6 +1065,11 @@ async function bootAuthenticated(data) {
   // Visiting Runs/Home clears the count locally so the badge updates fast.
   refreshSidebarBadges();
   setInterval(refreshSidebarBadges, 30_000);
+  // Admin-only update badge: paint now, bind the apply click, and refresh
+  // periodically (the server-side check is hourly, so 60s here is ample).
+  bindUpdateBadgeOnce();
+  refreshUpdateBadge();
+  setInterval(refreshUpdateBadge, 60_000);
   // Mount the hovering support agent now that we have a session — every
   // /api/chat call inherits the operator's scopes, so it can't run earlier.
   bootSupportChatOnce();

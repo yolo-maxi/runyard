@@ -18,6 +18,7 @@ import { extractSmithersFailure } from "./smithersFailure.js";
 import { supportWarmEnabled, warmSupportReply } from "./supportWarm.js";
 import { collectAuthHealth } from "./runnerAuthHealth.js";
 import { reauthEnabled, runReauth } from "./reauthCli.js";
+import { isDraining, resolveDataDir } from "./drain.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -87,6 +88,10 @@ let runnerId = process.env.SMITHERS_RUNNER_ID || loadCachedRunnerId() || "";
 const activeRuns = new Set();
 let completedRuns = 0;
 let intervalHandle = null;
+// Where the updater writes the drain flag (the shared Hub dataDir). Resolved the
+// same way the Hub resolves it so a single-box install agrees without extra config.
+const drainDataDir = resolveDataDir();
+let drainLogged = false;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const stripAnsi = (s) => String(s).replace(/\[[0-9;]*m/g, "");
@@ -394,15 +399,30 @@ async function tick() {
         auth: currentAuthHealth()
       })
       .catch(() => {});
-    // Fill every empty slot in this tick so a fast-arriving backlog drains as
-    // quickly as the runner can poll. Each executeAssignment runs as its own
-    // async task; we don't await them so multiple runs progress concurrently.
-    while (activeRuns.size < concurrency) {
-      const assignment = await client.get(`/api/runners/${runnerId}/next-run`).catch(() => ({}));
-      if (!assignment?.run) break;
-      // Fire-and-forget — executeAssignment manages the activeRuns slot in
-      // its own try/finally so an unexpected throw can't leak a slot.
-      executeAssignment(assignment).catch((error) => console.error("executeAssignment failed:", error.message));
+    // Drain gate: during an operator-initiated `runyard update` the updater
+    // writes a .drain flag under the shared Hub dataDir. While it is present we
+    // STOP claiming new work but keep heartbeating and finishing in-flight runs
+    // — a mid-run restart would destroy the agent's work, so we let it complete.
+    if (isDraining(drainDataDir)) {
+      if (!drainLogged) {
+        console.log("Drain flag set — pausing claims; finishing in-flight runs only.");
+        drainLogged = true;
+      }
+    } else {
+      if (drainLogged) {
+        console.log("Drain flag cleared — resuming claims.");
+        drainLogged = false;
+      }
+      // Fill every empty slot in this tick so a fast-arriving backlog drains as
+      // quickly as the runner can poll. Each executeAssignment runs as its own
+      // async task; we don't await them so multiple runs progress concurrently.
+      while (activeRuns.size < concurrency) {
+        const assignment = await client.get(`/api/runners/${runnerId}/next-run`).catch(() => ({}));
+        if (!assignment?.run) break;
+        // Fire-and-forget — executeAssignment manages the activeRuns slot in
+        // its own try/finally so an unexpected throw can't leak a slot.
+        executeAssignment(assignment).catch((error) => console.error("executeAssignment failed:", error.message));
+      }
     }
     maybeExitAfterRuns();
   } finally {
