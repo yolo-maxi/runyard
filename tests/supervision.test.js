@@ -309,16 +309,25 @@ describe("repo options endpoint", () => {
 
 describe("run form repo picker (UI source)", () => {
   it("ships repo picker + search wiring and keeps the raw JSON fallback", () => {
-    const src = readFileSync(path.join(process.cwd(), "public", "app.js"), "utf8");
-    assert.match(src, /data-repo-selector/);
-    assert.match(src, /hydrateRepoPickers/);
-    assert.match(src, /\/api\/repo-options/);
-    assert.match(src, /<datalist/);
-    assert.match(src, /Edit &amp; re-run/);
-    assert.match(src, /RERUN_DRAFT_KEY/);
-    assert.match(src, /Re-run with edited input/);
+    // After the React rewrite the run form lives in web/components/RunForm.jsx,
+    // the edit-rerun draft key in web/lib/runActions.js, and the run card's
+    // "Edit & re-run" action in web/components/RunCard.jsx.
+    const runForm = readFileSync(path.join(process.cwd(), "web", "components", "RunForm.jsx"), "utf8");
+    const runActions = readFileSync(path.join(process.cwd(), "web", "lib", "runActions.js"), "utf8");
+    const runCard = readFileSync(path.join(process.cwd(), "web", "components", "RunCard.jsx"), "utf8");
+
+    // Repo/project picker wiring: the datalist-backed selector hydrated from
+    // /api/repo-options (replaces the legacy hydrateRepoPickers internal).
+    assert.match(runForm, /data-repo-selector/);
+    assert.match(runForm, /\/api\/repo-options/);
+    assert.match(runForm, /<datalist/);
+    // Edit-rerun flow: the submit button label and the draft storage key.
+    assert.match(runForm, /Re-run with edited input/);
+    assert.match(runActions, /RERUN_DRAFT_KEY/);
+    // The run card exposes the "Edit & re-run" action (JSX-escaped &).
+    assert.match(runCard, /Edit &amp; re-run/);
     // Raw JSON escape hatch must still exist.
-    assert.match(src, /Edit as raw JSON instead/);
+    assert.match(runForm, /Edit as raw JSON instead/);
   });
 });
 
