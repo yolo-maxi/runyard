@@ -3,23 +3,27 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-// Pins the app-wide UX/UI polish pass: focused login chrome, an overflow-free
-// Tokens layout, a calm Approvals empty state, the platform-stable support FAB,
-// and FAB clearance for the last row of content. Content assertions on the
-// shipped static assets, matching the rest of the browser-asset suite.
+// Pins the app-wide UX/UI polish pass for the React + TanStack frontend:
+// focused login chrome (body gated on auth), an overflow-free Tokens layout, a
+// calm Approvals empty state, the platform-stable support FAB, and FAB
+// clearance for the last content row. UI structure is asserted on the web/
+// React source; CSS rules on the (unchanged) styles.css; the body gate on
+// index.html.
 const root = process.cwd();
-const appJs = readFileSync(path.join(root, "public", "app.js"), "utf8");
 const css = readFileSync(path.join(root, "public", "styles.css"), "utf8");
 const indexHtml = readFileSync(path.join(root, "public", "index.html"), "utf8");
+const shell = readFileSync(path.join(root, "web", "app", "Shell.jsx"), "utf8");
+const tokens = readFileSync(path.join(root, "web", "views", "Tokens.jsx"), "utf8");
+const approvalList = readFileSync(path.join(root, "web", "components", "ApprovalList.jsx"), "utf8");
+const supportChat = readFileSync(path.join(root, "web", "components", "SupportChat.jsx"), "utf8");
 
 describe("UX polish: login screen chrome is gated on auth", () => {
   it("defaults the body to logged-out and reveals nav only after auth", () => {
     assert.match(indexHtml, /<body class="logged-out">/);
-    // bootAuthenticated must drop the gate; showAuthFallback must (re)apply it.
-    const boot = appJs.slice(appJs.indexOf("function bootAuthenticated"));
-    assert.match(boot.slice(0, 600), /classList\.remove\("logged-out"\)/);
-    const fallback = appJs.slice(appJs.indexOf("function showAuthFallback"));
-    assert.match(fallback.slice(0, 600), /classList\.add\("logged-out"\)/);
+    // The authenticated Shell drops the gate on mount and re-applies it on
+    // unmount (the React equivalent of bootAuthenticated/showAuthFallback).
+    assert.match(shell, /classList\.remove\("logged-out"\)/);
+    assert.match(shell, /classList\.add\("logged-out"\)/);
   });
 
   it("hides the primary nav + admin chrome while logged out", () => {
@@ -30,7 +34,7 @@ describe("UX polish: login screen chrome is gated on auth", () => {
 
 describe("UX polish: Tokens layout no longer overflows on desktop", () => {
   it("uses a balanced split (not the 1fr/380px main+rail) for peer panels", () => {
-    assert.match(appJs, /class="split split-even"/);
+    assert.match(tokens, /split split-even/);
     assert.match(css, /\.split-even\s*\{[\s\S]*?repeat\(2, minmax\(0, 1fr\)\)/);
     // Long monospace ids must wrap inside cells rather than widen the table.
     assert.match(css, /\.table \.muted\s*\{[\s\S]*?overflow-wrap:\s*anywhere/);
@@ -39,19 +43,19 @@ describe("UX polish: Tokens layout no longer overflows on desktop", () => {
 
 describe("UX polish: calm, consistent empty + FAB chrome", () => {
   it("renders Approvals empty state as a card, not bare muted text", () => {
-    const fn = appJs.slice(appJs.indexOf("function approvalList"));
-    const body = fn.slice(0, fn.indexOf("\n}\n") + 2);
-    assert.match(body, /class="empty"/);
-    assert.match(body, /No pending approvals/);
-    // The old bare paragraph must be gone.
-    assert.ok(!/return `<p class="muted">No pending approvals/.test(body), "empty state should be a card");
+    // The ApprovalList component renders the empty state inside a `.empty` card.
+    assert.match(approvalList, /className="empty"/);
+    assert.match(approvalList, /No pending approvals/);
+    // The old bare `<p class="muted">No pending approvals` must be gone.
+    assert.ok(!/<p className="muted">\s*No pending approvals/.test(approvalList), "empty state should be a card");
   });
 
   it("ships the support FAB as inline SVG (platform-stable, not an emoji)", () => {
-    const fab = indexHtml.slice(indexHtml.indexOf('id="support-chat-fab"'));
-    const btn = fab.slice(0, fab.indexOf("</button>"));
-    assert.match(btn, /<svg/);
-    assert.ok(!/✨/.test(btn), "FAB must not rely on the sparkle emoji");
+    // The FAB renders an inline sparkle <svg> (a module constant), never the
+    // sparkle emoji.
+    assert.match(supportChat, /support-chat-fab/);
+    assert.match(supportChat, /<svg/);
+    assert.ok(!/✨/.test(supportChat), "FAB must not rely on the sparkle emoji");
   });
 
   it("clears the floating FAB so the last content row stays tappable on phones", () => {
