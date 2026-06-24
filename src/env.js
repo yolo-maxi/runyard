@@ -129,6 +129,11 @@ export const env = {
   telegramWebhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET || "",
   // Runners are considered offline if no heartbeat within this window.
   runnerOfflineMs: Number(process.env.SMITHERS_RUNNER_OFFLINE_MS || 30_000),
+  // Runner rows whose last heartbeat is older than this are deleted by the
+  // reaper (long-dead ghosts from restarts before stable-identity registration).
+  // Runners with in-flight work (active_runs>0 / current_run_id) are never
+  // pruned. Default 24h. 0 disables pruning.
+  runnerPruneMs: Number(process.env.SMITHERS_RUNNER_PRUNE_MS || 24 * 60 * 60_000),
   // Running/assigned runs are considered stalled if they emit no event within this window. 0 disables.
   runStallMs: Number(process.env.SMITHERS_RUN_STALL_MS || 15 * 60_000),
   // Optional allow-list of filesystem roots the runner may operate in. Empty = unrestricted (with a warning).

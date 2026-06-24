@@ -1628,7 +1628,21 @@ export function registerRunner(input, tokenId = null) {
   // Only allow updating an existing runner record if the caller's token owns it; otherwise mint a fresh id.
   // This prevents one runner token from hijacking another runner's record by guessing its id.
   const candidate = input.id ? one("SELECT * FROM runners WHERE id = ?", [input.id]) : null;
-  const existing = candidate && candidate.token_id && candidate.token_id === tokenId ? candidate : null;
+  let existing = candidate && candidate.token_id && candidate.token_id === tokenId ? candidate : null;
+  // Stable-identity fallback: the client (smithers-runner.js) caches the id, but
+  // a wiped workspace / corrupt id-file / first boot sends no id, which used to
+  // mint a fresh ghost row on every restart (the 95-row pileup). When no owned
+  // row was found by id, reuse the row that matches this caller's stable
+  // identity = (token_id + name + hostname). The token_id match preserves the
+  // security property — one runner token can never adopt another token's row.
+  if (!existing && tokenId) {
+    const name = input.name || input.hostname || "runner";
+    const hostname = input.hostname || "";
+    existing = one(
+      "SELECT * FROM runners WHERE token_id = ? AND name = ? AND hostname = ? ORDER BY last_heartbeat_at DESC LIMIT 1",
+      [tokenId, name, hostname]
+    );
+  }
   const timestamp = now();
   // A runner that doesn't advertise capacity stays at 1 — preserves the
   // pre-pool behavior where a single host ran a single concurrent job.
@@ -1647,10 +1661,22 @@ export function registerRunner(input, tokenId = null) {
     last_heartbeat_at: timestamp
   };
   if (existing) {
+    // Bind only the columns this statement names — node:sqlite rejects an
+    // object carrying named params (status/token_id/created_at) the SQL doesn't
+    // reference. Identity stays pinned to the existing row's id + token.
     run(
       `UPDATE runners SET name=$name, hostname=$hostname, platform=$platform, version=$version,
        tags=$tags, status='online', capacity=$capacity, last_heartbeat_at=$last_heartbeat_at WHERE id=$id`,
-      payload
+      {
+        id: payload.id,
+        name: payload.name,
+        hostname: payload.hostname,
+        platform: payload.platform,
+        version: payload.version,
+        tags: payload.tags,
+        capacity: payload.capacity,
+        last_heartbeat_at: payload.last_heartbeat_at
+      }
     );
   } else {
     run(
@@ -1739,6 +1765,34 @@ export function heartbeatRunner(runnerId, input = {}) {
     ]
   );
   return getRunner(runnerId);
+}
+
+// Delete runner rows that have been dead longer than `maxMs`. This prunes the
+// ghost rows that accumulated before stable-identity registration. Returns the
+// list of pruned ids (caller logs the count when >0). A runner with in-flight
+// work (active_runs>0 or a non-null current_run_id) is NEVER pruned, even if its
+// heartbeat is stale — that work is still being reaped/finished elsewhere.
+//
+// Datetime comparison MUST go through SQLite's datetime() on both sides: stored
+// timestamps are ISO-8601 with `T`/`Z` while a raw string compare against
+// datetime('now') (space-separated, no `Z`) miscompares — that exact bug forced
+// the manual 95→2 cleanup. datetime() normalizes both to the same form.
+export function pruneDeadRunners(maxMs = env.runnerPruneMs) {
+  if (!maxMs || maxMs <= 0) return [];
+  const seconds = Math.floor(maxMs / 1000);
+  const stale = all(
+    `SELECT id FROM runners
+      WHERE last_heartbeat_at IS NOT NULL
+        AND datetime(last_heartbeat_at) < datetime('now', ?)
+        AND COALESCE(active_runs, 0) <= 0
+        AND current_run_id IS NULL`,
+    [`-${seconds} seconds`]
+  );
+  const ids = stale.map((row) => row.id);
+  for (const runnerId of ids) {
+    run("DELETE FROM runners WHERE id = ?", [runnerId]);
+  }
+  return ids;
 }
 
 // Whitelist the auth-health shape the Hub will persist. Defense in depth: even

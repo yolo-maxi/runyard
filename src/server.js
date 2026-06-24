@@ -45,6 +45,7 @@ import {
   listRuns,
   listSkills,
   listWorkflowEndpoints,
+  pruneDeadRunners,
   reapStuckRunIds,
   recordWorkflowEndpointInvocation,
   recordAudit,
@@ -3706,6 +3707,14 @@ if (process.argv[1]?.endsWith("server.js")) {
       reapStuckRunsWithRetrospectives(env.runDeadlineMs);
     } catch (error) {
       console.error("Run reaper failed:", error.message);
+    }
+    try {
+      // Prune long-dead runner rows (ghosts from pre-stable-identity restarts).
+      // Never touches runners with in-flight work; see pruneDeadRunners.
+      const pruned = pruneDeadRunners(env.runnerPruneMs);
+      if (pruned.length) console.log(`Pruned ${pruned.length} dead runner(s): ${pruned.join(", ")}`);
+    } catch (error) {
+      console.error("Runner pruner failed:", error.message);
     }
   }, 60_000);
   reaper.unref?.();

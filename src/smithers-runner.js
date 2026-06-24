@@ -7,6 +7,7 @@
 // events, and uploads the workflow's outputs + event trace as artifacts. Nothing is faked: the
 // agent runs here, on this machine, and the Hub is the durable record.
 import { execFile } from "node:child_process";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -53,7 +54,33 @@ if (!token) {
 }
 
 const client = new HubClient({ baseUrl, token });
-let runnerId = process.env.SMITHERS_RUNNER_ID || "";
+
+// Persist the Hub-assigned runner id across restarts so a normal service bounce
+// reuses one stable row instead of minting a ghost. Server-side stable-identity
+// matching (token+name+hostname) is the primary defense; this id-file is the
+// fast path. A missing/corrupt file is tolerated — we simply re-register and
+// re-cache whatever id the Hub hands back.
+const runnerIdFile = path.join(workspace, ".smithers", "runner-id");
+
+function loadCachedRunnerId() {
+  try {
+    return readFileSync(runnerIdFile, "utf8").trim() || "";
+  } catch {
+    return "";
+  }
+}
+
+function cacheRunnerId(value) {
+  if (!value) return;
+  try {
+    mkdirSync(path.dirname(runnerIdFile), { recursive: true });
+    writeFileSync(runnerIdFile, `${value}\n`);
+  } catch (error) {
+    console.error("failed to persist runner id:", error.message);
+  }
+}
+
+let runnerId = process.env.SMITHERS_RUNNER_ID || loadCachedRunnerId() || "";
 // Active run IDs the runner is currently executing. Capacity is checked
 // against this set instead of a single `busy` flag so multiple runs can
 // progress in parallel.
@@ -103,6 +130,7 @@ async function register() {
     capacity: concurrency
   });
   runnerId = res.runner.id;
+  cacheRunnerId(runnerId);
   console.log(
     `Registered Smithers runner ${runnerId} (${name}) tags=[${tags}] workspace=${workspace} capacity=${concurrency}`
   );

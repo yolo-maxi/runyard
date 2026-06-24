@@ -4337,13 +4337,45 @@ async function renderRunners() {
     const tone = ageMs <= 30_000 ? "ok" : ageMs <= 120_000 ? "warn" : "danger";
     return `<span class="hb-cell hb-${tone}" title="${esc(iso)}">${esc(relativeTime(iso))}</span>`;
   };
+  const runnerRows = (list) => list.map((runner) => `<tr id="runner-row-${esc(runner.id)}"><td data-label="Name">${esc(runner.name)}<br><span class="muted">${esc(runner.id)}</span></td><td data-label="Status">${status(runner.online ? "online" : "offline")}</td><td data-label="Capacity">${runnerCapacityCell(runner)}</td><td data-label="Version">${runner.version ? `<code>${esc(runner.version)}</code>` : '<span class="muted">unknown</span>'}</td><td data-label="OS · host">${(runner.platform || runner.hostname) ? `${esc(runner.platform || "?")} · <span class="muted">${esc(runner.hostname || "?")}</span>` : '<span class="muted">—</span>'}</td><td data-label="Tags">${esc((runner.tags || []).join(", "))}</td><td data-label="Last seen">${heartbeatCell(runner)}</td><td data-label="Actions"><button class="button" data-runner-ping="${esc(runner.id)}" title="Refresh heartbeat reading">Send test ping</button> <button class="button" data-runner-toggle="${esc(runner.id)}" aria-expanded="false">Details</button></td></tr>
+      <tr class="runner-detail-row hidden" id="runner-detail-${esc(runner.id)}"><td colspan="8"><dl class="runner-detail-grid"><dt>Runner ID</dt><dd><code>${esc(runner.id)}</code></dd><dt>Hostname</dt><dd>${esc(runner.hostname || "—")}</dd><dt>Platform</dt><dd>${esc(runner.platform || "—")}</dd><dt>Version</dt><dd>${esc(runner.version || "—")}</dd><dt>Tags</dt><dd>${esc((runner.tags || []).join(", ") || "—")}</dd><dt>Created</dt><dd>${esc(runner.createdAt || "—")}</dd><dt>Last heartbeat</dt><dd>${esc(runner.lastHeartbeatAt || "never")}</dd><dt>Current run</dt><dd>${runner.currentRunId ? `<a href="${esc(deepLinks.run(runner.currentRunId))}">${esc(runner.currentRunId)}</a>` : "<span class=\"muted\">idle</span>"}</dd></dl></td></tr>`).join("");
+  // Hide offline runners by default — the table accumulates dead rows until the
+  // server-side pruner clears them, and an operator almost always cares about
+  // the live pool. Offline rows collapse behind a "Show N offline" toggle.
+  const online = data.runners.filter((r) => r.online);
+  const offline = data.runners.filter((r) => !r.online);
+  const tableHead = `<thead><tr><th>Name</th><th>Status</th><th>Capacity</th><th>Version</th><th>OS · host</th><th>Tags</th><th>Last seen</th><th></th></tr></thead>`;
+  let runnersBody;
+  if (!data.runners.length) {
+    runnersBody = empty("No runners connected.", "Start one with <code>smithers-hub-runner</code> using a token that has the runner scope. Set <code>SMITHERS_RUNNER_CONCURRENCY=4</code> on a dedicated pool host for ~4 concurrent jobs.");
+  } else {
+    const onlineTable = online.length
+      ? `<table class="table runners-table">${tableHead}<tbody>${runnerRows(online)}</tbody></table>`
+      : empty("No online runners.", offline.length ? "All connected runners are offline. Expand the offline list below or start a runner." : "");
+    const offlineSection = offline.length
+      ? `<div class="runners-offline">
+          <button class="button" id="runners-offline-toggle" aria-expanded="false">Show ${offline.length} offline</button>
+          <div id="runners-offline-list" class="hidden">
+            <table class="table runners-table">${tableHead}<tbody>${runnerRows(offline)}</tbody></table>
+          </div>
+        </div>`
+      : "";
+    runnersBody = `${onlineTable}${offlineSection}`;
+  }
   content.innerHTML = `${toolbar("Runners", "", deepLinks.runners())}<section class="panel">
     ${summary}
-    ${data.runners.length ? `<table class="table runners-table"><thead><tr><th>Name</th><th>Status</th><th>Capacity</th><th>Version</th><th>OS · host</th><th>Tags</th><th>Last seen</th><th></th></tr></thead><tbody>
-      ${data.runners.map((runner) => `<tr id="runner-row-${esc(runner.id)}"><td data-label="Name">${esc(runner.name)}<br><span class="muted">${esc(runner.id)}</span></td><td data-label="Status">${status(runner.online ? "online" : "offline")}</td><td data-label="Capacity">${runnerCapacityCell(runner)}</td><td data-label="Version">${runner.version ? `<code>${esc(runner.version)}</code>` : '<span class="muted">unknown</span>'}</td><td data-label="OS · host">${(runner.platform || runner.hostname) ? `${esc(runner.platform || "?")} · <span class="muted">${esc(runner.hostname || "?")}</span>` : '<span class="muted">—</span>'}</td><td data-label="Tags">${esc((runner.tags || []).join(", "))}</td><td data-label="Last seen">${heartbeatCell(runner)}</td><td data-label="Actions"><button class="button" data-runner-ping="${esc(runner.id)}" title="Refresh heartbeat reading">Send test ping</button> <button class="button" data-runner-toggle="${esc(runner.id)}" aria-expanded="false">Details</button></td></tr>
-      <tr class="runner-detail-row hidden" id="runner-detail-${esc(runner.id)}"><td colspan="8"><dl class="runner-detail-grid"><dt>Runner ID</dt><dd><code>${esc(runner.id)}</code></dd><dt>Hostname</dt><dd>${esc(runner.hostname || "—")}</dd><dt>Platform</dt><dd>${esc(runner.platform || "—")}</dd><dt>Version</dt><dd>${esc(runner.version || "—")}</dd><dt>Tags</dt><dd>${esc((runner.tags || []).join(", ") || "—")}</dd><dt>Created</dt><dd>${esc(runner.createdAt || "—")}</dd><dt>Last heartbeat</dt><dd>${esc(runner.lastHeartbeatAt || "never")}</dd><dt>Current run</dt><dd>${runner.currentRunId ? `<a href="${esc(deepLinks.run(runner.currentRunId))}">${esc(runner.currentRunId)}</a>` : "<span class=\"muted\">idle</span>"}</dd></dl></td></tr>`).join("")}
-    </tbody></table>` : empty("No runners connected.", "Start one with <code>smithers-hub-runner</code> using a token that has the runner scope. Set <code>SMITHERS_RUNNER_CONCURRENCY=4</code> on a dedicated pool host for ~4 concurrent jobs.")}
+    ${runnersBody}
   </section>`;
+  const offlineToggle = document.getElementById("runners-offline-toggle");
+  if (offlineToggle) {
+    offlineToggle.addEventListener("click", () => {
+      const list = document.getElementById("runners-offline-list");
+      if (!list) return;
+      const open = !list.classList.toggle("hidden");
+      offlineToggle.setAttribute("aria-expanded", open ? "true" : "false");
+      offlineToggle.textContent = open ? `Hide ${offline.length} offline` : `Show ${offline.length} offline`;
+    });
+  }
   document.querySelectorAll("[data-runner-toggle]").forEach((button) => {
     button.addEventListener("click", () => {
       const id = button.dataset.runnerToggle;
@@ -4415,6 +4447,23 @@ function runnerAuthStrip(runner) {
   </div>`;
 }
 
+// Auth-health cards, online by default. Offline runners' logins can't be
+// re-authed (the runner has to be up to receive the reauth capability), so they
+// collapse behind a toggle instead of cluttering the strip.
+function authHealthBlock(runners) {
+  if (!runners.length) return empty("No runners connected.");
+  const online = runners.filter((r) => r.online);
+  const offline = runners.filter((r) => !r.online);
+  const onlineBlock = online.length ? online.map(runnerAuthStrip).join("") : empty("No online runners.");
+  const offlineBlock = offline.length
+    ? `<div class="runners-offline">
+        <button class="button" id="authhealth-offline-toggle" aria-expanded="false">Show ${offline.length} offline</button>
+        <div id="authhealth-offline-list" class="hidden">${offline.map(runnerAuthStrip).join("")}</div>
+      </div>`
+    : "";
+  return `${onlineBlock}${offlineBlock}`;
+}
+
 async function renderSecrets() {
   if (!isAdmin()) {
     content.innerHTML = `${toolbar("Secrets", "", deepLinks.secrets())}
@@ -4466,7 +4515,7 @@ async function renderSecrets() {
     <section class="panel">
       <h2>Runner CLI auth health</h2>
       <p class="muted">Codex/Claude subscription logins live on each runner host and expire silently. Re-auth from here without SSH.</p>
-      ${runners.length ? runners.map(runnerAuthStrip).join("") : empty("No runners connected.")}
+      ${authHealthBlock(runners)}
     </section>
     <section class="panel">
       <h2>Reusable secrets</h2>
@@ -4482,6 +4531,17 @@ async function renderSecrets() {
 
   if (secretsEnabled) bindSecretForm();
   bindReauthButtons();
+  const authOfflineToggle = document.getElementById("authhealth-offline-toggle");
+  if (authOfflineToggle) {
+    const offlineCount = runners.filter((r) => !r.online).length;
+    authOfflineToggle.addEventListener("click", () => {
+      const list = document.getElementById("authhealth-offline-list");
+      if (!list) return;
+      const open = !list.classList.toggle("hidden");
+      authOfflineToggle.setAttribute("aria-expanded", open ? "true" : "false");
+      authOfflineToggle.textContent = open ? `Hide ${offlineCount} offline` : `Show ${offlineCount} offline`;
+    });
+  }
   document.querySelectorAll("[data-secret-delete]").forEach((button) =>
     button.addEventListener("click", async () => {
       const key = button.dataset.secretDelete;
