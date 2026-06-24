@@ -94,6 +94,132 @@ export function JsonBlock({ value }) {
   return <pre className="json">{JSON.stringify(value, null, 2)}</pre>;
 }
 
+// ---- Token-driven Button primitive ---------------------------------------
+// Wraps the CSS button system so views never hand-roll variant/size classes.
+// variant: "secondary" (default) | "primary" | "danger" | "warning" | "ghost".
+// size: "md" (default) | "sm". `icon` makes it a square icon-only button.
+// Renders an <a> when `href` is supplied so links and buttons stay consistent.
+export function Button({
+  variant = "secondary",
+  size = "md",
+  icon = false,
+  href,
+  className = "",
+  children,
+  ...props
+}) {
+  const cls = [
+    href ? "button" : "",
+    variant !== "secondary" ? variant : "",
+    size === "sm" ? "btn-sm" : "",
+    icon ? "btn-icon" : "",
+    className
+  ]
+    .filter(Boolean)
+    .join(" ");
+  if (href) {
+    return (
+      <a href={href} className={cls} {...props}>
+        {children}
+      </a>
+    );
+  }
+  return (
+    <button className={cls || undefined} {...props}>
+      {children}
+    </button>
+  );
+}
+
+// ---- Badge --------------------------------------------------------------
+// Neutral-by-default pill for counts/labels. tone maps to a semantic color.
+// (StatusBadge above is reserved for run/runner lifecycle states.)
+export function Badge({ tone = "neutral", children }) {
+  return <span className={`badge badge-${tone}`}>{children}</span>;
+}
+
+// ---- Card / Panel -------------------------------------------------------
+// The standard surface container. `as` lets callers pick the element.
+export function Card({ as: Tag = "div", className = "", children, ...props }) {
+  return (
+    <Tag className={`panel${className ? ` ${className}` : ""}`} {...props}>
+      {children}
+    </Tag>
+  );
+}
+
+// ---- Overflow menu (⋯) --------------------------------------------------
+// Collapses secondary actions behind a single trigger so toolbars stay calm.
+// items: [{ label, onSelect?, href?, danger?, disabled? }] — falsy entries are
+// skipped so callers can inline conditionals. Closes on selection / blur.
+export function OverflowMenu({ items = [], label = "More actions", size = "md" }) {
+  const visible = items.filter(Boolean);
+  if (!visible.length) return null;
+  const close = (el) => el?.closest("details")?.removeAttribute("open");
+  return (
+    <details className="overflow-menu">
+      <summary
+        className={`button btn-icon${size === "sm" ? " btn-sm" : ""}`}
+        aria-haspopup="menu"
+        aria-label={label}
+        title={label}
+      >
+        <span aria-hidden="true">⋯</span>
+      </summary>
+      <div className="overflow-menu-list" role="menu">
+        {visible.map((item, i) =>
+          item.href ? (
+            <a
+              key={i}
+              href={item.href}
+              role="menuitem"
+              className={item.danger ? "is-danger" : undefined}
+              onClick={(e) => close(e.currentTarget)}
+            >
+              {item.label}
+            </a>
+          ) : (
+            <button
+              key={i}
+              type="button"
+              role="menuitem"
+              disabled={item.disabled}
+              className={item.danger ? "is-danger" : undefined}
+              onClick={(e) => {
+                close(e.currentTarget);
+                item.onSelect?.(e);
+              }}
+            >
+              {item.label}
+            </button>
+          )
+        )}
+      </div>
+    </details>
+  );
+}
+
+// ---- Empty / Loading states ---------------------------------------------
+// Shared so every view's "nothing here" / "loading" reads identically.
+export function EmptyState({ title, children, actions }) {
+  return (
+    <div className="empty">
+      {title ? <p className="empty-title">{title}</p> : null}
+      {children}
+      {actions ? <div className="empty-actions">{actions}</div> : null}
+    </div>
+  );
+}
+
+export function Spinner({ label = "Loading…", inline = false }) {
+  return (
+    <span className={`spinner${inline ? " spinner-inline" : ""}`} role="status">
+      <span className="spinner-dot" aria-hidden="true" />
+      <span className="spinner-label">{label}</span>
+    </span>
+  );
+}
+
 // Inline "copy share link" button — emits an absolute URL for the given hash.
 export function ShareButton({ hash, label = "Copy link" }) {
   const url = deepLinks.abs(hash);

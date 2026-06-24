@@ -14,6 +14,7 @@ import { Schedules, ScheduleDetail } from "../views/Schedules.jsx";
 import { Secrets } from "../views/Secrets.jsx";
 import { Workflows } from "../views/Workflows.jsx";
 import { WorkflowDetail } from "../views/WorkflowDetail.jsx";
+import { Brand } from "../views/Brand.jsx";
 
 // Route → view dispatch, mirroring the legacy render() switch in app.js. Views
 // are swapped from Placeholder to their real React component as each migration
@@ -55,5 +56,6 @@ export function Content({ me }) {
   if (view === "audit") return <Audit />;
   if (view === "secrets") return <Secrets />;
   if (view === "settings") return <Settings />;
+  if (view === "brand") return <Brand />;
   return <Placeholder title="Runs" />;
 }

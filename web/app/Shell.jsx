@@ -126,6 +126,16 @@ export function Shell({ me }) {
               <a className="mobile-menu-only" href="/llms.txt" role="menuitem">
                 llms.txt
               </a>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={(e) => {
+                  e.currentTarget.closest("details")?.removeAttribute("open");
+                  navigate("#brand");
+                }}
+              >
+                Brand &amp; UI
+              </button>
               {ADMIN_LINKS.map(([view, label]) => (
                 <button
                   key={view}

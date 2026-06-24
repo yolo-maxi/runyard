@@ -50,7 +50,8 @@ export const deepLinks = {
   connect: () => "#connect",
   approvals: () => "#approvals",
   approval: (id) => `#approvals/${encodeURIComponent(id)}`,
-  settings: () => "#settings"
+  settings: () => "#settings",
+  brand: () => "#brand"
 };
 
 // Expose for devtools/tests/the server-served-JS check, matching legacy app.js.
