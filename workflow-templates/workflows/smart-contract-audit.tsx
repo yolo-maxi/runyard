@@ -91,7 +91,10 @@ export default smithers((ctx) => {
           {async () => {
             const { execFileSync } = await import("node:child_process");
             const { readFileSync, existsSync } = await import("node:fs");
-            const target = ctx.input.target;
+            const target = typeof ctx.input.target === "string" ? ctx.input.target.trim() : "";
+            if (!target) {
+              throw new Error("smart-contract-audit: input.target is required (got empty/null) — pass the path to a repo or contracts directory to audit.");
+            }
             const sandboxSource = execFileSync(`${SKILL_DIR}/scripts/prepare-sandbox.sh`, [target], {
               encoding: "utf8",
               maxBuffer: 1024 * 1024 * 16
