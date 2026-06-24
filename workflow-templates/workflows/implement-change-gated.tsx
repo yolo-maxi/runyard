@@ -1,6 +1,6 @@
 // smithers-source: authored
 // smithers-display-name: Implement Change (gated)
-// smithers-description: Runs an implementation agent for a change request, then gates it (pnpm test, staged diff, a sane commit, push to origin) before optionally deploying to a configured production target. deploy=false stops after push and reports what would deploy.
+// smithers-description: Runs an implementation agent for a change request, then gates it (pnpm install --frozen-lockfile, pnpm test, staged diff, a sane commit, push to origin) before optionally deploying to a configured production target. deploy=false stops after push and reports what would deploy.
 /** @jsxImportSource smithers-orchestrator */
 import { createSmithers, Sequence, ClaudeCodeAgent } from "smithers-orchestrator";
 import { existsSync } from "node:fs";
@@ -19,10 +19,9 @@ function resolveTool(envName, fallback, candidates) {
   return candidates.find((candidate) => existsSync(candidate)) || fallback;
 }
 const GIT = resolveTool("GATED_GIT_BIN", "git", ["/usr/bin/git", "/usr/local/bin/git"]);
-const PNPM = resolveTool("GATED_PNPM_BIN", "pnpm", [
-  "/usr/local/bin/pnpm",
-  "/usr/bin/pnpm"
-]);
+// pnpm is resolved per-run inside the test task via resolvePnpmOrExplain() so that
+// a missing pnpm fails fast with a guided remediation message instead of a raw
+// ENOENT trace. GATED_PNPM_BIN and PNPM_PATH are honoured there.
 const SSH = resolveTool("GATED_SSH_BIN", "ssh", ["/usr/bin/ssh", "/usr/local/bin/ssh"]);
 const CURL = resolveTool("GATED_CURL_BIN", "curl", ["/usr/bin/curl", "/usr/local/bin/curl"]);
 const TOOL_PATH = [
@@ -32,6 +31,44 @@ const TOOL_PATH = [
   "/bin"
 ].filter(Boolean).join(":");
 const TOOL_ENV = { ...process.env, PATH: TOOL_PATH };
+
+// Distinct exit-style code so callers can distinguish lockfile drift from a real
+// test failure. We thread it via Error.code so the orchestrator surfaces it on
+// the run summary instead of getting buried in a generic GATE FAILED tail.
+const LOCKFILE_DRIFT_CODE = "LOCKFILE_DRIFT";
+
+function slugifyChangeRequest(input) {
+  const explicit = (input && input.changeRequestId && String(input.changeRequestId).trim()) || "";
+  const source = explicit || String(input?.workPrompt || "").split("\n")[0] || "change";
+  const slug = source
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 32);
+  return slug || "change";
+}
+
+async function resolvePnpmOrExplain() {
+  // Honour explicit overrides first (both the workflow-specific GATED_PNPM_BIN and
+  // the more conventional PNPM_PATH that ops runbooks tend to mention), then fall
+  // back to the well-known absolute paths, and finally PATH lookup via `command -v`.
+  const tried = [];
+  const candidates = [];
+  if (process.env.PNPM_PATH) candidates.push(process.env.PNPM_PATH);
+  if (process.env.GATED_PNPM_BIN) candidates.push(process.env.GATED_PNPM_BIN);
+  candidates.push("/usr/local/bin/pnpm", "/usr/bin/pnpm");
+  for (const c of candidates) {
+    tried.push(c);
+    if (existsSync(c)) return c;
+  }
+  const { spawnSync } = await import("node:child_process");
+  const which = spawnSync("sh", ["-c", "command -v pnpm"], { env: TOOL_ENV, encoding: "utf8" });
+  if (which.status === 0 && which.stdout && which.stdout.trim()) return which.stdout.trim();
+  throw new Error(
+    `pnpm not found in PATH or [${tried.join(", ")}]. ` +
+      "Set PNPM_PATH=/abs/path/to/pnpm in runner.env, or install via `npm i -g pnpm`."
+  );
+}
 
 const baselineOut = z.looseObject({ startHead: z.string() });
 const implementOut = z.looseObject({ summary: z.string().default(""), notes: z.string().default("") });
@@ -45,6 +82,8 @@ const inputSchema = z.object({
   deploy: z.boolean().default(false).describe("If true, deploy to prod after gates pass."),
   targetBranch: z.string().default("main"),
   commitMessage: z.string().default(""),
+  changeRequestId: z.string().default("").describe("Optional change-request id/slug stamped into the auto-commit subject."),
+  allowLockfileUpdate: z.boolean().default(false).describe("If true, the install gate runs `pnpm install` (no --frozen-lockfile) so an added dependency can regenerate pnpm-lock.yaml."),
   repoDir: z.string().default("").describe("Absolute runner-local git repo path to edit. Must be inside allowed improve repo roots."),
   repo: z.string().default("").describe("Optional friendly repo key resolved on the runner from IMPROVE_REPO_MAP JSON."),
   project: z.string().default("").describe("Optional friendly project key resolved from IMPROVE_PROJECT_MAP or IMPROVE_REPO_MAP.")
@@ -109,24 +148,61 @@ export default smithers((ctx) => {
           </Task>
         )}
 
-        {/* 2. GATE: pnpm test must pass, or the run fails here (nothing committed/pushed/deployed). */}
+        {/* 2. GATE: install + pnpm test must pass, or the run fails here (nothing committed/pushed/deployed). */}
         {impl && (
           <Task id="test" output={outputs.test} retries={0}>
             {async () => {
-              const { execFileSync } = await import("node:child_process");
-              let out = "";
-              let passed = false;
-              try {
-                out = execFileSync(PNPM, ["test"], { cwd: repoDir, encoding: "utf8", env: TOOL_ENV, maxBuffer: 1024 * 1024 * 64 });
-                passed = true;
-              } catch (e) {
-                // execFileSync errors may surface stdout/stderr as Buffers, undefined,
-                // or be missing entirely (ENOENT) — coerce defensively so the gate
-                // never crashes on .split before it can report the real failure.
-                out = `${e?.stdout ?? ""}${e?.stderr ?? ""}${e?.message ?? ""}`;
-                passed = false;
+              const { spawnSync } = await import("node:child_process");
+              // 256MB — large, but spawnSync will silently truncate at the cap, so we
+              // detect that explicitly below instead of letting a confusing mid-log tail leak.
+              const MAX_BUFFER = 256 * 1024 * 1024;
+              const TRUNCATION_BANNER =
+                "\n— output truncated at 256MB; rerun locally with `pnpm test` for full log —\n";
+
+              // Pre-flight: fail fast with a guided message when pnpm cannot be located.
+              const pnpm = await resolvePnpmOrExplain();
+
+              // 1. Install gate. --frozen-lockfile by default so an agent that edits package.json
+              // without updating pnpm-lock.yaml is caught with a clear remediation instead of
+              // a 30-line pnpm trace. allowLockfileUpdate=true regenerates the lockfile.
+              const installArgs = ctx.input.allowLockfileUpdate ? ["install"] : ["install", "--frozen-lockfile"];
+              const installResult = spawnSync(pnpm, installArgs, {
+                cwd: repoDir,
+                encoding: "utf8",
+                env: TOOL_ENV,
+                maxBuffer: MAX_BUFFER
+              });
+              const installOut = `${installResult.stdout ?? ""}${installResult.stderr ?? ""}`;
+              if (installResult.status !== 0) {
+                if (/ERR_PNPM_OUTDATED_LOCKFILE/.test(installOut)) {
+                  const err = new Error(
+                    "Lockfile drift detected — rerun this workflow with allowLockfileUpdate=true to regenerate pnpm-lock.yaml"
+                  );
+                  err.code = LOCKFILE_DRIFT_CODE;
+                  throw err;
+                }
+                const installTail = installOut.split("\n").slice(-30).join("\n");
+                throw new Error(`GATE FAILED: pnpm ${installArgs.join(" ")} failed.\n${installTail}`);
               }
-              const tail = String(out || "").split("\n").slice(-30).join("\n");
+
+              // 2. Test gate. Use spawnSync (not execFileSync) so we can inspect maxBuffer
+              // truncation without try/catching for ENOBUFS in a separate code path.
+              const testResult = spawnSync(pnpm, ["test"], {
+                cwd: repoDir,
+                encoding: "utf8",
+                env: TOOL_ENV,
+                maxBuffer: MAX_BUFFER
+              });
+              const rawStdout = testResult.stdout ?? "";
+              const rawStderr = testResult.stderr ?? "";
+              let combined = `${rawStdout}${rawStderr}${testResult.error?.message ?? ""}`;
+              const truncated =
+                testResult.error?.code === "ENOBUFS" ||
+                (typeof rawStdout === "string" && rawStdout.length >= MAX_BUFFER) ||
+                (typeof rawStderr === "string" && rawStderr.length >= MAX_BUFFER);
+              if (truncated) combined += TRUNCATION_BANNER;
+              const tail = String(combined || "").split("\n").slice(-30).join("\n");
+              const passed = testResult.status === 0 && !testResult.error;
               if (!passed) throw new Error(`GATE FAILED: pnpm test did not pass.\n${tail}`);
               return { passed, tail };
             }}
@@ -142,8 +218,15 @@ export default smithers((ctx) => {
               run(["add", "-A"]);
               const staged = run(["diff", "--cached", "--name-only"]).split("\n").map((s) => s.trim()).filter(Boolean);
               const stat = run(["diff", "--cached", "--stat"]).trim();
-              const msg = (ctx.input.commitMessage && ctx.input.commitMessage.trim()) ||
-                `gated change: ${ctx.input.workPrompt.split("\n")[0].slice(0, 72)}`;
+              // Stamp the change-request slug into the subject so `git log --oneline` after
+              // a few automated runs is scannable. Cap the slug at 32 chars and budget the
+              // remaining subject so the total subject fits in the ~72-char convention.
+              const slug = slugifyChangeRequest(ctx.input);
+              const subjectPrefix = `[smithers:${slug}] `;
+              const remainingSubject = Math.max(20, 72 - subjectPrefix.length);
+              const rawMsg = (ctx.input.commitMessage && ctx.input.commitMessage.trim()) ||
+                `gated change: ${ctx.input.workPrompt.split("\n")[0].slice(0, remainingSubject)}`;
+              const msg = rawMsg.startsWith(subjectPrefix) ? rawMsg : `${subjectPrefix}${rawMsg}`;
               let commitHash;
               if (staged.length > 0) {
                 run(["commit", "-m", msg]);
@@ -186,8 +269,17 @@ export default smithers((ctx) => {
             {async () => {
               const { execFileSync } = await import("node:child_process");
               const target = PROD_HOST && PROD_DIR ? `${PROD_REMOTE} (${PROD_HOST}:${PROD_DIR})` : `${PROD_REMOTE} (not configured)`;
+              // Headline form: short, scannable, and fits in 80 cols even with long PROD_REMOTE.
+              const targetHost = PROD_HOST ? `${PROD_REMOTE}@${PROD_HOST}` : `${PROD_REMOTE}@(unconfigured)`;
               if (!ctx.input.deploy) {
-                return { deployed: false, wouldDeploy: true, target, verify: `deploy=false — would push ${commit.commit} to ${target}, reset main, and restart the hub.` };
+                return {
+                  deployed: false,
+                  wouldDeploy: true,
+                  target,
+                  verify:
+                    `Deploy: SKIPPED → ${targetHost}\n` +
+                    `deploy=false — would push ${commit.commit} to ${target}, reset main, and restart the hub.`
+                };
               }
               if (!PROD_HOST || !PROD_DIR || !DEPLOY_KEY) {
                 throw new Error("GATE FAILED: deploy=true requires GATED_PROD_HOST, GATED_PROD_DIR, and GATED_DEPLOY_KEY on the runner.");
@@ -205,7 +297,14 @@ export default smithers((ctx) => {
                 const code = execFileSync(CURL, ["-s", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "15", `${HEALTH_BASE}${p}`], { encoding: "utf8", env: TOOL_ENV });
                 verify += `${p}:${code} `;
               }
-              return { deployed: true, wouldDeploy: false, target, verify: `remote HEAD: ${remoteOut.trim().split("\n").pop()} | routes: ${verify.trim()}` };
+              return {
+                deployed: true,
+                wouldDeploy: false,
+                target,
+                verify:
+                  `Deploy: OK → ${targetHost}\n` +
+                  `remote HEAD: ${remoteOut.trim().split("\n").pop()} | routes: ${verify.trim()}`
+              };
             }}
           </Task>
         )}
