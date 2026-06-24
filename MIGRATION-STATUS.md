@@ -3,15 +3,20 @@
 Branch: `feat/tanstack-react-ui`. See **FRONTEND-MIGRATION-PLAN.md** for the full
 design. This file tracks live progress and how to resume.
 
-## TL;DR
+## TL;DR — COMPLETE ✅
 
-The hard architectural work is **done and verified**: esbuild `build:web`, the
-TanStack Query + TanStack DB collection layer, hash router (deep-link grammar
-preserved), cookie/Telegram/token auth gate, and the app shell all run with the
-existing `styles.css` reused unchanged. The **Runs/Home view is fully ported and
-reactive** — it is driven by the TanStack DB runs collection (no setInterval),
-proving the core thesis. Remaining work is porting the other ~16 views into the
-same established pattern.
+The Hub frontend has been **fully rebuilt** as a React app on a TanStack
+Query + TanStack DB sync layer (esbuild `build:web`), reusing the existing
+`styles.css` unchanged. **Every view is ported** (runs/home, run detail +
+**live SSE console**, workflows + ReactFlow graph + highlight.js code, run form,
+workflow editor, approvals, runners, schedules, agents/skills/knowledge, tokens,
+secrets, audit, settings, connect/onboarding, update badge, support chat) and
+the legacy `public/app.js` is gone. setInterval polling is replaced by reactive
+collections (+ an additive SSE stream for run events, with polling fallback).
+
+**All eval gates are green:** `pnpm install` clean, `pnpm build:vendor` +
+`pnpm build:web` succeed, `pnpm test` **384 pass / 0 fail**, and the hub boots
+with all 19 routes rendering with **zero console errors**.
 
 ## Done
 
@@ -24,8 +29,8 @@ same established pattern.
     `clipboard.js`, `me.js` (boot: session → Telegram WebApp → token login).
   - `web/app`: `AuthGate`, `Shell` (topbar + env chip + sidebar + admin menu +
     reactive nav badges), `Content` (route dispatch), `EnvChip`.
-  - `index.html` reduced to `#root` + module; legacy app preserved as
-    `public/legacy-app.js` (porting reference, not loaded).
+  - `index.html` reduced to `#root` + module. (Legacy app was kept as
+    `public/legacy-app.js` during the port and **deleted in the final cleanup**.)
 - **Phase 2 — Runs/Home** (commit `feat(web): port Runs/Home…`):
   - `web/views/Home.jsx` backed by the **reactive runs collection**
     (`useLiveQuery`), adaptive refetch (4s in-flight / 30s idle). Filters
@@ -56,47 +61,46 @@ same established pattern.
   status dot. Verified headless: live append + auto-scroll + pause + fallback,
   zero console errors, backend suite green.
 
-## Polling → reactive sync (Phase 4, in progress)
+- **Phases 3d–3m — remaining views** (commit per view): Approvals (list +
+  detail), Runners (live collection), Tokens, Agents/Skills/Knowledge, Connect +
+  Onboarding, Schedules (list/detail/editor + debounced cron preview), Secrets
+  (+ runner auth-health/reauth), Workflows list + detail (ReactFlow graph +
+  highlight.js code tab + run form + editor), the admin Update badge, and the
+  global Support Chat FAB/panel. A Phase-1 auth bug was fixed along the way
+  (`useMe` now unwraps `data.token` so admin-scoped gating works).
+- **Final cleanup**: deleted `public/legacy-app.js`; migrated every legacy
+  source-grep UI test to assert the React source; full gate pass + a 19-route
+  console-error sweep (all clean).
 
-Replaced so far: the 4s active-run progress poll and the 30s sidebar-badge poll
-(now derived live queries over the collections), and — for run events — the poll
-loop is replaced by a **real SSE stream** consumed through a TanStack events
-collection, with polling kept only as the graceful fallback. Still polling via
-per-view `useQuery` refetchInterval (acceptable, no manual loops): run-detail
-metadata, reauth, update badge — wired as those views land.
+## Polling → reactive sync — done
 
-## Remaining (port into the established pattern; commit per view)
+Replaced: the 4s active-run progress poll and the 30s sidebar-badge poll (now
+derived live queries over the collections); the runners list (live collection);
+and — for run events — the poll loop is replaced by a **real SSE stream**
+consumed through a per-run TanStack events collection, with polling kept only as
+the graceful fallback. Remaining per-view `useQuery` `refetchInterval` (run
+detail, reauth, update badge, dashboard) are reactive Query refetches, not manual
+loops — no `setInterval` remains in the app.
 
-Workflows list · Workflow detail (ReactFlow graph + highlight.js code tab) ·
-Run form + workflow editor · Approvals list/detail · Runners · Schedules
-(list/detail/editor) · Agents/Skills/Knowledge · Tokens · Secrets (+reauth) ·
-Update/Alerts · Connect/Onboarding · Support chat. Final: delete `legacy-app.js`,
-prune unused vendor JS, full gate pass + screenshots. (Done so far: Home, Run
-Detail + live console, Audit, Settings.)
-
-## How to resume
+## How it's built / how to run
 
 1. `pnpm install` then `pnpm build` (vendor + web). `pnpm watch:web` for dev.
-2. `pnpm start` (serves on `$PORT`, default 8788). First bootstrap token at
-   `data/bootstrap-token.txt`; `POST /api/auth/token-login` to get the
+2. `pnpm start` (serves on `$PORT`). First bootstrap token at
+   `data/bootstrap-token.txt`; `POST /api/auth/token-login` for the
    `shub_session` cookie.
-3. To port a view: read its `render<X>` in `public/legacy-app.js`, port pure
-   helpers verbatim into `web/lib`, build JSX components reusing `styles.css`
-   class names, back live/shared data with a collection or `useQuery`
-   (`refetchInterval` for live), wire it into `web/app/Content.jsx`, then rewrite
-   that view's legacy source-grep test to assert the React source.
-4. Headless smoke: `node /tmp/web-smoke.mjs <base> <cookie> <hash> <png>` (CDP
-   script — checks DOM render + console errors + screenshot).
+3. Source lives under `web/` (esbuild → `public/app.js`). To extend a view:
+   build JSX reusing `styles.css` class names, back live/shared data with a
+   collection or `useQuery`, wire into `web/app/Content.jsx`.
 
-## Gate status
+## Gate status — ALL GREEN ✅
 
 | Gate | Status |
 | --- | --- |
 | `pnpm install` clean (pnpm only) | ✅ |
 | `pnpm build:vendor` | ✅ |
 | `pnpm build:web` | ✅ |
-| `pnpm test` ≥ 384 pass / 0 fail | ⚠️ **366 pass / 18 fail** — all failures are legacy source-grep UI tests for **not-yet-ported** views (schedules-ui, uxui-polish-ui, supervision "UI source", workflow-source asset, ~2 app.js-grep in api.test.js). Each is rewritten to the React source as its view is ported (per agreed strategy). All backend/API behavior tests green. Target restored to 384+ at completion. |
-| `pnpm start` + browser smoke, no console errors | ✅ login, shell, and **reactive Home** verified headless (zero console errors); other views render placeholders until ported |
+| `pnpm test` ≥ 384 pass / 0 fail | ✅ **384 pass / 0 fail** |
+| `pnpm start` + browser smoke, no console errors | ✅ all **19 routes** swept headless — zero console errors |
 | Lint/typecheck | n/a (no config; JSX is plain JS via esbuild) |
 
 ## Notes / decisions
