@@ -4,11 +4,12 @@ import { api } from "../lib/api.js";
 import { deepLinks } from "../lib/router.js";
 import { isTerminalRun } from "../lib/collections.js";
 import {
-  runTitle, runDescription, runProject, runBranch, runExecutionLabel, formatBytes
+  runTitle, runDescription, runProject, runBranch, runExecutionLabel, isActiveRun, formatBytes
 } from "../lib/runHelpers.js";
 import { Breadcrumbs, Icon, ShareButton } from "../components/ui.jsx";
 import { RunBanner, RunMetaStrip, RunDiagnostics, RunIO, RunArtifacts, payloadBytes } from "../components/RunDetailParts.jsx";
 import { RunLog } from "../components/RunLog.jsx";
+import { LiveConsole } from "../components/LiveConsole.jsx";
 
 const SUCCESS = new Set(["succeeded", "recovered", "approved"]);
 const FAILURE = new Set(["failed", "error", "cancelled", "rejected"]);
@@ -17,7 +18,9 @@ function sectionDefaultOpen(name, status) {
   if (name === "io") return true;
   if (FAILURE.has(status)) return name === "log" || name === "diagnostics";
   if (SUCCESS.has(status)) return name === "artifacts";
-  return name === "log";
+  // Active / queued / unknown: lead with the live console so the operator sees
+  // the stream move; keep the static log open too.
+  return name === "console" || name === "log";
 }
 
 // Collapsible run-detail section whose open state persists per run/section
@@ -117,6 +120,13 @@ export function RunDetail({ runId, focus = "" }) {
       {focus === "logs" ? <p className="muted">Linked directly to this run's log.</p> : null}
       {focus === "artifacts" ? <p className="muted">Linked directly to this run's artifacts.</p> : null}
       <RunDiagnostics diagnostics={diagnostics} />
+
+      <RunSection
+        runId={run.id} name="console" status={statusKey} title="Live console"
+        meta={isActiveRun(run) ? "streaming" : "history"}
+      >
+        <LiveConsole runId={run.id} live={isActiveRun(run)} />
+      </RunSection>
 
       <RunSection runId={run.id} name="io" status={statusKey} title="Inputs & outputs" meta={`${ioBytes ? formatBytes(ioBytes) : "empty"} total`}>
         <RunIO run={run} />
