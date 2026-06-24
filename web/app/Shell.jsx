@@ -6,6 +6,7 @@ import { meIsAdmin } from "../lib/me.js";
 import { useSidebarBadges } from "../lib/badges.js";
 import { EnvChip } from "./EnvChip.jsx";
 import { Content } from "./Content.jsx";
+import { UpdateBadge } from "../components/UpdateBadge.jsx";
 
 // Small count badge — hidden when zero, matching legacy .nav-badge behavior.
 function NavBadge({ kind, count }) {
@@ -111,6 +112,7 @@ export function Shell({ me }) {
           <a className="button support-link" href="/llms.txt">
             llms.txt
           </a>
+          <UpdateBadge me={me} />
           <details className="admin-menu" id="admin-menu">
             <summary className="button" aria-haspopup="true">
               <span className="admin-label-full">Admin</span>
