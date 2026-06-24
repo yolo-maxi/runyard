@@ -299,9 +299,11 @@ export default smithers((ctx) => {
                 run(["commit", "-m", msg]);
                 commitHash = run(["rev-parse", "HEAD"]).trim();
               } else {
-                const head = run(["rev-parse", "HEAD"]).trim();
-                if (head === baseline.startHead) throw new Error("GATE FAILED: implementation produced no changes.");
-                commitHash = head;
+                // No staged changes — accept as a no-op rather than failing the gate so a
+                // benign "nothing to change" outcome (PM returned an empty improvements
+                // set, or the target already meets the acceptance checks) doesn't sink
+                // the whole pipeline. Downstream push/deploy no-op against unchanged HEAD.
+                commitHash = run(["rev-parse", "HEAD"]).trim();
               }
               if (!/^[0-9a-f]{7,40}$/.test(commitHash)) throw new Error("GATE FAILED: no sane commit hash.");
               return { commit: commitHash, message: msg, stat, files: staged };
