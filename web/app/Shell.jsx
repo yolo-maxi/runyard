@@ -7,6 +7,7 @@ import { useSidebarBadges } from "../lib/badges.js";
 import { EnvChip } from "./EnvChip.jsx";
 import { Content } from "./Content.jsx";
 import { UpdateBadge } from "../components/UpdateBadge.jsx";
+import { SupportChat } from "../components/SupportChat.jsx";
 
 // Small count badge — hidden when zero, matching legacy .nav-badge behavior.
 function NavBadge({ kind, count }) {
@@ -154,6 +155,7 @@ export function Shell({ me }) {
           <Content me={me} />
         </section>
       </main>
+      <SupportChat me={me} />
     </>
   );
 }
