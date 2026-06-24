@@ -51,6 +51,25 @@ export function StatusBadge({ value }) {
   );
 }
 
+// Page toolbar with a title, optional share button, and action slot. Ported
+// from legacy toolbar().
+export function Toolbar({ title, shareHash = "", children }) {
+  return (
+    <div className="toolbar">
+      <h1>
+        {title}
+        {shareHash ? <ShareButton hash={shareHash} label="Copy link to this page" /> : null}
+      </h1>
+      <div className="toolbar-actions">{children}</div>
+    </div>
+  );
+}
+
+// Pretty-printed JSON block. Ported from legacy json().
+export function JsonBlock({ value }) {
+  return <pre className="json">{JSON.stringify(value, null, 2)}</pre>;
+}
+
 // Inline "copy share link" button — emits an absolute URL for the given hash.
 export function ShareButton({ hash, label = "Copy link" }) {
   const url = deepLinks.abs(hash);
