@@ -12,6 +12,8 @@ import { Connect } from "../views/Connect.jsx";
 import { Onboarding } from "../views/Onboarding.jsx";
 import { Schedules, ScheduleDetail } from "../views/Schedules.jsx";
 import { Secrets } from "../views/Secrets.jsx";
+import { Workflows } from "../views/Workflows.jsx";
+import { WorkflowDetail } from "../views/WorkflowDetail.jsx";
 
 // Route → view dispatch, mirroring the legacy render() switch in app.js. Views
 // are swapped from Placeholder to their real React component as each migration
@@ -30,9 +32,9 @@ export function Content({ me }) {
   }
   if (view === "workflows" || view === "capabilities") {
     return segments[1] ? (
-      <Placeholder title="Workflow detail" note={`${segments[1]} — porting in progress.`} />
+      <WorkflowDetail key={segments[1]} slug={segments[1]} sub={segments[2] || ""} />
     ) : (
-      <Placeholder title="Workflows" />
+      <Workflows />
     );
   }
   if (view === "agents" || view === "skills" || view === "knowledge") {
