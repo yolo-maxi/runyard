@@ -39,6 +39,9 @@ same established pattern.
     (reactive sidebar badges — replaces the 30s `refreshSidebarBadges` loop).
   - Rewrote `tests/runs-dashboard-ui.test.js` to assert the React source +
     import/exercise the real `cleanFailureText` (7/7 green).
+- **Phase 3a — Audit + Settings** (commit `feat(web): port Audit + Settings…`):
+  small read-only admin views (`useQuery` + shared `Toolbar`/`JsonBlock`/
+  `StatusBadge`). Verified headless with real data, zero console errors.
 
 ## Polling → reactive sync (Phase 4, in progress)
 
@@ -52,9 +55,9 @@ update badge — to be wired as those views land.
 Run detail (+ event log/diagnostics) · Workflows list · Workflow detail
 (ReactFlow graph + highlight.js code tab) · Run form + workflow editor ·
 Approvals list/detail · Runners · Schedules (list/detail/editor) ·
-Agents/Skills/Knowledge · Tokens · Secrets (+reauth) · Audit · Settings ·
-Update/Alerts · Connect/Onboarding · Support chat. Final: delete
-`legacy-app.js`, prune unused vendor JS, full gate pass + screenshots.
+Agents/Skills/Knowledge · Tokens · Secrets (+reauth) · Update/Alerts ·
+Connect/Onboarding · Support chat. Final: delete `legacy-app.js`, prune unused
+vendor JS, full gate pass + screenshots. (Audit + Settings: done, see Phase 3a.)
 
 ## How to resume
 
