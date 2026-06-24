@@ -3,8 +3,18 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useHashRoute, useNavigate } from "../lib/router.js";
 import { api } from "../lib/api.js";
 import { meIsAdmin } from "../lib/me.js";
+import { useSidebarBadges } from "../lib/badges.js";
 import { EnvChip } from "./EnvChip.jsx";
 import { Content } from "./Content.jsx";
+
+// Small count badge — hidden when zero, matching legacy .nav-badge behavior.
+function NavBadge({ kind, count }) {
+  return (
+    <span className="nav-badge" data-badge={kind} hidden={!count} title={`${count} need attention`}>
+      {count || ""}
+    </span>
+  );
+}
 
 // Maps any route view to its highlighted primary nav item (sidebar + mobile),
 // ported from PRIMARY_VIEWS in app.js.
@@ -52,6 +62,7 @@ export function Shell({ me }) {
   const queryClient = useQueryClient();
   const current = PRIMARY_VIEWS.get(route.view) || "";
   const admin = meIsAdmin(me);
+  const badges = useSidebarBadges();
 
   // Reveal the authenticated chrome (login screen sets body.logged-out).
   useEffect(() => {
@@ -81,7 +92,7 @@ export function Shell({ me }) {
         </div>
         <nav className="mobile-primary-nav" aria-label="Primary navigation">
           <a href="#runs" data-primary-view="home" className={current === "home" ? "active" : undefined}>
-            Runs
+            Runs<NavBadge kind="runs" count={badges.runs} />
           </a>
           <a href="#workflows" data-primary-view="workflows" className={current === "workflows" ? "active" : undefined}>
             Workflows
@@ -90,7 +101,7 @@ export function Shell({ me }) {
             Agents
           </a>
           <a href="#approvals" data-primary-view="approvals" className={current === "approvals" ? "active" : undefined}>
-            Approvals
+            Approvals<NavBadge kind="approvals" count={badges.approvals} />
           </a>
         </nav>
         <nav className="nav" aria-label="Support and admin">
