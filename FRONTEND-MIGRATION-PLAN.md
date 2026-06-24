@@ -226,10 +226,18 @@ Cookie session is unchanged; `api()` keeps `credentials` default (same-origin co
 
 ## 6. New endpoints?
 
-**None required.** Polling fully covers "live" needs and maps directly onto Query
-`refetchInterval` / collection sync. A future SSE/WS stream for run events would be a
-nice optimization but is **explicitly out of scope** here (additive, would be flagged
-separately). We keep the API contract byte-for-byte.
+The migration itself needs **none** — polling covers "live" via Query
+`refetchInterval` / collection sync, and all existing endpoints are kept
+byte-for-byte.
+
+**Added (additive, by request):** `GET /api/runs/:id/events/stream` — a
+Server-Sent Events stream that pushes run events as they are persisted, powering
+the live event console in Run Detail. It is purely additive: no existing REST
+endpoint, schema, or response shape changed. Server side it is a tiny in-process
+pub/sub (`src/runEventBus.js`) hooked into the single event-write path
+(`addRunEvent`); the client consumes it through a TanStack events collection and
+**falls back to polling** `/api/runs/:id/events` if the stream drops or SSE is
+unavailable. See Phase 3c.
 
 ## 7. Evaluation gates (loop until all green)
 
