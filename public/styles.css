@@ -347,6 +347,127 @@ code {
   font-family: var(--font-mono);
 }
 
+/* ============================================================================
+ * SHARED PRIMITIVES (Badge, OverflowMenu, Spinner, EmptyState extras)
+ * Rendered verbatim on the /brand page; keep them token-pure.
+ * ==========================================================================*/
+
+/* Badge — neutral count/label pill. Tones carry meaning only. */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0 var(--space-2);
+  min-height: 18px;
+  border-radius: var(--radius-pill);
+  border: var(--border-width) solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+.badge-accent { background: var(--accent-tint); border-color: var(--accent-border); color: var(--accent); }
+.badge-success { background: var(--success-bg); border-color: var(--success-border); color: var(--success); }
+.badge-warn { background: var(--warn-bg); border-color: var(--warn-border); color: var(--warn-fg); }
+.badge-danger { background: var(--danger-bg); border-color: var(--danger-border); color: var(--danger-fg); }
+.badge-info { background: var(--info-bg); border-color: var(--info-border); color: var(--info-fg); }
+
+/* Overflow (⋯) menu — collapses secondary actions behind one trigger. Mirrors
+ * the admin-menu pattern so the whole app has one menu affordance. */
+.overflow-menu {
+  position: relative;
+  display: inline-block;
+}
+.overflow-menu > summary {
+  list-style: none;
+  user-select: none;
+  font-size: var(--fs-md);
+}
+.overflow-menu > summary::-webkit-details-marker {
+  display: none;
+}
+.overflow-menu[open] > summary {
+  background: var(--surface-2);
+  border-color: var(--border-strong);
+}
+.overflow-menu-list {
+  position: absolute;
+  right: 0;
+  top: calc(100% + var(--space-1));
+  background: var(--surface);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-1);
+  display: grid;
+  gap: var(--space-0-5);
+  min-width: 180px;
+  z-index: 30;
+}
+.overflow-menu-list button,
+.overflow-menu-list a {
+  width: 100%;
+  justify-content: flex-start;
+  border-color: transparent;
+  background: transparent;
+  min-height: 34px;
+  color: var(--text);
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-2-5);
+  font-weight: var(--fw-normal);
+}
+.overflow-menu-list button:hover,
+.overflow-menu-list a:hover {
+  background: var(--surface-2);
+  border-color: var(--border);
+}
+.overflow-menu-list .is-danger {
+  color: var(--danger-fg);
+}
+.overflow-menu-list .is-danger:hover {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+}
+
+/* Spinner — the one loading affordance. */
+.spinner {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+.spinner-inline { gap: var(--space-1-5); }
+.spinner-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  animation: spinner-rotate 0.7s linear infinite;
+  flex: none;
+}
+@keyframes spinner-rotate {
+  to { transform: rotate(360deg); }
+}
+
+/* EmptyState extras (the base .empty card is defined further down). */
+.empty-title {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+.empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: center;
+  margin-top: var(--space-3);
+}
+
 .topbar {
   height: 58px;
   display: flex;
@@ -5738,4 +5859,236 @@ button.cron-preset:hover {
 @media (prefers-reduced-motion: reduce) {
   .live-console-body { scroll-behavior: auto; }
   .live-console-status-live .live-console-dot { animation: none; }
+}
+
+/* ============================================================================
+ * /brand — living style guide. Lays out the token sets the page renders.
+ * ==========================================================================*/
+.brand-page {
+  max-width: 1080px;
+}
+.brand-lede {
+  margin: 0 0 var(--space-8);
+  max-width: 70ch;
+  font-size: var(--fs-md);
+  line-height: var(--lh-md);
+}
+.brand-section {
+  margin: 0 0 var(--space-10);
+}
+.brand-section-head {
+  margin: 0 0 var(--space-4);
+  padding-bottom: var(--space-2);
+  border-bottom: var(--border-width) solid var(--border);
+}
+.brand-section-head h2 {
+  margin: 0;
+}
+.brand-section-head p {
+  margin: var(--space-1) 0 0;
+  font-size: var(--fs-sm);
+}
+.brand-subhead {
+  margin: 0 0 var(--space-2);
+  font-size: var(--fs-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+  color: var(--text-muted);
+  font-weight: var(--fw-semibold);
+}
+.brand-token {
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  color: var(--text-secondary);
+  background: var(--surface-2);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-1);
+}
+
+/* Type scale */
+.brand-type {
+  display: grid;
+  gap: var(--space-4);
+}
+.brand-type-row {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: baseline;
+}
+.brand-type-meta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0-5);
+  font-size: var(--fs-xs);
+}
+.brand-type-sample {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+/* Weights */
+.brand-weights {
+  display: grid;
+  gap: var(--space-2);
+}
+.brand-weight-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+.brand-weight-row > span:first-child {
+  min-width: 120px;
+}
+
+/* Colors */
+.brand-color-groups {
+  display: grid;
+  gap: var(--space-6);
+}
+.brand-swatches {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--space-2);
+}
+.brand-swatch {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  column-gap: var(--space-2);
+  align-items: center;
+  padding: var(--space-2);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.brand-swatch-chip {
+  grid-row: 1 / 3;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  border: var(--border-width) solid var(--border);
+}
+.brand-swatch-label {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+}
+.brand-swatch-hex {
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+}
+
+/* Spacing */
+.brand-spacing {
+  display: grid;
+  gap: var(--space-2);
+}
+.brand-space-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.brand-space-val {
+  width: 48px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+}
+.brand-space-bar {
+  height: 16px;
+  background: var(--accent);
+  border-radius: var(--radius-sm);
+}
+
+/* Radii & shadows */
+.brand-rs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-6);
+}
+.brand-rs-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+.brand-rs-tile {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: center;
+}
+.brand-rs-box {
+  width: 56px;
+  height: 56px;
+  background: var(--accent-tint);
+  border: var(--border-width) solid var(--accent-border);
+}
+.brand-rs-shadow {
+  background: var(--surface);
+  border-color: var(--border);
+  border-radius: var(--radius-md);
+}
+
+/* Buttons */
+.brand-rule {
+  margin: 0 0 var(--space-4);
+  font-size: var(--fs-sm);
+}
+.brand-btn-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--space-6);
+}
+.brand-btn-col {
+  display: grid;
+  gap: var(--space-3);
+}
+.brand-btn-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+/* Badges & statuses */
+.brand-badges {
+  display: grid;
+  gap: var(--space-6);
+}
+.brand-badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+/* Forms */
+.brand-forms {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-4);
+  max-width: 720px;
+}
+.brand-field {
+  display: grid;
+  gap: var(--space-1-5);
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+}
+.brand-state-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: 38px;
+}
+.brand-console {
+  margin: 0;
+  max-width: 720px;
+}
+
+@media (max-width: 640px) {
+  .brand-type-row {
+    grid-template-columns: 1fr;
+    gap: var(--space-1);
+  }
 }
