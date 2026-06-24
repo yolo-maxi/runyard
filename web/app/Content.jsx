@@ -4,6 +4,7 @@ import { Home } from "../views/Home.jsx";
 import { RunDetail } from "../views/RunDetail.jsx";
 import { Audit } from "../views/Audit.jsx";
 import { Settings } from "../views/Settings.jsx";
+import { Approvals, ApprovalDetail } from "../views/Approvals.jsx";
 
 // Route → view dispatch, mirroring the legacy render() switch in app.js. Views
 // are swapped from Placeholder to their real React component as each migration
@@ -33,11 +34,7 @@ export function Content({ me }) {
   if (view === "connect") return <Placeholder title="Connect" />;
   if (view === "onboarding") return <Placeholder title="Get started" />;
   if (view === "approvals") {
-    return segments[1] ? (
-      <Placeholder title="Approval detail" />
-    ) : (
-      <Placeholder title="Approvals" />
-    );
+    return segments[1] ? <ApprovalDetail key={segments[1]} id={segments[1]} /> : <Approvals />;
   }
   if (view === "runners") return <Placeholder title="Runners" />;
   if (view === "schedules") {
