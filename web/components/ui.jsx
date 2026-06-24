@@ -51,6 +51,30 @@ export function StatusBadge({ value }) {
   );
 }
 
+// Breadcrumb trail. Ported from legacy breadcrumbs(). Items: {label, href?,
+// title?, current?}.
+export function Breadcrumbs({ items = [] }) {
+  const visible = items.filter((i) => i?.label);
+  if (!visible.length) return null;
+  return (
+    <nav className="breadcrumbs" aria-label="Breadcrumb">
+      <ol>
+        {visible.map((item, i) => (
+          <li key={i}>
+            {item.href ? (
+              <a href={item.href} title={item.title || item.label} aria-current={item.current ? "page" : undefined}>
+                {item.label}
+              </a>
+            ) : (
+              <span title={item.title || item.label} aria-current={item.current ? "page" : undefined}>{item.label}</span>
+            )}
+          </li>
+        ))}
+      </ol>
+    </nav>
+  );
+}
+
 // Page toolbar with a title, optional share button, and action slot. Ported
 // from legacy toolbar().
 export function Toolbar({ title, shareHash = "", children }) {
