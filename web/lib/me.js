@@ -35,14 +35,21 @@ async function tryTelegramAuth() {
 }
 
 // Resolves to the authenticated token record, or throws (→ login fallback).
+// /api/me returns `{ token: {...} }`; we unwrap to the token record so `me`
+// matches the legacy `state.me = data.token` shape (so `me.scopes` is correct).
+async function fetchMe() {
+  const data = await api("/api/me");
+  return data?.token ?? data;
+}
+
 async function bootMe() {
   try {
-    return await api("/api/me");
+    return await fetchMe();
   } catch {
     // fall through to Telegram attempt
   }
   if (await tryTelegramAuth()) {
-    return api("/api/me"); // throws again if the Hub session wasn't accepted
+    return fetchMe(); // throws again if the Hub session wasn't accepted
   }
   throw new Error("no-session");
 }

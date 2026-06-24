@@ -10,6 +10,8 @@ import { Tokens } from "../views/Tokens.jsx";
 import { Agents } from "../views/Agents.jsx";
 import { Connect } from "../views/Connect.jsx";
 import { Onboarding } from "../views/Onboarding.jsx";
+import { Schedules, ScheduleDetail } from "../views/Schedules.jsx";
+import { Secrets } from "../views/Secrets.jsx";
 
 // Route → view dispatch, mirroring the legacy render() switch in app.js. Views
 // are swapped from Placeholder to their real React component as each migration
@@ -45,11 +47,11 @@ export function Content({ me }) {
   }
   if (view === "runners") return <Runners />;
   if (view === "schedules") {
-    return segments[1] ? <Placeholder title="Schedule detail" /> : <Placeholder title="Schedules" />;
+    return segments[1] ? <ScheduleDetail key={segments[1]} id={segments[1]} /> : <Schedules />;
   }
   if (view === "tokens") return <Tokens />;
   if (view === "audit") return <Audit />;
-  if (view === "secrets") return <Placeholder title="Secrets" />;
+  if (view === "secrets") return <Secrets />;
   if (view === "settings") return <Settings />;
   return <Placeholder title="Runs" />;
 }
