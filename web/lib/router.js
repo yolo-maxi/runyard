@@ -4,8 +4,9 @@ import { useSyncExternalStore, useCallback } from "react";
 // public/app.js `deepLinks` object so every existing shareable URL keeps
 // working ("every URL in the Hub is shareable" is a documented feature).
 
-const base = () =>
-  typeof location !== "undefined" ? `${location.pathname}${location.search}` : "";
+// Matches legacy deepLinks.base() — absolute "/app" URL so share links are
+// copy-pasteable regardless of the current path.
+const base = () => (typeof location !== "undefined" ? `${location.origin}/app` : "");
 
 export const deepLinks = {
   base,
