@@ -1,6 +1,8 @@
 import { useHashRoute } from "../lib/router.js";
 import { Placeholder } from "../views/Placeholder.jsx";
 import { Home } from "../views/Home.jsx";
+import { Audit } from "../views/Audit.jsx";
+import { Settings } from "../views/Settings.jsx";
 
 // Route → view dispatch, mirroring the legacy render() switch in app.js. Views
 // are swapped from Placeholder to their real React component as each migration
@@ -40,8 +42,8 @@ export function Content({ me }) {
     return segments[1] ? <Placeholder title="Schedule detail" /> : <Placeholder title="Schedules" />;
   }
   if (view === "tokens") return <Placeholder title="Tokens" />;
-  if (view === "audit") return <Placeholder title="Audit" />;
+  if (view === "audit") return <Audit />;
   if (view === "secrets") return <Placeholder title="Secrets" />;
-  if (view === "settings") return <Placeholder title="Settings" />;
+  if (view === "settings") return <Settings />;
   return <Placeholder title="Runs" />;
 }
