@@ -7,6 +7,9 @@ import { Settings } from "../views/Settings.jsx";
 import { Approvals, ApprovalDetail } from "../views/Approvals.jsx";
 import { Runners } from "../views/Runners.jsx";
 import { Tokens } from "../views/Tokens.jsx";
+import { Agents } from "../views/Agents.jsx";
+import { Connect } from "../views/Connect.jsx";
+import { Onboarding } from "../views/Onboarding.jsx";
 
 // Route → view dispatch, mirroring the legacy render() switch in app.js. Views
 // are swapped from Placeholder to their real React component as each migration
@@ -31,10 +34,12 @@ export function Content({ me }) {
     );
   }
   if (view === "agents" || view === "skills" || view === "knowledge") {
-    return <Placeholder title="Agents / Skills / Knowledge" />;
+    const tab = view === "agents" ? segments[1] || "agents" : view;
+    const slug = view === "agents" ? segments[2] : segments[1];
+    return <Agents tab={tab} slug={slug} />;
   }
-  if (view === "connect") return <Placeholder title="Connect" />;
-  if (view === "onboarding") return <Placeholder title="Get started" />;
+  if (view === "connect") return <Connect />;
+  if (view === "onboarding") return <Onboarding />;
   if (view === "approvals") {
     return segments[1] ? <ApprovalDetail key={segments[1]} id={segments[1]} /> : <Approvals />;
   }
