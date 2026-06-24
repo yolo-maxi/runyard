@@ -1,6 +1,7 @@
 import { useHashRoute } from "../lib/router.js";
 import { Placeholder } from "../views/Placeholder.jsx";
 import { Home } from "../views/Home.jsx";
+import { RunDetail } from "../views/RunDetail.jsx";
 import { Audit } from "../views/Audit.jsx";
 import { Settings } from "../views/Settings.jsx";
 
@@ -13,7 +14,8 @@ export function Content({ me }) {
   const { view, segments } = route;
 
   if (view === "runs" && segments[1]) {
-    return <Placeholder title="Run detail" note={`Run ${segments[1]} — porting in progress.`} />;
+    const focus = segments[2] || ""; // "logs" | "artifacts" | ""
+    return <RunDetail key={segments[1]} runId={segments[1]} focus={focus} />;
   }
   if (view === "home" || view === "runs" || view === "dashboard") {
     return <Home />;
