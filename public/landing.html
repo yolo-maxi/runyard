@@ -3,174 +3,670 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Runyard — Self-hosted control plane for agent runs</title>
-    <meta name="description" content="Runyard is a self-hosted control plane for agent runs. Try a sample capability in one click, then connect MCP, CLI, API, or runners from the Advanced panel." />
+    <title>RunYard — Self-hosted control plane for AI agent runs</title>
+    <meta
+      name="description"
+      content="RunYard is a self-hosted control plane for AI agent and workflow runs. Orchestrate long-running coding and automation workflows on your own machines, with durable state, live streaming logs, and human-in-the-loop approvals."
+    />
     <link rel="stylesheet" href="/public/styles.css" />
     <style>
-      .try-hero { display: grid; gap: 1.5rem; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); align-items: stretch; }
-      @media (max-width: 860px) { .try-hero { grid-template-columns: 1fr; } }
-      .try-copy h1 { margin-bottom: 0.25rem; }
-      .try-def { font-size: 1.05rem; line-height: 1.5; margin: 0.5rem 0 1rem; }
-      .try-def strong { font-weight: 600; }
-      .try-actions { margin-top: 1rem; display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center; }
-      .try-actions .button.primary { font-size: 1.05rem; padding: 0.7rem 1.2rem; }
-      .try-foot { margin-top: 0.75rem; }
-      .demo { background: rgba(0,0,0,0.55); color: #d8ffd8; border-radius: 12px; padding: 0.9rem 1rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; line-height: 1.45; min-height: 220px; box-shadow: 0 1px 2px rgba(0,0,0,0.15); overflow: hidden; }
-      .demo-head { color: #9fdcff; opacity: 0.85; margin-bottom: 0.4rem; }
-      .demo-line { display: block; opacity: 0; animation: demo-line 8s linear infinite; }
-      .demo-line:nth-child(2) { animation-delay: 0.6s; }
-      .demo-line:nth-child(3) { animation-delay: 1.4s; }
-      .demo-line:nth-child(4) { animation-delay: 2.2s; }
-      .demo-line:nth-child(5) { animation-delay: 3.0s; }
-      .demo-line:nth-child(6) { animation-delay: 3.8s; }
-      .demo-line:nth-child(7) { animation-delay: 4.6s; color: #f6c177; }
-      .demo-line:nth-child(8) { animation-delay: 5.4s; color: #9fdcff; }
-      @keyframes demo-line { 0% { opacity: 0; transform: translateY(4px); } 6% { opacity: 1; transform: translateY(0); } 70% { opacity: 1; } 100% { opacity: 0.35; transform: translateY(0); } }
-      details.advanced-block { background: var(--surface, rgba(255,255,255,0.04)); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 1rem 1.25rem; margin-top: 1rem; }
-      details.advanced-block > summary { cursor: pointer; font-weight: 600; }
-      details.advanced-block[open] > summary { margin-bottom: 1rem; }
+      /* ====================================================================
+       * Landing page — scoped styles.
+       * Everything here resolves to the brand design tokens defined in
+       * styles.css (--fs-*, --space-*, --accent, --ink, --surface, …) and
+       * reuses the shared .button / .brand primitives, so the page is the
+       * same product as the app. No ad-hoc font sizes or raw palette hex.
+       * ================================================================== */
+
+      .lp main { display: block; }
+
+      /* Generic centered content rail. */
+      .lp-wrap {
+        width: 100%;
+        max-width: 1120px;
+        margin: 0 auto;
+        padding: 0 var(--space-6);
+      }
+
+      .lp section { scroll-margin-top: 72px; }
+
+      .lp-eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--space-2);
+        margin: 0 0 var(--space-5);
+        padding: var(--space-1) var(--space-3);
+        border-radius: var(--radius-pill);
+        background: var(--accent-tint);
+        border: var(--border-width) solid var(--accent-border);
+        color: var(--accent);
+        font-size: var(--fs-xs);
+        font-weight: var(--fw-semibold);
+        letter-spacing: var(--tracking-label);
+        text-transform: uppercase;
+      }
+      .lp-eyebrow .dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--accent);
+        flex: 0 0 auto;
+      }
+
+      /* ---- Hero ---------------------------------------------------------- */
+      .lp-hero {
+        padding: clamp(var(--space-12), 8vw, 96px) 0 var(--space-16);
+        background:
+          radial-gradient(1100px 520px at 78% -8%, var(--accent-tint), transparent 60%),
+          radial-gradient(820px 420px at -5% 0%, var(--info-bg), transparent 55%);
+        border-bottom: var(--border-width) solid var(--border);
+      }
+      .lp-hero-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+        gap: clamp(var(--space-8), 5vw, var(--space-16));
+        align-items: center;
+      }
+      .lp-hero h1 {
+        font-size: var(--fs-display);
+        line-height: 1.02;
+        letter-spacing: -0.02em;
+        font-weight: var(--fw-display);
+        margin: 0 0 var(--space-5);
+        color: var(--text-strong);
+        text-wrap: balance;
+      }
+      .lp-hero h1 .accent { color: var(--accent); }
+      .lp-lede {
+        font-size: var(--fs-lg);
+        line-height: var(--lh-lg);
+        color: var(--text-secondary);
+        max-width: 38ch;
+        margin: 0 0 var(--space-8);
+      }
+      .lp-cta-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--space-3);
+        align-items: center;
+      }
+      .lp-cta-row .button { min-height: 44px; padding: 0 var(--space-5); }
+      .lp-cta-note {
+        margin: var(--space-5) 0 0;
+        color: var(--text-muted);
+        font-size: var(--fs-sm);
+      }
+      .lp-cta-note a { color: var(--link); text-decoration: none; }
+      .lp-cta-note a:hover { text-decoration: underline; }
+
+      /* ---- Console card (the "watch your runs" proof) ------------------- */
+      .lp-console {
+        background: var(--console-bg);
+        color: var(--console-fg);
+        border-radius: var(--radius-lg);
+        border: var(--border-width) solid #1f2c3a;
+        box-shadow: var(--shadow-lg);
+        overflow: hidden;
+        min-width: 0;
+      }
+      .lp-console-bar {
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
+        padding: var(--space-3) var(--space-4);
+        border-bottom: var(--border-width) solid #1f2c3a;
+        background: #0b1218;
+      }
+      .lp-console-bar .tl {
+        width: 11px; height: 11px; border-radius: 50%;
+        background: #33424f; flex: 0 0 auto;
+      }
+      .lp-console-bar .tl.g { background: var(--success); }
+      .lp-console-bar .tl.a { background: var(--warn-fg); }
+      .lp-console-bar .tl.r { background: var(--danger-fg); }
+      .lp-console-bar .title {
+        margin-left: var(--space-2);
+        font-family: var(--font-mono);
+        font-size: var(--fs-xs);
+        color: #8da2b5;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        min-width: 0;
+      }
+      .lp-console pre {
+        margin: 0;
+        padding: var(--space-4) var(--space-4) var(--space-5);
+        font-family: var(--font-mono);
+        font-size: var(--fs-sm);
+        line-height: 1.7;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+      .lp-console .c-prompt { color: #8da2b5; }
+      .lp-console .c-ok { color: #6fcf97; }
+      .lp-console .c-warn { color: #f0c674; }
+      .lp-console .c-info { color: #82aaff; }
+      .lp-console .c-dim { color: #607387; }
+      .lp-console .cursor {
+        display: inline-block;
+        width: 8px;
+        height: 1.05em;
+        vertical-align: -0.18em;
+        background: #6fcf97;
+        animation: lp-blink 1.1s steps(1) infinite;
+      }
+      @keyframes lp-blink { 0%, 50% { opacity: 1; } 50.01%, 100% { opacity: 0; } }
+
+      /* ---- Logos / trust strip ----------------------------------------- */
+      .lp-strip {
+        border-bottom: var(--border-width) solid var(--border);
+        background: var(--surface);
+      }
+      .lp-strip .lp-wrap {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--space-4) var(--space-8);
+        align-items: center;
+        justify-content: center;
+        padding-top: var(--space-5);
+        padding-bottom: var(--space-5);
+      }
+      .lp-strip span {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--space-2);
+        color: var(--text-muted);
+        font-size: var(--fs-sm);
+        font-weight: var(--fw-medium);
+      }
+      .lp-strip span::before {
+        content: "";
+        width: 6px; height: 6px; border-radius: 50%;
+        background: var(--accent);
+        flex: 0 0 auto;
+      }
+
+      /* ---- Generic section header --------------------------------------- */
+      .lp-block { padding: clamp(var(--space-12), 7vw, 88px) 0; }
+      .lp-block.alt { background: var(--surface); border-block: var(--border-width) solid var(--border); }
+      .lp-head { max-width: 60ch; margin: 0 0 var(--space-10); }
+      .lp-head .lp-eyebrow { margin-bottom: var(--space-4); }
+      .lp-head h2 {
+        font-size: var(--fs-2xl);
+        line-height: var(--lh-2xl);
+        letter-spacing: -0.01em;
+        margin: 0 0 var(--space-3);
+        color: var(--text-strong);
+      }
+      .lp-head p {
+        margin: 0;
+        font-size: var(--fs-md);
+        line-height: var(--lh-md);
+        color: var(--text-secondary);
+      }
+
+      /* ---- How it works: hub + runners flow ----------------------------- */
+      .lp-flow {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: var(--space-4);
+        align-items: stretch;
+      }
+      .lp-node {
+        position: relative;
+        background: var(--surface);
+        border: var(--border-width) solid var(--border);
+        border-radius: var(--radius-lg);
+        padding: var(--space-6);
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-3);
+      }
+      .lp-node.hub {
+        border-color: var(--accent-border);
+        background: linear-gradient(180deg, var(--accent-tint), var(--surface) 72%);
+        box-shadow: var(--shadow-sm);
+      }
+      .lp-node-kicker {
+        font-size: var(--fs-2xs);
+        font-weight: var(--fw-semibold);
+        letter-spacing: var(--tracking-label);
+        text-transform: uppercase;
+        color: var(--text-muted);
+      }
+      .lp-node.hub .lp-node-kicker { color: var(--accent); }
+      .lp-node h3 { margin: 0; font-size: var(--fs-md); }
+      .lp-node ul {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: var(--space-2);
+      }
+      .lp-node li {
+        font-size: var(--fs-sm);
+        line-height: var(--lh-sm);
+        color: var(--text-secondary);
+        padding-left: var(--space-4);
+        position: relative;
+        overflow-wrap: anywhere;
+      }
+      .lp-node li::before {
+        content: "";
+        position: absolute;
+        left: 0; top: 0.5em;
+        width: 6px; height: 6px;
+        border-radius: 2px;
+        background: var(--border-strong);
+      }
+      .lp-node.hub li::before { background: var(--accent); }
+      /* Connector arrows between the three columns. */
+      .lp-flow .lp-node:not(:last-child)::after {
+        content: "→";
+        position: absolute;
+        right: calc(-1 * var(--space-4) - 1px);
+        top: 50%;
+        transform: translate(50%, -50%);
+        width: calc(var(--space-4) * 2);
+        text-align: center;
+        color: var(--text-muted);
+        font-size: var(--fs-lg);
+        z-index: 1;
+      }
+      .lp-flow-foot {
+        margin: var(--space-6) 0 0;
+        font-size: var(--fs-sm);
+        color: var(--text-muted);
+      }
+      .lp-flow-foot code {
+        background: var(--surface-2);
+        border: var(--border-width) solid var(--border);
+        border-radius: var(--radius-sm);
+        padding: 1px 6px;
+        font-size: var(--fs-xs);
+      }
+
+      /* ---- Features grid ------------------------------------------------- */
+      .lp-features {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: var(--space-4);
+      }
+      .lp-feature {
+        background: var(--surface);
+        border: var(--border-width) solid var(--border);
+        border-radius: var(--radius-lg);
+        padding: var(--space-6);
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-2);
+        min-width: 0;
+        transition: border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
+      }
+      .lp-block.alt .lp-feature { background: var(--bg); }
+      .lp-feature:hover {
+        border-color: var(--border-strong);
+        box-shadow: var(--shadow-sm);
+        transform: translateY(-2px);
+      }
+      .lp-feature-icon {
+        width: 38px; height: 38px;
+        border-radius: var(--radius-md);
+        background: var(--accent-tint);
+        border: var(--border-width) solid var(--accent-border);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--accent);
+        margin-bottom: var(--space-2);
+        flex: 0 0 auto;
+      }
+      .lp-feature-icon svg { width: 19px; height: 19px; display: block; }
+      .lp-feature h3 { margin: 0; font-size: var(--fs-md); }
+      .lp-feature p {
+        margin: 0;
+        font-size: var(--fs-sm);
+        line-height: var(--lh-sm);
+        color: var(--text-secondary);
+        overflow-wrap: anywhere;
+      }
+      .lp-feature code {
+        font-size: var(--fs-xs);
+        background: var(--surface-2);
+        border: var(--border-width) solid var(--border);
+        border-radius: var(--radius-sm);
+        padding: 0 4px;
+      }
+
+      /* ---- Final CTA ---------------------------------------------------- */
+      .lp-final {
+        text-align: center;
+        background:
+          radial-gradient(900px 360px at 50% 120%, var(--accent-tint), transparent 60%);
+      }
+      .lp-final h2 {
+        font-size: var(--fs-2xl);
+        line-height: var(--lh-2xl);
+        letter-spacing: -0.01em;
+        margin: 0 auto var(--space-3);
+        max-width: 22ch;
+        color: var(--text-strong);
+      }
+      .lp-final p {
+        margin: 0 auto var(--space-8);
+        max-width: 52ch;
+        color: var(--text-secondary);
+        font-size: var(--fs-md);
+        line-height: var(--lh-md);
+      }
+      .lp-final .lp-cta-row { justify-content: center; }
+
+      /* ---- Footer ------------------------------------------------------- */
+      .lp-footer {
+        border-top: var(--border-width) solid var(--border);
+        background: var(--surface);
+        padding: var(--space-10) 0 var(--space-8);
+      }
+      .lp-footer-top {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--space-6) var(--space-8);
+        align-items: flex-start;
+        justify-content: space-between;
+      }
+      .lp-footer .brand { gap: var(--space-2); }
+      .lp-footer-tag {
+        margin: var(--space-3) 0 0;
+        color: var(--text-muted);
+        font-size: var(--fs-sm);
+        max-width: 36ch;
+      }
+      .lp-footer-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--space-2) var(--space-6);
+      }
+      .lp-footer-links a {
+        color: var(--text-secondary);
+        text-decoration: none;
+        font-size: var(--fs-sm);
+        font-weight: var(--fw-medium);
+      }
+      .lp-footer-links a:hover { color: var(--accent); }
+      .lp-footer-note {
+        margin: var(--space-8) 0 0;
+        padding-top: var(--space-5);
+        border-top: var(--border-width) solid var(--border);
+        color: var(--text-muted);
+        font-size: var(--fs-xs);
+        line-height: var(--lh-xs);
+      }
+      .lp-footer-note code {
+        background: var(--surface-2);
+        border: var(--border-width) solid var(--border);
+        border-radius: var(--radius-sm);
+        padding: 0 4px;
+      }
+      .lp-footer-note a { color: var(--link); text-decoration: none; }
+      .lp-footer-note a:hover { text-decoration: underline; }
+
+      /* ---- Responsive --------------------------------------------------- */
+      @media (max-width: 960px) {
+        .lp-hero-grid { grid-template-columns: 1fr; gap: var(--space-10); }
+        .lp-lede { max-width: 52ch; }
+        .lp-features { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      }
+
+      @media (max-width: 760px) {
+        .lp-flow { grid-template-columns: 1fr; }
+        /* Arrows point down when the flow stacks. */
+        .lp-flow .lp-node:not(:last-child)::after {
+          content: "↓";
+          right: auto;
+          left: 50%;
+          top: auto;
+          bottom: calc(-1 * var(--space-4) - 1px);
+          transform: translate(-50%, 50%);
+          width: auto;
+        }
+      }
+
+      @media (max-width: 640px) {
+        .lp-wrap { padding: 0 var(--space-4); }
+        .lp-hero { padding-top: var(--space-10); }
+        .lp-features { grid-template-columns: 1fr; }
+        .lp-cta-row .button { width: 100%; }
+        .lp-footer-top { flex-direction: column; }
+      }
+
+      @media (max-width: 380px) {
+        /* Display clamp already shrinks the H1; nudge the lede tighter so
+         * nothing crowds the edge on a 360px viewport. */
+        .lp-lede { font-size: var(--fs-md); line-height: var(--lh-md); }
+      }
     </style>
   </head>
-  <body>
+  <body class="lp">
     <header class="topbar">
-      <div class="brand">
+      <a class="brand" href="/" style="text-decoration: none">
         <span class="brand-mark" aria-hidden="true"></span>
-        <span class="brand-name">Runyard</span>
-      </div>
-      <nav class="nav">
-        <a class="button" href="/docs/quickstart">Quickstart</a>
-        <a class="button" href="/llms.txt">llms.txt</a>
-        <a class="button primary back-to-app" href="/app" title="Open the Runyard app — runs dashboard">Open RunYard →</a>
+        <span class="brand-name">runyard</span>
+      </a>
+      <nav class="nav" aria-label="Primary">
+        <a class="button" href="/docs">Docs</a>
+        <a class="button" href="https://github.com/yolo-maxi/runyard" rel="noopener">GitHub</a>
+        <a class="button primary" href="/app" title="Sign in and open the RunYard hub">Open the hub →</a>
       </nav>
     </header>
+
     <main>
-      <section class="hero">
-        <div class="hero-inner">
-          <div class="try-hero">
-            <div class="try-copy">
-              <p class="hero-eyebrow">Self-hosted control plane for agent runs</p>
-              <h1>Run your first capability in one click</h1>
-              <p class="try-def">A <strong>capability</strong> is a team-defined action — a workflow with inputs, outputs, runner requirements, and an approval policy — that agents discover and run through Runyard. Pick one, hit Try, and watch logs stream while artifacts land on the Hub.</p>
-              <div class="try-actions">
-                <a class="button primary" href="/app?try=hello#workflows/hello/run">Try it: run <code>hello</code></a>
-                <a class="button" href="/docs/quickstart">Quickstart</a>
+      <!-- ============================ HERO ============================ -->
+      <section class="lp-hero">
+        <div class="lp-wrap">
+          <div class="lp-hero-grid">
+            <div class="lp-hero-copy">
+              <p class="lp-eyebrow"><span class="dot" aria-hidden="true"></span>Self-hosted · open · runs on your infra</p>
+              <h1>A control plane for AI agent runs — on <span class="accent">your own machines</span>.</h1>
+              <p class="lp-lede">
+                RunYard orchestrates long-running coding and automation workflows across your own
+                runners — with durable state, live streaming logs, and human-in-the-loop approvals.
+                Crash-safe, private by default, deploy anywhere.
+              </p>
+              <div class="lp-cta-row">
+                <a class="button primary" href="/app">Open the hub →</a>
+                <a class="button" href="/docs">Read the docs</a>
               </div>
-              <p class="try-foot muted">Sample run uses the default single-host topology. No topology decision required up front — you can wire MCP, CLI, API, or a runner pool from <a href="/app#connect">Connect</a> after your first successful run.</p>
+              <p class="lp-cta-note">
+                Free &amp; open source ·
+                <a href="https://github.com/yolo-maxi/runyard" rel="noopener">GitHub</a> ·
+                <a href="/llms.txt">llms.txt</a>
+              </p>
             </div>
-            <div class="demo" aria-hidden="true">
-              <div class="demo-head">$ runyard run hello --where local</div>
-              <span class="demo-line">→ queued run_01H9 capability=hello runner=local</span>
-              <span class="demo-line">  step 1/3 prepare workspace ✓</span>
-              <span class="demo-line">  step 2/3 invoke agent (claude) …</span>
-              <span class="demo-line">  log: collected 3 sources, drafting summary</span>
-              <span class="demo-line">  step 3/3 write artifact hello-output.md</span>
-              <span class="demo-line">  ✓ artifact hello-output.md (2.1 KB)</span>
-              <span class="demo-line">★ run succeeded · open /app#connect to wire your agents</span>
-              <span class="demo-line">$ _</span>
+
+            <div class="lp-console" role="img" aria-label="Example RunYard run console: a workflow streams logs, pauses for approval, then succeeds">
+              <div class="lp-console-bar">
+                <span class="tl r" aria-hidden="true"></span>
+                <span class="tl a" aria-hidden="true"></span>
+                <span class="tl g" aria-hidden="true"></span>
+                <span class="title">runyard logs -f run_01J8C</span>
+              </div>
+              <pre aria-hidden="true"><span class="c-prompt">$ runyard logs -f run_01J8C</span>
+<span class="c-dim">[12:04:01]</span> <span class="c-info">▶</span> run started   workflow=nightly-audit
+<span class="c-dim">[12:04:01]</span>            runner=hetzner-1  tags=linux,git
+<span class="c-dim">[12:04:09]</span> <span class="c-ok">✓</span> workspace ready @ a1b2c3d
+<span class="c-dim">[12:04:11]</span> <span class="c-info">→</span> agent scanning 482 files…
+<span class="c-dim">[12:06:40]</span> <span class="c-warn">⏸</span> approval required: open PR to main
+<span class="c-dim">[12:07:02]</span> <span class="c-ok">✓</span> approved by ocean
+<span class="c-dim">[12:07:18]</span> <span class="c-ok">★</span> run succeeded · 2 artifacts
+<span class="c-prompt">$ </span><span class="cursor" aria-hidden="true"></span></pre>
             </div>
-          </div>
-          <details class="advanced-block">
-            <summary>Advanced: install MCP, CLI, API, or a runner pool</summary>
-            <p class="muted">Most operators don't need any of this until after their first successful run. Each card below mirrors the snippets shown in <a href="/app#connect">/app#connect</a>; bin names match the current build.</p>
-            <div class="setup-grid">
-              <article class="setup-step">
-                <h3>MCP</h3>
-                <p class="muted">Wire every detected AI client to this Hub.</p>
-                <pre class="json">runyard mcp install --all
-# auto-detects Claude Code/Desktop, Codex, Cursor, Windsurf, Gemini, VS Code</pre>
-              </article>
-              <article class="setup-step">
-                <h3>CLI</h3>
-                <p class="muted">Authenticate, then run the next-action menu.</p>
-                <pre class="json">runyard login --url https://hub.example.com
-runyard menu                # try: runyard run hello
-runyard menu --all          # full catalog</pre>
-              </article>
-              <article class="setup-step">
-                <h3>HTTP API</h3>
-                <p class="muted">Bearer-token API mirrors every CLI/MCP action.</p>
-                <pre class="json">curl -H "authorization: Bearer $TOKEN" \
-  https://hub.example.com/api/menu
-curl https://hub.example.com/llms.txt</pre>
-              </article>
-              <article class="setup-step">
-                <h3>Runner pool</h3>
-                <p class="muted">Bring more capacity online with one process per host.</p>
-                <pre class="json">RUNYARD_HUB_URL=https://hub.example.com \
-RUNYARD_HUB_TOKEN=shub_... \
-SMITHERS_RUNNER_TAGS=linux,node,git,shell,web,smithers \
-runyard-runner</pre>
-              </article>
-            </div>
-            <p class="muted">Need the full bring-up? See <a href="/docs/quickstart">/docs/quickstart</a> for install, topology, security, env vars, and verification.</p>
-          </details>
-        </div>
-      </section>
-      <section class="band">
-        <div class="band-inner">
-          <div class="toolbar"><h1>What Runyard gives you</h1></div>
-          <div class="grid">
-            <article class="item">
-              <span class="status-dot status-dot-ok" aria-hidden="true"></span>
-              <h3>Capability Catalog</h3>
-              <p class="muted">Agents see a clean menu of team-defined actions with input/output schemas, required runner tags, skills, and approval policy.</p>
-            </article>
-            <article class="item">
-              <span class="status-dot status-dot-info" aria-hidden="true"></span>
-              <h3>Local and Remote Runners</h3>
-              <p class="muted">Run work on a VPS, laptop, or workstation; the Hub keeps the durable record and the runners stay disposable.</p>
-            </article>
-            <article class="item">
-              <span class="status-dot status-dot-warn" aria-hidden="true"></span>
-              <h3>Unified Approvals</h3>
-              <p class="muted">Approve through Web, API, CLI, Telegram, or MCP without re-implementing workflow gates per surface.</p>
-            </article>
-            <article class="item">
-              <span class="status-dot status-dot-ok" aria-hidden="true"></span>
-              <h3>Shared Company Memory</h3>
-              <p class="muted">Editable skills, agents, and knowledge entries become reusable infrastructure rather than scattered prompts.</p>
-            </article>
-            <article class="item">
-              <span class="status-dot status-dot-info" aria-hidden="true"></span>
-              <h3>Open agent surface</h3>
-              <p class="muted">Stable HTTP API, <code>/openapi.json</code>, <code>/llms.txt</code> (rendered from <code>get_menu</code>), and an MCP server keep agents and humans on the same surface.</p>
-            </article>
-            <article class="item">
-              <span class="status-dot status-dot-danger" aria-hidden="true"></span>
-              <h3>Private by default</h3>
-              <p class="muted">Bearer-token auth, per-deployment data dir, no SaaS dependency. Bring your own domain and TLS terminator.</p>
-            </article>
           </div>
         </div>
       </section>
-      <section class="band">
-        <div class="band-inner">
-          <div class="toolbar"><h1>Workflow hardening</h1></div>
-          <p class="muted">Runyard treats agent workflows as processes to improve, not just prompts to rerun. Inspired by the process order “question, delete, simplify, accelerate, automate,” workflows start agentic, then harden into smaller scripted and coded steps wherever outcomes become repeatable.</p>
-          <div class="grid">
-            <article class="item">
-              <span class="status-dot status-dot-info" aria-hidden="true"></span>
-              <h3>Discover with agents</h3>
-              <p class="muted">Early runs keep agents close to the work so they can explore, write throwaway scripts, learn edge cases, and produce the first useful deliverables.</p>
+
+      <!-- ===================== TRUST / VALUE STRIP ==================== -->
+      <section class="lp-strip" aria-label="At a glance">
+        <div class="lp-wrap">
+          <span>Durable &amp; crash-safe runs</span>
+          <span>Live streaming console</span>
+          <span>Your infra, your data</span>
+          <span>Docker &amp; confidential VMs</span>
+          <span>Built on Smithers</span>
+        </div>
+      </section>
+
+      <!-- ========================= HOW IT WORKS ====================== -->
+      <section class="lp-block" id="how">
+        <div class="lp-wrap">
+          <div class="lp-head">
+            <p class="lp-eyebrow"><span class="dot" aria-hidden="true"></span>How it works</p>
+            <h2>One hub. A pool of runners. Full visibility end to end.</h2>
+            <p>
+              RunYard is a hub — the control plane: API, web UI, durable datastore, and run
+              queue — plus one or more delegated runners that execute the actual work. Runners
+              can live anywhere: a VPS, your laptop, Kubernetes, or a confidential VM.
+            </p>
+          </div>
+
+          <div class="lp-flow">
+            <article class="lp-node">
+              <span class="lp-node-kicker">Trigger &amp; approve</span>
+              <h3>Agents &amp; people</h3>
+              <ul>
+                <li>MCP server for AI clients</li>
+                <li>CLI, HTTP API &amp; web UI</li>
+                <li>Approve from Web, CLI, API, Telegram</li>
+              </ul>
             </article>
-            <article class="item">
-              <span class="status-dot status-dot-warn" aria-hidden="true"></span>
-              <h3>Extract the repeatable bits</h3>
-              <p class="muted">Runyard keeps the scripts, commands, evals, and artifacts agents create, then turns stable patterns into explicit workflow steps with inputs, outputs, and checks.</p>
+
+            <article class="lp-node hub">
+              <span class="lp-node-kicker">Control plane</span>
+              <h3>The hub</h3>
+              <ul>
+                <li>Durable datastore &amp; run queue</li>
+                <li>Live event tail &amp; streaming logs</li>
+                <li>Approval gates &amp; full run history</li>
+              </ul>
             </article>
-            <article class="item">
-              <span class="status-dot status-dot-ok" aria-hidden="true"></span>
-              <h3>Compile toward code</h3>
-              <p class="muted">Nightly optimizer runs replay workflows, diff outcomes, delete unnecessary steps, and propose deterministic code paths for the parts that no longer need agent judgment.</p>
+
+            <article class="lp-node">
+              <span class="lp-node-kicker">Execute anywhere</span>
+              <h3>Delegated runners</h3>
+              <ul>
+                <li>VPS, laptop, k8s, or confidential VM</li>
+                <li>One pool, route work by tags</li>
+                <li>Disposable workers, durable record</li>
+              </ul>
+            </article>
+          </div>
+          <p class="lp-flow-foot">
+            Under the hood the execution engine is <strong>Smithers</strong>
+            (<code>smithers-orchestrator</code>) — RunYard is the control plane around it.
+          </p>
+        </div>
+      </section>
+
+      <!-- ========================== FEATURES ========================= -->
+      <section class="lp-block alt" id="features">
+        <div class="lp-wrap">
+          <div class="lp-head">
+            <p class="lp-eyebrow"><span class="dot" aria-hidden="true"></span>Why RunYard</p>
+            <h2>Everything you need to run agents in production — that you actually control.</h2>
+          </div>
+
+          <div class="lp-features">
+            <article class="lp-feature">
+              <span class="lp-feature-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 4 21 10 15 10"/></svg>
+              </span>
+              <h3>Durable &amp; crash-safe</h3>
+              <p>Runs are persisted as they progress. Restart the hub or a runner and work resumes from where it left off — no lost progress, no orphaned jobs.</p>
+            </article>
+
+            <article class="lp-feature">
+              <span class="lp-feature-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+              </span>
+              <h3>Full visibility</h3>
+              <p>A live streaming console and event tail for every run — like <code>docker logs -f</code> for an agent. See each step, tool call, and artifact as it happens.</p>
+            </article>
+
+            <article class="lp-feature">
+              <span class="lp-feature-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+              </span>
+              <h3>Human-in-the-loop</h3>
+              <p>Gate sensitive steps behind approvals. Review and approve or reject from the Web UI, CLI, API, MCP, or Telegram — without re-implementing gates per surface.</p>
+            </article>
+
+            <article class="lp-feature">
+              <span class="lp-feature-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M7 20h10M9 16v4m6-4v4"/></svg>
+              </span>
+              <h3>Runs on your infra</h3>
+              <p>Self-hosted by design. Code, data, and credentials stay on machines you control — bearer-token auth, per-deployment data dir, no SaaS dependency.</p>
+            </article>
+
+            <article class="lp-feature">
+              <span class="lp-feature-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8m-4-4v4"/><path d="M6 7h.01M10 7h.01M6 11h6"/></svg>
+              </span>
+              <h3>One pool, many machines</h3>
+              <p>Bring more capacity online with one process per host. Runners join a single pool and you route work by tags — <code>linux</code>, <code>gpu</code>, <code>git</code>, your call.</p>
+            </article>
+
+            <article class="lp-feature">
+              <span class="lp-feature-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 3 7v10l9 5 9-5V7l-9-5Z"/><path d="m12 22V12M3 7l9 5 9-5"/></svg>
+              </span>
+              <h3>Deploy anywhere</h3>
+              <p>Ships as Docker images (GHCR) plus docker-compose — a portable base with per-target overlays, including confidential VMs (dstack / Intel TDX) for hardware-attested isolation.</p>
             </article>
           </div>
         </div>
       </section>
-      <section class="band band-foot">
-        <div class="band-inner">
-          <p class="muted">Runyard was formerly called Smithers Hub. The legacy <code>SMITHERS_HUB_*</code> environment variables are still honored as fallbacks so existing deployments and tokens keep working.</p>
+
+      <!-- ========================== FINAL CTA ======================== -->
+      <section class="lp-block lp-final">
+        <div class="lp-wrap">
+          <h2>Put your agents to work — where you can watch them.</h2>
+          <p>Sign in to the hub to trigger your first run, or read the quickstart to bring up RunYard on your own infrastructure.</p>
+          <div class="lp-cta-row">
+            <a class="button primary" href="/app">Open the hub →</a>
+            <a class="button" href="/docs">Quickstart &amp; docs</a>
+          </div>
         </div>
       </section>
     </main>
+
+    <!-- ============================= FOOTER ========================== -->
+    <footer class="lp-footer">
+      <div class="lp-wrap">
+        <div class="lp-footer-top">
+          <div>
+            <span class="brand">
+              <span class="brand-mark" aria-hidden="true"></span>
+              <span class="brand-name">runyard</span>
+            </span>
+            <p class="lp-footer-tag">Self-hosted control plane for AI agent runs. Built on Smithers.</p>
+          </div>
+          <nav class="lp-footer-links" aria-label="Footer">
+            <a href="/app">Open the hub</a>
+            <a href="/docs">Docs</a>
+            <a href="/llms.txt">llms.txt</a>
+            <a href="https://github.com/yolo-maxi/runyard" rel="noopener">GitHub</a>
+          </nav>
+        </div>
+        <p class="lp-footer-note">
+          RunYard was formerly called Smithers Hub. The legacy <code>SMITHERS_HUB_*</code>
+          environment variables are still honored as fallbacks, so existing deployments and tokens
+          keep working. The execution engine is
+          <a href="https://github.com/yolo-maxi/runyard" rel="noopener">Smithers</a>
+          (<code>smithers-orchestrator</code>); RunYard is the control plane around it.
+        </p>
+      </div>
+    </footer>
   </body>
 </html>
