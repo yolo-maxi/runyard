@@ -159,14 +159,19 @@ export function Home() {
 
   const draft = (() => { void draftTick; return peekRerunDraft(); })();
 
-  // First-run gate → onboarding wizard (once per session).
+  // First-run gate → onboarding wizard (once per session). Only for a GENUINELY
+  // fresh hub: wait until the dashboard fetch has settled, otherwise the empty
+  // initial live-collections race the load and wrongly bounce a populated
+  // deployment (existing runs/runners) into the wizard during the load window.
   useEffect(() => {
     if (filtersActive) return;
+    if (!dashQ.isSuccess) return;
     if (runners.length || runs.length) return;
+    if ((dashQ.data?.recentRuns?.length || 0) > 0) return;
     if (sessionStorage.getItem("onboardingSkipped")) return;
     if (location.hash === "#runs" || location.hash === "#home") return;
     navigate("#onboarding");
-  }, [filtersActive, runners.length, runs.length, navigate]);
+  }, [filtersActive, dashQ.isSuccess, dashQ.data, runners.length, runs.length, navigate]);
 
   const visibleRuns = filtersActive ? runs : topLevelRuns(runs);
   const hiddenSupervised = filtersActive ? [] : supervisedChildRuns(runs);
