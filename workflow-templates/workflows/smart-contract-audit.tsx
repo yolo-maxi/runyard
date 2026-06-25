@@ -31,8 +31,15 @@ const findingSchema = z.looseObject({
   kind: z.enum(["FINDING", "LEAD"]).default("LEAD")
 });
 
+// `agent` defaults to "" so any parseable JSON the engine extracts from the
+// auditor's stdout validates without triggering a schema retry. The engine's
+// extractor sometimes lands on the LAST balanced `{...}` in the stream — e.g.
+// the final finding inside `findings[]`, which has no `agent` field — and a
+// schema-retry would re-spawn `claude` with the entire conversation
+// (including ~640KB of Read tool output for the bundle) flattened into a
+// single argv string, blowing past the OS argument-list limit (E2BIG).
 const auditSchema = z.looseObject({
-  agent: z.string(),
+  agent: z.string().default(""),
   specialty: z.string().default(""),
   findings: z.array(findingSchema).default([])
 });

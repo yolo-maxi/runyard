@@ -1686,7 +1686,14 @@ function runStartApprovalPolicy(approval) {
 function shouldNotifyTelegram(approval) {
   if (!approval) return false;
   if (!isRunStartApproval(approval)) return true;
-  return approvalPolicyNotifiesTelegram(runStartApprovalPolicy(approval));
+  // Default: notify on run-start approvals too, unless the capability's policy
+  // explicitly opts out (notifyTelegram:false / telegramNotify:false). Previously
+  // run-start gates were silent unless they opted in, so operators never saw
+  // "approve before this workflow runs" prompts.
+  const policy = runStartApprovalPolicy(approval) || {};
+  if (policy.notifyTelegram === false || policy.telegramNotify === false) return false;
+  if (policy.notifications?.telegram === false || policy.notify?.telegram === false) return false;
+  return true;
 }
 
 async function notifyTelegram(approval) {
