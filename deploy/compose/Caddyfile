@@ -1,0 +1,11 @@
+# Optional TLS reverse proxy for the RunYard hub (compose `proxy` profile).
+# For self-hosters with NO external gateway. Set SITE_ADDRESS to your domain
+# (e.g. hub.example.com) for automatic HTTPS via Let's Encrypt; the default
+# `localhost` serves a local self-signed cert for testing.
+#
+# Targets given to dstack/k8s/cloud gateways do NOT use this — they terminate
+# TLS upstream. See DEPLOY.md.
+
+{$SITE_ADDRESS} {
+	reverse_proxy {$HUB_UPSTREAM}
+}

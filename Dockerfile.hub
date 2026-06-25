@@ -1,0 +1,77 @@
+# syntax=docker/dockerfile:1
+#
+# RunYard hub (control plane + web UI + embedded datastore).
+#
+# Environment-agnostic image: runs anywhere (plain Docker, compose, k8s, dstack).
+# Multi-stage: a build stage installs the full dependency tree and bundles the
+# browser vendor modules; the runtime stage copies only what the server needs.
+# Listens on PORT (default 8080), configurable via env. The datastore lives on a
+# mounted volume at /data (SMITHERS_HUB_DATA_DIR) so it survives container
+# recreation. The node binary is granted cap_net_bind_service so the unprivileged
+# user can also bind low ports (e.g. PORT=80 behind a gateway) without root.
+
+ARG NODE_VERSION=22
+ARG PNPM_VERSION=10.33.0
+
+# ---------------------------------------------------------------------------
+# Stage 1: build — install deps (frozen lockfile) + build the vendor bundle.
+# ---------------------------------------------------------------------------
+FROM node:${NODE_VERSION}-bookworm-slim AS build
+ARG PNPM_VERSION
+WORKDIR /app
+
+# pnpm via corepack, pinned to the version in package.json's packageManager.
+RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
+
+# Install dependencies first (better layer caching) from the lockfile only.
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+
+# Copy the rest of the source and build the browser vendor bundle into
+# public/vendor. (public/app.js ships prebuilt and committed — there is no
+# separate `build:web` step in this repo.)
+COPY . .
+RUN pnpm build:vendor
+
+# Drop dev dependencies so we copy a lean node_modules into the runtime image.
+RUN pnpm prune --prod
+
+# ---------------------------------------------------------------------------
+# Stage 2: runtime — minimal node image, non-root, listening on :80.
+# ---------------------------------------------------------------------------
+FROM node:${NODE_VERSION}-bookworm-slim AS runtime
+WORKDIR /app
+
+ENV NODE_ENV=production \
+    HOST=0.0.0.0 \
+    PORT=8080 \
+    SMITHERS_HUB_DATA_DIR=/data
+
+# tini for correct PID-1 signal handling; setcap so the unprivileged `node`
+# user can bind the privileged port 80 without running as root.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tini libcap2-bin \
+    && setcap 'cap_net_bind_service=+ep' "$(readlink -f "$(command -v node)")" \
+    && apt-get purge -y libcap2-bin \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+
+# Application code + production deps from the build stage.
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/package.json ./package.json
+COPY --from=build /app/bin ./bin
+COPY --from=build /app/src ./src
+COPY --from=build /app/public ./public
+COPY --from=build /app/workflow-templates ./workflow-templates
+
+# Mounted volume for the datastore; owned by the runtime user.
+RUN mkdir -p /data && chown -R node:node /data /app
+VOLUME ["/data"]
+
+USER node
+EXPOSE 8080
+
+# --experimental-sqlite enables node:sqlite (the embedded datastore), matching
+# the `pnpm start` script. PORT/HOST are read from the environment by src/env.js.
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["node", "--experimental-sqlite", "src/server.js"]
