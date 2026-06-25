@@ -28,14 +28,15 @@ services:
       # Hub listens on this port inside the container (configurable; default 8080).
       PORT: "${HUB_PORT:-8080}"
       NODE_ENV: "production"
-      SMITHERS_HUB_DATA_DIR: "/data"
-      SMITHERS_HUB_INSTANCE_NAME: "${SMITHERS_HUB_INSTANCE_NAME:-Runyard}"
+      RUNYARD_HUB_DATA_DIR: "/data"
+      # Legacy SMITHERS_HUB_* host vars are still accepted as fallbacks.
+      RUNYARD_HUB_INSTANCE_NAME: "${RUNYARD_HUB_INSTANCE_NAME:-${SMITHERS_HUB_INSTANCE_NAME:-Runyard}}"
       # Public URL of this hub (used for https links + production session mode).
       BASE_URL: "${BASE_URL:-}"
       # Secrets — provide via your platform's secret mechanism / a .env file,
       # never commit them. Empty defaults keep the file runnable for local trials.
-      SMITHERS_HUB_SESSION_SECRET: "${SMITHERS_HUB_SESSION_SECRET:-}"
-      SMITHERS_HUB_BOOTSTRAP_TOKEN: "${SMITHERS_HUB_BOOTSTRAP_TOKEN:-}"
+      RUNYARD_HUB_SESSION_SECRET: "${RUNYARD_HUB_SESSION_SECRET:-${SMITHERS_HUB_SESSION_SECRET:-}}"
+      RUNYARD_HUB_BOOTSTRAP_TOKEN: "${RUNYARD_HUB_BOOTSTRAP_TOKEN:-${SMITHERS_HUB_BOOTSTRAP_TOKEN:-}}"
       SECRETS_ENC_KEY: "${SECRETS_ENC_KEY:-}"
     ports:
       # Publish the hub directly. Behind the proxy profile you can drop this.
@@ -60,8 +61,8 @@ services:
       - hub
     environment:
       # Reach the hub. Same compose → service name; separate hosts → its URL.
-      SMITHERS_HUB_URL: "${SMITHERS_HUB_URL:-http://hub:${HUB_PORT:-8080}}"
-      SMITHERS_HUB_TOKEN: "${SMITHERS_HUB_TOKEN:-}"
+      RUNYARD_HUB_URL: "${RUNYARD_HUB_URL:-${SMITHERS_HUB_URL:-http://hub:${HUB_PORT:-8080}}}"
+      RUNYARD_HUB_TOKEN: "${RUNYARD_HUB_TOKEN:-${SMITHERS_HUB_TOKEN:-}}"
       SMITHERS_WORKSPACE: "/workspace"
       SMITHERS_RUNNER_LOCATION: "${SMITHERS_RUNNER_LOCATION:-vps}"
       SMITHERS_RUNNER_CONCURRENCY: "${SMITHERS_RUNNER_CONCURRENCY:-1}"

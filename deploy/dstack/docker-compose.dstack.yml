@@ -36,7 +36,7 @@ services:
     image: ghcr.io/yolo-maxi/runyard-runner@sha256:REPLACE_WITH_RUNNER_DIGEST
     environment:
       # The runner reaches the hub on the same CVM/compose by service name.
-      SMITHERS_HUB_URL: "${SMITHERS_HUB_URL:-http://hub:80}"
+      RUNYARD_HUB_URL: "${RUNYARD_HUB_URL:-${RUNYARD_HUB_URL:-http://hub:80}}"
       # Guest CVM docker socket (you own it inside the CVM — not the host socket).
       DOCKER_HOST: "unix:///var/run/docker.sock"
     volumes:

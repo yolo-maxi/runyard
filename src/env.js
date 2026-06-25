@@ -3,13 +3,35 @@ import { randomBytes } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 
-const root = process.env.SMITHERS_HUB_ROOT || process.cwd();
-const dataDir = process.env.SMITHERS_HUB_DATA_DIR || path.join(root, "data");
+// Read the first non-empty value among the given env var names. RunYard prefers
+// its RUNYARD_HUB_* variables but falls back to the legacy SMITHERS_HUB_* names
+// so existing deployments and tokens keep working without any re-config.
+export function firstEnv(...names) {
+  for (const name of names) {
+    const value = process.env[name];
+    if (value != null && value !== "") return value;
+  }
+  return undefined;
+}
+
+const root = firstEnv("RUNYARD_HUB_ROOT", "SMITHERS_HUB_ROOT") || process.cwd();
+const dataDir = firstEnv("RUNYARD_HUB_DATA_DIR", "SMITHERS_HUB_DATA_DIR") || path.join(root, "data");
 
 mkdirSync(dataDir, { recursive: true });
 mkdirSync(path.join(dataDir, "artifacts", "runs"), { recursive: true });
 
-const DEV_SECRET = "dev-smithers-hub-session-secret";
+// Default DB path. Prefer the RunYard-branded file, but transparently keep using
+// an existing legacy data/smithers-hub.sqlite so an in-place rename never orphans
+// a deployment's database.
+function defaultDbPath(dir) {
+  const runyardDb = path.join(dir, "runyard.sqlite");
+  if (existsSync(runyardDb)) return runyardDb;
+  const legacyDb = path.join(dir, "smithers-hub.sqlite");
+  if (existsSync(legacyDb)) return legacyDb;
+  return runyardDb;
+}
+
+const DEV_SECRET = "dev-runyard-session-secret";
 const baseUrl = process.env.BASE_URL || `http://127.0.0.1:${process.env.PORT || 43117}`;
 // Treat an explicit production flag or an https base URL as a production deployment.
 const isProduction = process.env.NODE_ENV === "production" || baseUrl.startsWith("https://");
@@ -18,7 +40,8 @@ const isProduction = process.env.NODE_ENV === "production" || baseUrl.startsWith
 // derivation from the base URL when nothing is set. Surfaced in the header so
 // operators bouncing between hubs (.248 vs Hetzner) know which one they're on.
 function deriveEnvironmentLabel() {
-  const explicit = process.env.SMITHERS_HUB_ENVIRONMENT || process.env.SMITHERS_HUB_ENV || "";
+  const explicit =
+    firstEnv("RUNYARD_HUB_ENVIRONMENT", "SMITHERS_HUB_ENVIRONMENT", "RUNYARD_HUB_ENV", "SMITHERS_HUB_ENV") || "";
   if (explicit) return explicit.toLowerCase();
   if (!isProduction) return "local";
   try {
@@ -32,7 +55,7 @@ function deriveEnvironmentLabel() {
 }
 
 function deriveHostnameLabel() {
-  const explicit = process.env.SMITHERS_HUB_HOSTNAME || "";
+  const explicit = firstEnv("RUNYARD_HUB_HOSTNAME", "SMITHERS_HUB_HOSTNAME") || "";
   if (explicit) return explicit;
   try {
     const host = new URL(baseUrl).hostname;
@@ -48,12 +71,12 @@ function deriveHostnameLabel() {
 }
 
 function resolveSessionSecret() {
-  const provided = process.env.SMITHERS_HUB_SESSION_SECRET;
+  const provided = firstEnv("RUNYARD_HUB_SESSION_SECRET", "SMITHERS_HUB_SESSION_SECRET");
   if (provided && provided !== DEV_SECRET) return provided;
   if (isProduction) {
     if (provided === DEV_SECRET) {
       throw new Error(
-        "Refusing to start: SMITHERS_HUB_SESSION_SECRET is set to the insecure development default in a production deployment. Set a long random secret."
+        "Refusing to start: RUNYARD_HUB_SESSION_SECRET is set to the insecure development default in a production deployment. Set a long random secret."
       );
     }
     // No secret provided in production: persist a generated one so sessions survive restarts.
@@ -92,23 +115,25 @@ function parseBool(value, fallback = true) {
 export const env = {
   root,
   dataDir,
-  dbPath: process.env.SMITHERS_HUB_DB || path.join(dataDir, "smithers-hub.sqlite"),
-  artifactDir: process.env.SMITHERS_HUB_ARTIFACT_DIR || path.join(dataDir, "artifacts"),
+  dbPath: firstEnv("RUNYARD_HUB_DB", "SMITHERS_HUB_DB") || defaultDbPath(dataDir),
+  artifactDir: firstEnv("RUNYARD_HUB_ARTIFACT_DIR", "SMITHERS_HUB_ARTIFACT_DIR") || path.join(dataDir, "artifacts"),
   host: process.env.HOST || "127.0.0.1",
   port: Number(process.env.PORT || 43117),
   baseUrl,
   isProduction,
-  // Public product name. The codebase keeps the smithers-hub prefix for back-
-  // compat, but every user-visible surface defaults to "Runyard".
-  instanceName: process.env.SMITHERS_HUB_INSTANCE_NAME || "Runyard",
+  // Public product name. Every user-visible surface defaults to "Runyard"; the
+  // legacy SMITHERS_HUB_INSTANCE_NAME is still honored for back-compat.
+  instanceName: firstEnv("RUNYARD_HUB_INSTANCE_NAME", "SMITHERS_HUB_INSTANCE_NAME") || "Runyard",
   environment: deriveEnvironmentLabel(),
   hostname: deriveHostnameLabel(),
   sessionSecret: resolveSessionSecret(),
-  bootstrapToken: process.env.SMITHERS_HUB_BOOTSTRAP_TOKEN || "",
+  bootstrapToken: firstEnv("RUNYARD_HUB_BOOTSTRAP_TOKEN", "SMITHERS_HUB_BOOTSTRAP_TOKEN") || "",
   runyardMobileFeedbackEndpointSecret:
-    process.env.SMITHERS_HUB_RUNYARD_MOBILE_FEEDBACK_SECRET ||
-    process.env.RUNYARD_MOBILE_FEEDBACK_ENDPOINT_SECRET ||
-    "",
+    firstEnv(
+      "RUNYARD_HUB_MOBILE_FEEDBACK_SECRET",
+      "RUNYARD_MOBILE_FEEDBACK_ENDPOINT_SECRET",
+      "SMITHERS_HUB_RUNYARD_MOBILE_FEEDBACK_SECRET"
+    ) || "",
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || process.env.SMITHERS_TELEGRAM_BOT_TOKEN || "",
   telegramApprovalChatId:
     process.env.TELEGRAM_APPROVAL_CHAT_ID ||

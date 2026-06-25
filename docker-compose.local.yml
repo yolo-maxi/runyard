@@ -13,5 +13,5 @@ services:
   runner:
     image: runyard-runner:local
     environment:
-      SMITHERS_HUB_URL: "http://hub:8080"
-      SMITHERS_HUB_TOKEN: "local-placeholder-token"
+      RUNYARD_HUB_URL: "http://hub:8080"
+      RUNYARD_HUB_TOKEN: "local-placeholder-token"

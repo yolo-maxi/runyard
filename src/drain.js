@@ -15,13 +15,14 @@ import path from "node:path";
 
 // Resolve the Hub dataDir using the SAME precedence as src/env.js, but WITHOUT
 // the mkdir side effects. Hub and runner must land on the same directory for the
-// flag to be visible to both; the standard install sets SMITHERS_HUB_DATA_DIR in
+// flag to be visible to both; the standard install sets RUNYARD_HUB_DATA_DIR in
 // both EnvironmentFiles, and the fallback (<root>/data with a shared cwd) agrees
 // too. An explicit SMITHERS_DRAIN_DIR override wins for unusual split layouts.
+// The legacy SMITHERS_HUB_* names stay honored for back-compat.
 export function resolveDataDir(envObj = process.env) {
-  const explicit = envObj.SMITHERS_DRAIN_DIR || envObj.SMITHERS_HUB_DATA_DIR;
+  const explicit = envObj.SMITHERS_DRAIN_DIR || envObj.RUNYARD_HUB_DATA_DIR || envObj.SMITHERS_HUB_DATA_DIR;
   if (explicit) return path.resolve(explicit);
-  const root = envObj.SMITHERS_HUB_ROOT || process.cwd();
+  const root = envObj.RUNYARD_HUB_ROOT || envObj.SMITHERS_HUB_ROOT || process.cwd();
   return path.join(root, "data");
 }
 
