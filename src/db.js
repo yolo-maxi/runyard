@@ -414,7 +414,7 @@ function ensureBootstrapToken() {
     writeFileSync(tokenFile, `${token}\n`, { mode: 0o600 });
     chmodSync(tokenFile, 0o600);
   }
-  console.log(`Smithers Hub bootstrap token written to ${tokenFile}`);
+  console.log(`RunYard bootstrap token written to ${tokenFile}`);
 }
 
 export function createAccessToken(name, token = randomToken(), scopes = ["api"], options = {}) {
@@ -490,7 +490,7 @@ const seededWorkflowEndpoints = [
     description: "Accepts trusted app-server feedback submissions and queues a constrained improve-no-deploy run for Runyard.",
     capabilitySlug: "improve-no-deploy",
     project: "runyard",
-    repo: "smithers-hub",
+    repo: "runyard",
     maxPayloadBytes: 32 * 1024,
     rateLimitCount: 30,
     rateLimitWindowMs: 60_000,
@@ -1649,7 +1649,7 @@ export function registerRunner(input, tokenId = null) {
   // This prevents one runner token from hijacking another runner's record by guessing its id.
   const candidate = input.id ? one("SELECT * FROM runners WHERE id = ?", [input.id]) : null;
   let existing = candidate && candidate.token_id && candidate.token_id === tokenId ? candidate : null;
-  // Stable-identity fallback: the client (smithers-runner.js) caches the id, but
+  // Stable-identity fallback: the client (runner.js) caches the id, but
   // a wiped workspace / corrupt id-file / first boot sends no id, which used to
   // mint a fresh ghost row on every restart (the 95-row pileup). When no owned
   // row was found by id, reuse the row that matches this caller's stable

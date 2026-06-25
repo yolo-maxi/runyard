@@ -1192,7 +1192,7 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
     const r1 = await fetch(`${baseUrl}/install.sh`);
     assert.equal(r1.status, 200);
     const body = await r1.text();
-    assert.match(body, /Installing Smithers Hub client/);
+    assert.match(body, /Installing RunYard client/);
     assert.match(body, /\/cli\.tgz/);
     assert.match(body, /runyard tail <run-id>/);
     assert.match(body, /runyard mcp install/);
@@ -1716,7 +1716,7 @@ describe("Authenticated workflow endpoints", () => {
     const endpoint = listed.endpoints.find((entry) => entry.slug === "runyard-mobile-feedback");
     assert.ok(endpoint, "seeded feedback endpoint should be discoverable to admins");
     assert.equal(endpoint.capabilitySlug, "improve-no-deploy");
-    assert.equal(endpoint.repo, "smithers-hub");
+    assert.equal(endpoint.repo, "runyard");
     assert.equal(endpoint.project, "runyard");
     assert.equal(endpoint.secretConfigured, true);
     assert.equal(JSON.stringify(endpoint).includes(endpointSecret), false);
@@ -1774,7 +1774,7 @@ describe("Authenticated workflow endpoints", () => {
     assert.equal(detail.run.capabilitySlug, "improve-no-deploy");
     assert.equal(detail.run.status, "queued");
     assert.equal(detail.run.input.project, "runyard");
-    assert.equal(detail.run.input.repo, "smithers-hub");
+    assert.equal(detail.run.input.repo, "runyard");
     assert.equal(detail.run.input.repoDir, undefined);
     assert.equal(detail.run.input.deploy, undefined);
     assert.equal(detail.run.input.targetBranch, undefined);
@@ -1840,7 +1840,7 @@ describe("Authenticated workflow endpoints", () => {
         secret: rateSecret,
         capabilitySlug: "improve-no-deploy",
         project: "runyard",
-        repo: "smithers-hub",
+        repo: "runyard",
         maxPayloadBytes: 4096,
         rateLimitCount: 1,
         rateLimitWindowMs: 60_000,

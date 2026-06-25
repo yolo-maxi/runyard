@@ -7,13 +7,13 @@ const remoteArgIndex = process.argv.indexOf("--remote");
 const remoteName = remoteArgIndex >= 0 ? process.argv[remoteArgIndex + 1] : null;
 const remote = resolveRemote(remoteName);
 const client = new HubClient({
-  baseUrl: process.env.SMITHERS_HUB_URL || process.env.HUB_URL || remote.url || "http://127.0.0.1:43117",
-  token: process.env.SMITHERS_HUB_TOKEN || process.env.HUB_TOKEN || remote.token
+  baseUrl: process.env.RUNYARD_HUB_URL || process.env.SMITHERS_HUB_URL || process.env.HUB_URL || remote.url || "http://127.0.0.1:43117",
+  token: process.env.RUNYARD_HUB_TOKEN || process.env.SMITHERS_HUB_TOKEN || process.env.HUB_TOKEN || remote.token
 });
 
 const tools = [
   { name: "get_menu", description: "Show the Runyard menu: discovery steps, local vs remote execution choices, and Hub output/artifact follow-up paths.", inputSchema: { type: "object", properties: {} } },
-  { name: "list_capabilities", description: "List available Smithers Hub capabilities.", inputSchema: { type: "object", properties: {} } },
+  { name: "list_capabilities", description: "List available RunYard capabilities.", inputSchema: { type: "object", properties: {} } },
   { name: "search_capabilities", description: "Search capabilities by query.", inputSchema: { type: "object", properties: { query: { type: "string" } } } },
   { name: "describe_capability", description: "Describe a capability, schemas, permissions, skills, agents, and workflow.", inputSchema: { type: "object", required: ["id"], properties: { id: { type: "string" } } } },
   {
@@ -61,7 +61,7 @@ async function callTool(name, args = {}) {
       runnerLocation: args.runnerLocation || undefined,
       origin: {
         type: "mcp",
-        label: "MCP: smithers-hub",
+        label: "MCP: runyard",
         tool: "run_capability"
       }
     }));
@@ -101,7 +101,7 @@ process.stdin.on("data", async (chunk) => {
         response = {
           protocolVersion: request.params?.protocolVersion || "2024-11-05",
           capabilities: { tools: {} },
-          serverInfo: { name: "smithers-hub-mcp", version: "0.1.0" }
+          serverInfo: { name: "runyard-mcp", version: "0.1.0" }
         };
       } else if (request.method === "tools/list") {
         response = { tools };

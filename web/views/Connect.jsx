@@ -46,10 +46,10 @@ const INVITE_SCOPES = ["api", "mcp", "runner", "admin"];
 export function Connect() {
   const origin = location.origin;
   const installCmd = `bash <(curl -fsSL ${origin}/install.sh)`;
-  const mcpSnippet = `smithers-hub mcp install --all`;
-  const cliSnippet = `smithers-hub login --url ${origin}\nsmithers-hub menu        # then: smithers-hub run hello`;
+  const mcpSnippet = `runyard mcp install --all`;
+  const cliSnippet = `runyard login --url ${origin}\nrunyard menu        # then: runyard run hello`;
   const apiSnippet = `curl -H "authorization: Bearer $TOKEN" ${origin}/api/menu`;
-  const runnerSnippet = `SMITHERS_HUB_URL=${origin} \\\nSMITHERS_HUB_TOKEN=shub_... \\\nSMITHERS_RUNNER_TAGS=linux,node,git,shell,web,smithers \\\nsmithers-hub-runner`;
+  const runnerSnippet = `RUNYARD_HUB_URL=${origin} \\\nRUNYARD_HUB_TOKEN=shub_... \\\nSMITHERS_RUNNER_TAGS=linux,node,git,shell,web,smithers \\\nrunyard-runner`;
 
   const [name, setName] = useState("teammate");
   const [scopes, setScopes] = useState(() => new Set(["api", "mcp"]));
@@ -115,14 +115,14 @@ export function Connect() {
       <section className="split">
         <div className="panel">
           <h2>1 · Install the client</h2>
-          <p className="muted">One command — installs the <code>smithers-hub</code> CLI + MCP server and asks you to paste a token. Requires Node.js 18+.</p>
+          <p className="muted">One command — installs the <code>runyard</code> CLI + MCP server and asks you to paste a token. Requires Node.js 18+.</p>
           <CopyRow value={installCmd} ariaLabel="Install command" />
           <h3>2 · Connect every AI agent</h3>
           <p className="muted">Auto-detects and configures the AI clients on your machine — no JSON editing:</p>
-          <CopyRow value="smithers-hub mcp install --all" ariaLabel="MCP install all command" />
+          <CopyRow value="runyard mcp install --all" ariaLabel="MCP install all command" />
           <p className="muted">Supports Claude Code/Desktop, Codex, Cursor, Windsurf, Gemini, VS Code. Target one with <code>--client &lt;name&gt;</code>.</p>
           <h3>Multiple orgs?</h3>
-          <p className="muted">Each org is its own hub. On the same machine: <code>smithers-hub login --remote &lt;org&gt;</code> (against that org's URL), then <code>smithers-hub mcp install --all --remote &lt;org&gt;</code> — its tools install alongside, namespaced <code>smithers-hub-&lt;org&gt;</code>.</p>
+          <p className="muted">Each org is its own hub. On the same machine: <code>runyard login --remote &lt;org&gt;</code> (against that org's URL), then <code>runyard mcp install --all --remote &lt;org&gt;</code> — its tools install alongside, namespaced <code>runyard-&lt;org&gt;</code>.</p>
         </div>
         <div className="panel">
           <h2>Onboard a teammate</h2>
@@ -148,7 +148,7 @@ export function Connect() {
                 <SecretRow id="invite-token" value={issued.token} label="Teammate token" />
                 <p className="muted">Install command:</p>
                 <CopyRow value={installCmd} ariaLabel="Install command" />
-                <p className="muted">Then they run <code>smithers-hub mcp install --all</code>. Revoke anytime under Tokens.</p>
+                <p className="muted">Then they run <code>runyard mcp install --all</code>. Revoke anytime under Tokens.</p>
               </>
             ) : null}
           </div>

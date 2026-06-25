@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Runyard Setup &amp; Docs</title>
-    <meta name="description" content="Install, run, deploy, and operate Runyard (Smithers Hub). CLI, MCP, runner pool, security model, environment variables, and open-source readiness." />
+    <meta name="description" content="Install, run, deploy, and operate Runyard. CLI, MCP, runner pool, security model, environment variables, and open-source readiness." />
     <link rel="stylesheet" href="/public/styles.css" />
   </head>
   <body>
@@ -17,7 +17,7 @@
       <nav class="nav">
         <a class="button" href="/">Landing</a>
         <a class="button" href="/llms.txt">llms.txt</a>
-        <a class="button primary back-to-app" href="/app" title="Open the Runyard app — runs dashboard">Open Smithers Hub →</a>
+        <a class="button primary back-to-app" href="/app" title="Open the Runyard app — runs dashboard">Open RunYard →</a>
       </nav>
     </header>
     <main class="band band-docs">
@@ -51,7 +51,7 @@
         <p>If you just want to see Runyard work, open <a href="/">the landing page</a> and hit <strong>Try it: run <code>hello</code></strong>. Come back here when you want to wire MCP, CLI, API, or a runner pool to a real deployment.</p>
 
         <h1 id="what">What is Runyard</h1>
-        <p>Runyard is a self-hosted control plane for agent runs. It exposes a capability catalog over MCP, CLI, HTTP API, and a Web Hub; dispatches work to local or remote runners; and stores logs, events, artifacts, approvals, skills, agents, and knowledge centrally. The codebase ships as the <code>smithers-hub</code> package; Runyard is the public product name and the names compose without breakage.</p>
+        <p>Runyard is a self-hosted control plane for agent runs. It exposes a capability catalog over MCP, CLI, HTTP API, and a Web Hub; dispatches work to local or remote runners; and stores logs, events, artifacts, approvals, skills, agents, and knowledge centrally. The codebase ships as the <code>runyard</code> package; the legacy <code>SMITHERS_HUB_*</code> environment variables are still honored as fallbacks so existing deployments keep working.</p>
 
         <h1 id="concepts">Concepts</h1>
         <p>A handful of objects describe everything Runyard does. The Hub is the durable source of truth for all of them.</p>
@@ -119,16 +119,16 @@ runyard approve appr_...</pre>
         <p class="muted">Use <code>--where local</code> for a laptop/workstation runner and <code>--where remote</code> for the VPS runner pool. The Hub records the run, logs, outputs, artifacts, and a unified timeline either way. <code>runyard tail &lt;run-id&gt;</code> streams that timeline as NDJSON.</p>
         <p class="muted">Multiple orgs work like git remotes:</p>
         <pre class="json">runyard login --remote acme --url https://acme-hub.example
-runyard mcp install --all --remote acme   # installs as smithers-hub-acme
+runyard mcp install --all --remote acme   # installs as runyard-acme
 runyard remote use acme
 runyard remotes</pre>
 
         <h2 id="mcp">MCP config</h2>
         <pre class="json">{
-  "command": "smithers-hub-mcp",
+  "command": "runyard-mcp",
   "env": {
-    "SMITHERS_HUB_URL": "https://hub.example.com",
-    "SMITHERS_HUB_TOKEN": "shub_..."
+    "RUNYARD_HUB_URL": "https://hub.example.com",
+    "RUNYARD_HUB_TOKEN": "shub_..."
   }
 }</pre>
         <p class="muted">From a running Hub, <code>runyard mcp install --all</code> writes this config into every detected agent — Claude Code/Desktop, Codex, Cursor, Windsurf, Gemini, VS Code.</p>
@@ -170,13 +170,13 @@ GET  /healthz  /readyz  /api/version</pre>
 
         <h2 id="runners">Runner pool</h2>
         <p>Runners are stateless processes that poll the Hub for queued work. Each runner advertises a tag set and an optional capacity:</p>
-        <pre class="json">SMITHERS_HUB_URL=https://hub.example.com \
-SMITHERS_HUB_TOKEN=shub_... \
+        <pre class="json">RUNYARD_HUB_URL=https://hub.example.com \
+RUNYARD_HUB_TOKEN=shub_... \
 SMITHERS_RUNNER_NAME=hetzner-vps-runner \
 SMITHERS_RUNNER_LOCATION=vps \
 SMITHERS_RUNNER_TAGS=linux,node,git,shell,web,smithers \
 SMITHERS_RUNNER_CONCURRENCY=4 \
-smithers-hub-runner</pre>
+runyard-runner</pre>
         <ul>
           <li><strong>Tag match.</strong> The Hub only schedules a run on a runner that advertises every required tag.</li>
           <li><strong>Location match.</strong> Local runs target runners tagged <code>local</code>; remote runs target runners tagged <code>vps</code> or <code>remote</code>.</li>
@@ -190,8 +190,8 @@ smithers-hub-runner</pre>
         <ul>
           <li><strong>Answer-first, never surprise-runs.</strong> The Assistant is a chat agent. It explains what happened before proposing anything. App-changing actions (navigating, triggering a run, calling the API) only execute when you click a confirmation <strong>button</strong> it offers — a question stays a question.</li>
           <li><strong>Context-aware.</strong> It always receives your current route, and the server resolves a redacted, read-only snapshot of what you're actually looking at — the failing run's recent events, the runner pool's free slots, pending approvals — so it can answer "why did this fail?" from real state, not guesses. Secrets and token-shaped strings are stripped before the model ever sees them.</li>
-          <li><strong>Runner-backed by default.</strong> Out of the box the provider is the Hub runner pool: <code>/api/chat</code> queues a tiny internal <code>runyard-support-agent</code> workflow and your subscribed on-runner CLI agent answers it — no extra API key needed. Direct HTTP providers are opt-in for installs that prefer them: set <code>SMITHERS_HUB_SUPPORT_AGENT_PROVIDER=anthropic</code> (with <code>ANTHROPIC_API_KEY</code>) or <code>=openai</code> (with <code>OPENAI_API_KEY</code>).</li>
-          <li><strong>Configurable.</strong> Disable it with <code>SMITHERS_HUB_SUPPORT_AGENT_ENABLED=0</code>. Tune with <code>SMITHERS_HUB_SUPPORT_AGENT_MODEL</code>, <code>_TIMEOUT_MS</code>, and <code>_MAX_OUTPUT_TOKENS</code>. <code>GET /api/chat/status</code> reports the resolved provider and whether it's configured.</li>
+          <li><strong>Runner-backed by default.</strong> Out of the box the provider is the Hub runner pool: <code>/api/chat</code> queues a tiny internal <code>runyard-support-agent</code> workflow and your subscribed on-runner CLI agent answers it — no extra API key needed. Direct HTTP providers are opt-in for installs that prefer them: set <code>RUNYARD_HUB_SUPPORT_AGENT_PROVIDER=anthropic</code> (with <code>ANTHROPIC_API_KEY</code>) or <code>=openai</code> (with <code>OPENAI_API_KEY</code>).</li>
+          <li><strong>Configurable.</strong> Disable it with <code>RUNYARD_HUB_SUPPORT_AGENT_ENABLED=0</code>. Tune with <code>RUNYARD_HUB_SUPPORT_AGENT_MODEL</code>, <code>_TIMEOUT_MS</code>, and <code>_MAX_OUTPUT_TOKENS</code>. <code>GET /api/chat/status</code> reports the resolved provider and whether it's configured.</li>
         </ul>
 
         <h2 id="telegram">Telegram approvals</h2>
@@ -202,19 +202,19 @@ smithers-hub-runner</pre>
         <ul>
           <li><code>BASE_URL</code> — the public origin (e.g. <code>https://hub.example.com</code>).</li>
           <li><code>PORT</code> — port the server binds to.</li>
-          <li><code>SMITHERS_HUB_SESSION_SECRET</code> — long random string. Sessions and CSRF derive from it.</li>
-          <li><code>SMITHERS_HUB_BOOTSTRAP_TOKEN</code> or read access to <code>data/bootstrap-token.txt</code>.</li>
+          <li><code>RUNYARD_HUB_SESSION_SECRET</code> — long random string. Sessions and CSRF derive from it.</li>
+          <li><code>RUNYARD_HUB_BOOTSTRAP_TOKEN</code> or read access to <code>data/bootstrap-token.txt</code>.</li>
         </ul>
         <p>Optional:</p>
         <ul>
           <li><code>TELEGRAM_BOT_TOKEN</code>, <code>TELEGRAM_APPROVAL_CHAT_ID</code> (or <code>SMITHERS_TELEGRAM_APPROVAL_CHAT_ID</code>) for approval DMs.</li>
           <li><code>TELEGRAM_CHAT_ID</code> / <code>TELEGRAM_THREAD_ID</code> as a backward-compatible fallback.</li>
-          <li><code>SMITHERS_HUB_INSTANCE_NAME</code> to label a deployment in <code>/api/version</code>.</li>
-          <li><code>SMITHERS_HUB_SUPPORT_AGENT_ENABLED</code> (default on), <code>_PROVIDER</code> (<code>runner</code>|<code>anthropic</code>|<code>openai</code>), <code>_MODEL</code>, <code>_TIMEOUT_MS</code>, <code>_MAX_OUTPUT_TOKENS</code> — the in-app <a href="#assistant">Assistant</a>. HTTP providers also read <code>ANTHROPIC_API_KEY</code> / <code>OPENAI_API_KEY</code>.</li>
+          <li><code>RUNYARD_HUB_INSTANCE_NAME</code> to label a deployment in <code>/api/version</code>.</li>
+          <li><code>RUNYARD_HUB_SUPPORT_AGENT_ENABLED</code> (default on), <code>_PROVIDER</code> (<code>runner</code>|<code>anthropic</code>|<code>openai</code>), <code>_MODEL</code>, <code>_TIMEOUT_MS</code>, <code>_MAX_OUTPUT_TOKENS</code> — the in-app <a href="#assistant">Assistant</a>. HTTP providers also read <code>ANTHROPIC_API_KEY</code> / <code>OPENAI_API_KEY</code>.</li>
         </ul>
-        <p>Runner-side variables (used by <code>smithers-hub-runner</code>):</p>
+        <p>Runner-side variables (used by <code>runyard-runner</code>):</p>
         <ul>
-          <li><code>SMITHERS_HUB_URL</code>, <code>SMITHERS_HUB_TOKEN</code> — connection &amp; auth.</li>
+          <li><code>RUNYARD_HUB_URL</code>, <code>RUNYARD_HUB_TOKEN</code> — connection &amp; auth.</li>
           <li><code>SMITHERS_RUNNER_NAME</code>, <code>SMITHERS_RUNNER_LOCATION</code>, <code>SMITHERS_RUNNER_TAGS</code>, <code>SMITHERS_RUNNER_CONCURRENCY</code>.</li>
           <li><code>SMITHERS_WORKSPACE</code> — directory the runner uses as scratch space for Smithers workflows.</li>
           <li><code>IMPROVE_REPO_DIR</code> or <code>GATED_REPO_DIR</code> — default git repo for the <strong>Improve</strong> workflow.</li>
@@ -224,7 +224,7 @@ smithers-hub-runner</pre>
         <p class="muted">For <strong>Improve</strong>, <code>repoDir</code> selects the allowlisted runner-local repository to inspect, test, commit, push, and optionally deploy. The Hub still stores the run status, logs, outputs, and artifacts.</p>
         <pre class="json">IMPROVE_ALLOWED_REPO_ROOTS='["/srv/repos"]'
 IMPROVE_REPO_MAP='{"website":"/srv/repos/website"}'
-smithers-hub run improve --where remote --input '{"target":"pricing page","repo":"website"}'</pre>
+runyard run improve --where remote --input '{"target":"pricing page","repo":"website"}'</pre>
 
         <h2 id="hardening">Workflow hardening</h2>
         <p>Runyard is designed to move workflows from agentic exploration toward deterministic code. The operating philosophy follows the process order: question requirements, delete unnecessary steps, simplify, accelerate, then automate. In Runyard terms, automation means moving from agent judgment to machine-checkable scripts and code where the work has become repeatable.</p>
@@ -265,7 +265,7 @@ curl -s http://127.0.0.1:43117/openapi.json | head</pre>
           <li>Start a runner and confirm the run succeeds.</li>
           <li>Open the run detail page and download the generated artifact.</li>
           <li>Run <strong>Implement</strong>; approve it via Web or MCP; confirm it queues and executes.</li>
-          <li>Configure a local MCP client with <code>smithers-hub-mcp</code> and call <code>list_capabilities</code>.</li>
+          <li>Configure a local MCP client with <code>runyard-mcp</code> and call <code>list_capabilities</code>.</li>
         </ol>
 
         <h2 id="oss">Open source &amp; contributions</h2>

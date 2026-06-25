@@ -34,7 +34,7 @@ export const seedAgents = [
   {
     slug: "run-knowledge-analyst",
     name: "Run Knowledge Analyst",
-    description: "Turns Smithers Hub run evidence into reusable lessons and workflow improvement recommendations.",
+    description: "Turns RunYard run evidence into reusable lessons and workflow improvement recommendations.",
     instructions:
       "Use only redacted Hub run evidence. Separate observed facts from inference, cite run ids or deep links, avoid generic advice, and recommend changes without mutating skills, agents, or workflows.",
     tools: ["hub-api", "files"],
@@ -111,7 +111,7 @@ export const seedSkills = [
   {
     slug: "run-knowledge-loop",
     name: "Run Knowledge Loop",
-    description: "How to convert Smithers Hub run evidence into durable improvements.",
+    description: "How to convert RunYard run evidence into durable improvements.",
     body:
       "Sample recent runs, preserve concrete evidence, redact secrets and local paths, distinguish evidence from inference, cluster repeated failure modes, and propose skill, agent, workflow, or knowledge updates only as recommendations unless a human approves a mutation checkpoint."
   },
@@ -151,8 +151,8 @@ export const seedSkills = [
 
 export const seedKnowledge = [
   {
-    slug: "smithers-hub-mental-model",
-    title: "Smithers Hub Mental Model",
+    slug: "runyard-mental-model",
+    title: "RunYard Mental Model",
     type: "doc",
     body: "Agents consume capabilities. Capabilities are backed by workflows, agents, skills, and knowledge. Runners execute locally or remotely. The Hub records runs, logs, artifacts, and approvals centrally.",
     tags: ["hub", "architecture", "agents"]
@@ -447,7 +447,7 @@ export const seedCapabilities = [
     slug: "run-knowledge-builder",
     name: "Run Knowledge Builder",
     description:
-      "Analyzes recent Smithers Hub runs, separates redacted evidence from inference, and produces a recommendation-only report for improving skills, agents, workflows, templates, and knowledge resources.",
+      "Analyzes recent RunYard runs, separates redacted evidence from inference, and produces a recommendation-only report for improving skills, agents, workflows, templates, and knowledge resources.",
     category: "Knowledge",
     keywords: ["runs", "knowledge", "lessons", "diagnostics", "improvement", "smithers"],
     inputSchema: {
@@ -647,7 +647,7 @@ export const seedCapabilities = [
         },
         repo: {
           type: "string",
-          description: "Friendly repo key resolved on the runner from IMPROVE_REPO_MAP. Defaults to smithers-hub (Runyard)."
+          description: "Friendly repo key resolved on the runner from IMPROVE_REPO_MAP. Defaults to runyard."
         },
         project: {
           type: "string",

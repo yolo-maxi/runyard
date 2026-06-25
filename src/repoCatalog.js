@@ -16,7 +16,7 @@
 
 import { execFileSync } from "node:child_process";
 
-const DEFAULT_REPO_KEY = "smithers-hub";
+const DEFAULT_REPO_KEY = "runyard";
 
 // Match a git SHA1 (or short SHA1). Used to validate operator-supplied pins
 // before we shell out to git so a bad value can never reach the runtime.
@@ -86,7 +86,7 @@ function entriesFromCatalog(raw) {
 export function buildRepoCatalog(env = process.env) {
   const defaultEntry = {
     value: DEFAULT_REPO_KEY,
-    label: "Smithers Hub (default repo)",
+    label: "RunYard (default repo)",
     selector: "repo",
     default: true
   };
@@ -141,7 +141,7 @@ export function resolveCapabilityRef(capability, options = {}) {
     return { capability, capabilitySha: explicitPin };
   }
   if (!versioningEnabled) return { capability, capabilitySha: null };
-  const cwd = options.cwd || env.SMITHERS_HUB_ROOT || process.cwd();
+  const cwd = options.cwd || env.RUNYARD_HUB_ROOT || env.SMITHERS_HUB_ROOT || process.cwd();
   let capabilitySha = null;
   try {
     const out = execFileSync("git", ["rev-parse", "HEAD"], {

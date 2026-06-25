@@ -287,14 +287,13 @@ describe("repo options endpoint", () => {
       async () => {
         const data = await api("/api/repo-options");
         const values = data.options.map((o) => o.value);
-        assert.ok(values.includes("smithers-hub"), "default Hub repo must be present");
+        assert.ok(values.includes("runyard"), "default Hub repo must be present");
         assert.ok(values.includes("docs"));
-        assert.ok(values.includes("runyard"));
         assert.ok(values.includes("marketing"));
         // Friendly keys only — no absolute runner-local paths anywhere in the body.
         const serialized = JSON.stringify(data);
         assert.equal(/\/srv\/secret\/runner\/path/.test(serialized), false, "raw paths must not be exposed");
-        assert.equal(data.default.value, "smithers-hub");
+        assert.equal(data.default.value, "runyard");
         // repoDir stays an escape hatch but carries a clear warning.
         assert.match(data.repoDir.warning, /runner-local/);
       }
@@ -303,7 +302,7 @@ describe("repo options endpoint", () => {
 
   it("ignores malformed catalog env instead of failing", () => {
     const catalog = buildRepoCatalog({ IMPROVE_REPO_MAP: "{not json", SMITHERS_REPO_CATALOG: "also bad" });
-    assert.equal(catalog.options[0].value, "smithers-hub");
+    assert.equal(catalog.options[0].value, "runyard");
   });
 });
 

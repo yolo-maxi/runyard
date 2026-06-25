@@ -18,9 +18,16 @@ process.stdout.on("error", (error) => {
 function client(options = {}) {
   const remoteName = options.remote || program.opts().remote;
   const remote = resolveRemote(remoteName);
-  const baseUrl = options.url || program.opts().url || process.env.SMITHERS_HUB_URL || remote.url || "http://127.0.0.1:43117";
-  const token = options.token || program.opts().token || process.env.SMITHERS_HUB_TOKEN || remote.token;
-  if (!token) throw new Error("No token configured. Run: smithers-hub login");
+  const baseUrl =
+    options.url ||
+    program.opts().url ||
+    process.env.RUNYARD_HUB_URL ||
+    process.env.SMITHERS_HUB_URL ||
+    remote.url ||
+    "http://127.0.0.1:43117";
+  const token =
+    options.token || program.opts().token || process.env.RUNYARD_HUB_TOKEN || process.env.SMITHERS_HUB_TOKEN || remote.token;
+  if (!token) throw new Error("No token configured. Run: runyard login");
   return new HubClient({ baseUrl, token });
 }
 
@@ -38,7 +45,7 @@ function print(data, json) {
 
 function printMenu(data, json, { all = false } = {}) {
   if (json) return print(data, true);
-  console.log("Try: smithers-hub run hello");
+  console.log("Try: runyard run hello");
   const caps = data.capabilities || [];
   const shown = all ? caps : caps.slice(0, 5);
   if (shown.length) {
@@ -46,11 +53,11 @@ function printMenu(data, json, { all = false } = {}) {
     console.log("Capabilities:");
     shown.forEach((cap, index) => console.log(`  ${index + 1}. ${cap.slug}\t${cap.name}`));
     if (!all && caps.length > shown.length) {
-      console.log(`  …${caps.length - shown.length} more — run \`smithers-hub menu --all\` for the full catalog`);
+      console.log(`  …${caps.length - shown.length} more — run \`runyard menu --all\` for the full catalog`);
     }
   }
   console.log("");
-  console.log("After a run: smithers-hub run-status|logs|artifacts <run-id>");
+  console.log("After a run: runyard run-status|logs|artifacts <run-id>");
 }
 
 function printRunCreated(data, json) {
@@ -59,9 +66,9 @@ function printRunCreated(data, json) {
   const execution = run.execution || {};
   console.log(`Run ${run.id} queued for ${run.capabilityName || run.capabilitySlug}.`);
   console.log(`Execution: ${execution.mode || "auto"}${execution.runnerLocation ? ` (${execution.runnerLocation})` : ""}`);
-  console.log(`Hub status: smithers-hub run-status ${run.id}`);
-  console.log(`Hub logs: smithers-hub logs ${run.id}`);
-  console.log(`Hub artifacts and outputs: smithers-hub artifacts ${run.id}`);
+  console.log(`Hub status: runyard run-status ${run.id}`);
+  console.log(`Hub logs: runyard logs ${run.id}`);
+  console.log(`Hub artifacts and outputs: runyard artifacts ${run.id}`);
   const improveRepoSelector = run.input?.repoDir || run.input?.repo || run.input?.project || "";
   if (run.capabilitySlug === "improve" && improveRepoSelector) {
     console.log(`Edited repo requested on runner: ${improveRepoSelector}`);
@@ -80,9 +87,9 @@ function ask(query, { hidden = false } = {}) {
   });
 }
 
-const invokedName = path.basename(process.argv[1] || "smithers-hub").replace(/\.js$/, "");
+const invokedName = path.basename(process.argv[1] || "runyard").replace(/\.js$/, "");
 const program = new Command();
-program.name(invokedName === "runyard" ? "runyard" : "smithers-hub").description("Runyard CLI (smithers-hub) — self-hosted control plane for agent runs").version("0.1.0");
+program.name(invokedName || "runyard").description("Runyard CLI — self-hosted control plane for agent runs").version("0.1.0");
 program
   .option("--url <url>", "Hub URL")
   .option("--token <token>", "Hub access token")
@@ -130,7 +137,7 @@ program
 function listRemotes() {
   const config = readConfig();
   const names = Object.keys(config.remotes);
-  if (!names.length) return console.log("No remotes configured. Run: smithers-hub login");
+  if (!names.length) return console.log("No remotes configured. Run: runyard login");
   for (const name of names) console.log(`${name === config.current ? "* " : "  "}${name}\t${config.remotes[name].url}`);
 }
 
@@ -143,7 +150,7 @@ remoteCmd
   .action((name) => {
     const config = readConfig();
     if (!config.remotes[name]) {
-      console.error(`No remote "${name}". Run: smithers-hub login --remote ${name}`);
+      console.error(`No remote "${name}". Run: runyard login --remote ${name}`);
       process.exit(1);
     }
     config.current = name;
@@ -187,7 +194,7 @@ program.command("capabilities").description("List capabilities").option("-q, --q
 // `capability` is now a parent command with subcommands so we can hang the
 // new `rollback` action off it cleanly. `describe` keeps the old `capability
 // <id>` behavior; we register a top-level alias below so existing operator
-// muscle memory (`smithers-hub capability <id>`) keeps working.
+// muscle memory (`runyard capability <id>`) keeps working.
 const capabilityCommand = program.command("capability").description("Capability commands");
 capabilityCommand
   .command("describe <id>")
@@ -219,7 +226,7 @@ capabilityCommand
         type: "cli",
         label: `CLI${remote.name ? `: ${remote.name}` : ""}`,
         remote: remote.name || "",
-        command: "smithers-hub capability rollback",
+        command: "runyard capability rollback",
         pin: sha,
         ...(opts.fromRun ? { rollbackOf: opts.fromRun } : {})
       }
@@ -248,7 +255,7 @@ program
         type: "cli",
         label: `CLI${remote.name ? `: ${remote.name}` : ""}`,
         remote: remote.name || "",
-        command: "smithers-hub run"
+        command: "runyard run"
       }
     };
     if (opts.chain) body.chain = JSON.parse(opts.chain);
@@ -446,7 +453,7 @@ runnerCommand
       cpSync(path.join(tpl, "examples"), path.join(ws, ".smithers", "examples"), { recursive: true });
       console.log("Added Hub workflow templates (hello, fan-out-fan-in).");
     }
-    console.log(`\n✓ Workspace ready. Start the runner:\n  smithers-hub runner start --workspace ${ws} --location ${opts.location}`);
+    console.log(`\n✓ Workspace ready. Start the runner:\n  runyard runner start --workspace ${ws} --location ${opts.location}`);
   });
 
 runnerCommand
@@ -458,12 +465,12 @@ runnerCommand
     const remote = resolveRemote(program.opts().remote);
     const env = {
       ...process.env,
-      SMITHERS_HUB_URL: program.opts().url || process.env.SMITHERS_HUB_URL || remote.url,
-      SMITHERS_HUB_TOKEN: program.opts().token || process.env.SMITHERS_HUB_TOKEN || remote.token,
+      RUNYARD_HUB_URL: program.opts().url || process.env.RUNYARD_HUB_URL || process.env.SMITHERS_HUB_URL || remote.url,
+      RUNYARD_HUB_TOKEN: program.opts().token || process.env.RUNYARD_HUB_TOKEN || process.env.SMITHERS_HUB_TOKEN || remote.token,
       SMITHERS_WORKSPACE: opts.workspace,
       SMITHERS_RUNNER_LOCATION: opts.location
     };
-    const child = spawn(process.execPath, [fileURLToPath(new URL("./smithers-runner.js", import.meta.url))], { stdio: "inherit", env });
+    const child = spawn(process.execPath, [fileURLToPath(new URL("./runner.js", import.meta.url))], { stdio: "inherit", env });
     child.on("exit", (code) => process.exit(code ?? 0));
   });
 
@@ -481,7 +488,7 @@ mcpCommand
 mcpCommand.command("config").description("Print the MCP server config snippet").action(() => printMcpConfig());
 
 // MCP server spec — references this CLI's sibling mcp.js by absolute path and a remote name.
-// No token is written here: mcp.js reads it from ~/.smithers-hub for the named remote.
+// No token is written here: mcp.js reads it from ~/.runyard for the named remote.
 function mcpServerSpec(remoteName) {
   const remote = resolveRemote(remoteName).name;
   const mcpJs = fileURLToPath(new URL("./mcp.js", import.meta.url));
@@ -548,7 +555,7 @@ const CLIENTS = {
   cursor: {
     detect: () => existsSync(path.join(HOME, ".cursor")),
     apply: jsonWriter(() => path.join(HOME, ".cursor", "mcp.json")),
-    activate: "Cursor → Settings → MCP → enable 'smithers-hub' (or reload the window)"
+    activate: "Cursor → Settings → MCP → enable 'runyard' (or reload the window)"
   },
   windsurf: {
     detect: () => existsSync(path.join(HOME, ".codeium")),
@@ -578,7 +585,7 @@ const CLIENTS = {
 
 function installMcp(opts) {
   const remote = resolveRemote(opts.remote || program.opts().remote).name;
-  const serverName = remote === "default" ? "smithers-hub" : `smithers-hub-${remote}`;
+  const serverName = remote === "default" ? "runyard" : `runyard-${remote}`;
   const server = mcpServerSpec(remote);
   let ids;
   if (opts.all) {
@@ -601,12 +608,12 @@ function installMcp(opts) {
     console.log(`✓ ${id}: wrote "${serverName}" -> ${file}`);
     console.log(`    to load it: ${c.activate}`);
   }
-  console.log(`\nToken is read from ~/.smithers-hub (remote "${remote}") — none is stored in the configs above.`);
+  console.log(`\nToken is read from ~/.runyard (remote "${remote}") — none is stored in the configs above.`);
 }
 
 function printMcpConfig() {
   const remote = resolveRemote(program.opts().remote).name;
-  const name = remote === "default" ? "smithers-hub" : `smithers-hub-${remote}`;
+  const name = remote === "default" ? "runyard" : `runyard-${remote}`;
   console.log(JSON.stringify({ mcpServers: { [name]: mcpServerSpec(remote) } }, null, 2));
 }
 

@@ -119,7 +119,10 @@ export function resolveImproveRepo(input = {}, options = {}) {
     selectedLabel = "repoDir";
   } else if (friendlyKey) {
     const repoMap = improveRepoMap(env);
-    const mapped = repoMap[friendlyKey] || (friendlyKey === "smithers-hub" ? defaultRepo : "");
+    // "runyard" is the canonical default-repo key; "smithers-hub" stays a
+    // back-compat alias so older configs/clients keep resolving to the default.
+    const isDefaultKey = friendlyKey === "runyard" || friendlyKey === "smithers-hub";
+    const mapped = repoMap[friendlyKey] || (isDefaultKey ? defaultRepo : "");
     if (!mapped) {
       throw new Error(`improve repo selector "${friendlyKey}" is not configured in IMPROVE_REPO_MAP or IMPROVE_PROJECT_MAP.`);
     }

@@ -2,9 +2,9 @@
 
 **Self-hosted control plane for agent runs.**
 
-Runyard (codebase: `smithers-hub`) is a capability operating system you run on a box you own. Agents discover team-defined capabilities over MCP/CLI/HTTP/Web, runners execute them on a VPS or laptop, and the Hub keeps the durable record of logs, events, artifacts, approvals, skills, agents, and knowledge.
+Runyard (package: `runyard`) is a capability operating system you run on a box you own. Agents discover team-defined capabilities over MCP/CLI/HTTP/Web, runners execute them on a VPS or laptop, and the Hub keeps the durable record of logs, events, artifacts, approvals, skills, agents, and knowledge.
 
-One private deployment per company/org — no SaaS dependency, no shared database. The preferred CLI alias is `runyard`; legacy package/bin names (`smithers-hub`, `smithers-hub-mcp`, `smithers-hub-runner`) and `SMITHERS_HUB_*` env vars keep their existing prefix, so deployments and tokens carry over.
+One private deployment per company/org — no SaaS dependency, no shared database. The CLI and bins are `runyard`, `runyard-mcp`, and `runyard-runner`. Runyard was formerly called Smithers Hub; the legacy `SMITHERS_HUB_*` env vars are still read as fallbacks, so existing deployments and tokens carry over.
 
 ## Concepts
 

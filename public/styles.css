@@ -2,7 +2,7 @@
  * Public product name: Runyard
  * Tagline: Self-hosted control plane for agent runs
  * Palette: ink + off-white, signal green/amber/red for run states, one blue accent.
- * Internal package/bin names keep the `smithers-hub` prefix for backwards compatibility.
+ * Legacy SMITHERS_HUB_* env vars are still honored as fallbacks for back-compat.
  */
 /* ============================================================================
  * DESIGN TOKENS — the single source of truth for the Runyard brand.
@@ -4702,7 +4702,7 @@ button.run-id-mono:focus-visible,
 }
 
 /* Docs/landing topbars: allow the .nav row to wrap on narrow viewports so
- * the 'Open Smithers Hub →' link stays visible above the fold even when
+ * the 'Open RunYard →' link stays visible above the fold even when
  * sibling buttons (Landing/Quickstart/llms.txt) would otherwise push it
  * off-screen. The app topbar uses a separate mobile-primary-nav row, so
  * the existing flex-wrap: nowrap stays correct there — we scope this fix
