@@ -1,100 +1,104 @@
-# RunYard on dstack (Intel TDX confidential VM).
+# RunYard — portable base compose (runs anywhere: self-hosted Docker, a VPS, k8s
+# via kompose, or as the base for the dstack overlay).
 #
-# This compose is the app-compose dstack runs inside the CVM guest (full dockerd
-# in the guest). dstack-gateway terminates TLS and reverse-proxies to the hub on
-# container port 80 — there is NO Caddy / no own-TLS in this stack.
+# Defaults are env-driven and tag-based so this file works out of the box. For
+# production you SHOULD pin images by @sha256: digest (see DEPLOY.md "Digest
+# pinning"); for dstack attestation digest pinning is REQUIRED — use the overlay
+# at deploy/dstack/.
 #
-# IMPORTANT — images MUST be pinned by @sha256: digest, never a mutable tag.
-# dstack attestation measures this compose *text*; a :tag commits to the string,
-# not the bytes. Digests only exist after the first CI push to GHCR, so the refs
-# below are placeholders. After CI builds the images it emits both digests (job
-# summary + release artifact); paste them in, then deploy/UpgradeApp.
+# Profiles / overlays (all OFF by default):
+#   - proxy profile:          `--profile proxy` adds Caddy TLS in front of the hub
+#                             (for self-hosters with no external gateway).
+#   - runner docker builds:   add `-f deploy/compose/runner-docker-socket.yml`
+#                             to let the runner `docker build` via the host socket
+#                             (or run a DinD sidecar — see DEPLOY.md).
+#   - local dev:              add `-f docker-compose.local.yml` to use locally
+#                             built images.
 #
-# Updates are via dstack UpgradeApp (swap digests → new compose-hash → re-measure),
-# NOT `docker compose pull` and NOT Watchtower. Rollback = UpgradeApp back to the
-# previous digests. See DEPLOY-DSTACK.md.
+# Update APPLY differs per target (NOT baked in): `docker compose pull` with tags,
+# k8s rollout, host-install `runyard update`, or dstack UpgradeApp. The in-app
+# update CHECK/version surface works everywhere. See DEPLOY.md.
 
 services:
   hub:
-    # REPLACE_WITH_DIGEST — e.g. ghcr.io/yolo-maxi/runyard-hub@sha256:<64-hex>
-    image: ghcr.io/yolo-maxi/runyard-hub@sha256:REPLACE_WITH_HUB_DIGEST
+    image: ${HUB_IMAGE:-ghcr.io/yolo-maxi/runyard-hub:latest}
     restart: unless-stopped
-    # dstack-gateway proxies to container :80. Exposing 80 is enough; the
-    # published host mapping is harmless inside the CVM and aids local testing.
-    ports:
-      - "80:80"
     environment:
-      # The hub listens on 0.0.0.0:80 (read by src/env.js).
       HOST: "0.0.0.0"
-      PORT: "80"
+      # Hub listens on this port inside the container (configurable; default 8080).
+      PORT: "${HUB_PORT:-8080}"
       NODE_ENV: "production"
       SMITHERS_HUB_DATA_DIR: "/data"
-      SMITHERS_HUB_INSTANCE_NAME: "Runyard"
-      # Public gateway URL for this app. Set to your app's gateway hostname so
-      # https links and production-mode session handling are correct.
-      #   BASE_URL: "https://<app_id>.gateway.attestmesh.xyz"
+      SMITHERS_HUB_INSTANCE_NAME: "${SMITHERS_HUB_INSTANCE_NAME:-Runyard}"
+      # Public URL of this hub (used for https links + production session mode).
       BASE_URL: "${BASE_URL:-}"
-      # Secrets via dstack ENCRYPTED env vars — referenced here, never inlined.
-      # Provide these in the dstack app's encrypted-env, not in this file:
+      # Secrets — provide via your platform's secret mechanism / a .env file,
+      # never commit them. Empty defaults keep the file runnable for local trials.
       SMITHERS_HUB_SESSION_SECRET: "${SMITHERS_HUB_SESSION_SECRET:-}"
       SMITHERS_HUB_BOOTSTRAP_TOKEN: "${SMITHERS_HUB_BOOTSTRAP_TOKEN:-}"
-      # 32-byte key (base64/hex) enabling the encrypted reusable-secrets store.
       SECRETS_ENC_KEY: "${SECRETS_ENC_KEY:-}"
-      # On dstack, APPLY = UpgradeApp. Keep the in-app update CHECK informational
-      # only and disable the host-side self-update APPLY path.
-      UPDATE_APPLY_ENABLED: "0"
+    ports:
+      # Publish the hub directly. Behind the proxy profile you can drop this.
+      - "${HUB_PORT:-8080}:${HUB_PORT:-8080}"
     volumes:
-      # Hub datastore on a named volume — survives container recreation & CVM
-      # reboot on the KMS-encrypted per-CVM disk (NOT app destruction / RemoveVm).
       - hub-data:/data
-    # Bound the hub within the CVM (limits the real ceiling is CVM-create sizing).
-    cpus: "1.0"
-    mem_limit: "1g"
+    # Soft caps; the real ceiling is the host/VM. Tune per environment.
+    cpus: "${HUB_CPUS:-1.0}"
+    mem_limit: "${HUB_MEM:-1g}"
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:80/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      # Probes whatever PORT the hub is configured to use.
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:'+(process.env.PORT||8080)+'/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
       interval: 30s
       timeout: 5s
       retries: 5
       start_period: 20s
 
   runner:
-    # REPLACE_WITH_DIGEST — e.g. ghcr.io/yolo-maxi/runyard-runner@sha256:<64-hex>
-    image: ghcr.io/yolo-maxi/runyard-runner@sha256:REPLACE_WITH_RUNNER_DIGEST
+    image: ${RUNNER_IMAGE:-ghcr.io/yolo-maxi/runyard-runner:latest}
     restart: unless-stopped
     depends_on:
       - hub
     environment:
-      # Reach the hub. On the same CVM/compose, the service name resolves.
-      # Across separate CVMs, point at the hub's gateway URL or direct addr.
-      SMITHERS_HUB_URL: "${SMITHERS_HUB_URL:-http://hub:80}"
-      # Runner auth token — provide via dstack ENCRYPTED env (never inline).
+      # Reach the hub. Same compose → service name; separate hosts → its URL.
+      SMITHERS_HUB_URL: "${SMITHERS_HUB_URL:-http://hub:${HUB_PORT:-8080}}"
       SMITHERS_HUB_TOKEN: "${SMITHERS_HUB_TOKEN:-}"
       SMITHERS_WORKSPACE: "/workspace"
-      SMITHERS_RUNNER_LOCATION: "vps"
+      SMITHERS_RUNNER_LOCATION: "${SMITHERS_RUNNER_LOCATION:-vps}"
       SMITHERS_RUNNER_CONCURRENCY: "${SMITHERS_RUNNER_CONCURRENCY:-1}"
       # Pinned engine resolved deterministically (matches Dockerfile.runner).
       SMITHERS_BIN: "/usr/local/bun/bin/smithers"
-      # Agent CLI credentials (claude/codex) — provide via dstack ENCRYPTED env.
-      # The agent CLIs themselves are NOT baked into the image; mount/auth them.
+      # Agent CLI creds (claude/codex) — provide via env/secrets; not baked in.
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
-      # Point the docker CLI at the guest dockerd socket (see volumes below).
-      DOCKER_HOST: "${DOCKER_HOST:-unix:///var/run/docker.sock}"
     volumes:
-      # Large scratch workspace on the runner's disk (persist only what matters
-      # back to the hub as artifacts).
       - runner-workspace:/workspace
-      # --- Guest Docker access (pick ONE; verify dstack app-compose policy) -----
-      # Option A (default here): mount the *guest* CVM docker socket so the runner
-      # can `docker build` against the guest dockerd. You own this socket inside
-      # the CVM — it is NOT the bare-metal host socket.
-      - /var/run/docker.sock:/var/run/docker.sock
-      # Option B: a rootless DinD sidecar instead of the socket mount (safer if
-      # the dstack app-compose parser restricts socket mounts). See DEPLOY-DSTACK.md.
-    # Bound each build inside the CVM. The hard ceiling is set at CVM create.
-    cpus: "2.0"
-    mem_limit: "4g"
+      # Docker-build access is OPTIONAL and OFF here. To enable, add
+      #   -f deploy/compose/runner-docker-socket.yml
+      # (host/guest socket) or run a DinD sidecar. See DEPLOY.md.
+    cpus: "${RUNNER_CPUS:-2.0}"
+    mem_limit: "${RUNNER_MEM:-4g}"
+
+  # Optional TLS reverse proxy for self-hosters with no external gateway.
+  # Enable with `--profile proxy`. Set SITE_ADDRESS to your domain for auto-HTTPS.
+  proxy:
+    image: caddy:2
+    profiles: ["proxy"]
+    restart: unless-stopped
+    depends_on:
+      - hub
+    environment:
+      SITE_ADDRESS: "${SITE_ADDRESS:-localhost}"
+      HUB_UPSTREAM: "hub:${HUB_PORT:-8080}"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/compose/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
 
 volumes:
   hub-data:
   runner-workspace:
+  caddy-data:
+  caddy-config:

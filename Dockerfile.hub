@@ -2,12 +2,13 @@
 #
 # RunYard hub (control plane + web UI + embedded datastore).
 #
+# Environment-agnostic image: runs anywhere (plain Docker, compose, k8s, dstack).
 # Multi-stage: a build stage installs the full dependency tree and bundles the
 # browser vendor modules; the runtime stage copies only what the server needs.
-# Listens on port 80 by default so dstack-gateway can reverse-proxy straight to
-# the container (gateway → container :80). The datastore lives on a mounted
-# volume at /data (SMITHERS_HUB_DATA_DIR), which survives container recreation
-# and CVM reboot on dstack's KMS-encrypted per-CVM disk.
+# Listens on PORT (default 8080), configurable via env. The datastore lives on a
+# mounted volume at /data (SMITHERS_HUB_DATA_DIR) so it survives container
+# recreation. The node binary is granted cap_net_bind_service so the unprivileged
+# user can also bind low ports (e.g. PORT=80 behind a gateway) without root.
 
 ARG NODE_VERSION=22
 ARG PNPM_VERSION=10.33.0
@@ -43,7 +44,7 @@ WORKDIR /app
 
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
-    PORT=80 \
+    PORT=8080 \
     SMITHERS_HUB_DATA_DIR=/data
 
 # tini for correct PID-1 signal handling; setcap so the unprivileged `node`
@@ -68,7 +69,7 @@ RUN mkdir -p /data && chown -R node:node /data /app
 VOLUME ["/data"]
 
 USER node
-EXPOSE 80
+EXPOSE 8080
 
 # --experimental-sqlite enables node:sqlite (the embedded datastore), matching
 # the `pnpm start` script. PORT/HOST are read from the environment by src/env.js.
