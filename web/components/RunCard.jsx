@@ -5,7 +5,7 @@ import {
   artifactDisplayName, formatBytes
 } from "../lib/runHelpers.js";
 import { rerunRun, editRerunById } from "../lib/runActions.js";
-import { Icon, StatusBadge, ShareButton } from "./ui.jsx";
+import { Icon, StatusBadge, ShareButton, OverflowMenu } from "./ui.jsx";
 import { RunProgressStrip } from "./RunProgressStrip.jsx";
 
 function QueueBanner({ run }) {
@@ -103,11 +103,19 @@ export function RunCard({ run, artifacts = [], now = Date.now() }) {
         </ul>
       ) : null}
       <footer className="run-card-foot">
-        <a className="button" href={slug ? deepLinks.workflow(slug) : deepLinks.workflows()}>Workflow</a>
-        <a className="button" href={deepLinks.runLogs(run.id)}>Run log</a>
-        <a className="button" href={deepLinks.runArtifacts(run.id)}>Artifacts</a>
-        <button onClick={() => editRerunById(run.id)}>Edit &amp; re-run</button>
-        <button onClick={() => rerunRun(run.id)}>Re-run</button>
+        {/* One clear action per card; everything secondary collapses into the
+            overflow menu so the runs grid stays calm. The card title and the
+            workflow chip above already link to detail / the workflow. */}
+        <button className="btn-sm" onClick={() => rerunRun(run.id)}>Re-run</button>
+        <OverflowMenu
+          size="sm"
+          label="More run actions"
+          items={[
+            { label: "Edit & re-run", onSelect: () => editRerunById(run.id) },
+            { label: "Run log", href: deepLinks.runLogs(run.id) },
+            { label: "Artifacts", href: deepLinks.runArtifacts(run.id) }
+          ]}
+        />
       </footer>
     </article>
   );
