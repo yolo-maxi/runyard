@@ -91,8 +91,9 @@ function AgentCard({ meta, item, capabilities, onEdit }) {
         </div>
       ) : null}
       <div className="toolbar-actions">
-        <a className="button" href={link}>Open</a>
-        <button onClick={() => onEdit(item.slug)}>Edit</button>
+        {/* The card title already links to the detail page, so the footer
+            carries just the one secondary action. */}
+        <button className="btn-sm" onClick={() => onEdit(item.slug)}>Edit</button>
       </div>
     </article>
   );
