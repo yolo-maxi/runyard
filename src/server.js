@@ -3,6 +3,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { createHash, createHmac } from "node:crypto";
 import path from "node:path";
 import express from "express";
+import { subscribeRunEvents } from "./runEventBus.js";
 import {
   addRunEvent,
   authenticateToken,
@@ -3308,6 +3309,52 @@ app.get("/api/runs/:id", requireAuth, (req, res) => {
   });
 });
 app.get("/api/runs/:id/events", requireAuth, (req, res) => res.json({ events: listRunEvents(req.params.id) }));
+// Live event stream (Server-Sent Events). Additive companion to the REST
+// endpoints above — the React run-detail console tails this and falls back to
+// polling /api/runs/:id/events if the stream is unavailable or drops. Cookie
+// auth flows through requireAuth automatically (EventSource sends same-origin
+// cookies), so no header juggling is needed.
+app.get("/api/runs/:id/events/stream", requireAuth, (req, res) => {
+  const run = getRun(req.params.id);
+  if (!run) return res.status(404).json({ error: "run not found" });
+  res.set({
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    // Defeat proxy buffering (nginx) so events flush immediately.
+    "X-Accel-Buffering": "no"
+  });
+  res.flushHeaders?.();
+  // Opening comment + a "ready" frame carrying the last known event id so the
+  // client can reconcile against its initial fetch without missing events.
+  res.write(": connected\n\n");
+  const existing = listRunEvents(run.id);
+  const lastId = existing.length ? existing[existing.length - 1].id : null;
+  res.write(`event: ready\ndata: ${JSON.stringify({ runId: run.id, lastEventId: lastId, count: existing.length })}\n\n`);
+
+  const send = (event) => {
+    try {
+      res.write(`event: run-event\ndata: ${JSON.stringify(event)}\n\n`);
+    } catch {
+      // Write after close — cleanup below handles teardown.
+    }
+  };
+  const unsubscribe = subscribeRunEvents(run.id, send);
+  // Heartbeat comment keeps idle connections alive through proxy timeouts.
+  const heartbeat = setInterval(() => {
+    try { res.write(": ping\n\n"); } catch { /* closed */ }
+  }, 25_000);
+
+  let closed = false;
+  const cleanup = () => {
+    if (closed) return;
+    closed = true;
+    clearInterval(heartbeat);
+    unsubscribe();
+  };
+  req.on("close", cleanup);
+  res.on("close", cleanup);
+});
 app.get("/api/runs/:id/log-summary", requireAuth, (req, res) => {
   const run = getRun(req.params.id);
   if (!run) return res.status(404).json({ error: "run not found" });

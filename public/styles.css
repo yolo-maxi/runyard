@@ -4,20 +4,155 @@
  * Palette: ink + off-white, signal green/amber/red for run states, one blue accent.
  * Internal package/bin names keep the `smithers-hub` prefix for backwards compatibility.
  */
+/* ============================================================================
+ * DESIGN TOKENS — the single source of truth for the Runyard brand.
+ * Every font-size, color, space, radius, and shadow in this stylesheet should
+ * resolve to one of the variables below. The /brand page renders these tokens
+ * directly and is the living contract: if it looks right there, it is correct.
+ * Do NOT introduce ad-hoc px font sizes or raw hex colors outside this block.
+ * ==========================================================================*/
 :root {
-  --ink: #15191f;
-  --ink-soft: #1f2630;
-  --off-white: #f6f5ef;
-  --muted: #637083;
-  --line: #d9e0ea;
-  --panel: #ffffff;
-  --soft: #f4f7fb;
-  --brand: #1f6f4a;          /* Runyard signal green (primary action) */
-  --brand-2: #2563eb;        /* Single blue accent for links/highlights */
-  --warn: #b45309;           /* Signal amber */
-  --danger: #b91c1c;         /* Signal red */
-  --ok: #15803d;             /* Signal green for status pills */
-  --brand-tint: #e7f6ef;     /* Soft tint for hover/active states */
+  /* ---- Fonts ----------------------------------------------------------- */
+  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "SFMono-Regular", Consolas, ui-monospace, Menlo, monospace;
+
+  /* ---- Type scale (strict, 8 steps + display) -------------------------- *
+   * Use --fs-* for size and the paired --lh-* for line-height. No size may
+   * appear outside this scale. Display is reserved for marketing/hero only. */
+  --fs-2xs: 11px;   --lh-2xs: 16px;   /* micro labels, pill text, timestamps */
+  --fs-xs: 12px;    --lh-xs: 16px;    /* captions, secondary meta            */
+  --fs-sm: 13px;    --lh-sm: 18px;    /* dense body, table cells             */
+  --fs-base: 14px;  --lh-base: 20px;  /* default UI text, buttons, inputs    */
+  --fs-md: 16px;    --lh-md: 24px;    /* lead paragraph, card titles         */
+  --fs-lg: 18px;    --lh-lg: 26px;    /* section headings                    */
+  --fs-xl: 22px;    --lh-xl: 28px;    /* page sub-titles                     */
+  --fs-2xl: 28px;   --lh-2xl: 34px;   /* page H1                             */
+  --fs-display: clamp(34px, 6vw, 64px); /* landing/hero only                 */
+
+  /* ---- Font weights ---------------------------------------------------- */
+  --fw-normal: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+  --fw-display: 720;   /* wordmark / hero only */
+
+  /* ---- Letter-spacing -------------------------------------------------- *
+   * Tracking is only allowed on uppercase micro-labels (eyebrows, tags).
+   * Body and headings stay at 0. */
+  --tracking-label: 0.06em;
+  --tracking-tight: 0.01em;
+
+  /* ---- Spacing scale (4px base grid) ----------------------------------- */
+  --space-0: 0;
+  --space-px: 1px;
+  --space-0-5: 2px;
+  --space-1: 4px;
+  --space-1-5: 6px;
+  --space-2: 8px;
+  --space-2-5: 10px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* ---- Radii ----------------------------------------------------------- */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-pill: 999px;
+
+  /* ---- Borders --------------------------------------------------------- */
+  --border-width: 1px;
+
+  /* ---- Shadows (a small fixed set) ------------------------------------- */
+  --shadow-xs: 0 1px 2px rgba(15, 25, 35, 0.08);
+  --shadow-sm: 0 4px 16px rgba(15, 25, 35, 0.08);
+  --shadow-md: 0 6px 20px rgba(15, 25, 35, 0.16);
+  --shadow-lg: 0 12px 28px rgba(15, 25, 35, 0.18);
+
+  /* ---- Color: background layers ---------------------------------------- */
+  --bg: #f6f5ef;          /* app canvas (off-white)        */
+  --surface: #ffffff;     /* panels, cards                 */
+  --surface-2: #f4f7fb;   /* soft fills, hover, code wells */
+  --surface-3: #eef3f8;   /* table headers, subtle stripe  */
+
+  /* ---- Color: text ----------------------------------------------------- */
+  --text: #15191f;            /* primary ink            */
+  --text-strong: #1f2630;     /* slightly deeper ink    */
+  --text-secondary: #475569;  /* secondary copy         */
+  --text-muted: #637083;      /* muted / tertiary       */
+  --text-on-accent: #ffffff;  /* text on solid fills    */
+
+  /* ---- Color: borders -------------------------------------------------- */
+  --border: #d9e0ea;
+  --border-strong: #cbd5e1;
+
+  /* ---- Color: accent (one green primary + one blue link) --------------- */
+  --accent: #1f6f4a;          /* Runyard signal green (the ONE accent) */
+  --accent-hover: #1a5e3e;
+  --accent-tint: #e7f6ef;
+  --accent-border: #b7e7df;
+  --link: #2563eb;            /* single blue, links/highlights only    */
+
+  /* ---- Color: semantic tones (meaning only, never decoration) ---------- */
+  --success: #15803d;  --success-bg: #f0fdf4;  --success-border: #bbf7d0;
+  --warn-fg: #b45309;  --warn-bg: #fffbeb;     --warn-border: #fed7aa;
+  --danger-fg: #b91c1c; --danger-bg: #fef2f2;  --danger-border: #fecaca;
+  --info-fg: #1d4ed8;  --info-bg: #eff6ff;     --info-border: #bfdbfe;
+
+  /* ---- Console / log surface (dark, monospace) ------------------------- */
+  --console-bg: #101820;
+  --console-fg: #dbeafe;
+
+  /* ---- Buttons (the full system) --------------------------------------- *
+   * Two sizes, one radius. Height is canonical per size. Variants are colour
+   * only (see the button rules below). Rule: at most ONE primary (solid-accent)
+   * button per view; everything else is secondary/ghost. */
+  --btn-height-sm: 30px;
+  --btn-height-md: 36px;
+  --btn-radius: var(--radius-sm);
+  --btn-pad-sm: 0 var(--space-2-5);
+  --btn-pad-md: 0 var(--space-3);
+  --btn-font-sm: var(--fs-sm);
+  --btn-font-md: var(--fs-base);
+  --btn-gap: var(--space-2);
+
+  /* ---- Motion ---------------------------------------------------------- */
+  --transition-fast: 0.15s ease;
+  --transition-base: 0.2s ease;
+
+  /* ---- Legacy aliases -------------------------------------------------- *
+   * Older rules reference these names; they now resolve to the tokens above
+   * so the whole stylesheet inherits the brand without a mass rename. */
+  --ink: var(--text);
+  --ink-soft: var(--text-strong);
+  --off-white: var(--bg);
+  --muted: var(--text-muted);
+  --line: var(--border);
+  --panel: var(--surface);
+  --soft: var(--surface-2);
+  --brand: var(--accent);
+  --brand-2: var(--link);
+  --warn: var(--warn-fg);
+  --danger: var(--danger-fg);
+  --ok: var(--success);
+  --brand-tint: var(--accent-tint);
+}
+
+/* Respect users who ask for less motion: kill non-essential animation globally. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 * {
@@ -26,14 +161,33 @@
 
 body {
   margin: 0;
-  color: var(--ink);
-  background: var(--off-white);
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: var(--text);
+  background: var(--bg);
+  font-family: var(--font-sans);
+  font-size: var(--fs-base);
+  line-height: var(--lh-base);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 a {
   color: inherit;
 }
+
+/* ---- Typographic baseline ----------------------------------------------- *
+ * Headings inherit the type scale by default so any view that does not set an
+ * explicit size still lands on-grid. Components may step a heading up/down the
+ * scale but must not invent sizes. */
+h1, h2, h3, h4, h5, h6 {
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-md);
+  color: var(--text);
+}
+h1 { font-size: var(--fs-2xl); line-height: var(--lh-2xl); }
+h2 { font-size: var(--fs-xl); line-height: var(--lh-xl); }
+h3 { font-size: var(--fs-md); line-height: var(--lh-md); }
+h4 { font-size: var(--fs-base); line-height: var(--lh-base); }
+h5, h6 { font-size: var(--fs-sm); line-height: var(--lh-sm); }
 
 button,
 input,
@@ -42,57 +196,145 @@ select {
   font: inherit;
 }
 
+/* ============================================================================
+ * BUTTON SYSTEM
+ * Default (bare <button> / .button) = SECONDARY (outlined, neutral). Layer one
+ * variant class for intent and one size class for scale. Rule of thumb: at
+ * most ONE .primary per view — the single solid-accent call to action.
+ * Sizes: .btn-sm (30px) and the default .btn-md (36px). Icon-only buttons add
+ * .btn-icon for a square footprint.
+ * ==========================================================================*/
 button,
 .button {
-  border: 1px solid var(--line);
-  background: var(--panel);
-  color: var(--ink);
-  min-height: 36px;
-  padding: 8px 12px;
-  border-radius: 6px;
+  border: var(--border-width) solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  min-height: var(--btn-height-md);
+  padding: var(--btn-pad-md);
+  border-radius: var(--btn-radius);
+  font-size: var(--btn-font-md);
+  font-weight: var(--fw-medium);
+  line-height: 1;
   cursor: pointer;
   text-decoration: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: var(--btn-gap);
   white-space: nowrap;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
 }
 
+button:hover,
+.button:hover {
+  background: var(--surface-2);
+  border-color: var(--border-strong);
+}
+
+button:focus-visible,
+.button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Primary — the single solid accent action. */
 button.primary,
 .button.primary {
-  color: #fff;
-  background: var(--brand);
-  border-color: var(--brand);
+  color: var(--text-on-accent);
+  background: var(--accent);
+  border-color: var(--accent);
+  font-weight: var(--fw-semibold);
+}
+button.primary:hover,
+.button.primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
 }
 
-button.danger {
-  color: #fff;
-  background: var(--danger);
-  border-color: var(--danger);
+/* Danger — destructive solid action. */
+button.danger,
+.button.danger {
+  color: var(--text-on-accent);
+  background: var(--danger-fg);
+  border-color: var(--danger-fg);
+  font-weight: var(--fw-semibold);
+}
+button.danger:hover,
+.button.danger:hover {
+  background: #a11717;
+  border-color: #a11717;
 }
 
-button.warning {
-  color: #fff;
-  background: var(--warn);
-  border-color: var(--warn);
+button.warning,
+.button.warning {
+  color: var(--text-on-accent);
+  background: var(--warn-fg);
+  border-color: var(--warn-fg);
+  font-weight: var(--fw-semibold);
 }
 
-button:disabled {
+/* Ghost — lowest-emphasis action (transparent until hover). For tertiary
+ * actions and toolbar buttons that should recede. */
+button.ghost,
+.button.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-secondary);
+}
+button.ghost:hover,
+.button.ghost:hover {
+  background: var(--surface-2);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+/* Size: small. */
+button.btn-sm,
+.button.btn-sm {
+  min-height: var(--btn-height-sm);
+  padding: var(--btn-pad-sm);
+  font-size: var(--btn-font-sm);
+}
+
+/* Icon-only buttons: square footprint, centered glyph. */
+button.btn-icon,
+.button.btn-icon {
+  padding: 0;
+  width: var(--btn-height-md);
+}
+button.btn-icon.btn-sm,
+.button.btn-icon.btn-sm {
+  width: var(--btn-height-sm);
+}
+
+button:disabled,
+.button:disabled,
+button[disabled],
+.button[disabled] {
   opacity: 0.55;
   cursor: not-allowed;
+}
+button:disabled:hover,
+.button:disabled:hover {
+  background: var(--surface);
+  border-color: var(--border);
 }
 
 input,
 textarea,
 select {
   width: 100%;
-  border: 1px solid var(--line);
-  background: #fff;
-  color: var(--ink);
-  border-radius: 6px;
+  border: var(--border-width) solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: var(--radius-sm);
   min-height: 38px;
-  padding: 8px 10px;
+  padding: var(--space-2) var(--space-2-5);
+  font-size: var(--fs-base);
 }
 
 textarea {
@@ -102,7 +344,128 @@ textarea {
 
 pre,
 code {
-  font-family: "SFMono-Regular", Consolas, monospace;
+  font-family: var(--font-mono);
+}
+
+/* ============================================================================
+ * SHARED PRIMITIVES (Badge, OverflowMenu, Spinner, EmptyState extras)
+ * Rendered verbatim on the /brand page; keep them token-pure.
+ * ==========================================================================*/
+
+/* Badge — neutral count/label pill. Tones carry meaning only. */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0 var(--space-2);
+  min-height: 18px;
+  border-radius: var(--radius-pill);
+  border: var(--border-width) solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+.badge-accent { background: var(--accent-tint); border-color: var(--accent-border); color: var(--accent); }
+.badge-success { background: var(--success-bg); border-color: var(--success-border); color: var(--success); }
+.badge-warn { background: var(--warn-bg); border-color: var(--warn-border); color: var(--warn-fg); }
+.badge-danger { background: var(--danger-bg); border-color: var(--danger-border); color: var(--danger-fg); }
+.badge-info { background: var(--info-bg); border-color: var(--info-border); color: var(--info-fg); }
+
+/* Overflow (⋯) menu — collapses secondary actions behind one trigger. Mirrors
+ * the admin-menu pattern so the whole app has one menu affordance. */
+.overflow-menu {
+  position: relative;
+  display: inline-block;
+}
+.overflow-menu > summary {
+  list-style: none;
+  user-select: none;
+  font-size: var(--fs-md);
+}
+.overflow-menu > summary::-webkit-details-marker {
+  display: none;
+}
+.overflow-menu[open] > summary {
+  background: var(--surface-2);
+  border-color: var(--border-strong);
+}
+.overflow-menu-list {
+  position: absolute;
+  right: 0;
+  top: calc(100% + var(--space-1));
+  background: var(--surface);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-1);
+  display: grid;
+  gap: var(--space-0-5);
+  min-width: 180px;
+  z-index: 30;
+}
+.overflow-menu-list button,
+.overflow-menu-list a {
+  width: 100%;
+  justify-content: flex-start;
+  border-color: transparent;
+  background: transparent;
+  min-height: 34px;
+  color: var(--text);
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-2-5);
+  font-weight: var(--fw-normal);
+}
+.overflow-menu-list button:hover,
+.overflow-menu-list a:hover {
+  background: var(--surface-2);
+  border-color: var(--border);
+}
+.overflow-menu-list .is-danger {
+  color: var(--danger-fg);
+}
+.overflow-menu-list .is-danger:hover {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+}
+
+/* Spinner — the one loading affordance. */
+.spinner {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--fs-sm);
+}
+.spinner-inline { gap: var(--space-1-5); }
+.spinner-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  animation: spinner-rotate 0.7s linear infinite;
+  flex: none;
+}
+@keyframes spinner-rotate {
+  to { transform: rotate(360deg); }
+}
+
+/* EmptyState extras (the base .empty card is defined further down). */
+.empty-title {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+.empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: center;
+  margin-top: var(--space-3);
 }
 
 .topbar {
@@ -120,7 +483,7 @@ code {
 }
 
 .brand {
-  font-weight: 760;
+  font-weight: var(--fw-display);
   letter-spacing: 0;
   display: flex;
   align-items: center;
@@ -143,9 +506,9 @@ code {
 }
 
 .brand-name {
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 18px;
-  font-weight: 760;
+  font-family: var(--font-mono);
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-display);
   letter-spacing: 0.04em;
   color: var(--ink);
   text-transform: lowercase;
@@ -153,9 +516,9 @@ code {
 }
 
 .brand-pill {
-  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
-  font-size: 11px;
-  font-weight: 600;
+  font-family: var(--font-sans);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--muted);
@@ -175,9 +538,9 @@ code {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 11px;
-  font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
   letter-spacing: 0.04em;
   color: var(--ink);
   border: 1px solid var(--line);
@@ -199,12 +562,12 @@ code {
 }
 
 .env-chip-host {
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
 }
 
 .env-chip-tag {
-  font-size: 10px;
-  font-weight: 700;
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-bold);
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--muted);
@@ -235,8 +598,8 @@ code {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
   line-height: 1;
   padding: 6px 10px;
   border-radius: 999px;
@@ -302,8 +665,8 @@ body.logged-out .mobile-primary-nav {
   border-radius: 999px;
   background: var(--danger);
   color: #fff;
-  font-size: 11px;
-  font-weight: 600;
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
   line-height: 1.4;
   text-align: center;
 }
@@ -316,7 +679,7 @@ body.logged-out .mobile-primary-nav {
 .nav a {
   min-height: 32px;
   padding: 6px 9px;
-  font-size: 14px;
+  font-size: var(--fs-base);
 }
 
 .admin-label-short,
@@ -370,14 +733,14 @@ body.logged-out .mobile-primary-nav {
 }
 
 .hero h1 {
-  font-size: clamp(42px, 7vw, 92px);
+  font-size: var(--fs-display);
   line-height: 0.95;
   margin: 0 0 18px;
   letter-spacing: 0;
 }
 
 .hero p {
-  font-size: 20px;
+  font-size: var(--fs-xl);
   line-height: 1.55;
   max-width: 760px;
   margin: 0 0 24px;
@@ -427,7 +790,7 @@ body.logged-out .mobile-primary-nav {
 
 .toolbar h1 {
   margin: 0;
-  font-size: 28px;
+  font-size: var(--fs-2xl);
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -441,7 +804,7 @@ body.logged-out .mobile-primary-nav {
 
 .breadcrumbs {
   margin: -4px 0 12px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   min-width: 0;
 }
 
@@ -493,7 +856,7 @@ body.logged-out .mobile-primary-nav {
 
 .breadcrumbs [aria-current="page"] {
   color: var(--ink);
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
   max-width: min(42vw, 420px);
 }
 
@@ -513,7 +876,7 @@ body.logged-out .mobile-primary-nav {
 
 .stat strong {
   display: block;
-  font-size: 26px;
+  font-size: var(--fs-2xl);
 }
 
 .table {
@@ -531,7 +894,7 @@ body.logged-out .mobile-primary-nav {
   padding: 10px;
   text-align: left;
   vertical-align: top;
-  font-size: 14px;
+  font-size: var(--fs-base);
 }
 
 .table th {
@@ -544,7 +907,7 @@ body.logged-out .mobile-primary-nav {
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 2px 8px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   background: #fff;
 }
 
@@ -616,7 +979,7 @@ body.logged-out .mobile-primary-nav {
 .event time {
   display: block;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .json {
@@ -639,7 +1002,7 @@ body.logged-out .mobile-primary-nav {
   display: grid;
   gap: 5px;
   color: #334155;
-  font-size: 14px;
+  font-size: var(--fs-base);
 }
 
 .login {
@@ -676,7 +1039,7 @@ body.logged-out .mobile-primary-nav {
   background: #fff;
   color: var(--ink);
   box-shadow: 0 6px 20px rgba(15, 25, 35, 0.16);
-  font-size: 14px;
+  font-size: var(--fs-base);
   opacity: 0;
   transform: translateY(8px);
   transition: opacity 0.2s, transform 0.2s;
@@ -725,7 +1088,7 @@ body.logged-out .mobile-primary-nav {
 
 .empty-runs-headline {
   margin: 0 0 6px;
-  font-size: 18px;
+  font-size: var(--fs-lg);
 }
 
 .empty-runs-actions {
@@ -754,8 +1117,8 @@ body.logged-out .mobile-primary-nav {
 /* Form helpers */
 .field-hint {
   color: var(--muted);
-  font-size: 12px;
-  font-weight: 400;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-normal);
 }
 
 /* repoDir manual-override warning: the raw path escape hatch must read as
@@ -770,7 +1133,7 @@ body.logged-out .mobile-primary-nav {
 
 .field-error {
   color: var(--danger);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   min-height: 0;
 }
 
@@ -796,7 +1159,7 @@ label.inline input {
   border-radius: 8px;
   padding: 10px 12px;
   margin: 0 0 12px;
-  font-size: 14px;
+  font-size: var(--fs-base);
 }
 
 /* Rerun draft banner: surfaces the persisted edit so the operator never
@@ -863,7 +1226,7 @@ details.advanced {
 
 details.advanced summary {
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--fs-base);
   color: #334155;
 }
 
@@ -878,8 +1241,8 @@ details.advanced[open] summary {
 }
 
 .copy-row input {
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 13px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
   flex: 1;
   min-width: 0;
 }
@@ -892,7 +1255,7 @@ details.advanced[open] summary {
   border-radius: 999px;
   min-height: 24px;
   padding: 0 7px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   line-height: 1;
   margin-left: 6px;
   cursor: pointer;
@@ -907,7 +1270,7 @@ details.advanced[open] summary {
 
 .deep-link-hint {
   margin: -6px 0 12px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 /* Briefly highlight an item that was opened via deep link. */
@@ -920,8 +1283,8 @@ details.advanced[open] summary {
 
 /* Mono pill for showing the absolute share URL inline. */
 .kbd {
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
   background: var(--soft);
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -931,7 +1294,7 @@ details.advanced[open] summary {
 }
 
 .artifact-dl {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   text-decoration: underline;
 }
 
@@ -1009,7 +1372,7 @@ details.advanced[open] summary {
 .subtabs .tab {
   min-height: 30px;
   padding: 4px 10px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .workflow-code-panel,
@@ -1052,9 +1415,9 @@ details.advanced[open] summary {
   max-height: 70vh;
   background: transparent;
   color: var(--ink);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   line-height: 1.5;
-  font-family: "SFMono-Regular", Consolas, monospace;
+  font-family: var(--font-mono);
   white-space: pre;
 }
 
@@ -1106,7 +1469,7 @@ details.advanced[open] summary {
   border-left: 1px solid var(--line);
   background: var(--soft);
   overflow: auto;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 /* Desktop: the rail is rendered as a <details open> for mobile parity, but
@@ -1131,7 +1494,7 @@ details.advanced[open] summary {
   background: #fff;
   border: 1px solid var(--line);
   color: var(--ink);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   width: fit-content;
 }
 
@@ -1194,22 +1557,22 @@ details.advanced[open] summary {
 
 /* ---- Section heading (above run grids on home) ---- */
 .section-heading {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--muted);
   margin: 20px 0 10px;
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
   display: flex;
   align-items: baseline;
   gap: 8px;
 }
 
 .section-heading .muted {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   text-transform: none;
   letter-spacing: 0;
-  font-weight: 400;
+  font-weight: var(--fw-normal);
 }
 
 .run-empty {
@@ -1268,7 +1631,7 @@ details.advanced[open] summary {
 
 .run-card-title {
   margin: 0;
-  font-size: 17px;
+  font-size: var(--fs-lg);
   line-height: 1.25;
   overflow-wrap: anywhere;
 }
@@ -1285,7 +1648,7 @@ details.advanced[open] summary {
 .run-origin-detail {
   margin: 0;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1304,7 +1667,7 @@ details.advanced[open] summary {
 
 .run-step {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   overflow-wrap: anywhere;
 }
 
@@ -1372,8 +1735,8 @@ details.advanced[open] summary {
 }
 
 .run-folder {
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
   color: var(--muted);
   background: var(--soft);
   border: 1px solid var(--line);
@@ -1384,7 +1747,7 @@ details.advanced[open] summary {
 }
 
 .run-folder-icon {
-  font-size: 14px;
+  font-size: var(--fs-base);
 }
 
 .run-folder-banner {
@@ -1404,13 +1767,13 @@ details.advanced[open] summary {
 .run-card-foot .button {
   min-height: 30px;
   padding: 4px 10px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .artifact-list {
   margin: 4px 0 0;
   padding-left: 18px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   display: grid;
   gap: 2px;
 }
@@ -1431,7 +1794,7 @@ details.advanced[open] summary {
   color: var(--brand);
   border-radius: 999px;
   padding: 2px 8px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.6;
 }
 
@@ -1460,10 +1823,10 @@ details.advanced[open] summary {
 
 .pill-label {
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
   min-width: 70px;
 }
 
@@ -1473,7 +1836,7 @@ details.advanced[open] summary {
   gap: 4px;
   padding: 2px 8px;
   border-radius: 999px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   background: var(--soft);
   border: 1px solid var(--line);
   color: var(--ink);
@@ -1534,14 +1897,14 @@ details.advanced[open] summary {
  * compose with the existing .chip-* colour classes (e.g. chip-runner can
  * also be a chip--id). */
 .chip--status {
-  font-weight: 700;
+  font-weight: var(--fw-bold);
   letter-spacing: 0.01em;
   box-shadow: 0 1px 2px rgba(15, 25, 35, 0.08);
 }
 
 .chip--id {
-  font-family: "SFMono-Regular", Consolas, ui-monospace, Menlo, monospace;
-  font-size: 11.5px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
   background: var(--soft);
   border-color: var(--line);
   color: var(--ink-soft, var(--muted));
@@ -1574,7 +1937,7 @@ details.advanced[open] summary {
 
 .runner-capacity.saturated .runner-capacity-count {
   color: var(--danger);
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
 }
 
 .runner-slots {
@@ -1612,19 +1975,19 @@ details.advanced[open] summary {
   background: #fff7ed;
   border: 1px solid #fed7aa;
   color: #9a3412;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .run-queue-icon {
-  font-size: 16px;
+  font-size: var(--fs-md);
 }
 
 .run-queue-text {
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
 }
 
 .run-queue-detail {
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .run-card-chips {
@@ -1645,7 +2008,7 @@ details.advanced[open] summary {
 
 .run-desc {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   line-height: 1.45;
   /* 2-line clamp keeps each card compact while giving substance. */
   display: -webkit-box;
@@ -1659,7 +2022,7 @@ details.advanced[open] summary {
   display: flex;
   justify-content: space-between;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .run-meta .run-step {
@@ -1677,7 +2040,7 @@ details.advanced[open] summary {
 }
 
 .run-cap-link {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--brand);
   text-decoration: none;
   background: var(--brand-tint);
@@ -1697,12 +2060,12 @@ details.advanced[open] summary {
   align-items: center;
   gap: 8px;
   margin: -8px 0 8px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .run-detail-desc {
   margin: 0 0 10px;
-  font-size: 15px;
+  font-size: var(--fs-md);
   line-height: 1.5;
   /* 2-line clamp for the descriptive paragraph. */
   display: -webkit-box;
@@ -1745,7 +2108,7 @@ details.advanced[open] summary {
   padding: 10px 12px;
   margin: 0 0 6px;
   border-radius: 8px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--muted);
   background: var(--soft);
   border: 1px solid var(--line);
@@ -1760,7 +2123,7 @@ details.advanced[open] summary {
 .run-detail-meta-summary::before {
   content: "▸";
   display: inline-block;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--muted);
   transition: transform 0.15s ease;
   width: 10px;
@@ -1795,8 +2158,8 @@ details.advanced[open] summary {
 
 .run-id-mono {
   display: inline-block;
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
   background: var(--soft);
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -1815,8 +2178,8 @@ details.advanced[open] summary {
 button.run-id-mono,
 .run-id-mono-copy {
   cursor: pointer;
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
   color: var(--muted);
   background: var(--soft);
   border: 1px solid var(--line);
@@ -1856,12 +2219,12 @@ button.run-id-mono:focus-visible,
 
 .workflow-card .workflow-meta {
   margin: 0 0 6px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--muted);
 }
 
 .workflow-detail-desc {
-  font-size: 15px;
+  font-size: var(--fs-md);
   line-height: 1.5;
   margin: -8px 0 6px;
 }
@@ -1871,7 +2234,7 @@ button.run-id-mono:focus-visible,
   flex-wrap: wrap;
   gap: 8px;
   margin: 0 0 12px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   align-items: center;
 }
 
@@ -1888,7 +2251,7 @@ button.run-id-mono:focus-visible,
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   padding: 6px 8px;
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -1898,7 +2261,7 @@ button.run-id-mono:focus-visible,
 .wf-run-row .wf-run-title {
   flex: 1 1 60%;
   text-decoration: none;
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1911,7 +2274,7 @@ button.run-id-mono:focus-visible,
 }
 
 .wf-run-row .wf-run-when {
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 /* ---- Agent cards ---- */
@@ -1965,7 +2328,7 @@ button.run-id-mono:focus-visible,
 .approval-card-meta,
 .approval-detail-sub {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .approval-detail-grid {
@@ -2017,7 +2380,7 @@ button.run-id-mono:focus-visible,
   display: grid;
   gap: 5px;
   color: #334155;
-  font-size: 14px;
+  font-size: var(--fs-base);
 }
 
 .approval-resolved {
@@ -2158,7 +2521,7 @@ button.run-id-mono:focus-visible,
     flex: 1 1 0;
     min-width: 0;
     padding: 8px 6px;
-    font-size: 13px;
+    font-size: var(--fs-sm);
     justify-content: center;
     text-align: center;
   }
@@ -2181,7 +2544,7 @@ button.run-id-mono:focus-visible,
   }
 
   .toolbar h1 {
-    font-size: 22px;
+    font-size: var(--fs-xl);
     overflow-wrap: anywhere;
     min-width: 0;
   }
@@ -2197,11 +2560,11 @@ button.run-id-mono:focus-visible,
   }
 
   .hero h1 {
-    font-size: clamp(34px, 11vw, 64px);
+    font-size: var(--fs-display);
   }
 
   .hero p {
-    font-size: 16px;
+    font-size: var(--fs-md);
   }
 
   .band {
@@ -2305,7 +2668,7 @@ button.run-id-mono:focus-visible,
     flex: 0 0 38%;
     max-width: 38%;
     color: var(--muted);
-    font-size: 11px;
+    font-size: var(--fs-2xs);
     text-transform: uppercase;
     letter-spacing: 0.04em;
     line-height: 1.4;
@@ -2326,7 +2689,7 @@ button.run-id-mono:focus-visible,
   background: #fef2f2;
   border: 1px solid #fecaca;
   color: var(--danger);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   display: flex;
   gap: 6px;
   align-items: flex-start;
@@ -2375,8 +2738,8 @@ button.run-id-mono:focus-visible,
 }
 
 .diagnostics-headline {
-  font-weight: 600;
-  font-size: 15px;
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-md);
   margin: 0 0 12px;
   overflow-wrap: anywhere;
 }
@@ -2386,12 +2749,12 @@ button.run-id-mono:focus-visible,
   grid-template-columns: max-content 1fr;
   gap: 4px 12px;
   margin: 0 0 12px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .diagnostics-facts dt {
   color: var(--muted);
-  font-weight: 500;
+  font-weight: var(--fw-medium);
 }
 
 .diagnostics-facts dd {
@@ -2409,7 +2772,7 @@ button.run-id-mono:focus-visible,
 
 .diagnostics-reason > summary {
   cursor: pointer;
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
   margin-bottom: 4px;
 }
 
@@ -2419,7 +2782,7 @@ button.run-id-mono:focus-visible,
   border-radius: 8px;
   padding: 10px 12px;
   overflow-x: auto;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   line-height: 1.45;
   white-space: pre-wrap;
   word-break: break-word;
@@ -2432,7 +2795,7 @@ button.run-id-mono:focus-visible,
   border-left: 3px solid var(--warn);
   background: #fffbeb;
   border-radius: 0 8px 8px 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .diagnostics-event-list {
@@ -2447,7 +2810,7 @@ button.run-id-mono:focus-visible,
   display: grid;
   grid-template-columns: 150px 180px 1fr;
   gap: 8px;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   padding: 4px 6px;
   border-radius: 6px;
 }
@@ -2466,8 +2829,8 @@ button.run-id-mono:focus-visible,
   grid-template-columns: none;
   background: rgba(21, 128, 61, 0.08);
   color: var(--ok);
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
   letter-spacing: 0.04em;
   text-transform: uppercase;
   padding: 4px 10px;
@@ -2528,7 +2891,7 @@ button.run-id-mono:focus-visible,
 
 .diagnostics-event-type {
   color: var(--brand);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   overflow-wrap: anywhere;
 }
 
@@ -2548,11 +2911,11 @@ button.run-id-mono:focus-visible,
 .diagnostics-approval-quote h4,
 .diagnostics-artifacts h4 {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--fs-base);
 }
 
 .diagnostics-panel .copy-btn {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   padding: 8px 12px;
 }
 
@@ -2596,7 +2959,7 @@ button.run-id-mono:focus-visible,
 }
 
 .diagnostics-event-toggle {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   padding: 4px 10px;
   background: #fff;
   border: 1px solid var(--line);
@@ -2619,13 +2982,13 @@ button.run-id-mono:focus-visible,
 
 .run-sections-toolbar .button {
   min-height: 36px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   padding: 6px 12px;
 }
 
 .run-sections-toolbar .run-sections-toolbar-hint {
   margin-left: auto;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--muted);
 }
 
@@ -2653,7 +3016,7 @@ button.run-id-mono:focus-visible,
   .run-log-search input {
     width: 100%;
     /* 16px prevents iOS Safari from zooming on focus. */
-    font-size: 16px;
+    font-size: var(--fs-md);
     min-height: 44px;
     padding: 8px 12px;
   }
@@ -2677,8 +3040,8 @@ button.run-id-mono:focus-visible,
     align-items: stretch;
   }
   .diagnostics-logs-head h4 {
-    font-size: 14px;
-    font-weight: 600;
+    font-size: var(--fs-base);
+    font-weight: var(--fw-semibold);
     margin: 0 0 8px;
   }
   .diagnostics-logs-head .copy-btn {
@@ -2722,7 +3085,7 @@ button.run-id-mono:focus-visible,
 }
 
 .run-log-total dt {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--muted);
@@ -2730,8 +3093,8 @@ button.run-id-mono:focus-visible,
 
 .run-log-total dd {
   margin: 0;
-  font-size: 18px;
-  font-weight: 600;
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
 }
 
 .run-log-total-error dd {
@@ -2769,7 +3132,7 @@ button.run-id-mono:focus-visible,
   padding: 6px 10px;
   border: 1px solid var(--line);
   border-radius: 6px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .run-log-chip-row {
@@ -2780,7 +3143,7 @@ button.run-id-mono:focus-visible,
 }
 
 .run-log-chip-label {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
@@ -2793,7 +3156,7 @@ button.run-id-mono:focus-visible,
   background: #fff;
   border-radius: 999px;
   padding: 3px 10px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   cursor: pointer;
 }
 
@@ -2805,7 +3168,7 @@ button.run-id-mono:focus-visible,
 
 .run-log-chip-count {
   font-variant-numeric: tabular-nums;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: inherit;
   opacity: 0.7;
 }
@@ -2819,14 +3182,14 @@ button.run-id-mono:focus-visible,
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--muted);
   margin: 6px 0;
 }
 
 .run-log-section h3 {
   margin: 14px 0 6px;
-  font-size: 14px;
+  font-size: var(--fs-base);
 }
 
 .run-log-list {
@@ -2845,18 +3208,18 @@ button.run-id-mono:focus-visible,
   padding: 6px 10px;
   border-left: 3px solid var(--line);
   background: #fff;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   overflow-wrap: anywhere;
 }
 
 .run-log-list li.run-log-event time {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
 }
 
 .run-log-type {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: #334155;
   background: #eef2ff;
   padding: 1px 6px;
@@ -2865,7 +3228,7 @@ button.run-id-mono:focus-visible,
 }
 
 .run-log-node-chip {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: #1e293b;
   background: #fef3c7;
   padding: 1px 6px;
@@ -2920,8 +3283,8 @@ button.run-id-mono:focus-visible,
 
 .run-log-full > summary {
   cursor: pointer;
-  font-weight: 600;
-  font-size: 13px;
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-sm);
   padding: 4px 0;
 }
 
@@ -2937,7 +3300,7 @@ button.run-id-mono:focus-visible,
  * the now-default-open full timeline so investigators don't lose them in the
  * heartbeat stream. */
 .run-log-event.run-log-emphasised {
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
   box-shadow: inset 2px 0 0 var(--danger);
 }
 
@@ -2959,7 +3322,7 @@ button.run-id-mono:focus-visible,
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.14);
   border: 1px solid rgba(255, 255, 255, 0.28);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   letter-spacing: 0.12em;
   text-transform: uppercase;
   color: #f1f5f9;
@@ -2975,7 +3338,7 @@ button.run-id-mono:focus-visible,
 .hero-foot {
   margin: 0;
   color: #cbd5e1;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .hero-foot code {
@@ -3017,7 +3380,7 @@ button.run-id-mono:focus-visible,
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 16px;
+  font-size: var(--fs-md);
 }
 
 .setup-num {
@@ -3029,8 +3392,8 @@ button.run-id-mono:focus-visible,
   border-radius: 999px;
   background: var(--brand);
   color: #fff;
-  font-size: 12px;
-  font-weight: 700;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
 }
 
 .setup-step pre.json {
@@ -3087,14 +3450,14 @@ button.run-id-mono:focus-visible,
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--soft);
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .docs-toc strong {
   color: var(--muted);
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
 }
 
 .docs-toc a {
@@ -3167,8 +3530,8 @@ button.run-id-mono:focus-visible,
 }
 
 .primary-action-headline {
-  font-weight: 600;
-  font-size: 14px;
+  font-weight: var(--fw-semibold);
+  font-size: var(--fs-base);
   color: var(--ink);
   margin-right: auto;
   display: flex;
@@ -3178,9 +3541,9 @@ button.run-id-mono:focus-visible,
 }
 
 .primary-action-headline small {
-  font-weight: 400;
+  font-weight: var(--fw-normal);
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .primary-action-bar .primary-action-actions {
@@ -3203,8 +3566,8 @@ button.run-id-mono:focus-visible,
    visual lead instead of competing with equally-loud CTAs. */
 .primary-action-secondary {
   align-self: center;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
   color: var(--brand-2);
   text-decoration: none;
   padding: 6px 4px;
@@ -3248,7 +3611,7 @@ button.run-id-mono:focus-visible,
 }
 
 .failure-banner-title {
-  font-weight: 700;
+  font-weight: var(--fw-bold);
   color: var(--danger);
   display: flex;
   flex-wrap: wrap;
@@ -3257,8 +3620,8 @@ button.run-id-mono:focus-visible,
 }
 
 .failure-banner-step {
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
   background: rgba(220, 38, 38, 0.08);
   border-radius: 4px;
   padding: 1px 6px;
@@ -3266,7 +3629,7 @@ button.run-id-mono:focus-visible,
 
 .failure-banner-cause {
   color: var(--ink);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   overflow-wrap: anywhere;
 }
 
@@ -3303,7 +3666,7 @@ button.run-id-mono:focus-visible,
   content: "▸";
   margin-left: auto;
   color: var(--danger);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   transition: transform 0.15s ease;
 }
 .incident-card[open] > .incident-summary::after { transform: rotate(90deg); }
@@ -3323,8 +3686,8 @@ button.run-id-mono:focus-visible,
 }
 
 .incident-cause-label {
-  font-weight: 700;
-  font-size: 14px;
+  font-weight: var(--fw-bold);
+  font-size: var(--fs-base);
   color: #fff;
   background: var(--danger);
   border-radius: 6px;
@@ -3332,14 +3695,14 @@ button.run-id-mono:focus-visible,
 }
 
 .incident-impact {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
   color: var(--danger);
 }
 
 .incident-sentence {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--fs-base);
   color: var(--ink);
   overflow-wrap: anywhere;
 }
@@ -3358,7 +3721,7 @@ button.run-id-mono:focus-visible,
 
 .incident-tech > summary {
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--muted);
   list-style: revert;
 }
@@ -3367,7 +3730,7 @@ button.run-id-mono:focus-visible,
   margin: 8px 0 0;
   display: grid;
   gap: 6px 14px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .incident-tech-grid > div {
@@ -3380,7 +3743,7 @@ button.run-id-mono:focus-visible,
 .incident-tech-grid dt {
   color: var(--muted);
   min-width: 52px;
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
 }
 
 .incident-tech-grid dd {
@@ -3389,7 +3752,7 @@ button.run-id-mono:focus-visible,
 }
 
 .incident-tech-grid code {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   overflow-wrap: anywhere;
   word-break: break-all;
 }
@@ -3420,7 +3783,7 @@ button.run-id-mono:focus-visible,
   border: 1px solid var(--border);
   border-radius: 8px;
   background: #f8fafc;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 /* ---- Per-run-card failure detail (step + cause snippet + timeline link) ---- */
@@ -3431,7 +3794,7 @@ button.run-id-mono:focus-visible,
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .run-card-failure-row {
@@ -3442,8 +3805,8 @@ button.run-id-mono:focus-visible,
 }
 
 .run-card-failure-step {
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 11px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
   background: rgba(220, 38, 38, 0.08);
   color: var(--danger);
   border-radius: 4px;
@@ -3456,8 +3819,8 @@ button.run-id-mono:focus-visible,
 }
 
 .run-card-failure-link {
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
 }
 
 /* ---- Runs filter bar (Home: search + status + time range) ---- */
@@ -3472,8 +3835,8 @@ button.run-id-mono:focus-visible,
   gap: 8px;
   cursor: pointer;
   list-style: none;
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
   color: var(--muted);
   padding: 5px 10px;
   border: 1px solid var(--line);
@@ -3484,12 +3847,12 @@ button.run-id-mono:focus-visible,
 .runs-filter-summary::-webkit-details-marker { display: none; }
 .runs-filter-summary::before {
   content: "▸";
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   transition: transform 0.15s ease;
 }
 .runs-filter-details[open] > .runs-filter-summary::before { transform: rotate(90deg); }
 .filter-active-count {
-  font-weight: 600;
+  font-weight: var(--fw-semibold);
   color: var(--brand-2);
 }
 .runs-filter-details[open] > .runs-filter-summary {
@@ -3524,17 +3887,17 @@ button.run-id-mono:focus-visible,
   border: 1px solid var(--line);
   border-radius: 999px;
   background: var(--soft);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--muted);
   white-space: nowrap;
 }
 .home-stat-strip .hstat strong {
   color: var(--ink);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-variant-numeric: tabular-nums;
 }
 .home-stat-strip .hstat .hstat-label {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
 }
 .home-stat-strip .hstat .ic {
   width: 13px;
@@ -3551,7 +3914,7 @@ button.run-id-mono:focus-visible,
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--muted);
 }
 
@@ -3575,7 +3938,7 @@ button.run-id-mono:focus-visible,
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   padding: 2px 8px;
   border-radius: 999px;
   background: var(--soft);
@@ -3587,7 +3950,7 @@ button.run-id-mono:focus-visible,
   background: transparent;
   cursor: pointer;
   padding: 0 0 0 2px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--muted);
 }
 
@@ -3622,7 +3985,7 @@ button.run-id-mono:focus-visible,
 .nba-card.nba-danger { border-left: 4px solid var(--danger); background: #fef2f2; }
 .nba-card.nba-ok { border-left: 4px solid var(--ok); background: #f0fdf4; }
 
-.nba-title { margin: 0 0 4px; font-size: 18px; }
+.nba-title { margin: 0 0 4px; font-size: var(--fs-lg); }
 .nba-text { margin: 0; color: var(--muted); }
 .nba-actions { display: flex; gap: 8px; }
 
@@ -3637,8 +4000,8 @@ button.run-id-mono:focus-visible,
   border-radius: 999px;
   background: var(--warn);
   color: #fff;
-  font-size: 11px;
-  font-weight: 600;
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
   text-align: center;
   line-height: 1.4;
 }
@@ -3656,7 +4019,7 @@ button.run-id-mono:focus-visible,
 
 .chip-last-run,
 .chip-success {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   padding: 2px 8px;
   border-radius: 999px;
   border: 1px solid var(--line);
@@ -3677,8 +4040,8 @@ button.run-id-mono:focus-visible,
   background: var(--soft);
 }
 
-.template-card h3 { margin: 0 0 4px; font-size: 15px; }
-.template-card .template-meta { font-size: 12px; margin: 6px 0 10px; }
+.template-card h3 { margin: 0 0 4px; font-size: var(--fs-md); }
+.template-card .template-meta { font-size: var(--fs-xs); margin: 6px 0 10px; }
 
 /* ---- Runners table extras ---- */
 .runners-table .hb-cell {
@@ -3700,14 +4063,14 @@ button.run-id-mono:focus-visible,
   grid-template-columns: max-content 1fr;
   gap: 4px 18px;
   margin: 6px 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .runner-detail-grid dt { color: var(--muted); }
 .runner-detail-grid dd { margin: 0; }
 
 /* ---- Secret input (token mask + show/copy) ---- */
-.secret-row input { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.03em; }
+.secret-row input { font-family: var(--font-mono); letter-spacing: 0.03em; }
 
 /* ---- Onboarding wizard ---- */
 .onboarding-steps {
@@ -3734,7 +4097,7 @@ button.run-id-mono:focus-visible,
 }
 
 .onboarding-step h2 {
-  font-size: 16px;
+  font-size: var(--fs-md);
   margin: 0 0 8px;
   display: flex;
   align-items: center;
@@ -3750,8 +4113,8 @@ button.run-id-mono:focus-visible,
   border-radius: 50%;
   background: var(--brand);
   color: #fff;
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
 }
 
 .ob-skip { text-align: center; margin-top: 16px; }
@@ -3769,7 +4132,7 @@ button.run-id-mono:focus-visible,
   border-radius: 50%;
   background: var(--soft);
   border: 1px solid var(--line);
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--muted);
   cursor: help;
   vertical-align: middle;
@@ -3788,7 +4151,7 @@ button.run-id-mono:focus-visible,
   border-radius: 8px;
   background: var(--ink);
   color: var(--off-white);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.4;
   opacity: 0;
   pointer-events: none;
@@ -3826,7 +4189,7 @@ button.run-id-mono:focus-visible,
   .workflow-graph-side > .workflow-graph-side-summary {
     display: list-item;
     cursor: pointer;
-    font-weight: 600;
+    font-weight: var(--fw-semibold);
     color: var(--ink);
     padding: 4px 0;
   }
@@ -3855,7 +4218,7 @@ button.run-id-mono:focus-visible,
   align-items: center;
   gap: 6px;
   padding: 4px 10px 4px 6px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--muted);
   position: relative;
 }
@@ -3884,25 +4247,25 @@ button.run-id-mono:focus-visible,
   box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.18);
   animation: run-progress-pulse 1.4s ease-in-out infinite;
 }
-.run-progress-phase.phase-active { color: #1d4ed8; font-weight: 600; }
+.run-progress-phase.phase-active { color: #1d4ed8; font-weight: var(--fw-semibold); }
 .run-progress-phase.phase-stalled .run-progress-dot {
   background: #f59e0b;
   border-color: #f59e0b;
   box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.18);
   animation: run-progress-pulse 1.4s ease-in-out infinite;
 }
-.run-progress-phase.phase-stalled { color: #b45309; font-weight: 600; }
+.run-progress-phase.phase-stalled { color: #b45309; font-weight: var(--fw-semibold); }
 .run-progress-phase.phase-done .run-progress-dot { background: #16a34a; border-color: #16a34a; }
 .run-progress-phase.phase-done { color: #15803d; }
 .run-progress-phase.phase-ok .run-progress-dot { background: #16a34a; border-color: #16a34a; }
-.run-progress-phase.phase-ok { color: #15803d; font-weight: 600; }
+.run-progress-phase.phase-ok { color: #15803d; font-weight: var(--fw-semibold); }
 .run-progress-phase.phase-fail .run-progress-dot { background: #dc2626; border-color: #dc2626; }
-.run-progress-phase.phase-fail { color: #b91c1c; font-weight: 600; }
+.run-progress-phase.phase-fail { color: #b91c1c; font-weight: var(--fw-semibold); }
 .run-progress-phase.phase-cancel .run-progress-dot { background: #94a3b8; border-color: #94a3b8; }
 .run-progress-phase.phase-cancel { color: #475569; }
 .run-progress-step-name {
   margin-left: 8px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   max-width: 30ch;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3913,7 +4276,7 @@ button.run-id-mono:focus-visible,
    and is rewritten once a second by the global ticker in app.js. */
 .run-progress-phase-duration {
   margin-left: 6px;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   font-variant-numeric: tabular-nums;
   color: var(--muted);
   opacity: 0.9;
@@ -3940,14 +4303,14 @@ button.run-id-mono:focus-visible,
   border: 1px solid var(--line);
   border-radius: 999px;
   background: var(--soft);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .home-stats.compact .stat strong {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-variant-numeric: tabular-nums;
 }
 .home-stats.compact .stat .muted {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
 }
 .in-flight-heading {
   margin-top: 4px;
@@ -3977,7 +4340,7 @@ button.run-id-mono:focus-visible,
   display: inline-block;
   width: 1.2em;
   margin-right: 4px;
-  font-weight: 700;
+  font-weight: var(--fw-bold);
   text-align: center;
   color: var(--ink);
 }
@@ -4054,12 +4417,12 @@ button.run-id-mono:focus-visible,
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-weight: 700;
-  font-size: 13px;
+  font-weight: var(--fw-bold);
+  font-size: var(--fs-sm);
 }
 .onboarding-card-body { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.onboarding-card-body h3 { margin: 0; font-size: 15px; }
-.onboarding-card-body p { margin: 0; font-size: 13px; }
+.onboarding-card-body h3 { margin: 0; font-size: var(--fs-md); }
+.onboarding-card-body p { margin: 0; font-size: var(--fs-sm); }
 .onboarding-card-cta { margin-top: auto; padding-top: 6px; }
 @media (max-width: 900px) {
   .onboarding-card-steps { grid-template-columns: 1fr; }
@@ -4079,7 +4442,7 @@ button.run-id-mono:focus-visible,
   background: var(--brand);
   color: #fff;
   border: 1px solid var(--brand);
-  font-size: 22px;
+  font-size: var(--fs-xl);
   line-height: 1;
   box-shadow: 0 10px 28px rgba(15, 25, 35, 0.18);
   z-index: 1000;
@@ -4131,8 +4494,8 @@ button.run-id-mono:focus-visible,
   border: 1px solid transparent;
   background: transparent;
   color: var(--ink-soft);
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
   cursor: pointer;
   white-space: nowrap;
   max-width: 140px;
@@ -4159,7 +4522,7 @@ button.run-id-mono:focus-visible,
   border: none;
   background: transparent;
   color: inherit;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   cursor: pointer;
   opacity: 0.7;
   padding: 0;
@@ -4176,7 +4539,7 @@ button.run-id-mono:focus-visible,
   min-height: 28px;
   padding: 2px 8px;
   border-radius: 6px;
-  font-size: 14px;
+  font-size: var(--fs-base);
   background: transparent;
   border: 1px solid transparent;
 }
@@ -4244,7 +4607,7 @@ button.run-id-mono:focus-visible,
   /* 44px is the Apple/Material recommended touch target; the prior 36px sat
    * just below it and 8/10px padding made mis-taps likely on phones. */
   padding: 10px 12px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   border-radius: 6px;
   background: transparent;
   border: 1px solid transparent;
@@ -4300,7 +4663,7 @@ button.run-id-mono:focus-visible,
  * exact stamp is still available on hover/focus for desktop operators and
  * via the bubble's title attribute (and aria) for everyone. */
 .support-chat-msg-meta {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--muted);
   padding: 0 4px;
   max-height: 0;
@@ -4321,7 +4684,7 @@ button.run-id-mono:focus-visible,
   align-self: stretch;
   gap: 8px;
   margin: 6px 4px 2px;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -4356,7 +4719,7 @@ button.run-id-mono:focus-visible,
 }
 .support-chat-status {
   padding: 6px 12px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--ink-soft);
   background: var(--soft);
   border-bottom: 1px solid var(--line);
@@ -4383,7 +4746,7 @@ button.run-id-mono:focus-visible,
   max-width: 88%;
   padding: 8px 12px;
   border-radius: 10px;
-  font-size: 13.5px;
+  font-size: var(--fs-sm);
   line-height: 1.45;
   white-space: pre-wrap;
   word-wrap: break-word;
@@ -4402,7 +4765,7 @@ button.run-id-mono:focus-visible,
 }
 .support-chat-msg.system {
   align-self: center;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--muted);
   background: transparent;
   padding: 2px 6px;
@@ -4412,8 +4775,8 @@ button.run-id-mono:focus-visible,
   background: #eef3fb;
   border: 1px solid #c9d6ec;
   color: var(--ink-soft);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
 }
 .support-chat-msg.error {
   align-self: stretch;
@@ -4434,7 +4797,7 @@ button.run-id-mono:focus-visible,
   border: 1px solid var(--line);
   background: var(--panel);
   color: var(--ink);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   line-height: 1.2;
   cursor: pointer;
 }
@@ -4468,7 +4831,7 @@ button.run-id-mono:focus-visible,
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 8px 10px;
-  font-size: 13.5px;
+  font-size: var(--fs-sm);
   background: #fff;
 }
 .support-chat-input:focus { outline: 2px solid var(--brand-2); outline-offset: -1px; }
@@ -4478,7 +4841,7 @@ button.run-id-mono:focus-visible,
 .support-chat-hint {
   flex-basis: 100%;
   margin: 0;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--muted);
   line-height: 1.3;
 }
@@ -4486,7 +4849,7 @@ button.run-id-mono:focus-visible,
   margin: auto;
   text-align: center;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   line-height: 1.5;
   padding: 18px;
 }
@@ -4511,7 +4874,7 @@ button.run-id-mono:focus-visible,
   background: var(--panel);
   border: 1px solid var(--line);
   color: var(--ink);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   line-height: 1.2;
   cursor: pointer;
   min-height: 36px;
@@ -4545,7 +4908,7 @@ button.run-id-mono:focus-visible,
   background: var(--brand-tint, var(--panel));
   border: 1px solid var(--line);
   color: var(--ink);
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   line-height: 1.2;
   white-space: nowrap;
   cursor: pointer;
@@ -4680,14 +5043,14 @@ button.run-id-mono:focus-visible,
 }
 
 .run-banner-status .status {
-  font-size: 14px;
+  font-size: var(--fs-base);
   padding: 4px 12px;
   min-height: 28px;
 }
 
 .run-banner-duration,
 .run-banner-time {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -4696,8 +5059,8 @@ button.run-id-mono:focus-visible,
 .run-banner-error {
   flex: 1 1 320px;
   min-width: 0;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: var(--fs-base);
+  font-weight: var(--fw-semibold);
   color: var(--danger);
   background: #fff;
   border: 1px solid #fecaca;
@@ -4711,7 +5074,7 @@ button.run-id-mono:focus-visible,
 .run-banner-title {
   grid-area: title;
   margin: 0;
-  font-size: 22px;
+  font-size: var(--fs-xl);
   line-height: 1.25;
   overflow-wrap: anywhere;
   min-width: 0;
@@ -4720,7 +5083,7 @@ button.run-id-mono:focus-visible,
 .run-banner-subtitle {
   grid-area: subtitle;
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -4729,7 +5092,7 @@ button.run-id-mono:focus-visible,
 }
 
 .run-banner-subtitle .run-id-mono {
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 /* Long workflow slugs in the subtitle were able to push past their flex row
@@ -4820,7 +5183,7 @@ button.run-id-mono:focus-visible,
   flex-wrap: wrap;
   align-items: center;
   gap: 6px 12px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--ink);
 }
 
@@ -4869,7 +5232,7 @@ button.run-id-mono:focus-visible,
   content: "▸";
   display: inline-block;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   transition: transform 0.15s ease;
   width: 12px;
   text-align: center;
@@ -4880,8 +5243,8 @@ button.run-id-mono:focus-visible,
 }
 
 .run-section-title {
-  font-weight: 700;
-  font-size: 15px;
+  font-weight: var(--fw-bold);
+  font-size: var(--fs-md);
   min-width: 0;
   overflow-wrap: anywhere;
   flex: 0 0 auto;
@@ -4891,7 +5254,7 @@ button.run-id-mono:focus-visible,
  * over multiple lines — the full value remains reachable via the title=
  * attribute set in JS, so nothing is lost. */
 .run-section-meta {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   min-width: 0;
   flex: 1 1 auto;
   overflow: hidden;
@@ -4913,7 +5276,7 @@ button.run-id-mono:focus-visible,
 .run-section-actions button {
   min-height: 32px;
   padding: 4px 10px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .run-section-body {
@@ -4955,12 +5318,12 @@ button.run-id-mono:focus-visible,
 
 .run-io-card h3 {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--fs-base);
 }
 
 .run-io-card-meta {
   min-width: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   text-align: right;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4992,8 +5355,8 @@ button.run-id-mono:focus-visible,
 .run-io-summary-row dt {
   margin: 0;
   color: var(--muted);
-  font-size: 12px;
-  font-weight: 700;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
   overflow-wrap: anywhere;
 }
 
@@ -5001,7 +5364,7 @@ button.run-id-mono:focus-visible,
   margin: 0;
   min-width: 0;
   color: var(--ink);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
@@ -5021,8 +5384,8 @@ button.run-id-mono:focus-visible,
   min-height: 40px;
   padding: 9px 12px;
   color: var(--ink);
-  font-size: 13px;
-  font-weight: 700;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-bold);
 }
 
 .run-io-raw .json {
@@ -5034,7 +5397,7 @@ button.run-id-mono:focus-visible,
 }
 
 .run-log-wrap-toggle {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--muted);
   display: inline-flex;
   align-items: center;
@@ -5083,7 +5446,7 @@ button.run-id-mono:focus-visible,
 }
 
 .artifact-icon {
-  font-size: 20px;
+  font-size: var(--fs-xl);
   text-align: center;
 }
 
@@ -5095,12 +5458,12 @@ button.run-id-mono:focus-visible,
 }
 
 .artifact-row-name {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   overflow-wrap: anywhere;
 }
 
 .artifact-row-meta {
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 .artifact-row-actions {
@@ -5115,7 +5478,7 @@ button.run-id-mono:focus-visible,
 .artifact-row-actions button {
   min-height: 32px;
   padding: 4px 10px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .artifacts-empty {
@@ -5169,7 +5532,7 @@ button.run-id-mono:focus-visible,
   height: 44px;
   min-height: 44px;
   padding: 0;
-  font-size: 22px;
+  font-size: var(--fs-xl);
   line-height: 1;
   border-radius: 8px;
 }
@@ -5195,7 +5558,7 @@ button.run-id-mono:focus-visible,
   color: #f8fafc;
   border-radius: 8px;
   padding: 12px;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   line-height: 1.45;
 }
 
@@ -5223,7 +5586,7 @@ button.run-id-mono:focus-visible,
   }
 
   .run-banner-title {
-    font-size: 20px;
+    font-size: var(--fs-xl);
   }
 
   .run-section-summary {
@@ -5309,7 +5672,7 @@ button.run-id-mono:focus-visible,
   .run-banner-status .status {
     min-height: 36px;
     padding: 6px 14px;
-    font-size: 14px;
+    font-size: var(--fs-base);
   }
 }
 
@@ -5347,7 +5710,7 @@ button.cron-preset:hover {
   border-radius: 8px;
   border: 1px solid var(--line);
   background: var(--soft);
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .schedule-preview.valid {
@@ -5383,7 +5746,7 @@ button.cron-preset:hover {
 
 .schedule-facts dt {
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .schedule-facts dd {
@@ -5398,11 +5761,334 @@ button.cron-preset:hover {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .schedule-next-list li {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+/* --- Live event console (Run Detail SSE stream) ---------------------------- */
+/* A terminal-style tail of run events streamed over SSE (TanStack events
+   collection), with a moving auto-scroll body, status indicator, and a
+   pause/resume control. New classes — additive to the existing run-log view. */
+.live-console {
+  border: 1px solid var(--border, #d7dbe3);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #0d1117;
+  color: #d6deeb;
+}
+.live-console-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: #161b22;
+  border-bottom: 1px solid #21262d;
+  font-size: var(--fs-sm);
+}
+.live-console-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: var(--fw-semibold);
+}
+.live-console-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #8b949e;
+  flex: 0 0 auto;
+}
+.live-console-status-live .live-console-dot {
+  background: #2ea043;
+  box-shadow: 0 0 0 0 rgba(46, 160, 67, 0.6);
+  animation: live-console-pulse 1.6s infinite;
+}
+.live-console-status-polling .live-console-dot { background: #d29922; }
+.live-console-status-reconnecting .live-console-dot { background: #d29922; }
+@keyframes live-console-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(46, 160, 67, 0.5); }
+  70% { box-shadow: 0 0 0 6px rgba(46, 160, 67, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(46, 160, 67, 0); }
+}
+.live-console-count { margin-left: auto; color: #8b949e; }
+.live-console-actions { display: inline-flex; gap: 8px; }
+.live-console-actions .button {
+  padding: 2px 10px;
+  font-size: var(--fs-sm);
+  background: #21262d;
+  color: #d6deeb;
+  border-color: #30363d;
+}
+.live-console-jump { background: #1f6feb !important; color: #fff !important; }
+.live-console-body {
+  max-height: 360px;
+  overflow-y: auto;
+  padding: 8px 12px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  scroll-behavior: smooth;
+}
+.live-console-empty { color: #8b949e; padding: 8px 0; }
+.live-console-list { list-style: none; margin: 0; padding: 0; }
+.live-console-line {
+  display: grid;
+  grid-template-columns: auto auto auto 1fr;
+  gap: 8px;
+  align-items: baseline;
+  padding: 1px 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.live-console-time { color: #6e7681; flex: 0 0 auto; }
+.live-console-type { color: #79c0ff; }
+.live-console-node {
+  color: #d2a8ff;
+  font-size: var(--fs-xs);
+}
+.live-console-msg { color: #d6deeb; }
+.live-console-sev-error .live-console-msg,
+.live-console-sev-error .live-console-type { color: #ff7b72; }
+.live-console-sev-warn .live-console-msg { color: #e3b341; }
+.live-console-cat-noise { opacity: 0.55; }
+@media (prefers-reduced-motion: reduce) {
+  .live-console-body { scroll-behavior: auto; }
+  .live-console-status-live .live-console-dot { animation: none; }
+}
+
+/* ============================================================================
+ * /brand — living style guide. Lays out the token sets the page renders.
+ * ==========================================================================*/
+.brand-page {
+  max-width: 1080px;
+}
+.brand-lede {
+  margin: 0 0 var(--space-8);
+  max-width: 70ch;
+  font-size: var(--fs-md);
+  line-height: var(--lh-md);
+}
+.brand-section {
+  margin: 0 0 var(--space-10);
+}
+.brand-section-head {
+  margin: 0 0 var(--space-4);
+  padding-bottom: var(--space-2);
+  border-bottom: var(--border-width) solid var(--border);
+}
+.brand-section-head h2 {
+  margin: 0;
+}
+.brand-section-head p {
+  margin: var(--space-1) 0 0;
+  font-size: var(--fs-sm);
+}
+.brand-subhead {
+  margin: 0 0 var(--space-2);
+  font-size: var(--fs-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-label);
+  color: var(--text-muted);
+  font-weight: var(--fw-semibold);
+}
+.brand-token {
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+  color: var(--text-secondary);
+  background: var(--surface-2);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-1);
+}
+
+/* Type scale */
+.brand-type {
+  display: grid;
+  gap: var(--space-4);
+}
+.brand-type-row {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: baseline;
+}
+.brand-type-meta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0-5);
+  font-size: var(--fs-xs);
+}
+.brand-type-sample {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+/* Weights */
+.brand-weights {
+  display: grid;
+  gap: var(--space-2);
+}
+.brand-weight-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+.brand-weight-row > span:first-child {
+  min-width: 120px;
+}
+
+/* Colors */
+.brand-color-groups {
+  display: grid;
+  gap: var(--space-6);
+}
+.brand-swatches {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--space-2);
+}
+.brand-swatch {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  column-gap: var(--space-2);
+  align-items: center;
+  padding: var(--space-2);
+  border: var(--border-width) solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.brand-swatch-chip {
+  grid-row: 1 / 3;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  border: var(--border-width) solid var(--border);
+}
+.brand-swatch-label {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+}
+.brand-swatch-hex {
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+}
+
+/* Spacing */
+.brand-spacing {
+  display: grid;
+  gap: var(--space-2);
+}
+.brand-space-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.brand-space-val {
+  width: 48px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-2xs);
+}
+.brand-space-bar {
+  height: 16px;
+  background: var(--accent);
+  border-radius: var(--radius-sm);
+}
+
+/* Radii & shadows */
+.brand-rs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-6);
+}
+.brand-rs-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+.brand-rs-tile {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: center;
+}
+.brand-rs-box {
+  width: 56px;
+  height: 56px;
+  background: var(--accent-tint);
+  border: var(--border-width) solid var(--accent-border);
+}
+.brand-rs-shadow {
+  background: var(--surface);
+  border-color: var(--border);
+  border-radius: var(--radius-md);
+}
+
+/* Buttons */
+.brand-rule {
+  margin: 0 0 var(--space-4);
+  font-size: var(--fs-sm);
+}
+.brand-btn-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--space-6);
+}
+.brand-btn-col {
+  display: grid;
+  gap: var(--space-3);
+}
+.brand-btn-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+/* Badges & statuses */
+.brand-badges {
+  display: grid;
+  gap: var(--space-6);
+}
+.brand-badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+/* Forms */
+.brand-forms {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-4);
+  max-width: 720px;
+}
+.brand-field {
+  display: grid;
+  gap: var(--space-1-5);
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+}
+.brand-state-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: 38px;
+}
+.brand-console {
+  margin: 0;
+  max-width: 720px;
+}
+
+@media (max-width: 640px) {
+  .brand-type-row {
+    grid-template-columns: 1fr;
+    gap: var(--space-1);
+  }
 }

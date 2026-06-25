@@ -137,14 +137,23 @@ describe("Code viewer + ReactFlow asset surface", () => {
     assert.ok(highlightBundle.length > 1000, "highlight.bundle.js should be non-empty");
   });
 
-  it("the workflow detail surface references the source endpoint, ReactFlow, and highlight.js", async () => {
-    const appJs = await raw("/public/app.js");
-    assert.equal(appJs.status, 200);
-    assert.match(appJs.text, /\/api\/capabilities\/.+\/source/);
-    assert.match(appJs.text, /\/public\/vendor\/reactflow\.bundle\.js/);
-    assert.match(appJs.text, /\/public\/vendor\/highlight\.bundle\.js/);
-    assert.match(appJs.text, /workflow-tabs|WORKFLOW_TABS/);
-    assert.match(appJs.text, /Visual graph/);
+  it("the workflow detail surface references the source endpoint, ReactFlow, and highlight.js", () => {
+    // The React rewrite imports @xyflow/react and highlight.js directly, so the
+    // self-contained bundle no longer references the vendor bundle PATHS. Assert
+    // the equivalent constructs in the new web/ source instead.
+    const workflowDetail = readFileSync(path.join(process.cwd(), "web", "views", "WorkflowDetail.jsx"), "utf8");
+    const workflowGraph = readFileSync(path.join(process.cwd(), "web", "components", "WorkflowGraph.jsx"), "utf8");
+    const codeBlock = readFileSync(path.join(process.cwd(), "web", "components", "CodeBlock.jsx"), "utf8");
+
+    // WorkflowDetail.jsx drives the source endpoint, the tab table, and the
+    // "Visual graph" label.
+    assert.match(workflowDetail, /\/api\/capabilities\/.+\/source/);
+    assert.match(workflowDetail, /WORKFLOW_TABS/);
+    assert.match(workflowDetail, /Visual graph/);
+    // The graph canvas renders via @xyflow/react (formerly the vendored ReactFlow bundle).
+    assert.match(workflowGraph, /from "@xyflow\/react"/);
+    // The code viewer highlights via highlight.js (formerly the vendored highlight bundle).
+    assert.match(codeBlock, /from "highlight\.js/);
   });
 
   it("serves the vendored CSS and JS bundles to the browser", async () => {

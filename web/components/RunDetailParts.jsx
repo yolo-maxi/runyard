@@ -1,0 +1,275 @@
+import { deepLinks } from "../lib/router.js";
+import { copyText } from "../lib/clipboard.js";
+import {
+  isActiveRun, runDurationMs, formatDuration, relativeTime, formatTimestamp,
+  artifactDisplayName, formatBytes, truncate
+} from "../lib/runHelpers.js";
+import { rerunRun, editRerunRun, cancelRun } from "../lib/runActions.js";
+import { StatusBadge, ShareButton, Icon, JsonBlock } from "./ui.jsx";
+
+const FAILURE_STATUSES = new Set(["failed", "error", "cancelled", "rejected"]);
+
+// Outcome-first banner. Ported from runOutcomeBanner().
+export function RunBanner({ run, diagnostics, title, slug, onChanged }) {
+  const statusKey = String(run.status || "").toLowerCase();
+  const isFailure = FAILURE_STATUSES.has(statusKey);
+  const durStr = formatDuration(runDurationMs(run));
+  const headline = isFailure && diagnostics?.headline
+    ? String(diagnostics.headline).split(/\r?\n/).find((l) => l.trim()) || ""
+    : "";
+  const startedRel = relativeTime(run.startedAt || run.createdAt);
+  const startedAbs = run.startedAt || run.createdAt;
+  const workflowHref = slug ? deepLinks.workflow(slug) : deepLinks.workflows();
+  const workflowLabel = run.capabilityName || slug || "Workflow";
+  const canCancel = isActiveRun(run);
+
+  return (
+    <header className="run-banner" data-status={statusKey} data-failure={isFailure ? "1" : "0"}>
+      <div className="run-banner-headline">
+        <span className="run-banner-status"><StatusBadge value={run.status} /></span>
+        {durStr ? <span className="run-banner-duration" title="Total duration"><span className="muted" aria-hidden="true">⏱</span> {durStr}</span> : null}
+        {startedRel ? <span className="run-banner-time muted" title={startedAbs || ""}>started {startedRel}</span> : null}
+        {headline ? <span className="run-banner-error" title={diagnostics?.headline || ""}>{headline}</span> : null}
+      </div>
+      <h1 className="run-banner-title">{title}</h1>
+      <p className="run-banner-subtitle muted">
+        <button type="button" className="run-id-mono run-id-mono-copy" title={`${run.id} — click to copy`} aria-label={`Copy run id ${run.id}`} onClick={() => copyText(run.id, "Run id copied")}>
+          {run.id}
+        </button>
+        {slug ? <a className="run-cap-link" href={workflowHref}>{workflowLabel}</a> : null}
+      </p>
+      <div className="run-banner-actions" role="group" aria-label="Run actions">
+        <button type="button" className="primary" title="Re-run with the same input (no editor)" onClick={() => rerunRun(run.id)}>Re-run same input</button>
+        <details className="run-action-overflow">
+          <summary className="button run-action-overflow-trigger" aria-haspopup="menu" aria-label="More run actions">More <span aria-hidden="true">▾</span></summary>
+          <div className="run-action-overflow-menu" role="menu">
+            <button type="button" role="menuitem" title="Open the input editor, then queue a re-run" onClick={() => editRerunRun(run)}>Edit input &amp; re-run…</button>
+            <button type="button" role="menuitem" title="Copy this run's id" onClick={() => copyText(run.id, "Run id copied")}>Copy run id</button>
+            <a className="button" role="menuitem" href={workflowHref} title="Open this run's workflow definition">Open workflow</a>
+            {canCancel ? (
+              <button type="button" className="danger" role="menuitem" title="Stop this run now" onClick={async () => { await cancelRun(run.id, "Cancelled from Web Hub"); onChanged?.(); }}>Cancel run</button>
+            ) : null}
+          </div>
+        </details>
+      </div>
+    </header>
+  );
+}
+
+export function RunMetaStrip({ run }) {
+  const durStr = formatDuration(runDurationMs(run));
+  const items = [];
+  const startedAt = run.startedAt || run.createdAt;
+  if (startedAt) items.push(<li className="chip--time" key="s"><span className="muted">Started</span> <span title={startedAt}>{relativeTime(startedAt)}</span></li>);
+  if (run.completedAt) items.push(<li className="chip--time" key="e"><span className="muted">Ended</span> <span title={run.completedAt}>{relativeTime(run.completedAt)}</span></li>);
+  if (durStr) items.push(<li className="chip--time" key="d"><span className="muted">Duration</span> {durStr}</li>);
+  const attempt = Number(run.attempt || 0);
+  if (attempt > 0) items.push(<li key="a"><span className="muted">Attempt</span> {attempt}</li>);
+  const trigger = run.originLabel || run.origin?.label || "";
+  if (trigger) items.push(<li key="t"><span className="muted">Trigger</span> {trigger}</li>);
+  if (!items.length) return null;
+  return <ul className="run-meta-strip" aria-label="Run metadata">{items}</ul>;
+}
+
+// --- Diagnostics panel (ported from renderRunDiagnostics) -------------------
+const LIVE_STATUSES = new Set(["queued", "assigned", "running", "pending"]);
+
+export function RunDiagnostics({ diagnostics }) {
+  if (!diagnostics) return null;
+  const statusKey = diagnostics.status || "";
+  const intro = statusKey === "waiting_approval"
+    ? "This run is paused waiting for an approval decision."
+    : statusKey === "failed" || statusKey === "error"
+      ? "This run failed. Diagnostic details below."
+      : "This run was cancelled. Diagnostic details below.";
+  const isLive = LIVE_STATUSES.has(statusKey);
+  const timeline = Array.isArray(diagnostics.timeline) ? diagnostics.timeline : [];
+  const logs = Array.isArray(diagnostics.logExcerpts) ? diagnostics.logExcerpts : [];
+  const arts = Array.isArray(diagnostics.artifacts) ? diagnostics.artifacts : [];
+  const logsText = logs.map((e) => `[${e.createdAt}] ${e.type}: ${e.message}`).join("\n");
+
+  return (
+    <section className={`panel diagnostics-panel diagnostics-${statusKey}`} aria-label="Run diagnostics">
+      <header className="diagnostics-head">
+        <h2>Why this run {statusKey === "waiting_approval" ? "is paused" : statusKey === "failed" || statusKey === "error" ? "failed" : "was cancelled"}</h2>
+        <StatusBadge value={statusKey} />
+      </header>
+      <p className="muted diagnostics-intro">{intro}</p>
+      {diagnostics.headline ? <p className="diagnostics-headline">{diagnostics.headline}</p> : null}
+      {(diagnostics.failedStep || diagnostics.failureType || diagnostics.failedAt || diagnostics.cancelledBy || diagnostics.approval) ? (
+        <dl className="diagnostics-facts">
+          {diagnostics.failedStep ? <><dt>Failed step</dt><dd>{diagnostics.failedStep}</dd></> : null}
+          {diagnostics.failureType ? <><dt>Failure event</dt><dd><code>{diagnostics.failureType}</code></dd></> : null}
+          {diagnostics.failedAt ? <><dt>When</dt><dd>{formatTimestamp(diagnostics.failedAt)}</dd></> : null}
+          {diagnostics.cancelledBy ? <><dt>Cancelled by</dt><dd>{diagnostics.cancelledBy}</dd></> : null}
+          {diagnostics.approval ? <><dt>Linked approval</dt><dd><a href={diagnostics.approval.deepLink}>{diagnostics.approval.title || diagnostics.approval.id}</a> <span className="muted">{diagnostics.approval.decision || diagnostics.approval.status || ""}</span></dd></> : null}
+        </dl>
+      ) : null}
+      {diagnostics.approval?.comment ? (
+        <div className="diagnostics-approval-quote">
+          <h4>Approval comment</h4>
+          <blockquote>{diagnostics.approval.comment}</blockquote>
+          <p className="muted">{diagnostics.approval.resolvedBy || diagnostics.approval.requestedBy || "approval"}{diagnostics.approval.resolvedAt ? ` · ${formatTimestamp(diagnostics.approval.resolvedAt)}` : ""}</p>
+        </div>
+      ) : null}
+      {diagnostics.reason && diagnostics.reason !== diagnostics.headline ? (
+        <details className="diagnostics-reason" open>
+          <summary>Reason</summary>
+          <pre className="diagnostics-pre"><code>{diagnostics.reason}</code></pre>
+          <button type="button" className="button copy-btn" title="Copy reason" onClick={() => copyText(diagnostics.reason, "Reason copied")}>Copy reason</button>
+        </details>
+      ) : null}
+      {(timeline.length || isLive) ? (
+        <div className="diagnostics-timeline">
+          <h4>{isLive ? "Recent events" : "Events around the failure"}</h4>
+          <ol className="diagnostics-event-list">
+            {isLive ? <li className="diagnostics-live-indicator" aria-label="Run is streaming events"><span className="diagnostics-live-dot" aria-hidden="true" /><span>Live</span></li> : null}
+            {timeline.map((event, i) => (
+              <li key={i}>
+                <time>{formatTimestamp(event.createdAt)}</time>
+                <code className="diagnostics-event-type">{event.type}</code>
+                <div className="diagnostics-event-msg-cell"><span className="diagnostics-event-msg">{event.message || ""}</span></div>
+              </li>
+            ))}
+          </ol>
+        </div>
+      ) : null}
+      {logs.length ? (
+        <div className="diagnostics-logs">
+          <div className="diagnostics-logs-head">
+            <h4>Recent log excerpts</h4>
+            <button type="button" className="button copy-btn" title="Copy these failure-window excerpts" onClick={() => copyText(logsText, "Excerpt copied")}>Copy excerpt</button>
+          </div>
+          <pre className="diagnostics-pre"><code>{logsText}</code></pre>
+          <p className="muted">Token/secret-shaped strings are redacted in this excerpt.</p>
+        </div>
+      ) : null}
+      {arts.length ? (
+        <div className="diagnostics-artifacts">
+          <h4>Diagnostic artifacts</h4>
+          <ul className="artifact-list">
+            {arts.map((a) => (
+              <li key={a.id}>
+                <a href={deepLinks.artifact(a)}>{artifactDisplayName(a)}</a>{" "}
+                <a className="muted artifact-dl" href={`/api/artifacts/${a.id}/download`} target="_blank" rel="noreferrer">download</a>{" "}
+                <span className="muted">{formatBytes(a.sizeBytes)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+// --- Inputs & outputs (ported from renderRunInputsOutputs) ------------------
+function payloadSummary(value) {
+  if (value == null) return "empty";
+  if (Array.isArray(value)) return `${value.length} item${value.length === 1 ? "" : "s"}`;
+  if (typeof value === "object") {
+    const keys = Object.keys(value);
+    if (!keys.length) return "empty object";
+    return `${keys.length} key${keys.length === 1 ? "" : "s"}: ${keys.slice(0, 5).join(", ")}${keys.length > 5 ? ", …" : ""}`;
+  }
+  if (typeof value === "string") return `${value.length} character${value.length === 1 ? "" : "s"}`;
+  return typeof value;
+}
+function humanizePayloadKey(key) {
+  return String(key || "").replace(/^__+/, "").replace(/[_-]+/g, " ").replace(/([a-z0-9])([A-Z])/g, "$1 $2").trim().replace(/\b\w/g, (c) => c.toUpperCase()) || "Value";
+}
+function payloadValuePreview(value) {
+  if (value == null) return "empty";
+  if (typeof value === "string") return value.trim() ? truncate(value.trim(), 180) : "empty string";
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) {
+    if (!value.length) return "empty list";
+    const first = value[0];
+    const sample = first && typeof first === "object" ? payloadSummary(first) : payloadValuePreview(first);
+    return `${value.length} item${value.length === 1 ? "" : "s"}${sample ? ` · first: ${sample}` : ""}`;
+  }
+  if (typeof value === "object") return payloadSummary(value);
+  return String(value);
+}
+function payloadEntries(value) {
+  if (value == null) return [];
+  if (Array.isArray(value)) return value.slice(0, 6).map((item, i) => [`Item ${i + 1}`, item]);
+  if (typeof value === "object") {
+    const entries = Object.entries(value);
+    const visible = entries.filter(([k]) => !String(k).startsWith("__"));
+    return (visible.length ? visible : entries).slice(0, 8);
+  }
+  return [["Value", value]];
+}
+function payloadBytes(value) {
+  try {
+    const s = JSON.stringify(value ?? null);
+    if (!s) return 0;
+    return typeof Blob === "function" ? new Blob([s]).size : s.length;
+  } catch { return 0; }
+}
+
+function PayloadBlock({ label, value }) {
+  const entries = payloadEntries(value);
+  return (
+    <article className="run-io-card">
+      <header className="run-io-card-head">
+        <h3>{label}</h3>
+        <span className="run-io-card-meta muted">{payloadSummary(value)} · {formatBytes(payloadBytes(value))}</span>
+      </header>
+      <div className="run-io-human">
+        {entries.length ? (
+          <dl className="run-io-summary-list">
+            {entries.map(([key, item], i) => (
+              <div className="run-io-summary-row" key={i}>
+                <dt>{humanizePayloadKey(key)}</dt>
+                <dd>{payloadValuePreview(item)}</dd>
+              </div>
+            ))}
+          </dl>
+        ) : (
+          <p className="run-io-empty muted">Nothing returned yet.</p>
+        )}
+      </div>
+      <details className="run-io-raw">
+        <summary>See raw JSON</summary>
+        <JsonBlock value={value ?? null} />
+      </details>
+    </article>
+  );
+}
+
+export function RunIO({ run }) {
+  return (
+    <div className="run-io-grid">
+      <PayloadBlock label="Input" value={run?.input ?? null} />
+      <PayloadBlock label="Output" value={run?.output ?? null} />
+    </div>
+  );
+}
+export { payloadBytes };
+
+// --- Artifacts (ported from renderArtifactsCard; preview opens in a new tab) -
+export function RunArtifacts({ artifacts = [] }) {
+  if (!artifacts.length) return <p className="muted artifacts-empty">No artifacts produced by this run.</p>;
+  return (
+    <ul className="artifact-list rich">
+      {artifacts.map((a) => {
+        const previewable = !/^(application\/octet-stream|application\/zip)/.test(a.mimeType || "");
+        return (
+          <li className="artifact-row" id={`artifact-${a.id}`} key={a.id}>
+            <span className="artifact-icon" aria-hidden="true">📄</span>
+            <div className="artifact-row-main">
+              <span className="artifact-row-name">{artifactDisplayName(a)}</span>
+              <span className="muted artifact-row-meta">{formatBytes(a.sizeBytes)}{a.mimeType ? ` · ${a.mimeType}` : ""}</span>
+            </div>
+            <div className="artifact-row-actions">
+              {previewable ? <a className="button" href={`/api/artifacts/${a.id}/download`} target="_blank" rel="noreferrer">Preview</a> : null}
+              <a className="button" href={`/api/artifacts/${a.id}/download`} target="_blank" rel="noopener">Open ↗</a>
+              <ShareButton hash={deepLinks.artifact(a)} label="Copy share link to this artifact in its run" />
+            </div>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}

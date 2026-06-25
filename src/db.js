@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { env } from "./env.js";
 import { id, now } from "./ids.js";
+import { emitRunEvent } from "./runEventBus.js";
 import {
   executionIntentFromInput,
   executionIntentMatchesRunnerTags,
@@ -1614,7 +1615,11 @@ export function addRunEvent(runId, type, message = "", data = {}) {
     "INSERT INTO run_events (id, run_id, type, message, data, created_at) VALUES ($id, $run_id, $type, $message, $data, $created_at)",
     event
   );
-  return { id: event.id, runId, type, message, data, createdAt: event.created_at };
+  const result = { id: event.id, runId, type, message, data, createdAt: event.created_at };
+  // Publish to any live SSE tails (no-op when nobody is subscribed). Additive:
+  // does not alter persistence or the return shape.
+  emitRunEvent(result);
+  return result;
 }
 
 export function listRunEvents(runId) {
