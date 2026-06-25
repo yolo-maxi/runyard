@@ -290,15 +290,15 @@ describe("Smithers Hub API", () => {
   });
 
   it("renders support chat actions as explicit choice buttons instead of auto-running them", async () => {
-    const response = await raw("/public/app.js");
-    assert.equal(response.status, 200);
-    const code = response.data;
+    // Asserted on the React SupportChat source (the minified bundle mangles
+    // these local names).
+    const code = readFileSync(path.join(process.cwd(), "web", "components", "SupportChat.jsx"), "utf8");
     assert.match(code, /parseAgentResponse/);
     assert.match(code, /normalizeSupportButtons/);
     assert.match(code, /support-chat-choice/);
     assert.match(code, /activateSupportButton/);
     assert.match(code, /legacyActions/);
-    assert.match(code, /label: "Do it"/);
+    assert.match(code, /"Do it"/);
     assert.doesNotMatch(code, /parseAgentActions/);
   });
 
@@ -354,19 +354,18 @@ describe("Smithers Hub API", () => {
     assert.equal(result.reply, "It failed because the build threw.");
   });
 
-  it("ships the snappy persistent-chat + contextual quick-reply code paths in the bundle", async () => {
-    const response = await raw("/public/app.js");
-    assert.equal(response.status, 200);
-    const code = response.data;
+  it("ships the snappy persistent-chat + contextual quick-reply code paths", async () => {
+    // Asserted on the React SupportChat source.
+    const code = readFileSync(path.join(process.cwd(), "web", "components", "SupportChat.jsx"), "utf8");
     // Contextual quick replies + the bar that renders them.
-    assert.match(code, /supportQuickReplies/);
-    assert.match(code, /renderSupportQuickReplies/);
-    assert.match(code, /data-quick-prompt/);
+    assert.match(code, /quickReplies/);
+    assert.match(code, /support-chat-quickreplies/);
     // Snappiness: optimistic typing indicator.
     assert.match(code, /support-chat-typing/);
-    // No-flicker: route sync only touches the chip bar, draft persists per tab.
-    assert.match(code, /syncSupportChatToRoute/);
-    assert.match(code, /restoreSupportDraft/);
+    // Route sync feeds the context payload + chip bar via the hash route, and
+    // drafts persist per tab.
+    assert.match(code, /useHashRoute/);
+    assert.match(code, /draft/);
   });
 
   it("creates a run, registers a runner, claims it, stores events and artifacts, and completes", async () => {
@@ -2451,27 +2450,36 @@ describe("Run log usability", () => {
     assert.match(entry.message, /\[redacted\]/);
   });
 
-  it("exposes the structured log summary helper in app.js for the console", async () => {
-    const response = await raw("/public/app.js");
-    assert.equal(response.status, 200);
-    const code = response.data;
-    assert.match(code, /renderRunLog/);
-    assert.match(code, /bindRunLogFilters/);
-    assert.match(code, /run-log-highlights/);
-    assert.match(code, /\/log-summary/);
+  it("exposes the structured log summary helper in app.js for the console", () => {
+    // After the React rewrite the structured run log lives in
+    // web/components/RunLog.jsx and is wired up by web/views/RunDetail.jsx.
+    const runLog = readFileSync(path.join(process.cwd(), "web", "components", "RunLog.jsx"), "utf8");
+    const runDetail = readFileSync(path.join(process.cwd(), "web", "views", "RunDetail.jsx"), "utf8");
+    // The structured log view component, its totals/toolbar strip, and the
+    // search + hide-routine filter (replaces the legacy filter-binding helper).
+    assert.match(runLog, /export function RunLog/);
+    assert.match(runLog, /run-log-toolbar/);
+    assert.match(runLog, /run-log-totals/);
+    assert.match(runLog, /hideRoutine/); // hide-routine filter
+    assert.match(runLog, /run-log-search/); // free-text search filter
+    // RunDetail feeds the log summary through to the structured view.
+    assert.match(runDetail, /summary=\{data\.logSummary/);
   });
 
   it("makes run inputs and outputs the first-class detail section", async () => {
-    const response = await raw("/public/app.js");
-    assert.equal(response.status, 200);
-    const code = response.data;
-    assert.match(code, /Inputs &amp; outputs/);
-    assert.match(code, /renderRunInputsOutputs/);
-    assert.match(code, /renderPayloadSummaryList/);
-    assert.match(code, /See raw JSON/);
-    assert.match(code, /data-run-section="io"/);
-    assert.match(code, /inputs\/outputs · log · artifacts · context/);
-    assert.doesNotMatch(code, /Raw payload/);
+    // The I/O detail section now lives in web/views/RunDetail.jsx (the section
+    // shell + title) and web/components/RunDetailParts.jsx (the RunIO body,
+    // payload summary list, and raw-JSON escape hatch).
+    const runDetail = readFileSync(path.join(process.cwd(), "web", "views", "RunDetail.jsx"), "utf8");
+    const runDetailParts = readFileSync(path.join(process.cwd(), "web", "components", "RunDetailParts.jsx"), "utf8");
+    // RunDetail renders the I/O section by name with the literal "Inputs & outputs" title.
+    assert.match(runDetail, /name="io"/);
+    assert.match(runDetail, /Inputs & outputs/);
+    // RunDetailParts owns the I/O body: the RunIO component, a payload summary
+    // list, and the "See raw JSON" disclosure.
+    assert.match(runDetailParts, /export function RunIO/);
+    assert.match(runDetailParts, /run-io-summary-list/);
+    assert.match(runDetailParts, /See raw JSON/);
 
     const styles = await raw("/public/styles.css");
     assert.equal(styles.status, 200);
@@ -2483,14 +2491,14 @@ describe("Run log usability", () => {
   });
 
   it("keeps supervised child attempts out of the default top-level runs view", async () => {
-    const response = await raw("/public/app.js");
-    assert.equal(response.status, 200);
-    const code = response.data;
-    assert.match(code, /isSupervisedChildRun/);
-    assert.match(code, /topLevelRuns/);
-    assert.match(code, /supervisedChildRunsNotice/);
-    assert.match(code, /run-smithers wrapper/);
-    assert.match(code, /supervised child attempt/);
+    // The supervised-child filtering helpers now live in web/lib/runHelpers.js,
+    // and the "hidden child attempts" notice in web/views/Home.jsx.
+    const runHelpers = readFileSync(path.join(process.cwd(), "web", "lib", "runHelpers.js"), "utf8");
+    const home = readFileSync(path.join(process.cwd(), "web", "views", "Home.jsx"), "utf8");
+    assert.match(runHelpers, /isSupervisedChildRun/);
+    assert.match(runHelpers, /topLevelRuns/);
+    assert.match(runHelpers, /run-smithers wrapper/);
+    assert.match(home, /supervised child attempt/);
 
     const styles = await raw("/public/styles.css");
     assert.equal(styles.status, 200);
@@ -2623,15 +2631,19 @@ describe("Runner pool capacity & queue visibility", () => {
     assert.equal(typeof dash.pool.queued, "number");
   });
 
-  it("ships queue + pool UI helpers in app.js so the console can render them", async () => {
-    const response = await raw("/public/app.js");
-    assert.equal(response.status, 200);
-    const code = response.data;
-    assert.match(code, /renderQueueBanner/);
-    assert.match(code, /run-queue-banner/);
-    assert.match(code, /runnerCapacityCell/);
-    assert.match(code, /renderRunnerPoolSummary/);
-    assert.match(code, /chip-queue/);
-    assert.match(code, /SMITHERS_RUNNER_CONCURRENCY/);
+  it("ships queue + pool UI helpers in app.js so the console can render them", () => {
+    // Queue banner now lives on the run card (web/components/RunCard.jsx); the
+    // runner pool + capacity summary lives in web/views/Runners.jsx.
+    const runCard = readFileSync(path.join(process.cwd(), "web", "components", "RunCard.jsx"), "utf8");
+    const runners = readFileSync(path.join(process.cwd(), "web", "views", "Runners.jsx"), "utf8");
+    // Queued runs get a queue banner on their card.
+    assert.match(runCard, /function QueueBanner/);
+    assert.match(runCard, /run-queue-banner/);
+    // Runners view renders the pool summary, a per-runner capacity cell, a
+    // queue chip, and the concurrency hint.
+    assert.match(runners, /function RunnerPoolSummary/);
+    assert.match(runners, /runner-capacity/);
+    assert.match(runners, /chip-queue/);
+    assert.match(runners, /SMITHERS_RUNNER_CONCURRENCY/);
   });
 });
