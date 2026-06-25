@@ -6092,3 +6092,30 @@ button.cron-preset:hover {
     gap: var(--space-1);
   }
 }
+
+/* --- Overflow hardening (RunYard): run cards never exceed their grid track,
+ * even with long unbreakable paths / run-ids on narrow viewports. The chain of
+ * default `min-width:auto` on grid/flex children was blocking the existing chip
+ * ellipsis + letting long strings stretch the track wider than the viewport. --- */
+.run-grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
+}
+.run-card,
+.run-card > *,
+.run-card-head,
+.run-card-sub,
+.run-card-chips,
+.run-card-failure,
+.run-card-failure-row,
+.chip {
+  min-width: 0;
+}
+.run-card-title a,
+.run-cap-link,
+.run-desc,
+.run-card-failure-cause,
+.run-reason-hint span,
+.diagnostics-event-type,
+.run-meta {
+  overflow-wrap: anywhere;
+}
