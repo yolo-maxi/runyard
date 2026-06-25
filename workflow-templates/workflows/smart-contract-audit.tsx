@@ -130,7 +130,7 @@ export default smithers((ctx) => {
         {prep && (
           <Parallel maxConcurrency={Math.min(auditCount, 4)}>
             {Array.from({ length: auditCount }).map((_, i) => (
-              <Task key={i} id={`audit-${i + 1}`} output={outputs.audit} agent={auditor()} timeoutMs={12 * 60 * 1000} retries={1}>
+              <Task key={i} id={`audit-${i + 1}`} output={outputs.audit} agent={auditor()} timeoutMs={12 * 60 * 1000} heartbeatTimeoutMs={12 * 60 * 1000} retries={1}>
                 {`You are audit agent ${i + 1} with the "${SPECIALTIES[i]}" specialty.\n` +
                   `Read this bundle fully — it contains the in-scope Solidity source, the senior-auditor SOP, your specialty, and shared rules:\n` +
                   `  ${prep.bundleDir}/agent-${i + 1}-bundle.md\n\n` +
