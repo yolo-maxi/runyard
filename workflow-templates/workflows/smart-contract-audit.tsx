@@ -130,15 +130,18 @@ export default smithers((ctx) => {
         {prep && (
           <Parallel maxConcurrency={Math.min(auditCount, 4)}>
             {Array.from({ length: auditCount }).map((_, i) => (
-              <Task key={i} id={`audit-${i + 1}`} output={outputs.audit} agent={auditor()} timeoutMs={12 * 60 * 1000} heartbeatTimeoutMs={12 * 60 * 1000} retries={1}>
+              <Task key={i} id={`audit-${i + 1}`} output={outputs.audit} agent={auditor()} timeoutMs={12 * 60 * 1000} heartbeatTimeoutMs={12 * 60 * 1000} retries={2}>
                 {`You are audit agent ${i + 1} with the "${SPECIALTIES[i]}" specialty.\n` +
                   `Read this bundle fully — it contains the in-scope Solidity source, the senior-auditor SOP, your specialty, and shared rules:\n` +
                   `  ${prep.bundleDir}/agent-${i + 1}-bundle.md\n\n` +
                   `Additional scope notes: ${ctx.input.scope || "(none)"}\n\n` +
                   `Rules: use ONLY file reads/search. Do not write files or run commands. Trust privileged roles unless told otherwise.\n` +
                   `A FINDING needs file, function, one-sentence root cause, minimal fix, and concrete proof. Without proof, emit a LEAD.\n\n` +
-                  `OUTPUT CONTRACT — return ONLY a single JSON object, no prose, no markdown fences, no commentary before or after. ` +
-                  `If you have nothing to report, still return the object with an empty findings array. Shape:\n` +
+                  `OUTPUT CONTRACT (HARD) — your entire response must be a single JSON object and NOTHING ELSE. ` +
+                  `The first character of your response must be \`{\` and the last character must be \`}\`. ` +
+                  `No prose, no preamble, no apology, no commentary before or after. ` +
+                  `If you find nothing, if you cannot read the bundle, or if anything else goes wrong, you MUST still return the JSON object with an empty findings array — never reply with a plain-text status or refusal. ` +
+                  `Shape (use this exact agent/specialty, replace findings with what you actually saw, or [] when none):\n` +
                   `{"agent":"${i + 1}","specialty":"${SPECIALTIES[i]}","findings":[{"severity":"high|medium|low|info","contract":"<name>","function":"<name>","title":"<short>","rootCause":"<one sentence>","fix":"<minimal patch>","proof":"<concrete evidence>","kind":"FINDING"}]}`}
               </Task>
             ))}
