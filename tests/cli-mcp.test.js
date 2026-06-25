@@ -179,7 +179,7 @@ describe("CLI/MCP discovery and execution intent", () => {
     const mcp = startMcp();
     try {
       const init = await mcp.call("initialize", { protocolVersion: "2024-11-05" });
-      assert.equal(init.result.serverInfo.name, "smithers-hub-mcp");
+      assert.equal(init.result.serverInfo.name, "runyard-mcp");
 
       const listed = await mcp.call("tools/list");
       assert.ok(listed.result.tools.find((tool) => tool.name === "get_menu"));

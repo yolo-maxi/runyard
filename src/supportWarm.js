@@ -152,7 +152,7 @@ export async function warmSupportReply(input = {}) {
 
   // Force a single-turn text answer from the injected context. Two guards:
   //  --strict-mcp-config ignores the host's ambient MCP servers (gdrive, gmail,
-  //    a smithers-hub MCP, ...) so the agent doesn't try to call them.
+  //    a runyard MCP, ...) so the agent doesn't try to call them.
   //  --disallowedTools turns off every built-in tool, so it can't burn turns (or
   //    stall on headless permission prompts) trying to "fetch" — it just answers
   //    from the live Hub data we already pre-fetched. Cuts latency ~25s -> ~3s.

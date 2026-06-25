@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-export const configDir = path.join(os.homedir(), ".smithers-hub");
+export const configDir = path.join(os.homedir(), ".runyard");
 export const configFile = path.join(configDir, "config.json");
 
 const EMPTY = { version: 2, current: "default", remotes: {} };

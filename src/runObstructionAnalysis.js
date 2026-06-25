@@ -415,7 +415,7 @@ export function buildRunObstructionAnalysisRequest(input = {}, options = {}) {
   const payload = buildRunObstructionAnalysisPayload(input);
   if (!hasEnoughEvidenceForObstructionAnalysis(payload)) return null;
   const budgeted = payloadForBudget(payload, maxChars);
-  const userPrompt = `Analyze this redacted Smithers Hub terminal run evidence and return JSON with these fields:
+  const userPrompt = `Analyze this redacted RunYard terminal run evidence and return JSON with these fields:
 severity, confidence, summary, observations, obstructions, suggestedWorkflowImprovements,
 suggestedAgentImprovements, suggestedSkillOrKnowledgeImprovements, followUpQuestions, doNotAutoMutate.
 Each observation and obstruction should include evidence and inference. Evidence JSON:
@@ -619,7 +619,7 @@ export function buildRunObstructionAnalysisArtifact({ payload, rawAnalysis, anal
   const content = {
     schemaVersion: RUN_OBSTRUCTION_ANALYSIS_SCHEMA_VERSION,
     generatedAt,
-    generatedBy: "smithers-hub",
+    generatedBy: "runyard",
     purpose: "Best-effort LLM-assisted obstruction analysis for a terminal run.",
     policy: {
       artifactOnly: true,
@@ -663,7 +663,7 @@ export function buildRunObstructionAnalysisArtifact({ payload, rawAnalysis, anal
     mimeType: "application/json",
     content: JSON.stringify(content, null, 2),
     metadata: {
-      generatedBy: "smithers-hub",
+      generatedBy: "runyard",
       kind: "run-obstruction-analysis",
       schemaVersion: RUN_OBSTRUCTION_ANALYSIS_SCHEMA_VERSION
     }

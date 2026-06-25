@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const out = join(root, "public", "vendor");
-const work = join(tmpdir(), `smithers-hub-vendor-${process.pid}`);
+const work = join(tmpdir(), `runyard-vendor-${process.pid}`);
 mkdirSync(out, { recursive: true });
 mkdirSync(work, { recursive: true });
 

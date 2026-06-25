@@ -119,8 +119,8 @@ export function Onboarding() {
       toast(error.message || "Could not auto-mint a runner token — paste your own when prompted", "info");
     }
     const cmd = token
-      ? `SMITHERS_HUB_URL=${location.origin} SMITHERS_HUB_TOKEN=${token} SMITHERS_RUNNER_NAME=${name} bash <(curl -fsSL ${location.origin}/install.sh)`
-      : `SMITHERS_HUB_URL=${location.origin} SMITHERS_RUNNER_NAME=${name} bash <(curl -fsSL ${location.origin}/install.sh)`;
+      ? `RUNYARD_HUB_URL=${location.origin} RUNYARD_HUB_TOKEN=${token} SMITHERS_RUNNER_NAME=${name} bash <(curl -fsSL ${location.origin}/install.sh)`
+      : `RUNYARD_HUB_URL=${location.origin} SMITHERS_RUNNER_NAME=${name} bash <(curl -fsSL ${location.origin}/install.sh)`;
     setInstallCmd(cmd);
     setStep(2);
   }

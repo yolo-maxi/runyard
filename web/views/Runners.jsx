@@ -195,7 +195,7 @@ export function Runners() {
           <div className="empty">
             <p>No runners connected.</p>
             <p className="muted">
-              Start one with <code>smithers-hub-runner</code> using a token that has the runner scope. Set <code>SMITHERS_RUNNER_CONCURRENCY=4</code> on a dedicated pool host for ~4 concurrent jobs.
+              Start one with <code>runyard-runner</code> using a token that has the runner scope. Set <code>SMITHERS_RUNNER_CONCURRENCY=4</code> on a dedicated pool host for ~4 concurrent jobs.
             </p>
           </div>
         ) : (

@@ -125,7 +125,7 @@ export function buildRunRetrospectiveArtifact({
   const content = {
     schemaVersion: RUN_RETROSPECTIVE_SCHEMA_VERSION,
     generatedAt,
-    generatedBy: "smithers-hub",
+    generatedBy: "runyard",
     purpose: "Lightweight run evidence for later batch knowledge analysis.",
     policy: {
       artifactOnly: true,
@@ -193,7 +193,7 @@ export function buildRunRetrospectiveArtifact({
     mimeType: "application/json",
     content: JSON.stringify(content, null, 2),
     metadata: {
-      generatedBy: "smithers-hub",
+      generatedBy: "runyard",
       kind: "run-retrospective",
       schemaVersion: RUN_RETROSPECTIVE_SCHEMA_VERSION
     }

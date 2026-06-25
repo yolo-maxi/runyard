@@ -1,4 +1,4 @@
-# Runyard Spec (codebase: smithers-hub)
+# Runyard Spec (package: runyard)
 
 For the expanded decision record, user intent, expectations, and acceptance checks, see the `specs/` folder:
 
@@ -8,7 +8,7 @@ For the expanded decision record, user intent, expectations, and acceptance chec
 
 ## Naming
 
-**Runyard** is the public product name. The codebase, package, bin names, env vars, and tokens keep the `smithers-hub` prefix for backwards compatibility. Treat "Runyard" and "Smithers Hub" as synonyms in docs; prefer "Runyard" for new user-facing copy.
+**Runyard** is the public product name and the package/bin name (`runyard`, `runyard-mcp`, `runyard-runner`). It was formerly called Smithers Hub; the legacy `SMITHERS_HUB_*` env vars (and the old `smithers-hub.sqlite` DB file) are still honored for backwards compatibility. Prefer "Runyard" for new user-facing copy.
 
 Tagline: **Self-hosted control plane for agent runs.**
 
@@ -49,7 +49,7 @@ SQLite and local disk are the production default for a private per-company deplo
 
 ```txt
 data/
-  smithers-hub.sqlite
+  runyard.sqlite        # legacy smithers-hub.sqlite is still read if present
   bootstrap-token.txt
   artifacts/
     runs/<run-id>/
@@ -61,7 +61,7 @@ Runyard is productized for installable private deployments. It is not multi-tena
 
 ## Brand System
 
-- Public name: **Runyard**. Internal codebase / package / bin: `smithers-hub`.
+- Public name: **Runyard**. Package / bin: `runyard` (formerly `smithers-hub`).
 - Palette: ink (`#15191f`), off-white (`#f6f5ef`), signal green (`#1f6f4a` brand / `#15803d` ok), signal amber (`#b45309`), signal red (`#b91c1c`), one blue accent (`#2563eb`).
 - Status colors align with run states: green = succeeded/approved/online, amber = running/queued/waiting_approval, red = failed/error/rejected/cancelled.
 - Brand mark and logotype live in `public/styles.css` as pure CSS — no external image dependency.

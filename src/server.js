@@ -1035,13 +1035,13 @@ function hubMenuPayload(req) {
       category: linked.category,
       requiredRunnerTags: linked.requiredRunnerTags,
       deepLink: linked.deepLink,
-      runWithCli: `smithers-hub run ${linked.slug} --where local --input '{}'`,
+      runWithCli: `runyard run ${linked.slug} --where local --input '{}'`,
       runWithMcp: { tool: "run_capability", arguments: { id: linked.slug, input: {}, executionMode: "local" } }
     };
   });
   return {
     product: "Runyard",
-    codebase: "smithers-hub",
+    codebase: "runyard",
     hub: {
       sourceOfTruth: true,
       status: `${publicUrl(req)}/api/runs/{runId}`,
@@ -1051,7 +1051,7 @@ function hubMenuPayload(req) {
     },
     discovery: [
       { surface: "MCP", action: "Call get_menu, then list_capabilities or describe_capability." },
-      { surface: "CLI", action: "Run smithers-hub menu, then smithers-hub capabilities or smithers-hub capability <slug>." },
+      { surface: "CLI", action: "Run runyard menu, then runyard capabilities or runyard capability <slug>." },
       { surface: "Web", action: "Open /app and use Workflows, Runs, Approvals, and Connect." }
     ],
     executionModes: [
@@ -1059,16 +1059,16 @@ function hubMenuPayload(req) {
         id: "local",
         label: "Run locally",
         runnerLocation: "local",
-        cli: "smithers-hub run <capability> --where local --input '<json>'",
+        cli: "runyard run <capability> --where local --input '<json>'",
         mcp: { tool: "run_capability", arguments: { id: "<capability>", input: {}, executionMode: "local" } },
-        runner: "smithers-hub runner start --location local",
+        runner: "runyard runner start --location local",
         result: "The local runner executes the workflow; outputs and artifacts are fetched from the Hub."
       },
       {
         id: "remote",
         label: "Run remotely",
         runnerLocation: "vps",
-        cli: "smithers-hub run <capability> --where remote --input '<json>'",
+        cli: "runyard run <capability> --where remote --input '<json>'",
         mcp: { tool: "run_capability", arguments: { id: "<capability>", input: {}, executionMode: "remote" } },
         runner: "Use the shared VPS/remote runner pool tagged vps or remote.",
         result: "A remote runner executes the workflow; outputs and artifacts are fetched from the Hub."
@@ -1817,7 +1817,7 @@ app.get("/readyz", (_req, res) => {
     res.status(503).json({ status: "unavailable" });
   }
 });
-app.get("/api/version", (_req, res) => res.json({ name: "smithers-hub", version: env.version, instanceName: env.instanceName }));
+app.get("/api/version", (_req, res) => res.json({ name: "runyard", version: env.version, instanceName: env.instanceName }));
 // Canonical running version. Unauthenticated on purpose — it's just the version
 // the box is running (a public release string + tag + short commit), nothing
 // sensitive. Used by the update-check comparison and by operators/monitoring.
@@ -1849,15 +1849,15 @@ app.get("/cli.tgz", (_req, res) => {
   }
 });
 
-// One-line installer: `curl -fsSL <hub>/install.sh | bash` (prefix with SMITHERS_HUB_TOKEN=... to auto-login).
+// One-line installer: `curl -fsSL <hub>/install.sh | bash` (prefix with RUNYARD_HUB_TOKEN=... to auto-login).
 app.get("/install.sh", (req, res) => {
   const hub = publicUrl(req);
   res.type("text/plain").send(`#!/usr/bin/env bash
 set -euo pipefail
-HUB_URL="\${SMITHERS_HUB_URL:-${hub}}"
-APP="$HOME/.smithers-hub/app"
+HUB_URL="\${RUNYARD_HUB_URL:-\${SMITHERS_HUB_URL:-${hub}}}"
+APP="$HOME/.runyard/app"
 BIN="$HOME/.local/bin"
-echo "Installing Smithers Hub client from $HUB_URL ..."
+echo "Installing RunYard client from $HUB_URL ..."
 command -v node >/dev/null 2>&1 || { echo "Error: Node.js 18+ is required (https://nodejs.org)."; exit 1; }
 command -v curl >/dev/null 2>&1 || { echo "Error: curl is required."; exit 1; }
 mkdir -p "$APP" "$BIN"
@@ -1865,24 +1865,20 @@ tmp="$(mktemp)"
 curl -fsSL "$HUB_URL/cli.tgz" -o "$tmp"
 tar xzf "$tmp" -C "$APP"
 rm -f "$tmp"
-cat > "$BIN/smithers-hub" <<WRAP
-#!/usr/bin/env bash
-exec node "$APP/src/cli.js" "\\$@"
-WRAP
 cat > "$BIN/runyard" <<WRAP
 #!/usr/bin/env bash
 exec node "$APP/src/cli.js" "\\$@"
 WRAP
-cat > "$BIN/smithers-hub-mcp" <<WRAP
+cat > "$BIN/runyard-mcp" <<WRAP
 #!/usr/bin/env bash
 exec node "$APP/src/mcp.js" "\\$@"
 WRAP
-chmod +x "$BIN/runyard" "$BIN/smithers-hub" "$BIN/smithers-hub-mcp"
-TOKEN="\${SMITHERS_HUB_TOKEN:-}"
-REMOTE="\${SMITHERS_HUB_REMOTE:-}"
+chmod +x "$BIN/runyard" "$BIN/runyard-mcp"
+TOKEN="\${RUNYARD_HUB_TOKEN:-\${SMITHERS_HUB_TOKEN:-}}"
+REMOTE="\${RUNYARD_HUB_REMOTE:-\${SMITHERS_HUB_REMOTE:-}}"
 # Ask for the token + a name for this connection (org) on first run.
 if [ -z "$TOKEN" ] && [ -r /dev/tty ]; then
-  printf "Paste your Smithers Hub access token (Web Hub -> Connect): " > /dev/tty
+  printf "Paste your RunYard access token (Web Hub -> Connect): " > /dev/tty
   read -r TOKEN < /dev/tty
 fi
 if [ -z "$REMOTE" ] && [ -r /dev/tty ]; then
@@ -1919,7 +1915,7 @@ app.get("/llms.txt", (req, res) => {
   const menu = hubMenuPayload(req);
   const base = publicUrl(req);
   const lines = [];
-  lines.push(`# ${menu.product || "Runyard"} (codebase: ${menu.codebase || "smithers-hub"})`);
+  lines.push(`# ${menu.product || "Runyard"} (codebase: ${menu.codebase || "runyard"})`);
   lines.push("");
   lines.push("Self-hosted control plane for agent runs. Agents discover capabilities");
   lines.push("over MCP/CLI/HTTP, runners execute them, and the Hub stores the durable");
@@ -1927,7 +1923,7 @@ app.get("/llms.txt", (req, res) => {
   lines.push("One private deployment per company/org.");
   lines.push("");
   lines.push("Primary agent interface:");
-  lines.push("- MCP server: smithers-hub-mcp");
+  lines.push("- MCP server: runyard-mcp");
   lines.push(`- HTTP API: ${base}/api`);
   lines.push(`- OpenAPI: ${base}/openapi.json`);
   lines.push(`- Menu: ${base}/api/menu`);
@@ -1954,7 +1950,7 @@ app.get("/llms.txt", (req, res) => {
   lines.push("Run path:");
   lines.push("1. Discover with get_menu / list_capabilities.");
   lines.push("2. Choose local or remote execution.");
-  lines.push("3. Start with run_capability or `smithers-hub run --where local|remote`.");
+  lines.push("3. Start with run_capability or `runyard run --where local|remote`.");
   lines.push("4. Fetch status, logs, outputs, artifacts, and the unified timeline from the Hub.");
   lines.push("5. Operators can run `runyard tail <run-id>` for an NDJSON timeline stream.");
   lines.push("");
@@ -1978,7 +1974,7 @@ app.get("/openapi.json", (req, res) => {
   res.json({
     openapi: "3.1.0",
     info: {
-      title: "Runyard API (smithers-hub)",
+      title: "Runyard API (runyard)",
       version: "0.1.0",
       description:
         "Self-hosted control plane for agent runs. The Web Hub, CLI, and MCP server all drive this same JSON API. " +
@@ -2184,7 +2180,7 @@ app.post("/api/update/apply", requireAuth, requireScopes("admin"), (req, res) =>
     RUNYARD_REPO_DIR: env.root,
     RUNYARD_NODE: process.execPath,
     RUNYARD_DRAIN_GRACE_MS: String(env.drainGraceMs),
-    SMITHERS_HUB_DATA_DIR: env.dataDir,
+    RUNYARD_HUB_DATA_DIR: env.dataDir,
     PORT: String(env.port)
   };
   if (process.env.RUNYARD_UNITS) updaterEnv.RUNYARD_UNITS = process.env.RUNYARD_UNITS;
