@@ -2,7 +2,7 @@
 //
 // Drives the real subscription login flow on the runner host so an operator can
 // re-auth Codex/Claude from the Hub UI without SSH'ing into Hetzner. Mirrors the
-// supportWarm.js special-path pattern: a gated branch in smithers-runner.js
+// supportWarm.js special-path pattern: a gated branch in runner.js
 // calls runReauth() instead of `smithers up`.
 //
 //   codex:  `codex login --device-auth` emits a verification URL + user code,

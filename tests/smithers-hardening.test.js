@@ -15,11 +15,12 @@ describe("Smithers samples hardening guardrails", () => {
     assert.ok(SMITHERS_SAMPLES_REFERENCE.samples.some((sample) => sample.slug === "cost-aware-model-router"));
   });
 
-  it("ships the preferred runyard CLI alias while preserving legacy bins", () => {
+  it("ships the runyard CLI, MCP, and runner bins (legacy smithers-hub aliases removed)", () => {
     const pkg = JSON.parse(readFileSync("package.json", "utf8"));
-    assert.equal(pkg.bin.runyard, "./bin/smithers-hub.js");
-    assert.equal(pkg.bin["smithers-hub"], "./bin/smithers-hub.js");
-    assert.equal(pkg.bin["smithers-hub-mcp"], "./bin/smithers-hub-mcp.js");
+    assert.equal(pkg.bin.runyard, "./bin/runyard.js");
+    assert.equal(pkg.bin["runyard-mcp"], "./bin/runyard-mcp.js");
+    assert.equal(pkg.bin["runyard-runner"], "./bin/runyard-runner.js");
+    assert.equal(pkg.bin["smithers-hub"], undefined);
   });
 
   it("treats Smithers approval exit code 3 as paused, not failed", () => {

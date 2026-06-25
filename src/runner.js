@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Smithers Hub runner — executes real Smithers workflows.
+// RunYard runner — executes real Smithers workflows.
 //
 // A "capability" is a Smithers workflow file in a local .smithers workspace. This runner claims
 // queued runs from the Hub, executes `smithers up <workflow> --input <json> -d` (which spawns the
@@ -27,8 +27,14 @@ const execFileAsync = promisify(execFile);
 // Keeps the pinned smithers-orchestrator engine deterministic on dstack images.
 const smithersBin = resolveSmithersBin();
 
-const baseUrl = process.env.SMITHERS_HUB_URL || process.env.HUB_URL || "http://127.0.0.1:43117";
-const token = process.env.SMITHERS_HUB_TOKEN || process.env.HUB_TOKEN || process.env.SMITHERS_HUB_BOOTSTRAP_TOKEN;
+const baseUrl =
+  process.env.RUNYARD_HUB_URL || process.env.SMITHERS_HUB_URL || process.env.HUB_URL || "http://127.0.0.1:43117";
+const token =
+  process.env.RUNYARD_HUB_TOKEN ||
+  process.env.SMITHERS_HUB_TOKEN ||
+  process.env.HUB_TOKEN ||
+  process.env.RUNYARD_HUB_BOOTSTRAP_TOKEN ||
+  process.env.SMITHERS_HUB_BOOTSTRAP_TOKEN;
 const workspace = path.resolve(process.env.SMITHERS_WORKSPACE || process.cwd());
 const location = process.env.SMITHERS_RUNNER_LOCATION || "vps"; // "vps" | "local"
 const name = process.env.SMITHERS_RUNNER_NAME || `${os.hostname()} (${location})`;
@@ -55,7 +61,7 @@ const concurrency = Math.max(
 );
 
 if (!token) {
-  console.error("SMITHERS_HUB_TOKEN is required for the runner.");
+  console.error("RUNYARD_HUB_TOKEN is required for the runner.");
   process.exit(1);
 }
 

@@ -6,12 +6,12 @@ After=network.target
 Type=simple
 WorkingDirectory=/opt/runyard
 EnvironmentFile=/etc/runyard/runner.env
-Environment=SMITHERS_HUB_URL=https://hub.example.com
+Environment=RUNYARD_HUB_URL=https://hub.example.com
 Environment="SMITHERS_RUNNER_NAME=vps-runner-1"
 Environment=SMITHERS_RUNNER_LOCATION=vps
 Environment=SMITHERS_RUNNER_TAGS=linux,node,git,shell,web,smithers
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
-ExecStart=/usr/bin/env node /opt/runyard/src/smithers-runner.js
+ExecStart=/usr/bin/env node /opt/runyard/src/runner.js
 Restart=always
 RestartSec=3
 

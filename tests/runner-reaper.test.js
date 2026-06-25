@@ -135,7 +135,7 @@ describe("pruneDeadRunners", () => {
 });
 
 describe("runner client id-cache (source-level)", () => {
-  const source = readFileSync(new URL("../src/smithers-runner.js", import.meta.url), "utf8");
+  const source = readFileSync(new URL("../src/runner.js", import.meta.url), "utf8");
 
   it("persists the assigned id under <workspace>/.smithers/runner-id", () => {
     assert.match(source, /\.smithers["'],\s*["']runner-id/);
