@@ -76,8 +76,8 @@ replace `APP_ID`).
 ## 4. Secrets — dstack encrypted env
 
 Provide secrets through dstack's **encrypted env** for the app (never inline them
-in the compose): `SMITHERS_HUB_SESSION_SECRET`, `SMITHERS_HUB_BOOTSTRAP_TOKEN`,
-`SECRETS_ENC_KEY` (hub); `SMITHERS_HUB_TOKEN`, `ANTHROPIC_API_KEY` /
+in the compose): `RUNYARD_HUB_SESSION_SECRET`, `RUNYARD_HUB_BOOTSTRAP_TOKEN`,
+`SECRETS_ENC_KEY` (hub); `RUNYARD_HUB_TOKEN`, `ANTHROPIC_API_KEY` /
 `OPENAI_API_KEY` (runner). The compose references them as `${VAR}` only.
 
 ---

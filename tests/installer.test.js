@@ -35,7 +35,7 @@ describe("install.sh — defensiveness + idempotency", () => {
   it("generates a SECRETS_ENC_KEY (openssl or node crypto) and a session secret", () => {
     assert.match(install, /openssl rand -base64 32/);
     assert.match(install, /randomBytes\(32\)/);
-    assert.match(install, /SMITHERS_HUB_SESSION_SECRET=\$session_secret/);
+    assert.match(install, /RUNYARD_HUB_SESSION_SECRET=\$session_secret/);
   });
 
   it("ensures node 22 + pnpm", () => {
@@ -45,14 +45,14 @@ describe("install.sh — defensiveness + idempotency", () => {
   });
 
   it("reuses deploy/*.service for the units", () => {
-    assert.match(install, /deploy\/smithers-hub\.service/);
-    assert.match(install, /deploy\/smithers-hub-runner\.service/);
+    assert.match(install, /deploy\/runyard\.service/);
+    assert.match(install, /deploy\/runyard-runner\.service/);
     assert.match(install, /systemctl enable --now runyard\.service/);
   });
 
   it("points hub and runner at the SAME data dir so the drain flag is shared", () => {
-    const hubData = install.match(/SMITHERS_HUB_DATA_DIR=\$DATA_DIR/g) || [];
-    assert.ok(hubData.length >= 2, "both hub and runner env files set SMITHERS_HUB_DATA_DIR=$DATA_DIR");
+    const hubData = install.match(/RUNYARD_HUB_DATA_DIR=\$DATA_DIR/g) || [];
+    assert.ok(hubData.length >= 2, "both hub and runner env files set RUNYARD_HUB_DATA_DIR=$DATA_DIR");
   });
 
   it("installs a passive update-CHECK timer only — never auto-apply", () => {

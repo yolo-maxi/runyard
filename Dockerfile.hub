@@ -6,7 +6,7 @@
 # Multi-stage: a build stage installs the full dependency tree and bundles the
 # browser vendor modules; the runtime stage copies only what the server needs.
 # Listens on PORT (default 8080), configurable via env. The datastore lives on a
-# mounted volume at /data (SMITHERS_HUB_DATA_DIR) so it survives container
+# mounted volume at /data (RUNYARD_HUB_DATA_DIR) so it survives container
 # recreation. The node binary is granted cap_net_bind_service so the unprivileged
 # user can also bind low ports (e.g. PORT=80 behind a gateway) without root.
 
@@ -45,7 +45,7 @@ WORKDIR /app
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=8080 \
-    SMITHERS_HUB_DATA_DIR=/data
+    RUNYARD_HUB_DATA_DIR=/data
 
 # tini for correct PID-1 signal handling; setcap so the unprivileged `node`
 # user can bind the privileged port 80 without running as root.

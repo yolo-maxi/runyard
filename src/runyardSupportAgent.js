@@ -21,7 +21,7 @@ const DEFAULT_TIMEOUT_MS = 45_000;
 const DEFAULT_MAX_OUTPUT_TOKENS = 1500;
 const SUPPORT_AGENT_CAPABILITY_SLUG = "runyard-support-agent";
 
-const PERSONA = `You are the Runyard user support agent — a hovering in-app copilot for Runyard, a self-hosted control plane for agent runs (codebase: smithers-hub).
+const PERSONA = `You are the Runyard user support agent — a hovering in-app copilot for Runyard, a self-hosted control plane for agent runs (codebase: runyard).
 
 Tone: concise, warm, no fluff. The operator can see your reply inline in the Hub UI; keep paragraphs short.
 
@@ -78,13 +78,35 @@ function pickProvider({ explicit, model, hasOpenAi, hasAnthropic }) {
 }
 
 function resolveConfig(config = {}) {
-  const enabled = config.supportAgentEnabled ?? parseBool(process.env.SMITHERS_HUB_SUPPORT_AGENT_ENABLED, true);
-  const explicitUrl = config.supportAgentUrl || process.env.SMITHERS_HUB_SUPPORT_AGENT_URL || "";
-  const explicitProvider = config.supportAgentProvider || process.env.SMITHERS_HUB_SUPPORT_AGENT_PROVIDER || "runner";
+  const enabled =
+    config.supportAgentEnabled ??
+    parseBool(
+      process.env.RUNYARD_HUB_SUPPORT_AGENT_ENABLED ?? process.env.SMITHERS_HUB_SUPPORT_AGENT_ENABLED,
+      true
+    );
+  const explicitUrl =
+    config.supportAgentUrl ||
+    process.env.RUNYARD_HUB_SUPPORT_AGENT_URL ||
+    process.env.SMITHERS_HUB_SUPPORT_AGENT_URL ||
+    "";
+  const explicitProvider =
+    config.supportAgentProvider ||
+    process.env.RUNYARD_HUB_SUPPORT_AGENT_PROVIDER ||
+    process.env.SMITHERS_HUB_SUPPORT_AGENT_PROVIDER ||
+    "runner";
   const openAiKey = config.openAiKey || process.env.OPENAI_API_KEY || "";
   const anthropicKey = config.anthropicKey || process.env.ANTHROPIC_API_KEY || "";
-  const explicitKey = config.supportAgentApiKey || process.env.SMITHERS_HUB_SUPPORT_AGENT_API_KEY || "";
-  const model = config.supportAgentModel || process.env.SMITHERS_HUB_SUPPORT_AGENT_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini";
+  const explicitKey =
+    config.supportAgentApiKey ||
+    process.env.RUNYARD_HUB_SUPPORT_AGENT_API_KEY ||
+    process.env.SMITHERS_HUB_SUPPORT_AGENT_API_KEY ||
+    "";
+  const model =
+    config.supportAgentModel ||
+    process.env.RUNYARD_HUB_SUPPORT_AGENT_MODEL ||
+    process.env.SMITHERS_HUB_SUPPORT_AGENT_MODEL ||
+    process.env.OPENAI_MODEL ||
+    "gpt-4o-mini";
   const provider = pickProvider({
     explicit: explicitProvider,
     model,
@@ -101,8 +123,18 @@ function resolveConfig(config = {}) {
     url,
     apiKey,
     model,
-    timeoutMs: safeNumber(config.supportAgentTimeoutMs || process.env.SMITHERS_HUB_SUPPORT_AGENT_TIMEOUT_MS, DEFAULT_TIMEOUT_MS),
-    maxOutputTokens: safeNumber(config.supportAgentMaxOutputTokens || process.env.SMITHERS_HUB_SUPPORT_AGENT_MAX_OUTPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS)
+    timeoutMs: safeNumber(
+      config.supportAgentTimeoutMs ||
+        process.env.RUNYARD_HUB_SUPPORT_AGENT_TIMEOUT_MS ||
+        process.env.SMITHERS_HUB_SUPPORT_AGENT_TIMEOUT_MS,
+      DEFAULT_TIMEOUT_MS
+    ),
+    maxOutputTokens: safeNumber(
+      config.supportAgentMaxOutputTokens ||
+        process.env.RUNYARD_HUB_SUPPORT_AGENT_MAX_OUTPUT_TOKENS ||
+        process.env.SMITHERS_HUB_SUPPORT_AGENT_MAX_OUTPUT_TOKENS,
+      DEFAULT_MAX_OUTPUT_TOKENS
+    )
   };
 }
 

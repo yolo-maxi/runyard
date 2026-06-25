@@ -65,12 +65,15 @@ Key env vars (all have sensible defaults; see `docker-compose.yml`):
 | `HUB_IMAGE` / `RUNNER_IMAGE` | both | image refs (tag **or** `@sha256:` digest) |
 | `HUB_PORT` | hub | container + published port (default 8080) |
 | `BASE_URL` | hub | public URL (https → production session mode) |
-| `SMITHERS_HUB_SESSION_SECRET` | hub | long random secret (required in prod/https) |
-| `SMITHERS_HUB_BOOTSTRAP_TOKEN` | hub | bootstrap admin/runner token |
+| `RUNYARD_HUB_SESSION_SECRET` | hub | long random secret (required in prod/https) |
+| `RUNYARD_HUB_BOOTSTRAP_TOKEN` | hub | bootstrap admin/runner token |
 | `SECRETS_ENC_KEY` | hub | 32-byte base64/hex for the secrets store |
-| `SMITHERS_HUB_URL` | runner | how the runner reaches the hub |
-| `SMITHERS_HUB_TOKEN` | runner | runner auth token |
+| `RUNYARD_HUB_URL` | runner | how the runner reaches the hub |
+| `RUNYARD_HUB_TOKEN` | runner | runner auth token |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | runner | agent API keys |
+
+> The `RUNYARD_HUB_*` names above are current. The legacy `SMITHERS_HUB_*`
+> equivalents are still read as fallbacks, so existing deployments keep working.
 
 > **Agent CLIs (`claude` / `codex`) are not baked into the runner image.** Provide
 > and authenticate them at runtime (mounted creds / env). Never bake secrets into
@@ -161,9 +164,9 @@ For the dstack model in detail, see **`deploy/dstack/README.md`**.
 
 ## 6. Hub ↔ runner communications
 
-- **Same compose:** runner → `SMITHERS_HUB_URL=http://hub:${HUB_PORT}`.
+- **Same compose:** runner → `RUNYARD_HUB_URL=http://hub:${HUB_PORT}`.
 - **Separate hosts:** point the runner at the hub's public URL (behind your
-  gateway/proxy) with a valid `SMITHERS_HUB_TOKEN`. The token is the trust
+  gateway/proxy) with a valid `RUNYARD_HUB_TOKEN`. The token is the trust
   boundary; the runner registers + heartbeats over HTTP(S).
 
 ---
