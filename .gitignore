@@ -5,3 +5,10 @@ test-artifacts/
 runner.env
 .runtime/
 support-runner.env
+
+# Security: never track env backups, runtime logs, or UI screenshots of admin pages
+*.bak
+*.bak-*
+runner.env.bak*
+ui-polish-screens/
+ui-polish-screens/**
