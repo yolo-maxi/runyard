@@ -136,8 +136,10 @@ export default smithers((ctx) => {
                   `  ${prep.bundleDir}/agent-${i + 1}-bundle.md\n\n` +
                   `Additional scope notes: ${ctx.input.scope || "(none)"}\n\n` +
                   `Rules: use ONLY file reads/search. Do not write files or run commands. Trust privileged roles unless told otherwise.\n` +
-                  `A FINDING needs file, function, one-sentence root cause, minimal fix, and concrete proof. Without proof, emit a LEAD.\n` +
-                  `Return JSON {"agent":"${i + 1}","specialty":"${SPECIALTIES[i]}","findings":[{"severity","contract","function","title","rootCause","fix","proof","kind"}]}.`}
+                  `A FINDING needs file, function, one-sentence root cause, minimal fix, and concrete proof. Without proof, emit a LEAD.\n\n` +
+                  `OUTPUT CONTRACT — return ONLY a single JSON object, no prose, no markdown fences, no commentary before or after. ` +
+                  `If you have nothing to report, still return the object with an empty findings array. Shape:\n` +
+                  `{"agent":"${i + 1}","specialty":"${SPECIALTIES[i]}","findings":[{"severity":"high|medium|low|info","contract":"<name>","function":"<name>","title":"<short>","rootCause":"<one sentence>","fix":"<minimal patch>","proof":"<concrete evidence>","kind":"FINDING"}]}`}
               </Task>
             ))}
           </Parallel>
