@@ -1,0 +1,15 @@
+# OPTIONAL overlay — give the runner docker-build access via the host/guest
+# Docker socket. OFF by default in the base compose. Enable with:
+#
+#   docker compose -f docker-compose.yml -f deploy/compose/runner-docker-socket.yml up -d
+#
+# This mounts the Docker socket of whatever host the runner runs on. On dstack
+# that is the *guest* CVM socket (you own it) — never the bare-metal host. If
+# your platform's compose parser forbids socket mounts (verify on dstack), run a
+# rootless DinD sidecar instead and point DOCKER_HOST at it (see DEPLOY.md).
+services:
+  runner:
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      DOCKER_HOST: "unix:///var/run/docker.sock"
