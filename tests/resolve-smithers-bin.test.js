@@ -1,10 +1,10 @@
-import { describe, it } from "node:test";
+import { describe, it, test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { resolveSmithersBin } from "../src/resolveSmithersBin.js";
+import { resolveSmithersBin, resolveExecWrapper } from "../src/resolveSmithersBin.js";
 
 function tmpDir() {
   return mkdtempSync(path.join(os.tmpdir(), "resolve-smithers-"));
@@ -42,4 +42,24 @@ describe("resolveSmithersBin", () => {
     const resolved = resolveSmithersBin({ SMITHERS_BIN: "  ", BUN_INSTALL: dir });
     assert.equal(resolved, "smithers");
   });
+});
+
+test("resolveExecWrapper: unset -> empty (bare host default)", () => {
+  assert.deepEqual(resolveExecWrapper({}), []);
+  assert.deepEqual(resolveExecWrapper({ RUNNER_EXEC_WRAPPER: "   " }), []);
+});
+
+test("resolveExecWrapper: whitespace string tokenizes", () => {
+  assert.deepEqual(resolveExecWrapper({ RUNNER_EXEC_WRAPPER: "docker run --rm img" }), ["docker", "run", "--rm", "img"]);
+});
+
+test("resolveExecWrapper: JSON array preserves args with spaces", () => {
+  assert.deepEqual(
+    resolveExecWrapper({ RUNNER_EXEC_WRAPPER: '["docker","run","--rm","-v","/a b:/w","img"]' }),
+    ["docker", "run", "--rm", "-v", "/a b:/w", "img"]
+  );
+});
+
+test("resolveExecWrapper: RUNYARD_ alias works", () => {
+  assert.deepEqual(resolveExecWrapper({ RUNYARD_RUNNER_EXEC_WRAPPER: "firejail" }), ["firejail"]);
 });

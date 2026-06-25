@@ -19,13 +19,17 @@ import { supportWarmEnabled, warmSupportReply } from "./supportWarm.js";
 import { collectAuthHealth } from "./runnerAuthHealth.js";
 import { reauthEnabled, runReauth } from "./reauthCli.js";
 import { isDraining, resolveDataDir } from "./drain.js";
-import { resolveSmithersBin } from "./resolveSmithersBin.js";
+import { resolveSmithersBin, resolveExecWrapper } from "./resolveSmithersBin.js";
 
 const execFileAsync = promisify(execFile);
 
 // Resolve once at startup: env override → pinned bun global install → PATH.
 // Keeps the pinned smithers-orchestrator engine deterministic on dstack images.
 const smithersBin = resolveSmithersBin();
+// Unopinionated execution seam: empty = run the engine directly on the host
+// (default); set RUNNER_EXEC_WRAPPER to run each engine invocation through a
+// deployer-chosen sandbox/container/job launcher. See resolveExecWrapper().
+const execWrapper = resolveExecWrapper();
 
 const baseUrl =
   process.env.RUNYARD_HUB_URL || process.env.SMITHERS_HUB_URL || process.env.HUB_URL || "http://127.0.0.1:43117";
@@ -108,7 +112,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const stripAnsi = (s) => String(s).replace(/\[[0-9;]*m/g, "");
 
 async function smithers(args, opts = {}) {
-  return execFileAsync(smithersBin, args, {
+  // Prepend the deployer-configured exec wrapper, if any:
+  //   wrapper set  -> `<wrapper[0]> <wrapper[1..]> <smithersBin> <args>`
+  //   wrapper unset -> `<smithersBin> <args>` (bare host default)
+  const cmd = execWrapper.length ? execWrapper[0] : smithersBin;
+  const fullArgs = execWrapper.length ? [...execWrapper.slice(1), smithersBin, ...args] : args;
+  return execFileAsync(cmd, fullArgs, {
     cwd: workspace,
     timeout: opts.timeout || 60_000,
     maxBuffer: 1024 * 1024 * 32,
@@ -148,7 +157,7 @@ async function register() {
   runnerId = res.runner.id;
   cacheRunnerId(runnerId);
   console.log(
-    `Registered Smithers runner ${runnerId} (${name}) tags=[${tags}] workspace=${workspace} capacity=${concurrency} smithers=${smithersBin}`
+    `Registered Smithers runner ${runnerId} (${name}) tags=[${tags}] workspace=${workspace} capacity=${concurrency} smithers=${smithersBin}${execWrapper.length ? ` exec-wrapper=[${execWrapper.join(" ")}]` : ""}`
   );
 }
 

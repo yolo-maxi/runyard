@@ -28,3 +28,29 @@ export function resolveSmithersBin(env = process.env) {
 
   return "smithers";
 }
+
+// Optional execution wrapper for the engine. RunYard is intentionally
+// unopinionated about HOW/WHERE a run executes: by default the runner invokes
+// the engine directly on its host. A deployer who wants per-run isolation,
+// sandboxing, or container-per-build sets RUNNER_EXEC_WRAPPER and every engine
+// invocation becomes `<wrapper...> <smithersBin> <args>` instead of
+// `<smithersBin> <args>`. The wrapper can be `docker run …`, a DinD/`docker exec`
+// command, a k8s job launcher, firejail, nsjail, a custom script — whatever the
+// deployer wishes. RunYard only prepends it; the deployer owns the wrapper's
+// behavior (workspace sharing, lifecycle, cleanup).
+//
+// Accepts a JSON array (precise argv — use when any token contains spaces) or a
+// plain whitespace-separated string. Returns [] when unset (bare host default).
+export function resolveExecWrapper(env = process.env) {
+  const raw = (env.RUNNER_EXEC_WRAPPER || env.RUNYARD_RUNNER_EXEC_WRAPPER || "").trim();
+  if (!raw) return [];
+  if (raw.startsWith("[")) {
+    try {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) return arr.map(String).filter((s) => s.length > 0);
+    } catch {
+      // not valid JSON — fall through to whitespace tokenization
+    }
+  }
+  return raw.split(/\s+/).filter((s) => s.length > 0);
+}
