@@ -1903,7 +1903,11 @@ echo "  runyard mcp install --all # connect every AI agent on this machine"
 `);
 });
 
-app.get("/", (_req, res) => res.sendFile(path.join(env.root, "public", "landing.html")));
+app.get("/", (req, res) => {
+  // Authenticated users skip the marketing landing and go straight to the app.
+  if (authFromRequest(req)) return res.redirect(302, "/app");
+  res.sendFile(path.join(env.root, "public", "landing.html"));
+});
 app.get("/app", (_req, res) => res.sendFile(path.join(env.root, "public", "index.html")));
 app.get("/docs", (_req, res) => res.sendFile(path.join(env.root, "public", "docs.html")));
 app.get("/docs/quickstart", (_req, res) => res.sendFile(path.join(env.root, "public", "docs.html")));
