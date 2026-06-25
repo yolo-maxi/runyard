@@ -1,0 +1,17 @@
+# Local-dev override ONLY — not for production. Swaps the GHCR images for the
+# locally-built ones and supplies a non-https BASE_URL + placeholder token. Use:
+#   docker build -f Dockerfile.hub    -t runyard-hub:local .
+#   docker build -f Dockerfile.runner -t runyard-runner:local .
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up -d
+#   curl localhost:8080/healthz
+services:
+  hub:
+    image: runyard-hub:local
+    environment:
+      # Local (non-https) so the hub doesn't demand a production session secret.
+      BASE_URL: "http://127.0.0.1:8080"
+  runner:
+    image: runyard-runner:local
+    environment:
+      SMITHERS_HUB_URL: "http://hub:8080"
+      SMITHERS_HUB_TOKEN: "local-placeholder-token"

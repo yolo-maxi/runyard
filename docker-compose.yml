@@ -1,0 +1,104 @@
+# RunYard — portable base compose (runs anywhere: self-hosted Docker, a VPS, k8s
+# via kompose, or as the base for the dstack overlay).
+#
+# Defaults are env-driven and tag-based so this file works out of the box. For
+# production you SHOULD pin images by @sha256: digest (see DEPLOY.md "Digest
+# pinning"); for dstack attestation digest pinning is REQUIRED — use the overlay
+# at deploy/dstack/.
+#
+# Profiles / overlays (all OFF by default):
+#   - proxy profile:          `--profile proxy` adds Caddy TLS in front of the hub
+#                             (for self-hosters with no external gateway).
+#   - runner docker builds:   add `-f deploy/compose/runner-docker-socket.yml`
+#                             to let the runner `docker build` via the host socket
+#                             (or run a DinD sidecar — see DEPLOY.md).
+#   - local dev:              add `-f docker-compose.local.yml` to use locally
+#                             built images.
+#
+# Update APPLY differs per target (NOT baked in): `docker compose pull` with tags,
+# k8s rollout, host-install `runyard update`, or dstack UpgradeApp. The in-app
+# update CHECK/version surface works everywhere. See DEPLOY.md.
+
+services:
+  hub:
+    image: ${HUB_IMAGE:-ghcr.io/yolo-maxi/runyard-hub:latest}
+    restart: unless-stopped
+    environment:
+      HOST: "0.0.0.0"
+      # Hub listens on this port inside the container (configurable; default 8080).
+      PORT: "${HUB_PORT:-8080}"
+      NODE_ENV: "production"
+      SMITHERS_HUB_DATA_DIR: "/data"
+      SMITHERS_HUB_INSTANCE_NAME: "${SMITHERS_HUB_INSTANCE_NAME:-Runyard}"
+      # Public URL of this hub (used for https links + production session mode).
+      BASE_URL: "${BASE_URL:-}"
+      # Secrets — provide via your platform's secret mechanism / a .env file,
+      # never commit them. Empty defaults keep the file runnable for local trials.
+      SMITHERS_HUB_SESSION_SECRET: "${SMITHERS_HUB_SESSION_SECRET:-}"
+      SMITHERS_HUB_BOOTSTRAP_TOKEN: "${SMITHERS_HUB_BOOTSTRAP_TOKEN:-}"
+      SECRETS_ENC_KEY: "${SECRETS_ENC_KEY:-}"
+    ports:
+      # Publish the hub directly. Behind the proxy profile you can drop this.
+      - "${HUB_PORT:-8080}:${HUB_PORT:-8080}"
+    volumes:
+      - hub-data:/data
+    # Soft caps; the real ceiling is the host/VM. Tune per environment.
+    cpus: "${HUB_CPUS:-1.0}"
+    mem_limit: "${HUB_MEM:-1g}"
+    healthcheck:
+      # Probes whatever PORT the hub is configured to use.
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:'+(process.env.PORT||8080)+'/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  runner:
+    image: ${RUNNER_IMAGE:-ghcr.io/yolo-maxi/runyard-runner:latest}
+    restart: unless-stopped
+    depends_on:
+      - hub
+    environment:
+      # Reach the hub. Same compose → service name; separate hosts → its URL.
+      SMITHERS_HUB_URL: "${SMITHERS_HUB_URL:-http://hub:${HUB_PORT:-8080}}"
+      SMITHERS_HUB_TOKEN: "${SMITHERS_HUB_TOKEN:-}"
+      SMITHERS_WORKSPACE: "/workspace"
+      SMITHERS_RUNNER_LOCATION: "${SMITHERS_RUNNER_LOCATION:-vps}"
+      SMITHERS_RUNNER_CONCURRENCY: "${SMITHERS_RUNNER_CONCURRENCY:-1}"
+      # Pinned engine resolved deterministically (matches Dockerfile.runner).
+      SMITHERS_BIN: "/usr/local/bun/bin/smithers"
+      # Agent CLI creds (claude/codex) — provide via env/secrets; not baked in.
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+    volumes:
+      - runner-workspace:/workspace
+      # Docker-build access is OPTIONAL and OFF here. To enable, add
+      #   -f deploy/compose/runner-docker-socket.yml
+      # (host/guest socket) or run a DinD sidecar. See DEPLOY.md.
+    cpus: "${RUNNER_CPUS:-2.0}"
+    mem_limit: "${RUNNER_MEM:-4g}"
+
+  # Optional TLS reverse proxy for self-hosters with no external gateway.
+  # Enable with `--profile proxy`. Set SITE_ADDRESS to your domain for auto-HTTPS.
+  proxy:
+    image: caddy:2
+    profiles: ["proxy"]
+    restart: unless-stopped
+    depends_on:
+      - hub
+    environment:
+      SITE_ADDRESS: "${SITE_ADDRESS:-localhost}"
+      HUB_UPSTREAM: "hub:${HUB_PORT:-8080}"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/compose/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  hub-data:
+  runner-workspace:
+  caddy-data:
+  caddy-config:

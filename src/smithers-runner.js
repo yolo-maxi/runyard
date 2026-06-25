@@ -19,8 +19,13 @@ import { supportWarmEnabled, warmSupportReply } from "./supportWarm.js";
 import { collectAuthHealth } from "./runnerAuthHealth.js";
 import { reauthEnabled, runReauth } from "./reauthCli.js";
 import { isDraining, resolveDataDir } from "./drain.js";
+import { resolveSmithersBin } from "./resolveSmithersBin.js";
 
 const execFileAsync = promisify(execFile);
+
+// Resolve once at startup: env override → pinned bun global install → PATH.
+// Keeps the pinned smithers-orchestrator engine deterministic on dstack images.
+const smithersBin = resolveSmithersBin();
 
 const baseUrl = process.env.SMITHERS_HUB_URL || process.env.HUB_URL || "http://127.0.0.1:43117";
 const token = process.env.SMITHERS_HUB_TOKEN || process.env.HUB_TOKEN || process.env.SMITHERS_HUB_BOOTSTRAP_TOKEN;
@@ -97,7 +102,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const stripAnsi = (s) => String(s).replace(/\[[0-9;]*m/g, "");
 
 async function smithers(args, opts = {}) {
-  return execFileAsync("smithers", args, {
+  return execFileAsync(smithersBin, args, {
     cwd: workspace,
     timeout: opts.timeout || 60_000,
     maxBuffer: 1024 * 1024 * 32,
@@ -137,7 +142,7 @@ async function register() {
   runnerId = res.runner.id;
   cacheRunnerId(runnerId);
   console.log(
-    `Registered Smithers runner ${runnerId} (${name}) tags=[${tags}] workspace=${workspace} capacity=${concurrency}`
+    `Registered Smithers runner ${runnerId} (${name}) tags=[${tags}] workspace=${workspace} capacity=${concurrency} smithers=${smithersBin}`
   );
 }
 
