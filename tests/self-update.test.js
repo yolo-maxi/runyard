@@ -224,7 +224,7 @@ describe("runyard-update.sh re-exec + rollback safety (source-level)", () => {
 });
 
 describe("runner drain gate (source-level)", () => {
-  const source = readFileSync(new URL("../src/smithers-runner.js", import.meta.url), "utf8");
+  const source = readFileSync(new URL("../src/runner.js", import.meta.url), "utf8");
 
   it("imports the drain helper and checks it before claiming", () => {
     assert.match(source, /import \{ isDraining, resolveDataDir \} from "\.\/drain\.js"/);

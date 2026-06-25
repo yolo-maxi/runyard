@@ -1,5 +1,5 @@
 {
-  "name": "smithers-hub",
+  "name": "runyard",
   "version": "0.1.0",
   "description": "Runyard: self-hosted control plane, runner, CLI, and MCP server for agent runs.",
   "private": false,
@@ -14,14 +14,13 @@
   },
   "type": "module",
   "bin": {
-    "runyard": "./bin/smithers-hub.js",
-    "smithers-hub": "./bin/smithers-hub.js",
-    "smithers-hub-mcp": "./bin/smithers-hub-mcp.js",
-    "smithers-hub-runner": "./bin/smithers-hub-runner.js"
+    "runyard": "./bin/runyard.js",
+    "runyard-mcp": "./bin/runyard-mcp.js",
+    "runyard-runner": "./bin/runyard-runner.js"
   },
   "scripts": {
     "start": "node --experimental-sqlite src/server.js",
-    "runner": "node src/smithers-runner.js",
+    "runner": "node src/runner.js",
     "mcp": "node src/mcp.js",
     "cli": "node src/cli.js",
     "build:vendor": "node bin/build-vendor.mjs",

@@ -120,7 +120,7 @@ async function startIsolatedHub() {
 }
 
 async function startIsolatedRunner() {
-  runnerProcess = spawn(process.execPath, [path.join(root, "src", "smithers-runner.js")], {
+  runnerProcess = spawn(process.execPath, [path.join(root, "src", "runner.js")], {
     cwd: root,
     stdio: "inherit",
     env: {

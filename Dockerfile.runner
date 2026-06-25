@@ -3,7 +3,7 @@
 # RunYard runner — executes real Smithers workflows.
 #
 # Bundles the full execution surface the runner shells out to:
-#   - node 22 + pnpm        (runs src/smithers-runner.js)
+#   - node 22 + pnpm        (runs src/runner.js)
 #   - bun >= 1.3            (the smithers-orchestrator engine is a bun app)
 #   - smithers-orchestrator (PINNED via bun add -g; resolved by resolveSmithersBin)
 #   - git                   (workflows clone/operate on repos)
@@ -90,4 +90,4 @@ VOLUME ["/workspace"]
 # write large scratch in /workspace without uid/gid juggling. See
 # DEPLOY-DSTACK.md "verify on target" for the socket-access trade-off.
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["node", "src/smithers-runner.js"]
+CMD ["node", "src/runner.js"]
