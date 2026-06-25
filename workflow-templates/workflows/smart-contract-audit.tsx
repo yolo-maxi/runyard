@@ -130,7 +130,7 @@ export default smithers((ctx) => {
         {prep && (
           <Parallel maxConcurrency={Math.min(auditCount, 4)}>
             {Array.from({ length: auditCount }).map((_, i) => (
-              <Task key={i} id={`audit-${i + 1}`} output={outputs.audit} agent={auditor()} timeoutMs={12 * 60 * 1000} heartbeatTimeoutMs={12 * 60 * 1000} retries={2}>
+              <Task key={i} id={`audit-${i + 1}`} output={outputs.audit} agent={auditor()} timeoutMs={12 * 60 * 1000} heartbeatTimeoutMs={12 * 60 * 1000} retries={2} continueOnFail>
                 {`You are audit agent ${i + 1} with the "${SPECIALTIES[i]}" specialty.\n` +
                   `Read this bundle fully — it contains the in-scope Solidity source, the senior-auditor SOP, your specialty, and shared rules:\n` +
                   `  ${prep.bundleDir}/agent-${i + 1}-bundle.md\n\n` +
@@ -148,8 +148,12 @@ export default smithers((ctx) => {
           </Parallel>
         )}
 
-        {/* 3. REPORT: consolidate once every audit agent has reported. */}
-        {prep && audits.length >= auditCount && (
+        {/* 3. REPORT: consolidate once the audit fan-out has settled. With continueOnFail on
+            each auditor, a misbehaving agent (e.g. one that returns plain text instead of the
+            declared JSON shape) no longer aborts the whole run — we still synthesise from the
+            agents that did report. Also keep the legitimate zero-bundle case (auditCount === 0)
+            where we render an empty report rather than skipping consolidation entirely. */}
+        {prep && (auditCount === 0 || audits.length > 0) && (
           <Task id="report" output={outputs.report} agent={auditor()} timeoutMs={10 * 60 * 1000}>
             {`Consolidate these smart-contract audit results into ONE Markdown report.\n` +
               `Hard rules: deduplicate only within (contract, function) — never merge across functions; preserve distinct fixes as Option A/B. ` +
