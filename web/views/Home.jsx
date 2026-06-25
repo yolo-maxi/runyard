@@ -211,8 +211,10 @@ export function Home() {
         <div className="empty empty-runs" role="region" aria-label="No runs yet">
           <p className="empty-runs-headline"><strong>No runs yet</strong></p>
           <p className="muted">Workflows you trigger will appear here with logs, artifacts, and re-run controls. Start with the quickstart, or pick a workflow to launch.</p>
+          {/* The PrimaryActionBar above owns the one primary action on this
+              view, so these onboarding shortcuts stay secondary. */}
           <div className="empty-runs-actions">
-            <a className="button primary" href="/docs#quickstart">Open quickstart</a>
+            <a className="button" href="/docs#quickstart">Open quickstart</a>
             <button type="button" className="button" onClick={() => navigate("#workflows")}>Pick a workflow</button>
           </div>
         </div>

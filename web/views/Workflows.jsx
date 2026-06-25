@@ -5,7 +5,7 @@ import { deepLinks, navigate } from "../lib/router.js";
 import { toast } from "../lib/toast.js";
 import { relativeTime, isActiveRun } from "../lib/runHelpers.js";
 import { refreshCollection } from "../lib/collections.js";
-import { Toolbar, ShareButton } from "../components/ui.jsx";
+import { Toolbar, ShareButton, OverflowMenu } from "../components/ui.jsx";
 import { Pills } from "../components/WorkflowParts.jsx";
 import { WorkflowEditor } from "../components/WorkflowEditor.jsx";
 
@@ -161,9 +161,17 @@ function WorkflowCard({ cap, stats }) {
       {skills.length ? <div className="pill-row"><span className="pill-label">Skills</span><Pills items={skills} /></div> : null}
       {tags.length ? <div className="pill-row"><span className="pill-label">Runner tags</span><Pills items={tags} kind="pill tag" /></div> : null}
       <div className="toolbar-actions">
-        <a className="button" href={deepLinks.workflow(cap.slug)}>Open</a>
-        <button className="primary" title="Run this workflow now" onClick={() => navigate(deepLinks.workflowRun(cap.slug))}>▶ Run</button>
-        <button onClick={() => navigate(deepLinks.workflowEdit(cap.slug))}>Edit</button>
+        {/* The card title links to Open, so the footer carries just the one
+            action (Run) plus secondary actions in the overflow menu. */}
+        <button className="primary btn-sm" title="Run this workflow now" onClick={() => navigate(deepLinks.workflowRun(cap.slug))}>▶ Run</button>
+        <OverflowMenu
+          size="sm"
+          label={`More actions for ${cap.name}`}
+          items={[
+            { label: "Open", href: deepLinks.workflow(cap.slug) },
+            { label: "Edit", onSelect: () => navigate(deepLinks.workflowEdit(cap.slug)) }
+          ]}
+        />
       </div>
     </article>
   );

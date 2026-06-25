@@ -324,8 +324,11 @@ describe("run form repo picker (UI source)", () => {
     // Edit-rerun flow: the submit button label and the draft storage key.
     assert.match(runForm, /Re-run with edited input/);
     assert.match(runActions, /RERUN_DRAFT_KEY/);
-    // The run card exposes the "Edit & re-run" action (JSX-escaped &).
-    assert.match(runCard, /Edit &amp; re-run/);
+    // The run card still exposes the "Edit & re-run" action. After the UI
+    // density pass it lives as an OverflowMenu (⋯) item — a plain JS string
+    // label, so the ampersand is no longer JSX-escaped.
+    assert.match(runCard, /Edit & re-run/);
+    assert.match(runCard, /OverflowMenu/);
     // Raw JSON escape hatch must still exist.
     assert.match(runForm, /Edit as raw JSON instead/);
   });
