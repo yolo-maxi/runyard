@@ -80,7 +80,9 @@ export default smithers((ctx) => {
   const maxAgents = Math.max(1, Math.min(ctx.input.maxAgents ?? 3, 12));
   // Contract with build-bundles.sh: only spawn one auditor per bundle it actually produced.
   // Asking for more would point an agent at a non-existent agent-<i>-bundle.md and fail the run.
-  const auditCount = prep?.bundles?.length ? Math.min(maxAgents, prep.bundles.length) : maxAgents;
+  // Note: bundles.length can legitimately be 0 — treat that as "no auditors" rather than falling
+  // back to maxAgents, which would spawn agents pointing at non-existent bundle files.
+  const auditCount = prep ? Math.min(maxAgents, prep.bundles?.length ?? 0) : maxAgents;
   const audits = ctx.outputs.audit ?? [];
 
   return (
