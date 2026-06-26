@@ -13,6 +13,7 @@ import {
 } from "./runExecution.js";
 import { hashToken, randomToken } from "./security.js";
 import { SUPERVISOR_CAPABILITY_SLUG } from "./supervision.js";
+import { decideReconcile, buildEscalationApproval, HUB_DEFAULT_CAPS } from "./hubSupervisor.js";
 import { decrypt as decryptSecret, encrypt as encryptSecret, redactSecrets, secretsEnabled } from "./secretsStore.js";
 import { seedAgents, seedCapabilities, seedKnowledge, seedSkills } from "./seeds.js";
 import { nextRun as cronNextRun } from "./cron.js";
@@ -181,6 +182,22 @@ export function initDb() {
       created_at TEXT NOT NULL
     );
 
+    -- Self-heal lineage: one row per hub-supervisor decision (resume / repair /
+    -- escalate / give_up) on a run. Lets the dashboard show *why* a run was
+    -- re-dispatched and guarantees we can audit (and never silently loop) the
+    -- reconcile loop's actions. Append-only.
+    CREATE TABLE IF NOT EXISTS run_lineage (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+      attempt INTEGER NOT NULL DEFAULT 0,
+      action TEXT NOT NULL,
+      reason TEXT NOT NULL DEFAULT '',
+      fingerprint TEXT NOT NULL DEFAULT '',
+      prev_runner_id TEXT,
+      checkpoint TEXT,
+      created_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS artifacts (
       id TEXT PRIMARY KEY,
       run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
@@ -319,6 +336,10 @@ export function initDb() {
     CREATE INDEX IF NOT EXISTS idx_run_response_endpoints_run ON run_response_endpoints(run_id);
     CREATE INDEX IF NOT EXISTS idx_run_response_endpoints_status ON run_response_endpoints(delivery_status);
     CREATE INDEX IF NOT EXISTS idx_schedules_due ON schedules(enabled, next_run_at);
+    CREATE INDEX IF NOT EXISTS idx_run_lineage_run ON run_lineage(run_id, created_at);
+    -- The hub-supervisor failed-recoverable scan filters on status + recency; an
+    -- index keeps the reconcile tick cheap as the runs table grows.
+    CREATE INDEX IF NOT EXISTS idx_runs_status_updated ON runs(status, updated_at);
   `);
 
   migrateRunnersPoolColumns();
@@ -327,6 +348,7 @@ export function initDb() {
   migrateCapabilityDefinitionHashColumn();
   migrateRunsCapabilityVersioningColumns();
   migrateRunnerAuthHealthColumn();
+  migrateRunsSupervisorColumns();
   setSettingDefault("instance_name", env.instanceName);
   seedAll();
   seedWorkflowEndpoints();
@@ -395,6 +417,25 @@ function migrateRunnerAuthHealthColumn() {
   const columns = all("PRAGMA table_info(runners)").map((row) => row.name);
   if (!columns.includes("auth_health")) {
     db.exec("ALTER TABLE runners ADD COLUMN auth_health TEXT");
+  }
+}
+
+// Hub-as-supervisor accounting. These counters must survive a hub restart so
+// the attempt/repair caps and the loop-breaker can't be reset by bouncing the
+// process. `supervisor_meta` is a JSON blob holding the per-fingerprint resume
+// and repair maps plus the loop-breaker progress marker; the scalar columns are
+// the hot fields the reconcile query reads. All nullable/defaulted so the
+// CREATE TABLE no-op on existing installs is backfilled here.
+function migrateRunsSupervisorColumns() {
+  const columns = all("PRAGMA table_info(runs)").map((row) => row.name);
+  if (!columns.includes("attempt")) {
+    db.exec("ALTER TABLE runs ADD COLUMN attempt INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!columns.includes("repair_count")) {
+    db.exec("ALTER TABLE runs ADD COLUMN repair_count INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!columns.includes("supervisor_meta")) {
+    db.exec("ALTER TABLE runs ADD COLUMN supervisor_meta TEXT");
   }
 }
 
@@ -1498,6 +1539,285 @@ function runReapReason(row, { maxMs = 0, stallMs = env.runStallMs, runnerOffline
   return null;
 }
 
+// --- Hub-as-supervisor: resume / repair / escalate instead of just failing ---
+//
+// The reaper used to be a pure janitor: a stuck run was transitioned to
+// `failed` and its slot released. That makes the supervisor share the failure
+// domain of the thing it protects — when a runner process dies, the in-band
+// run-smithers supervisor riding on it dies too, and nobody resumes the work.
+// These helpers promote the reaper to a supervisor: for an orphaned (runner
+// confirmed dead) or self-reported-failed run that still has a resumable
+// checkpoint and budget, it re-queues the run so any free runner *process* on
+// the same box resumes it from the last checkpoint on the shared workspace —
+// instead of failing it. Caps/loop-breaker survive a hub restart via the
+// persisted attempt/repair counters + supervisor_meta blob.
+
+// The resumable substrate handle: the prior Smithers run id, recorded by the
+// runner as `smithers.dispatched`. Re-dispatching the hub run with this id lets
+// the next runner `smithers up --resume <sid>` and pick up from the last
+// durable checkpoint on the shared workspace, rather than starting from scratch.
+function runResumeCheckpoint(runId) {
+  const row = one(
+    `SELECT data FROM run_events
+      WHERE run_id = ? AND type = 'smithers.dispatched'
+      ORDER BY created_at DESC LIMIT 1`,
+    [runId]
+  );
+  if (!row) return null;
+  const sid = parseJson(row.data, {})?.smithersRunId;
+  return sid ? String(sid) : null;
+}
+
+// A monotonic forward-progress proxy: the run's event count. If a run is
+// resumed and re-dies without this advancing, the loop-breaker treats it as no
+// progress and escalates rather than resuming forever.
+function runProgressMarker(runId) {
+  return one("SELECT COUNT(*) AS n FROM run_events WHERE run_id = ?", [runId]).n;
+}
+
+function readSupervisorMeta(row) {
+  const meta = parseJson(row?.supervisor_meta, {}) || {};
+  return {
+    repairedFingerprints: meta.repairedFingerprints && typeof meta.repairedFingerprints === "object" ? meta.repairedFingerprints : {},
+    fingerprintResumes: meta.fingerprintResumes && typeof meta.fingerprintResumes === "object" ? meta.fingerprintResumes : {},
+    lastProgressMarker: Number(meta.lastProgressMarker) || 0,
+    lastFingerprint: meta.lastFingerprint || "",
+    lastCheckpoint: meta.lastCheckpoint || "",
+    adjudicated: Boolean(meta.adjudicated),
+    lastDecision: meta.lastDecision || ""
+  };
+}
+
+// True when this run is a supervised child whose run-smithers parent is still
+// alive. In that case the in-band supervisor still owns recovery, so the hub
+// must NOT also resume it — that would double-dispatch. The hub only adjudicates
+// top-level/un-parented runs and the supervisors themselves (whose parent, if
+// any, is gone). Returns false for everything else.
+function hasLiveSupervisingParent(input) {
+  const origin = input?.__origin;
+  const parentRunId = origin?.parentRunId || input?.__supervisedChild?.parentRunId || "";
+  if (!parentRunId) return false;
+  const parent = one("SELECT status FROM runs WHERE id = ?", [String(parentRunId)]);
+  if (!parent) return false;
+  return !RUN_TERMINAL.has(parent.status);
+}
+
+export function recordRunLineage(runId, entry = {}) {
+  const row = {
+    id: id("lin"),
+    run_id: runId,
+    attempt: Number(entry.attempt) || 0,
+    action: String(entry.action || ""),
+    reason: String(entry.reason || "").slice(0, 600),
+    fingerprint: String(entry.fingerprint || "").slice(0, 200),
+    prev_runner_id: entry.prevRunnerId || null,
+    checkpoint: entry.checkpoint || null,
+    created_at: now()
+  };
+  run(
+    `INSERT INTO run_lineage (id, run_id, attempt, action, reason, fingerprint, prev_runner_id, checkpoint, created_at)
+     VALUES ($id, $run_id, $attempt, $action, $reason, $fingerprint, $prev_runner_id, $checkpoint, $created_at)`,
+    row
+  );
+  return row;
+}
+
+export function listRunLineage(runId) {
+  return all("SELECT * FROM run_lineage WHERE run_id = ? ORDER BY created_at ASC", [runId]).map((r) => ({
+    id: r.id,
+    runId: r.run_id,
+    attempt: r.attempt,
+    action: r.action,
+    reason: r.reason,
+    fingerprint: r.fingerprint,
+    prevRunnerId: r.prev_runner_id,
+    checkpoint: r.checkpoint,
+    createdAt: r.created_at
+  }));
+}
+
+// Re-queue an orphaned/failed run so a free runner process resumes it from the
+// recorded checkpoint. Idempotent and CAS-protected: the UPDATE only fires when
+// the run is still in the status we observed, so two reconcile ticks (or a
+// runner finishing the run just as we adjudicate) can never both requeue it.
+// Returns true when this call actually re-dispatched the run.
+function requeueRunForResume(row, decision, checkpoint, observedStatus) {
+  const meta = readSupervisorMeta(row);
+  const fingerprint = decision.fingerprint || "";
+  const nextAttempt = (Number(row.attempt) || 0) + 1;
+  const progressMarker = runProgressMarker(row.id);
+
+  // Persist caps/loop-breaker state BEFORE flipping status so it survives even
+  // if the hub crashes right after the requeue.
+  if (fingerprint) meta.fingerprintResumes[fingerprint] = (meta.fingerprintResumes[fingerprint] || 0) + 1;
+  meta.lastFingerprint = fingerprint;
+  meta.lastCheckpoint = checkpoint || "";
+  meta.lastProgressMarker = progressMarker;
+  meta.adjudicated = false;
+  meta.lastDecision = "resume";
+
+  // Stamp a resume marker into the run input so the claiming runner knows to
+  // `smithers up --resume <sid>` instead of starting a fresh run. Strip any
+  // prior marker first so it never accumulates.
+  const input = parseJson(row.input, {});
+  input.__resume = { smithersRunId: checkpoint, attempt: nextAttempt, at: now() };
+  const timestamp = now();
+
+  const result = run(
+    `UPDATE runs
+        SET status='queued', runner_id=NULL, current_step='queued (resume from checkpoint)',
+            error=NULL, attempt=$attempt, supervisor_meta=$meta, input=$input,
+            completed_at=NULL, updated_at=$ts
+      WHERE id=$id AND status=$observed`,
+    { id: row.id, attempt: nextAttempt, meta: json(meta, {}), input: json(input, {}), ts: timestamp, observed: observedStatus }
+  );
+  if (!result.changes) return false;
+
+  // The run left the active set on whatever runner held it — release that slot
+  // exactly once (orphaned runs were assigned/running; a self-reported failure
+  // already released its slot at fail time, so only release when it was active).
+  if (row.runner_id && (observedStatus === "assigned" || observedStatus === "running")) {
+    adjustRunnerActiveRuns(row.runner_id, -1);
+  }
+  recordRunLineage(row.id, {
+    attempt: nextAttempt,
+    action: "resume",
+    reason: decision.reason,
+    fingerprint,
+    prevRunnerId: row.runner_id,
+    checkpoint
+  });
+  addRunEvent(row.id, "run.supervisor.resumed", `Hub resumed run from checkpoint (attempt ${nextAttempt})`, {
+    attempt: nextAttempt,
+    checkpoint,
+    fingerprint,
+    reason: decision.reason
+  });
+  return true;
+}
+
+// Mark a run terminally failed under supervisor control (give_up / escalate).
+// Sets the adjudicated flag so the failed-recoverable scan never re-picks it.
+function finalizeSupervisorTerminal(row, decision, observedStatus, { escalate = false, failError = "", failStep = "" } = {}) {
+  const meta = readSupervisorMeta(row);
+  meta.adjudicated = true;
+  meta.lastDecision = decision.action;
+  meta.lastFingerprint = decision.fingerprint || meta.lastFingerprint;
+  run("UPDATE runs SET supervisor_meta=? WHERE id=?", [json(meta, {}), row.id]);
+
+  recordRunLineage(row.id, {
+    attempt: Number(row.attempt) || 0,
+    action: decision.action,
+    reason: decision.reason,
+    fingerprint: decision.fingerprint || "",
+    prevRunnerId: row.runner_id,
+    checkpoint: null
+  });
+
+  // For an active (orphaned) run, transition it to failed now. A run that was
+  // already `failed` stays failed — we only attach the escalation card + meta.
+  let endedTerminal = false;
+  if (observedStatus === "assigned" || observedStatus === "running") {
+    // Preserve the original reap reason's error/step for a plain give_up so the
+    // janitor contract ("runner heartbeat expired" / "runner offline") is
+    // unchanged; an escalation overrides with the operator-facing decision.
+    const t = transitionRun(row.id, "failed", {
+      current_step: escalate ? "escalated to operator" : failStep || "failed",
+      error: escalate ? decision.reason : failError || decision.reason,
+      completed_at: now()
+    });
+    endedTerminal = Boolean(t.ok && !t.idempotent);
+    if (endedTerminal && !escalate) {
+      addRunEvent(row.id, "run.failed", failError || decision.reason, { reason: "runner_offline" });
+    }
+  }
+
+  if (escalate) {
+    const card = buildEscalationApproval(row, decision);
+    createApproval({ runId: row.id, title: card.title, description: card.description, requestedBy: "system:hub-supervisor", payload: card.payload });
+    addRunEvent(row.id, "run.supervisor.escalated", card.description, { escalation: decision.escalation, fingerprint: decision.fingerprint });
+  }
+  return endedTerminal;
+}
+
+// Adjudicate a single run that the reconcile loop flagged. `observedStatus` is
+// the status we read it in (the CAS guard). Returns
+// { action, endedTerminal } so the caller can drive retrospectives only for
+// runs that actually reached a terminal state this tick.
+function adjudicateRun(row, { reason, error, observedStatus, currentStep = "", dispatchRepair = null } = {}) {
+  const input = parseJson(row.input, {});
+
+  // Let a live in-band supervisor own its own children — failing the child here
+  // (today's behavior) lets the parent see the failure and retry. The hub never
+  // double-dispatches a run a live parent is already supervising.
+  if (hasLiveSupervisingParent(input)) {
+    if (observedStatus === "assigned" || observedStatus === "running") {
+      const t = transitionRun(row.id, "failed", { current_step: currentStep || "runner offline", error, completed_at: now() });
+      if (t.ok && !t.idempotent) addRunEvent(row.id, "run.failed", error, { reason });
+      return { action: "give_up", endedTerminal: Boolean(t.ok && !t.idempotent) };
+    }
+    return { action: "give_up", endedTerminal: false };
+  }
+
+  const checkpoint = runResumeCheckpoint(row.id);
+  const meta = readSupervisorMeta(row);
+  const cancelledIntent = observedStatus === "cancelled" || row.status === "cancelled";
+
+  const decision = decideReconcile({
+    reason,
+    error,
+    checkpoint,
+    cancelledIntent,
+    attempt: Number(row.attempt) || 0,
+    repairCount: Number(row.repair_count) || 0,
+    repairedFingerprints: meta.repairedFingerprints,
+    fingerprintResumes: meta.fingerprintResumes,
+    progressMarker: runProgressMarker(row.id),
+    lastProgressMarker: meta.lastProgressMarker,
+    enableRepair: Boolean(dispatchRepair),
+    caps: HUB_DEFAULT_CAPS
+  });
+
+  if (decision.action === "repair" && dispatchRepair) {
+    // Phase 2: dispatch a one-shot code repair, then resume. The dispatcher
+    // (server.js) owns child-run creation; on success we bump the per-fingerprint
+    // repair counter so the same fingerprint is never repaired twice.
+    let repaired = false;
+    try {
+      repaired = Boolean(dispatchRepair(normalizeRun(row), decision, checkpoint));
+    } catch (err) {
+      repaired = false;
+    }
+    if (repaired) {
+      const fp = decision.fingerprint || "";
+      if (fp) meta.repairedFingerprints[fp] = (meta.repairedFingerprints[fp] || 0) + 1;
+      meta.lastDecision = "repair";
+      run("UPDATE runs SET repair_count=?, supervisor_meta=? WHERE id=?", [(Number(row.repair_count) || 0) + 1, json(meta, {}), row.id]);
+      recordRunLineage(row.id, { attempt: Number(row.attempt) || 0, action: "repair", reason: decision.reason, fingerprint: fp, prevRunnerId: row.runner_id, checkpoint });
+      addRunEvent(row.id, "run.supervisor.repair_dispatched", decision.reason, { fingerprint: fp });
+      const resumed = requeueRunForResume({ ...row, repair_count: (Number(row.repair_count) || 0) + 1 }, decision, checkpoint, observedStatus);
+      return { action: "repair", endedTerminal: false, resumed };
+    }
+    // Repair could not be dispatched — fall back to escalate rather than loop.
+    return { action: "escalate", endedTerminal: finalizeSupervisorTerminal(row, { ...decision, action: "escalate", escalation: "code_repair_undispatched" }, observedStatus, { escalate: true }) };
+  }
+
+  if (decision.action === "resume") {
+    const resumed = requeueRunForResume(row, decision, checkpoint, observedStatus);
+    return { action: resumed ? "resume" : "noop", endedTerminal: false };
+  }
+
+  if (decision.action === "escalate") {
+    return { action: "escalate", endedTerminal: finalizeSupervisorTerminal(row, decision, observedStatus, { escalate: true }) };
+  }
+
+  // give_up
+  return {
+    action: "give_up",
+    endedTerminal: finalizeSupervisorTerminal(row, decision, observedStatus, { escalate: false, failError: error, failStep: currentStep })
+  };
+}
+
 // Auto-fail active runs whose runner died, whose event stream stalled, or whose optional max-runtime backstop fired.
 export function reapStuckRunIds(maxMs) {
   const nowMs = Date.now();
@@ -1506,6 +1826,10 @@ export function reapStuckRunIds(maxMs) {
             runs.runner_id,
             runs.status,
             runs.capability_slug,
+            runs.input,
+            runs.attempt,
+            runs.repair_count,
+            runs.supervisor_meta,
             runs.created_at,
             runs.assigned_at,
             runs.started_at,
@@ -1519,6 +1843,17 @@ export function reapStuckRunIds(maxMs) {
   for (const row of active) {
     const reason = runReapReason(row, { maxMs, nowMs });
     if (!reason) continue;
+    // ORPHANED (runner confirmed dead) is the case the in-band supervisor can
+    // never recover — it died with the runner. Hand it to the hub supervisor:
+    // resume from checkpoint / escalate / give up, instead of a blind fail.
+    if (reason.reason === "runner_offline") {
+      const outcome = adjudicateRun(row, { reason: "runner_offline", error: reason.error, currentStep: reason.currentStep, observedStatus: row.status });
+      if (outcome.endedTerminal) reaped.push(row.id);
+      continue;
+    }
+    // STALLED / max-runtime: the runner may still be alive and executing, so a
+    // blind resume could double-run committed side effects. Keep the existing
+    // terminal-fail behavior (decideReconcile also classifies these give_up).
     const result = transitionRun(row.id, "failed", { current_step: reason.currentStep, error: reason.error, completed_at: now() });
     if (result.ok && !result.idempotent) {
       addRunEvent(row.id, "run.failed", reason.message, { reason: reason.reason });
@@ -1526,6 +1861,33 @@ export function reapStuckRunIds(maxMs) {
     }
   }
   return reaped;
+}
+
+// Hub-supervisor scan for FAILED-RECOVERABLE runs: runs a runner self-reported
+// as `failed` (via /api/runs/:id/fail) that still carry a resumable checkpoint
+// and have budget left. The orphaned path above handles runner death; this
+// handles a clean failure the in-band supervisor isn't (or is no longer)
+// covering. Bounded per tick (indexed status+recency query) so the loop stays
+// cheap. `dispatchRepair`, when provided, enables Phase 2 code repair.
+// Returns the ids it acted on.
+export function reconcileFailedRecoverable({ dispatchRepair = null, limit = 25, lookbackMs = 6 * 60 * 60_000 } = {}) {
+  const since = new Date(Date.now() - lookbackMs).toISOString();
+  const candidates = all(
+    `SELECT id, runner_id, status, capability_slug, input, attempt, repair_count, supervisor_meta, error
+       FROM runs
+      WHERE status = 'failed' AND updated_at >= ?
+      ORDER BY updated_at DESC LIMIT ?`,
+    [since, Math.max(1, Math.floor(limit))]
+  );
+  const acted = [];
+  for (const row of candidates) {
+    const meta = readSupervisorMeta(row);
+    if (meta.adjudicated) continue; // already given up / escalated — never re-pick
+    if (!runResumeCheckpoint(row.id)) continue; // no resumable substrate
+    const outcome = adjudicateRun(row, { reason: "failed", error: row.error || "", observedStatus: "failed", dispatchRepair });
+    if (outcome.action === "resume" || outcome.action === "repair" || outcome.action === "escalate") acted.push(row.id);
+  }
+  return acted;
 }
 
 export function reapStuckRuns(maxMs) {
