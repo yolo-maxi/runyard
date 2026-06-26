@@ -527,7 +527,18 @@ async function tick() {
 }
 
 async function main() {
-  await register();
+  try {
+    await register();
+  } catch (error) {
+    // A dead token / wrong hub URL fails registration with 401/403. Route it
+    // through the loud auth banner and exit non-zero so systemd surfaces (and
+    // restarts) a misconfigured runner instead of leaving a silent ghost.
+    if (isAuthError(error)) {
+      recordClaimAuth(false, error);
+      process.exit(1);
+    }
+    throw error;
+  }
   // Prove auth + claim path before entering the poll loop. A failure is logged
   // loudly (recordClaimAuth) but non-fatal — the runner keeps retrying and the
   // heartbeat reports auth.hub.ok=false so the misconfig is visible immediately.
