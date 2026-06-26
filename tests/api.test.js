@@ -1526,6 +1526,34 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
     }
   });
 
+  it("surfaces a child approval whose run id is unknown without crashing on the runs FK", async () => {
+    // Regression: a child_run_approval referencing a run id the Hub can't see
+    // (not-yet-persisted / pruned child) used to insert a dangling runs FK,
+    // throwing an unhandled SQLITE_CONSTRAINT that crashed the whole hub.
+    const res = await raw("/api/approvals", {
+      method: "POST",
+      body: {
+        title: "Approve checkpoint (unknown child)",
+        description: "child run not visible to the hub",
+        requestedBy: "workflow: app-skinner",
+        payload: {
+          kind: "child_run_approval",
+          capability: "app-skinner",
+          childRunId: "run_does_not_exist_xyz",
+          nodeId: "skin:approval",
+          child: { runId: "run_does_not_exist_xyz", status: "waiting_approval", nodeId: "skin:approval" }
+        }
+      }
+    });
+    assert.equal(res.status, 201);
+    // Card surfaces (carries the id in its payload) but is not FK-linked to a run.
+    assert.equal(res.data.approval.runId, null);
+    assert.equal(res.data.approval.payload.childRunId, "run_does_not_exist_xyz");
+    // Hub is still alive and serving.
+    const health = await raw("/healthz", {}, null);
+    assert.equal(health.status, 200);
+  });
+
   it("resolves Telegram approve callbacks and removes action buttons", async () => {
     const calls = [];
     const restoreFetch = captureTelegramFetch(calls);

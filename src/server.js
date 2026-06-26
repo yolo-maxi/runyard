@@ -3770,19 +3770,33 @@ function findExistingChildRunApproval(payload = {}) {
   }) || null;
 }
 app.post("/api/approvals", requireAuth, requireScopes("api", "mcp", "runner", "approvals"), async (req, res) => {
-  const payload = req.body?.payload && typeof req.body.payload === "object" ? req.body.payload : {};
-  const existing = findExistingChildRunApproval(payload);
-  if (existing) return res.status(200).json({ approval: withApprovalLinks(existing), idempotent: true });
+  try {
+    const payload = req.body?.payload && typeof req.body.payload === "object" ? req.body.payload : {};
+    const existing = findExistingChildRunApproval(payload);
+    if (existing) return res.status(200).json({ approval: withApprovalLinks(existing), idempotent: true });
 
-  const approval = createApproval({
-    runId: req.body?.runId || payload.childRunId || null,
-    title: String(req.body?.title || "Approval requested").slice(0, 240),
-    description: String(req.body?.description || "").slice(0, 2000),
-    requestedBy: String(req.body?.requestedBy || req.token?.name || "workflow").slice(0, 120),
-    payload
-  });
-  await notifyTelegram(approval);
-  res.status(201).json({ approval: withApprovalLinks(approval), idempotent: false });
+    // Only link the approval to a run row that actually exists. A child approval
+    // can reference a run id the Hub can't see (a not-yet-persisted or already-
+    // pruned child); inserting that id would violate the runs foreign key and —
+    // before this guard — threw an unhandled SQLITE_CONSTRAINT that crashed the
+    // whole hub. The card still surfaces; it just carries the id in its payload
+    // (which the run-smithers watcher polls) instead of a dangling FK link.
+    const requestedRunId = req.body?.runId || payload.childRunId || null;
+    const linkedRunId = requestedRunId && getRun(requestedRunId) ? requestedRunId : null;
+
+    const approval = createApproval({
+      runId: linkedRunId,
+      title: String(req.body?.title || "Approval requested").slice(0, 240),
+      description: String(req.body?.description || "").slice(0, 2000),
+      requestedBy: String(req.body?.requestedBy || req.token?.name || "workflow").slice(0, 120),
+      payload
+    });
+    await notifyTelegram(approval);
+    res.status(201).json({ approval: withApprovalLinks(approval), idempotent: false });
+  } catch (error) {
+    console.error("create approval failed:", error.message);
+    res.status(400).json({ error: "could not create approval" });
+  }
 });
 function resolveApprovalHttp(req, res, decision) {
   const approval = getApproval(req.params.id);
@@ -3915,6 +3929,20 @@ app.use((error, _req, res, _next) => {
 });
 
 if (process.argv[1]?.endsWith("server.js")) {
+  // Reliability net: a single malformed request must never take down the live
+  // control plane. Express 4 does not catch async-handler rejections, so a
+  // throw inside an `async (req,res)=>{}` route (e.g. an unexpected SQLITE
+  // constraint) becomes an unhandledRejection that, under Node's default, kills
+  // the process. We log and keep serving instead — the SQLite DB is durable
+  // (WAL) and each request is independent, so staying up in a slightly degraded
+  // state beats dropping every SSE tail + in-flight response on a hub restart.
+  // (Installed only when run as the server, never when imported by tests.)
+  process.on("unhandledRejection", (reason) => {
+    console.error("unhandledRejection (hub stays up):", reason instanceof Error ? reason.stack : reason);
+  });
+  process.on("uncaughtException", (error) => {
+    console.error("uncaughtException (hub stays up):", error?.stack || error);
+  });
   app.listen(env.port, env.host, () => {
     console.log(`${env.instanceName} listening on http://${env.host}:${env.port}`);
   });
