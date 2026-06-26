@@ -12,6 +12,7 @@ import {
   storeExecutionIntent
 } from "./runExecution.js";
 import { hashToken, randomToken } from "./security.js";
+import { SUPERVISOR_CAPABILITY_SLUG } from "./supervision.js";
 import { decrypt as decryptSecret, encrypt as encryptSecret, redactSecrets, secretsEnabled } from "./secretsStore.js";
 import { seedAgents, seedCapabilities, seedKnowledge, seedSkills } from "./seeds.js";
 import { nextRun as cronNextRun } from "./cron.js";
@@ -1739,6 +1740,10 @@ export function getRunner(runnerId) {
   // (e.g. a runner that crashed without releasing a slot) never reads as
   // "negative free slots" in the UI.
   const activeRuns = Math.min(Math.max(Number(row.active_runs) || 0, 0), capacity);
+  // Free WORK slots are derived from real run state, not the cached counter, so a
+  // stale/leaked counter can never falsely starve the queue. Supervisors live in
+  // their own pool and never consume a work slot (see runnerLoad/claimNextRun).
+  const load = runnerLoad(row.id);
   return {
     id: row.id,
     name: row.name,
@@ -1751,7 +1756,9 @@ export function getRunner(runnerId) {
     currentRunId: row.current_run_id,
     capacity,
     activeRuns,
-    availableSlots: Math.max(0, capacity - activeRuns),
+    workRuns: load.work,
+    supervisorRuns: load.supervisors,
+    availableSlots: Math.max(0, capacity - load.work),
     // Per-runner CLI auth health (Codex/Claude). Booleans + expiry + account id
     // only — never token material. Null until the runner reports it.
     authHealth: parseJson(row.auth_health, null),
@@ -1845,8 +1852,12 @@ function sanitizeRunnerAuthHealth(auth) {
   const result = {};
   const codex = pickProvider(auth.codex);
   const claude = pickProvider(auth.claude);
+  const hub = pickProvider(auth.hub);
   if (codex) result.codex = codex;
   if (claude) result.claude = claude;
+  // Hub claim-auth status: surfaces "registered/online but every claim is
+  // rejected" (dead token / wrong hub URL) so it can't masquerade as healthy.
+  if (hub) result.hub = hub;
   if (auth.checkedAt != null) result.checkedAt = String(auth.checkedAt).slice(0, 64);
   return result;
 }
@@ -1863,6 +1874,60 @@ function adjustRunnerActiveRuns(runnerId, delta) {
   );
 }
 
+// Ground-truth in-flight load for a runner, split into the two scheduling pools,
+// derived from the durable runs table (NOT the drift-prone active_runs counter).
+//   work        — heavy worker runs (the real agents); compete for `capacity`.
+//   supervisors — run-smithers envelopes that orchestrate + poll their child.
+// Counting supervisors against the work pool is the classic resource deadlock:
+// a parent holds a work slot while waiting for a child that can never get one.
+// Reading from real state means a crashed/reaped run can never leak a slot —
+// the moment its row leaves assigned/running, the slot is free again.
+export function runnerLoad(runnerId) {
+  if (!runnerId) return { work: 0, supervisors: 0 };
+  const row = one(
+    `SELECT
+        COALESCE(SUM(CASE WHEN capability_slug = ? THEN 1 ELSE 0 END), 0) AS supervisors,
+        COALESCE(SUM(CASE WHEN capability_slug = ? THEN 0 ELSE 1 END), 0) AS work
+       FROM runs
+      WHERE runner_id = ? AND status IN ('assigned','running')`,
+    [SUPERVISOR_CAPABILITY_SLUG, SUPERVISOR_CAPABILITY_SLUG, runnerId]
+  );
+  return { work: Number(row?.work) || 0, supervisors: Number(row?.supervisors) || 0 };
+}
+
+// Size of the separate supervisor pool for a runner of the given work capacity.
+// Default ratio 1.0 → up to `capacity` concurrent supervisors, so every work
+// slot can host its supervising parent without either starving the other.
+export function supervisorPoolSize(capacity) {
+  const cap = normalizeCapacity(capacity, 1);
+  return Math.max(1, Math.ceil(cap * (env.supervisorSlotRatio || 1)));
+}
+
+// Recompute every runner's active_runs counter from the durable runs table.
+// active_runs is a cached display/drain metric with several writers (claim +1,
+// terminal -1, heartbeat overwrite); under crashes or reaper-vs-runner races it
+// can drift and falsely read "full". The scheduler no longer trusts it (see
+// runnerLoad + claimNextRun), but the dashboard and pruneDeadRunners do, so the
+// reaper reconciles it to ground truth each cycle and self-corrects without a
+// restart. Returns the runners whose counter was actually corrected.
+export function reconcileRunnerActiveRuns() {
+  const rows = all(
+    `SELECT runners.id AS id,
+            COALESCE(runners.active_runs, 0) AS stored,
+            (SELECT COUNT(*) FROM runs
+              WHERE runs.runner_id = runners.id
+                AND runs.status IN ('assigned','running')) AS actual
+       FROM runners`
+  );
+  const corrected = [];
+  for (const row of rows) {
+    if (Number(row.stored) === Number(row.actual)) continue;
+    run("UPDATE runners SET active_runs = ? WHERE id = ?", [row.actual, row.id]);
+    corrected.push({ id: row.id, from: Number(row.stored), to: Number(row.actual) });
+  }
+  return corrected;
+}
+
 function runnerMatches(capability, runner, run) {
   if (!runner) return false;
   const tags = new Set(runner.tags || []);
@@ -1873,11 +1938,17 @@ function runnerMatches(capability, runner, run) {
 export function claimNextRun(runnerId) {
   const runner = getRunner(runnerId);
   if (!runner || !runner.online) return null;
-  // Capacity gate: a runner that already has `capacity` jobs in flight gets
-  // no new work until one of them releases a slot. This keeps the centralized
-  // Hub queue and lets a 4-slot VPS runner sit alongside a 1-slot laptop
-  // runner without the bigger pool starving the smaller one mid-cycle.
-  if (runner.availableSlots <= 0) return null;
+  // Two-pool capacity gate, decided from REAL run state (runnerLoad), not the
+  // drift-prone active_runs counter. Heavy work runs compete for `capacity`;
+  // lightweight run-smithers supervisors draw from a separate pool. This breaks
+  // the supervisor-slot deadlock: a parent supervisor no longer occupies a work
+  // slot its own child needs, so an `app-skinner` (supervisor + child) scales to
+  // the full work capacity instead of wedging at ~capacity/2.
+  const supervisorCapacity = supervisorPoolSize(runner.capacity);
+  const load = runnerLoad(runnerId);
+  // Fast reject only if BOTH pools are saturated — no candidate of either kind
+  // could be claimed this pass.
+  if (load.work >= runner.capacity && load.supervisors >= supervisorCapacity) return null;
   const queued = listRuns({ status: "queued", limit: 200 });
   for (const candidate of queued) {
     // Targeting: a run pre-assigned to a specific runner (e.g. "run on my laptop" vs "run on the VPS")
@@ -1885,6 +1956,15 @@ export function claimNextRun(runnerId) {
     if (candidate.runnerId && candidate.runnerId !== runnerId) continue;
     const capability = getCapability(candidate.capabilitySlug);
     if (!runnerMatches(capability, runner, candidate)) continue;
+    // Gate this candidate against the pool it belongs to. A run with no free slot
+    // in its pool is skipped (not claimed), but a run in the other pool can still
+    // be claimed this pass — so a backlog of supervisors never blocks work runs.
+    const isSupervisor = candidate.capabilitySlug === SUPERVISOR_CAPABILITY_SLUG;
+    if (isSupervisor) {
+      if (load.supervisors >= supervisorCapacity) continue;
+    } else if (load.work >= runner.capacity) {
+      continue;
+    }
     // Atomic claim: only succeeds if still queued and not targeted away, so two runners never both win it.
     const timestamp = now();
     const result = run(

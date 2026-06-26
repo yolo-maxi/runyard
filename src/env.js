@@ -161,6 +161,15 @@ export const env = {
   runnerPruneMs: Number(process.env.SMITHERS_RUNNER_PRUNE_MS || 24 * 60 * 60_000),
   // Running/assigned runs are considered stalled if they emit no event within this window. 0 disables.
   runStallMs: Number(process.env.SMITHERS_RUN_STALL_MS || 15 * 60_000),
+  // Supervisor (run-smithers) runs are lightweight orchestrators that mostly poll
+  // their child; counting them against the same work-slot pool deadlocks (a parent
+  // holds a slot waiting for a child that can never get one). They draw from a
+  // SEPARATE pool sized as ceil(capacity * ratio). Default 1.0 → each work slot can
+  // have its supervising parent. Raise above 1 only if you nest supervisors.
+  supervisorSlotRatio: (() => {
+    const raw = Number(process.env.SMITHERS_SUPERVISOR_SLOT_RATIO);
+    return Number.isFinite(raw) && raw > 0 ? raw : 1.0;
+  })(),
   // Optional allow-list of filesystem roots the runner may operate in. Empty = unrestricted (with a warning).
   runnerAllowedRoots: parseRoots(process.env.SMITHERS_RUNNER_ALLOWED_ROOTS),
   // Express trust-proxy setting. Default 'loopback' so X-Forwarded-For can't be spoofed by clients.

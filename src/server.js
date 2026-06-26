@@ -49,6 +49,7 @@ import {
   listWorkflowEndpoints,
   pruneDeadRunners,
   reapStuckRunIds,
+  reconcileRunnerActiveRuns,
   recordWorkflowEndpointInvocation,
   recordAudit,
   registerRunner,
@@ -3923,6 +3924,21 @@ if (process.argv[1]?.endsWith("server.js")) {
       reapStuckRunsWithRetrospectives(env.runDeadlineMs);
     } catch (error) {
       console.error("Run reaper failed:", error.message);
+    }
+    try {
+      // Self-correct any drift in the cached per-runner active_runs counter by
+      // recomputing it from real run state. Runs BEFORE pruneDeadRunners (which
+      // reads active_runs) so a stale "full" counter can't wedge the queue or
+      // block pruning of a genuinely idle runner between restarts.
+      const corrected = reconcileRunnerActiveRuns();
+      if (corrected.length) {
+        console.log(
+          `Reconciled active_runs for ${corrected.length} runner(s): ` +
+            corrected.map((c) => `${c.id} ${c.from}->${c.to}`).join(", ")
+        );
+      }
+    } catch (error) {
+      console.error("active_runs reconcile failed:", error.message);
     }
     try {
       // Prune long-dead runner rows (ghosts from pre-stable-identity restarts).

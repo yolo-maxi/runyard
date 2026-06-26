@@ -2609,19 +2609,22 @@ describe("Runner pool capacity & queue visibility", () => {
       runs.push(created.run.id);
     }
     const claims = [];
-    for (let i = 0; i < 4; i += 1) {
+    for (let i = 0; i < 6; i += 1) {
       claims.push(await api(`/api/runners/${reg.runner.id}/next-run`));
     }
-    const claimed = claims.filter((c) => c?.run).map((c) => c.run.id);
-    // First three slots get filled; the fourth claim is blocked by capacity.
-    assert.equal(claimed.length, 3);
-    assert.equal(claims[3].run, undefined);
+    // Work runs are capped at the runner's capacity. We count only the hello work
+    // runs we created here — the shared test DB may also have queued run-smithers
+    // supervisor runs, which draw from a SEPARATE pool (so a supervisor can't
+    // occupy a work slot its own child needs) and are intentionally not limited
+    // by the work capacity.
+    const claimedHello = claims.filter((c) => c?.run && runs.includes(c.run.id)).map((c) => c.run.id);
+    assert.equal(claimedHello.length, 3);
 
-    // The runner record now reflects the saturated pool.
+    // The runner record now reflects the saturated work pool.
     const runners = (await api("/api/runners")).runners;
     const updated = runners.find((r) => r.id === reg.runner.id);
     assert.equal(updated.capacity, 3);
-    assert.equal(updated.activeRuns, 3);
+    assert.equal(updated.workRuns, 3);
     assert.equal(updated.availableSlots, 0);
   });
 
