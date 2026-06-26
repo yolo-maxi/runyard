@@ -480,6 +480,45 @@ export const seedCapabilities = [
     workflow: { engine: "smithers", entry: ".smithers/workflows/run-knowledge-builder.tsx" }
   },
   {
+    slug: "workflow-doctor",
+    name: "Workflow Doctor",
+    description:
+      "Diagnoses a failing Smithers workflow from recent redacted Hub run evidence, reads the workflow source, proposes the smallest fix, and can apply that fix only behind human approval.",
+    category: "Engineering",
+    keywords: ["workflow", "doctor", "diagnostics", "repair", "failure", "smithers"],
+    inputSchema: {
+      type: "object",
+      required: ["targetWorkflow"],
+      properties: {
+        targetWorkflow: { type: "string", description: "Workflow/capability slug to diagnose." },
+        lookbackHours: { type: "number", description: "How far back to sample failed/error runs. Default 168." },
+        count: { type: "number", description: "Maximum failed/error runs to inspect, 1-50. Default 20." },
+        apply: { type: "boolean", description: "If true, apply the smallest deterministic fix to the target workflow file. Default false." },
+        focus: { type: "string", description: "Optional diagnostic focus." }
+      }
+    },
+    outputSchema: {
+      type: "object",
+      properties: {
+        diagnosis: { type: "object", description: "Root cause, failing node, fix summary, confidence, and deterministic/transient classification." },
+        evidence: { type: "object", description: "Runs sampled, failed count, and normalized top error fingerprints." },
+        proposedDiff: { type: "string", description: "Unified diff preview for the proposed workflow-source change." },
+        applied: { type: "boolean", description: "Whether the workflow file was edited." },
+        graphOk: { type: "boolean", description: "Whether the edited workflow graphed cleanly." },
+        testResult: { type: "object", description: "pnpm test result or skip reason." }
+      }
+    },
+    requiredRunnerTags: ["smithers"],
+    requiredSkills: ["run-knowledge-loop", "implementation"],
+    requiredAgents: ["run-knowledge-analyst", "implementation-agent"],
+    approvalPolicy: {
+      required: true,
+      notifyTelegram: true,
+      reason: "Edits a workflow source file; requires human approval before applying a fix."
+    },
+    workflow: { engine: "smithers", entry: ".smithers/workflows/workflow-doctor.tsx" }
+  },
+  {
     slug: "improve-no-deploy",
     name: "Improve (no deploy)",
     description:

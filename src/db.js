@@ -1454,7 +1454,18 @@ function runBackstopExceeded(row, maxMs, nowMs) {
   return ageMs(started, nowMs) > maxMs;
 }
 
+function hasWaitingApprovalSupervisedChild(parentRunId) {
+  if (!parentRunId) return false;
+  const rows = all("SELECT input FROM runs WHERE status = 'waiting_approval' ORDER BY created_at DESC LIMIT 500");
+  for (const row of rows) {
+    const input = parseJson(row.input, {});
+    if (input?.__origin?.parentRunId === parentRunId) return true;
+  }
+  return false;
+}
+
 function runReapReason(row, { maxMs = 0, stallMs = env.runStallMs, runnerOfflineMs = env.runnerOfflineMs, nowMs = Date.now() } = {}) {
+  if (row.status === "waiting_approval") return null;
   if (row.runner_id && ageMs(row.last_heartbeat_at, nowMs) > runnerOfflineMs) {
     return {
       currentStep: "runner offline",
@@ -1464,6 +1475,7 @@ function runReapReason(row, { maxMs = 0, stallMs = env.runStallMs, runnerOffline
     };
   }
   if (stallMs > 0) {
+    if (row.capability_slug === "run-smithers" && hasWaitingApprovalSupervisedChild(row.id)) return null;
     const lastEventAt = row.last_event_at || row.started_at || row.assigned_at || row.created_at;
     if (ageMs(lastEventAt, nowMs) > stallMs) {
       return {
@@ -1491,6 +1503,8 @@ export function reapStuckRunIds(maxMs) {
   const active = all(
     `SELECT runs.id,
             runs.runner_id,
+            runs.status,
+            runs.capability_slug,
             runs.created_at,
             runs.assigned_at,
             runs.started_at,
@@ -1498,7 +1512,7 @@ export function reapStuckRunIds(maxMs) {
             (SELECT MAX(created_at) FROM run_events WHERE run_id = runs.id) AS last_event_at
        FROM runs
        LEFT JOIN runners ON runners.id = runs.runner_id
-      WHERE runs.status IN ('assigned','running')`
+      WHERE runs.status IN ('assigned','running','waiting_approval')`
   );
   const reaped = [];
   for (const row of active) {

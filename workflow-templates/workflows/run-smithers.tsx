@@ -123,6 +123,17 @@ async function pollChildRun(runId: string) {
   return { run: null, classification: classifyChildState(null) };
 }
 
+async function waitForChildApprovalDecision(runId: string) {
+  const deadline = POLL_DEADLINE_MS > 0 ? Date.now() + POLL_DEADLINE_MS : 0;
+  while (!deadline || Date.now() < deadline) {
+    const detail = await hubJson(`/api/runs/${encodeURIComponent(runId)}`);
+    const run = detail?.run;
+    if (!run || run.status !== "waiting_approval") return run || null;
+    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+  }
+  return null;
+}
+
 // Resolve the wrapped capability's workflow file + the repo that ships its
 // source (workflow templates always live in the Hub repo). Returns null if we
 // cannot resolve enough to attempt a safe repair.
@@ -267,6 +278,44 @@ async function requestApprovalCheckpoint(state: ReturnType<typeof createWatcherS
   });
 }
 
+async function requestChildApprovalBridge(
+  state: ReturnType<typeof createWatcherState>,
+  childRun: Record<string, unknown>,
+  decision: ReturnType<typeof decideNextAction>
+) {
+  const childRunId = String(childRun?.id || "");
+  if (!childRunId) return null;
+  const nodeId = String(childRun?.currentStep || "approval");
+  return hubJson(`/api/approvals`, {
+    method: "POST",
+    body: {
+      runId: childRunId,
+      title: `Approve ${state.capabilitySlug} checkpoint`,
+      description: decision.reason,
+      requestedBy: `workflow: ${state.capabilitySlug}`,
+      payload: {
+        kind: "child_run_approval",
+        approvalKind: "checkpoint",
+        approvalScope: "workflow_checkpoint",
+        capability: state.capabilitySlug,
+        wrappedCapability: state.capabilitySlug,
+        parentRunId: state.parentRunId,
+        childRunId,
+        nodeId,
+        approvalNode: nodeId,
+        watcher: watcherSummary(state),
+        child: {
+          runId: childRunId,
+          status: String(childRun?.status || "waiting_approval"),
+          nodeId,
+          currentStep: nodeId
+        },
+        notifyTelegram: true
+      }
+    }
+  }).catch((error) => ({ error: String(error).slice(0, 200) }));
+}
+
 export default smithers((ctx) => {
   const supervise = ctx.outputMaybe("supervise", { nodeId: "supervise" });
   return (
@@ -298,8 +347,15 @@ export default smithers((ctx) => {
               continue;
             }
             wrappedRunId = child.id;
-            const polled = await pollChildRun(child.id);
+            let polled = await pollChildRun(child.id);
             lastClassification = polled.classification;
+            while (lastClassification.kind === "waiting_approval") {
+              const decision = decideNextAction(state, lastClassification);
+              await requestChildApprovalBridge(state, polled.run || child, decision);
+              await waitForChildApprovalDecision(child.id);
+              polled = await pollChildRun(child.id);
+              lastClassification = polled.classification;
+            }
             recordChildAttempt(state, {
               runId: child.id,
               capability: state.capabilitySlug,

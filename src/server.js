@@ -9,6 +9,7 @@ import {
   authenticateToken,
   approvalPolicyNotifiesTelegram,
   createAccessToken,
+  createApproval,
   createArtifact,
   createRun,
   countWorkflowEndpointInvocations,
@@ -3755,6 +3756,32 @@ app.get("/api/approvals/:id", requireAuth, (req, res) => {
   const approval = getApproval(req.params.id);
   if (!approval) return res.status(404).json({ error: "approval not found" });
   res.json({ approval: withApprovalLinks(approval) });
+});
+function findExistingChildRunApproval(payload = {}) {
+  const childRunId = String(payload.childRunId || payload.child?.runId || "").trim();
+  const nodeId = String(payload.nodeId || payload.approvalNode || payload.child?.nodeId || "").trim();
+  if (!childRunId || !nodeId) return null;
+  return listApprovals("pending").find((approval) => {
+    const approvalPayload = approval.payload || {};
+    const approvalChildRunId = String(approvalPayload.childRunId || approvalPayload.child?.runId || "").trim();
+    const approvalNodeId = String(approvalPayload.nodeId || approvalPayload.approvalNode || approvalPayload.child?.nodeId || "").trim();
+    return approvalChildRunId === childRunId && approvalNodeId === nodeId;
+  }) || null;
+}
+app.post("/api/approvals", requireAuth, requireScopes("api", "mcp", "runner", "approvals"), async (req, res) => {
+  const payload = req.body?.payload && typeof req.body.payload === "object" ? req.body.payload : {};
+  const existing = findExistingChildRunApproval(payload);
+  if (existing) return res.status(200).json({ approval: withApprovalLinks(existing), idempotent: true });
+
+  const approval = createApproval({
+    runId: req.body?.runId || payload.childRunId || null,
+    title: String(req.body?.title || "Approval requested").slice(0, 240),
+    description: String(req.body?.description || "").slice(0, 2000),
+    requestedBy: String(req.body?.requestedBy || req.token?.name || "workflow").slice(0, 120),
+    payload
+  });
+  await notifyTelegram(approval);
+  res.status(201).json({ approval: withApprovalLinks(approval), idempotent: false });
 });
 function resolveApprovalHttp(req, res, decision) {
   const approval = getApproval(req.params.id);

@@ -1467,6 +1467,65 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
     }
   });
 
+  it("bridges a supervised child waiting_approval exactly once and approving it resumes the child", async () => {
+    const calls = [];
+    const restoreFetch = captureTelegramFetch(calls);
+    const restoreEnv = withTelegramEnv({
+      telegramBotToken: "test-bot-token",
+      telegramApprovalChatId: "12345",
+      baseUrl: "https://hub.example"
+    });
+    try {
+      const created = await api("/api/capabilities/hello/run", {
+        method: "POST",
+        body: { input: { goal: "child approval bridge" } }
+      });
+      updateRun(created.run.id, { status: "waiting_approval", current_step: "skin:approval" });
+      const bridgeBody = {
+        runId: created.run.id,
+        title: "Approve app-skinner checkpoint",
+        description: "Child run is paused for an operator decision.",
+        requestedBy: "workflow: app-skinner",
+        payload: {
+          kind: "child_run_approval",
+          approvalKind: "checkpoint",
+          approvalScope: "workflow_checkpoint",
+          capability: "app-skinner",
+          wrappedCapability: "app-skinner",
+          childRunId: created.run.id,
+          nodeId: "skin:approval",
+          approvalNode: "skin:approval",
+          notifyTelegram: true
+        }
+      };
+
+      const first = await raw("/api/approvals", { method: "POST", body: bridgeBody });
+      const second = await raw("/api/approvals", { method: "POST", body: bridgeBody });
+      assert.equal(first.status, 201);
+      assert.equal(second.status, 200);
+      assert.equal(second.data.idempotent, true);
+      assert.equal(second.data.approval.id, first.data.approval.id);
+
+      const approvals = (await api("/api/approvals?status=pending")).approvals.filter(
+        (approval) => approval.payload?.childRunId === created.run.id && approval.payload?.nodeId === "skin:approval"
+      );
+      assert.equal(approvals.length, 1);
+      assert.equal(calls.filter((call) => call.url.endsWith("/sendMessage")).length, 1);
+
+      const approved = await api(`/api/approvals/${first.data.approval.id}/approve`, {
+        method: "POST",
+        body: { comment: "Approved from test" }
+      });
+      assert.equal(approved.approval.decision, "approved");
+      const run = getRun(created.run.id);
+      assert.equal(run.status, "queued");
+      assert.equal(run.currentStep, "approval granted; queued");
+    } finally {
+      restoreEnv();
+      restoreFetch();
+    }
+  });
+
   it("resolves Telegram approve callbacks and removes action buttons", async () => {
     const calls = [];
     const restoreFetch = captureTelegramFetch(calls);
