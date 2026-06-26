@@ -103,6 +103,69 @@ let runnerId = process.env.SMITHERS_RUNNER_ID || loadCachedRunnerId() || "";
 const activeRuns = new Set();
 let completedRuns = 0;
 let intervalHandle = null;
+// Hub claim-auth health. A runner can register + heartbeat fine yet have every
+// claim rejected (dead token / wrong hub URL), looking "online" while doing
+// nothing. We track the last claim's auth result and surface it both in the logs
+// (loudly) and on the heartbeat (auth.hub) so the dashboard shows the fault.
+let hubAuthOk = true;
+let hubAuthError = "";
+let consecutiveAuthFaults = 0;
+
+function isAuthError(error) {
+  return error && (error.status === 401 || error.status === 403);
+}
+
+// Record the auth outcome of a claim/probe. On a fresh fault, log loudly once;
+// keep the count so repeated faults are visible without spamming every tick.
+function recordClaimAuth(ok, error) {
+  if (ok) {
+    if (!hubAuthOk) console.log(`Hub auth recovered against ${baseUrl}.`);
+    hubAuthOk = true;
+    hubAuthError = "";
+    consecutiveAuthFaults = 0;
+    return;
+  }
+  consecutiveAuthFaults += 1;
+  hubAuthOk = false;
+  hubAuthError = error ? `HTTP ${error.status}: ${error.message}` : "unauthorized";
+  if (consecutiveAuthFaults === 1 || consecutiveAuthFaults % 20 === 0) {
+    console.error(
+      `\n*** RUNNER HUB AUTH FAILURE (x${consecutiveAuthFaults}) ***\n` +
+        `Hub ${baseUrl} rejected this runner's token (${hubAuthError}).\n` +
+        `The runner is registered/online but CANNOT claim work. ` +
+        `Check RUNYARD_HUB_TOKEN / SMITHERS_HUB_URL in runner.env, then restart.\n`
+    );
+  }
+}
+
+// Startup self-check: prove the configured token actually authenticates AND can
+// reach the claim path against the configured hub before we sit in a polling
+// loop. A 200 (even "no work") confirms the runner is wired correctly; a 401/403
+// means a silent-misconfig runner — fail loudly so an operator notices.
+async function verifyHubAuth() {
+  if (!runnerId) return false;
+  try {
+    const assignment = await client.get(`/api/runners/${runnerId}/next-run`);
+    recordClaimAuth(true);
+    console.log(`Hub auth self-check OK against ${baseUrl} (token + claim path verified).`);
+    // The probe uses the REAL claim path (a 401/403 fires in auth middleware
+    // before any claim). If work happened to be queued it actually claimed a
+    // run — execute it rather than orphaning the assignment, which would leak a
+    // slot until the reaper releases it.
+    if (assignment?.run) {
+      executeAssignment(assignment).catch((error) => console.error("executeAssignment failed:", error.message));
+    }
+    return true;
+  } catch (error) {
+    if (isAuthError(error)) {
+      recordClaimAuth(false, error);
+      return false;
+    }
+    // Network/transient: warn but don't hard-fail; the poll loop will retry.
+    console.error(`Hub auth self-check could not reach ${baseUrl}: ${error.message}`);
+    return false;
+  }
+}
 // Where the updater writes the drain flag (the shared Hub dataDir). Resolved the
 // same way the Hub resolves it so a single-box install agrees without extra config.
 const drainDataDir = resolveDataDir();
@@ -390,7 +453,11 @@ function currentAuthHealth() {
     }
     authHealthCheckedAtMs = nowMs;
   }
-  return authHealthCache;
+  // Ride the hub claim-auth status along on every heartbeat so the dashboard can
+  // surface "online but can't claim" instead of a healthy-looking dead runner.
+  const base = authHealthCache && typeof authHealthCache === "object" ? { ...authHealthCache } : {};
+  base.hub = hubAuthOk ? { ok: true } : { ok: false, error: hubAuthError || "unauthorized" };
+  return base;
 }
 
 let tickInFlight = false;
@@ -437,7 +504,16 @@ async function tick() {
       // quickly as the runner can poll. Each executeAssignment runs as its own
       // async task; we don't await them so multiple runs progress concurrently.
       while (activeRuns.size < concurrency) {
-        const assignment = await client.get(`/api/runners/${runnerId}/next-run`).catch(() => ({}));
+        let assignment;
+        try {
+          assignment = await client.get(`/api/runners/${runnerId}/next-run`);
+          recordClaimAuth(true);
+        } catch (error) {
+          // A 401/403 is a config fault, not "no work" — surface it loudly via
+          // recordClaimAuth (logs + heartbeat) instead of silently swallowing.
+          if (isAuthError(error)) recordClaimAuth(false, error);
+          break;
+        }
         if (!assignment?.run) break;
         // Fire-and-forget — executeAssignment manages the activeRuns slot in
         // its own try/finally so an unexpected throw can't leak a slot.
@@ -452,6 +528,10 @@ async function tick() {
 
 async function main() {
   await register();
+  // Prove auth + claim path before entering the poll loop. A failure is logged
+  // loudly (recordClaimAuth) but non-fatal — the runner keeps retrying and the
+  // heartbeat reports auth.hub.ok=false so the misconfig is visible immediately.
+  await verifyHubAuth();
   await tick();
   intervalHandle = setInterval(() => tick().catch((e) => console.error("tick failed:", e.message)), intervalMs);
 }

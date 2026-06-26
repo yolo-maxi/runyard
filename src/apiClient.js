@@ -19,6 +19,10 @@ export class HubClient {
     const data = text ? JSON.parse(text) : null;
     if (!response.ok) {
       const error = new Error(data?.error || `HTTP ${response.status}`);
+      // Surface the HTTP status so callers can distinguish an auth/config fault
+      // (401/403 — dead token, wrong hub) from a transient network error and
+      // react loudly instead of silently treating it as "no work".
+      error.status = response.status;
       error.response = data;
       throw error;
     }

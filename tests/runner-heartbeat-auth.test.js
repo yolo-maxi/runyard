@@ -69,6 +69,25 @@ describe("runner auth health via heartbeat", () => {
     assert.ok(!JSON.stringify(list).includes("LEAK"));
   });
 
+  it("surfaces the hub claim-auth fault (online-but-can't-claim) and strips any token material", () => {
+    const runner = registerRunner({ name: "hb-runner-hub", tags: ["smithers"], capacity: 1 }, "tok-hb-hub");
+    heartbeatRunner(runner.id, {
+      capacity: 1,
+      activeRuns: 0,
+      auth: {
+        claude: { ok: true },
+        // Runner reports it is registered/online but every claim is rejected.
+        hub: { ok: false, error: "HTTP 401: unauthorized", access_token: "LEAK-HUB" },
+        checkedAt: "2026-06-26T00:00:00.000Z"
+      }
+    });
+    const stored = getRunner(runner.id);
+    assert.ok(stored.authHealth.hub, "hub auth status surfaced");
+    assert.equal(stored.authHealth.hub.ok, false);
+    assert.equal(stored.authHealth.hub.error, "HTTP 401: unauthorized");
+    assert.ok(!("access_token" in stored.authHealth.hub), "no token material survives");
+  });
+
   it("keeps the last known health when a heartbeat omits auth", async () => {
     const runner = registerRunner({ name: "hb-runner-2", tags: ["smithers"], capacity: 1 }, "tok-hb2");
     heartbeatRunner(runner.id, { auth: { codex: { ok: true }, claude: { ok: true } } });
