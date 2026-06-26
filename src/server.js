@@ -6,6 +6,7 @@ import express from "express";
 import { asyncHandler } from "./http.js";
 import { registerRunnerRoutes } from "./routes/runners.js";
 import { subscribeRunEvents } from "./runEventBus.js";
+import { buildHubRepairInput } from "./hubSupervisor.js";
 import {
   addRunEvent,
   authenticateToken,
@@ -50,6 +51,7 @@ import {
   pruneDeadRunners,
   reapStuckRunIds,
   reconcileFailedRecoverable,
+  reconcileRepairChildTerminal,
   reconcileRunnerActiveRuns,
   recordWorkflowEndpointInvocation,
   recordAudit,
@@ -941,24 +943,36 @@ function dispatchHubRepair(failedRun, decision) {
     const capability = getCapability("implement-change-gated");
     if (!capability || !capability.enabled) return false;
     const wrapped = getCapability(failedRun.capabilitySlug);
-    const entry = wrapped?.workflow?.entry || "";
-    const workPrompt =
-      `A supervised run of '${failedRun.capabilitySlug}' failed with a deterministic workflow-code error.\n` +
-      `Error: ${decision.fingerprint || failedRun.error || "unknown"}\n` +
-      (entry ? `Likely source: ${entry}\n` : "") +
-      `Apply the smallest safe fix to the workflow source so a resume can succeed. Do not change unrelated behavior.`;
-    const { run } = dispatchRun(capability, { workPrompt, deploy: false }, {
+    // Safety-scoped repair input (see buildHubRepairInput): forces a dedicated
+    // repair branch (never main), inherits the failed run's runner routing so
+    // the repair lands on the SAME runner class/repo that ran the failed
+    // workflow, and forwards its repo selector. Without this the repair could be
+    // claimed by any `smithers` runner (including production) and pushed to main.
+    const repairInput = buildHubRepairInput(failedRun, decision, {
+      wrappedEntry: wrapped?.workflow?.entry || "",
+      repairBranch: process.env.RUN_SMITHERS_REPAIR_BRANCH || "smithers-self-repair"
+    });
+    // The hub IS the supervisor here, so create the repair as a DIRECT run. The
+    // old code routed through dispatchRun, which re-wrapped it in another
+    // run-smithers envelope that ran on an arbitrary runner and nested a
+    // redundant supervisor; a direct run keeps the execution routing intact so
+    // only the inherited runner location can claim it.
+    const run = createRun(capability, repairInput, {
       requestedBy: "system:hub-supervisor",
       origin: { type: "hub-supervisor-repair", repairsRunId: failedRun.id, fingerprint: decision.fingerprint || "" }
     });
     addRunEvent(failedRun.id, "run.supervisor.repair_child", `Hub dispatched code repair run ${run.id}`, {
       repairRunId: run.id,
-      fingerprint: decision.fingerprint || ""
+      fingerprint: decision.fingerprint || "",
+      targetBranch: repairInput.targetBranch,
+      runnerLocation: repairInput.__execution?.runnerLocation || ""
     });
-    return Boolean(run);
+    // Return the child run id so the reconcile loop can park the parent ON this
+    // specific child and re-run it fresh once the child terminates.
+    return run?.id || "";
   } catch (error) {
     console.error("hub repair dispatch failed:", error.message);
-    return false;
+    return "";
   }
 }
 
@@ -3755,6 +3769,14 @@ function recordRunTerminalArtifacts(runId) {
   const retrospective = recordRunRetrospectiveArtifact(runId);
   scheduleRunObstructionAnalysisArtifact(runId);
   dispatchRunResponseEndpointDelivery(runId);
+  // Phase 2: if this terminal run was a hub-dispatched code-repair child, drive
+  // its parked parent — re-run it fresh on repair success, escalate on failure.
+  // No-op for every other run. Never let a hook error mask the terminal report.
+  try {
+    reconcileRepairChildTerminal(runId);
+  } catch (error) {
+    console.error("repair-child completion hook failed:", error.message);
+  }
   return retrospective;
 }
 

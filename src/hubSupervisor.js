@@ -205,6 +205,56 @@ export function decideReconcile(ctx = {}) {
   };
 }
 
+// Build the input for the one-shot hub-side code-repair run (implement-change-gated).
+//
+// Pure helper. Mirrors the *in-band* run-smithers self-repair safety contract
+// (workflow-templates/workflows/run-smithers.tsx::attemptWorkflowRepair) so the
+// hub-side Phase 2 path is never LESS safe than the in-band one. As originally
+// shipped, dispatchHubRepair sent only { workPrompt, deploy:false }, which let
+// implement-change-gated default targetBranch to "main" and resolve repoDir to
+// whatever runner happened to claim it — so an autonomous fix could be pushed
+// straight to main on an arbitrary (production) runner. This helper closes that:
+//
+//   * targetBranch is forced to a dedicated repair branch, NEVER main;
+//   * the failed run's execution routing (__execution.runnerLocation) is
+//     inherited so the repair runs on the SAME runner class — and thus the same
+//     repo — that ran the failed workflow, never a different/production runner;
+//   * the failed run's repo selector (repoDir / repo / project) is forwarded so
+//     the agent edits the intended repo.
+export function buildHubRepairInput(failedRun, decision, options = {}) {
+  const repairBranch = (options.repairBranch && String(options.repairBranch).trim()) || "smithers-self-repair";
+  const wrappedEntry = String(options.wrappedEntry || "");
+  const failedInput =
+    failedRun?.input && typeof failedRun.input === "object" && !Array.isArray(failedRun.input) ? failedRun.input : {};
+  const capabilitySlug = failedRun?.capabilitySlug || failedRun?.capability_slug || "";
+  const fingerprint = decision?.fingerprint || failedRun?.error || "unknown";
+
+  const workPrompt =
+    `A supervised run of '${capabilitySlug}' failed with a deterministic workflow-code error.\n` +
+    `Error: ${fingerprint}\n` +
+    (wrappedEntry ? `Likely source: ${wrappedEntry}\n` : "") +
+    `Apply the smallest safe fix to the workflow source so a resume can succeed. Do not change unrelated behavior.`;
+
+  const input = {
+    workPrompt,
+    deploy: false,
+    targetBranch: repairBranch,
+    commitMessage: `fix: hub-supervisor self-repair of ${wrappedEntry || capabilitySlug}`.slice(0, 200)
+  };
+
+  const repoDir = typeof failedInput.repoDir === "string" ? failedInput.repoDir.trim() : "";
+  const repo = typeof failedInput.repo === "string" ? failedInput.repo.trim() : "";
+  const project = typeof failedInput.project === "string" ? failedInput.project.trim() : "";
+  if (repoDir) input.repoDir = repoDir;
+  else if (repo) input.repo = repo;
+  else if (project) input.project = project;
+
+  const exec = failedInput.__execution;
+  if (exec && typeof exec === "object" && !Array.isArray(exec)) input.__execution = exec;
+
+  return input;
+}
+
 // Build the standard operator approval payload for an escalation decision so the
 // reaper and the dashboard render a consistent self-heal card with concrete
 // options. Pure helper.

@@ -12,7 +12,7 @@ process.env.SMITHERS_HUB_SESSION_SECRET = "test-secret";
 process.env.SMITHERS_HUB_BOOTSTRAP_TOKEN = "shub_supervisor_token";
 process.env.SMITHERS_OBSTRUCTION_ANALYSIS_ENABLED = "0";
 
-const { decideReconcile, HUB_DEFAULT_CAPS } = await import("../src/hubSupervisor.js");
+const { decideReconcile, HUB_DEFAULT_CAPS, buildHubRepairInput } = await import("../src/hubSupervisor.js");
 const {
   addRunEvent,
   claimNextRun,
@@ -24,6 +24,7 @@ const {
   listRunLineage,
   reapStuckRunIds,
   reconcileFailedRecoverable,
+  reconcileRepairChildTerminal,
   registerRunner,
   transitionRun
 } = await import("../src/db.js");
@@ -132,6 +133,47 @@ describe("hubSupervisor.decideReconcile (pure)", () => {
   });
 });
 
+describe("buildHubRepairInput (hub-side repair safety scoping)", () => {
+  const decision = { fingerprint: "referenceerror: x is not defined" };
+
+  it("forces a dedicated repair branch and never main", () => {
+    const input = buildHubRepairInput({ capabilitySlug: "canary", input: {} }, decision, { wrappedEntry: ".smithers/workflows/canary.tsx" });
+    assert.equal(input.targetBranch, "smithers-self-repair");
+    assert.notEqual(input.targetBranch, "main");
+    assert.equal(input.deploy, false);
+    assert.match(input.workPrompt, /Likely source: \.smithers\/workflows\/canary\.tsx/);
+  });
+
+  it("honours an explicit repair branch override", () => {
+    const input = buildHubRepairInput({ capabilitySlug: "canary", input: {} }, decision, { repairBranch: "hub-repair-x" });
+    assert.equal(input.targetBranch, "hub-repair-x");
+  });
+
+  it("inherits the failed run's execution routing so the repair stays on the same runner class", () => {
+    const exec = { mode: "remote", runnerLocation: "canary-repair-proof", requested: true };
+    const input = buildHubRepairInput({ capabilitySlug: "canary", input: { __execution: exec } }, decision);
+    assert.deepEqual(input.__execution, exec);
+  });
+
+  it("forwards the failed run's repo selector (repoDir > repo > project)", () => {
+    assert.equal(buildHubRepairInput({ input: { repoDir: "/srv/repo" } }, decision).repoDir, "/srv/repo");
+    assert.equal(buildHubRepairInput({ input: { repo: "runyard" } }, decision).repo, "runyard");
+    assert.equal(buildHubRepairInput({ input: { project: "proj" } }, decision).project, "proj");
+    // repoDir wins when several are present.
+    const input = buildHubRepairInput({ input: { repoDir: "/srv/repo", repo: "runyard" } }, decision);
+    assert.equal(input.repoDir, "/srv/repo");
+    assert.equal(input.repo, undefined);
+  });
+
+  it("omits routing/selector when the failed run carries none (untargeted resolves on the claiming runner)", () => {
+    const input = buildHubRepairInput({ capabilitySlug: "canary", input: {} }, decision);
+    assert.equal(input.__execution, undefined);
+    assert.equal(input.repoDir, undefined);
+    assert.equal(input.repo, undefined);
+    assert.equal(input.project, undefined);
+  });
+});
+
 function fpOf(error) {
   // Mirror the module's normalized fingerprint for the strike-count fixture.
   return decideReconcile({ reason: "failed", error, checkpoint: "run-1" }).fingerprint;
@@ -214,6 +256,113 @@ describe("reaper resumes orphaned runs instead of failing them", () => {
     } finally {
       env.runnerOfflineMs = prevOffline;
     }
+  });
+});
+
+describe("Phase 2 hub-side repair: park child, re-run fresh / escalate", () => {
+  const codeError = "ReferenceError: multiplier is not defined at canary-repair-proof.tsx:12:5";
+
+  function failedCodeBugRun(input = { topic: "code-bug" }) {
+    const cap = getCapability("hello");
+    const run = createRun(cap, input);
+    addRunEvent(run.id, "smithers.dispatched", "started", { smithersRunId: "run-canary-old" });
+    transitionRun(run.id, "running", { current_step: "running" });
+    transitionRun(run.id, "failed", { error: codeError, current_step: "failed", completed_at: oldIso(0) });
+    return run;
+  }
+
+  function parkOn(parentId, childId, fingerprint = "fp", extra = {}) {
+    db.prepare("UPDATE runs SET supervisor_meta=? WHERE id=?").run(
+      JSON.stringify({ awaitingRepair: true, repairChildRunId: childId, lastFingerprint: fingerprint, repairedFingerprints: { [fingerprint]: 1 }, ...extra }),
+      parentId
+    );
+  }
+
+  it("on a deterministic code bug: dispatches a child, PARKS the parent (no resume), bumps the counter", () => {
+    const run = failedCodeBugRun();
+    let captured = null;
+    const dispatchRepair = (failedRun, decision, checkpoint) => {
+      captured = { decision, checkpoint };
+      return "run-repair-child-1";
+    };
+    const acted = reconcileFailedRecoverable({ dispatchRepair });
+    assert.ok(acted.includes(run.id));
+    assert.ok(captured, "dispatchRepair was called");
+
+    const row = db.prepare("SELECT status, repair_count, supervisor_meta, input FROM runs WHERE id = ?").get(run.id);
+    // Parked: still failed, NOT requeued, and NO resume marker was stamped.
+    assert.equal(row.status, "failed");
+    assert.equal(row.repair_count, 1);
+    assert.equal(JSON.parse(row.input).__resume, undefined);
+    const meta = JSON.parse(row.supervisor_meta);
+    assert.equal(meta.awaitingRepair, true);
+    assert.equal(meta.repairChildRunId, "run-repair-child-1");
+    assert.equal(meta.repairedFingerprints[captured.decision.fingerprint], 1);
+
+    // While parked (child run id not yet terminal/known), a second tick does not re-dispatch.
+    let redispatched = false;
+    reconcileFailedRecoverable({ dispatchRepair: () => { redispatched = true; return "x"; } });
+    assert.equal(redispatched, false);
+  });
+
+  it("repair child SUCCESS re-runs the parent FRESH (queued, new attempt, no resume marker)", () => {
+    const cap = getCapability("hello");
+    const parent = failedCodeBugRun({ topic: "rerun" });
+    const child = createRun(cap, { workPrompt: "fix" }, { origin: { type: "hub-supervisor-repair", repairsRunId: parent.id } });
+    parkOn(parent.id, child.id);
+    transitionRun(child.id, "running", {});
+    transitionRun(child.id, "succeeded", { completed_at: oldIso(0) });
+
+    const out = reconcileRepairChildTerminal(child.id);
+    assert.equal(out.action, "rerun");
+    const row = db.prepare("SELECT status, input, supervisor_meta, attempt FROM runs WHERE id = ?").get(parent.id);
+    assert.equal(row.status, "queued");
+    assert.equal(JSON.parse(row.input).__resume, undefined); // fresh — never resume a changed source
+    assert.equal(JSON.parse(row.supervisor_meta).awaitingRepair, false);
+    assert.equal(listRunLineage(parent.id).at(-1).action, "rerun");
+
+    // Idempotent: a duplicate terminal report does not re-queue again.
+    const dup = reconcileRepairChildTerminal(child.id);
+    assert.equal(dup, null);
+  });
+
+  it("repair child FAILURE escalates the parent to an operator card (code_repair_failed)", () => {
+    const cap = getCapability("hello");
+    const parent = failedCodeBugRun({ topic: "escal" });
+    const child = createRun(cap, { workPrompt: "fix" }, { origin: { type: "hub-supervisor-repair", repairsRunId: parent.id } });
+    parkOn(parent.id, child.id);
+    transitionRun(child.id, "running", {});
+    transitionRun(child.id, "failed", { error: "GATE FAILED: pnpm test did not pass", completed_at: oldIso(0) });
+
+    const out = reconcileRepairChildTerminal(child.id);
+    assert.equal(out.action, "escalate");
+    const cards = listApprovals("pending").filter((a) => a.runId === parent.id && a.payload?.kind === "supervisor_escalation");
+    assert.equal(cards.length, 1);
+    assert.equal(cards[0].payload.escalation, "code_repair_failed");
+  });
+
+  it("ignores a hub-repair child whose parent is not parked on it (idempotency guard)", () => {
+    const cap = getCapability("hello");
+    const parent = failedCodeBugRun({ topic: "notparked" });
+    const child = createRun(cap, { workPrompt: "fix" }, { origin: { type: "hub-supervisor-repair", repairsRunId: parent.id } });
+    // parent left with default meta (no awaitingRepair)
+    transitionRun(child.id, "running", {});
+    transitionRun(child.id, "succeeded", { completed_at: oldIso(0) });
+    assert.equal(reconcileRepairChildTerminal(child.id), null);
+    assert.equal(getRun(parent.id).status, "failed");
+  });
+
+  it("restart backstop: reconcileFailedRecoverable drives a parked parent whose child already finished", () => {
+    const cap = getCapability("hello");
+    const parent = failedCodeBugRun({ topic: "backstop" });
+    const child = createRun(cap, { workPrompt: "fix" }, { origin: { type: "hub-supervisor-repair", repairsRunId: parent.id } });
+    parkOn(parent.id, child.id);
+    transitionRun(child.id, "running", {});
+    transitionRun(child.id, "succeeded", { completed_at: oldIso(0) });
+    // No completion hook ran (simulating a hub restart). The scan must reconcile it.
+    const acted = reconcileFailedRecoverable({ dispatchRepair: () => "should-not-be-called" });
+    assert.ok(acted.includes(parent.id));
+    assert.equal(getRun(parent.id).status, "queued");
   });
 });
 

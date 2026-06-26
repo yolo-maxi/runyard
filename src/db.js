@@ -1584,7 +1584,12 @@ function readSupervisorMeta(row) {
     lastFingerprint: meta.lastFingerprint || "",
     lastCheckpoint: meta.lastCheckpoint || "",
     adjudicated: Boolean(meta.adjudicated),
-    lastDecision: meta.lastDecision || ""
+    lastDecision: meta.lastDecision || "",
+    // Phase 2 sequencing: a run parked while its one-shot code-repair child runs.
+    // It is NOT re-adjudicated while parked; its repair child's terminal drives it
+    // (reconcileRepairChildTerminal) — re-run fresh on success, escalate on failure.
+    awaitingRepair: Boolean(meta.awaitingRepair),
+    repairChildRunId: meta.repairChildRunId || ""
   };
 }
 
@@ -1696,6 +1701,79 @@ function requeueRunForResume(row, decision, checkpoint, observedStatus) {
   return true;
 }
 
+// Re-queue a failed run for a FRESH re-run (a brand new smithers run), clearing
+// any prior resume marker. Used after a code repair: the workflow source changed,
+// so the run must start clean rather than resume the old (now source-mismatched)
+// smithers checkpoint. CAS-guarded on the observed `failed` status so a late
+// duplicate completion can never double-dispatch.
+function requeueRunFresh(row, { fingerprint = "", reason = "" } = {}) {
+  const meta = readSupervisorMeta(row);
+  const nextAttempt = (Number(row.attempt) || 0) + 1;
+  meta.adjudicated = false;
+  meta.awaitingRepair = false;
+  meta.lastDecision = "repair_rerun";
+  // Drop the resume marker so the claiming runner starts a fresh `smithers up`
+  // (no --resume) against the repaired source.
+  const input = parseJson(row.input, {});
+  delete input.__resume;
+  const timestamp = now();
+  const result = run(
+    `UPDATE runs
+        SET status='queued', runner_id=NULL, current_step='queued (re-run after code repair)',
+            error=NULL, attempt=$attempt, supervisor_meta=$meta, input=$input,
+            completed_at=NULL, updated_at=$ts
+      WHERE id=$id AND status='failed'`,
+    { id: row.id, attempt: nextAttempt, meta: json(meta, {}), input: json(input, {}), ts: timestamp }
+  );
+  if (!result.changes) return false;
+  recordRunLineage(row.id, { attempt: nextAttempt, action: "rerun", reason, fingerprint, prevRunnerId: row.runner_id, checkpoint: null });
+  addRunEvent(row.id, "run.supervisor.rerun", `Hub re-ran run from a clean state after code repair (attempt ${nextAttempt})`, { attempt: nextAttempt, fingerprint, reason });
+  return true;
+}
+
+// Phase 2 completion hook: drive a PARKED parent run when its one-shot
+// hub-dispatched code-repair child reaches a terminal state. On repair success
+// the parent re-runs FRESH against the fix (smithers cannot resume across a
+// source change); on repair failure/cancel the parent escalates to an operator
+// card. Idempotent and safe to call more than once (e.g. on the runner's
+// completion report AND as a restart backstop from reconcileFailedRecoverable):
+// only the parent that is parked on THIS child is ever touched.
+export function reconcileRepairChildTerminal(repairRunId) {
+  if (!repairRunId) return null;
+  const repair = one("SELECT id, status, input FROM runs WHERE id = ?", [String(repairRunId)]);
+  if (!repair || !RUN_TERMINAL.has(repair.status)) return null;
+  const origin = parseJson(repair.input, {})?.__origin || {};
+  if (origin.type !== "hub-supervisor-repair") return null;
+  const parentId = origin.repairsRunId || "";
+  if (!parentId) return null;
+  const parent = one("SELECT * FROM runs WHERE id = ?", [String(parentId)]);
+  if (!parent) return null;
+  const meta = readSupervisorMeta(parent);
+  // Only act if the parent is parked specifically on this child (idempotency).
+  if (!meta.awaitingRepair) return null;
+  if (meta.repairChildRunId && meta.repairChildRunId !== String(repairRunId)) return null;
+  const fingerprint = meta.lastFingerprint || "";
+
+  if (repair.status === "succeeded") {
+    addRunEvent(parent.id, "run.supervisor.repair_succeeded", `Code repair ${repairRunId} succeeded; re-running from a clean state`, { repairRunId, fingerprint });
+    const requeued = requeueRunFresh(parent, { fingerprint, reason: "workflow-code repair applied; re-running fresh against the fix" });
+    return { action: requeued ? "rerun" : "noop", parentId, repairRunId };
+  }
+
+  // Repair failed/cancelled — clear the park flag and escalate the parent.
+  meta.awaitingRepair = false;
+  run("UPDATE runs SET supervisor_meta=? WHERE id=?", [json(meta, {}), parent.id]);
+  const decision = {
+    action: "escalate",
+    escalation: "code_repair_failed",
+    fingerprint,
+    attempt: Number(parent.attempt) || 0,
+    reason: `automated code repair run ${repairRunId} ended '${repair.status}'; operator review required`
+  };
+  finalizeSupervisorTerminal(parent, decision, "failed", { escalate: true });
+  return { action: "escalate", parentId, repairRunId };
+}
+
 // Mark a run terminally failed under supervisor control (give_up / escalate).
 // Sets the adjudicated flag so the failed-recoverable scan never re-picks it.
 function finalizeSupervisorTerminal(row, decision, observedStatus, { escalate = false, failError = "", failStep = "" } = {}) {
@@ -1779,24 +1857,35 @@ function adjudicateRun(row, { reason, error, observedStatus, currentStep = "", d
   });
 
   if (decision.action === "repair" && dispatchRepair) {
-    // Phase 2: dispatch a one-shot code repair, then resume. The dispatcher
-    // (server.js) owns child-run creation; on success we bump the per-fingerprint
-    // repair counter so the same fingerprint is never repaired twice.
-    let repaired = false;
+    // Phase 2: dispatch a one-shot code repair, then PARK this run until the
+    // repair child terminates (reconcileRepairChildTerminal drives it from there).
+    // We do NOT resume here: a code repair changes the workflow source, and
+    // smithers refuses to resume a run whose source changed ("durable metadata
+    // changed"). Parking-until-the-child-finishes also removes the fire-and-forget
+    // race where the parent could re-run before the fix landed. The dispatcher
+    // (server.js) owns child-run creation and returns the child's run id.
+    let repairChildId = "";
     try {
-      repaired = Boolean(dispatchRepair(normalizeRun(row), decision, checkpoint));
+      const out = dispatchRepair(normalizeRun(row), decision, checkpoint);
+      repairChildId = typeof out === "string" ? out : out && out.id ? String(out.id) : out ? "pending" : "";
     } catch (err) {
-      repaired = false;
+      repairChildId = "";
     }
-    if (repaired) {
+    if (repairChildId) {
       const fp = decision.fingerprint || "";
+      // Bump the per-fingerprint repair counter now so the same fingerprint is
+      // never repaired twice even if the parent fails again before the child ends.
       if (fp) meta.repairedFingerprints[fp] = (meta.repairedFingerprints[fp] || 0) + 1;
       meta.lastDecision = "repair";
+      meta.lastFingerprint = fp || meta.lastFingerprint;
+      meta.awaitingRepair = true;
+      meta.repairChildRunId = repairChildId === "pending" ? "" : repairChildId;
       run("UPDATE runs SET repair_count=?, supervisor_meta=? WHERE id=?", [(Number(row.repair_count) || 0) + 1, json(meta, {}), row.id]);
       recordRunLineage(row.id, { attempt: Number(row.attempt) || 0, action: "repair", reason: decision.reason, fingerprint: fp, prevRunnerId: row.runner_id, checkpoint });
-      addRunEvent(row.id, "run.supervisor.repair_dispatched", decision.reason, { fingerprint: fp });
-      const resumed = requeueRunForResume({ ...row, repair_count: (Number(row.repair_count) || 0) + 1 }, decision, checkpoint, observedStatus);
-      return { action: "repair", endedTerminal: false, resumed };
+      addRunEvent(row.id, "run.supervisor.repair_dispatched", decision.reason, { fingerprint: fp, repairChildRunId: meta.repairChildRunId });
+      // Parked: stays `failed` but not re-adjudicated; the child's terminal re-runs
+      // it fresh (success) or escalates (failure). No requeue, no resume here.
+      return { action: "repair", endedTerminal: false, resumed: false };
     }
     // Repair could not be dispatched — fall back to escalate rather than loop.
     return { action: "escalate", endedTerminal: finalizeSupervisorTerminal(row, { ...decision, action: "escalate", escalation: "code_repair_undispatched" }, observedStatus, { escalate: true }) };
@@ -1883,6 +1972,20 @@ export function reconcileFailedRecoverable({ dispatchRepair = null, limit = 25, 
   for (const row of candidates) {
     const meta = readSupervisorMeta(row);
     if (meta.adjudicated) continue; // already given up / escalated — never re-pick
+    if (meta.awaitingRepair) {
+      // Parked while its code-repair child runs. Normally the child's terminal
+      // report drives the parent; this is the restart backstop — if the child
+      // already finished (e.g. the hub restarted before the completion hook
+      // fired), reconcile it now so a parked run can never get stuck.
+      if (meta.repairChildRunId) {
+        const child = one("SELECT status FROM runs WHERE id = ?", [meta.repairChildRunId]);
+        if (child && RUN_TERMINAL.has(child.status)) {
+          const out = reconcileRepairChildTerminal(meta.repairChildRunId);
+          if (out && out.action && out.action !== "noop") acted.push(row.id);
+        }
+      }
+      continue;
+    }
     if (!runResumeCheckpoint(row.id)) continue; // no resumable substrate
     const outcome = adjudicateRun(row, { reason: "failed", error: row.error || "", observedStatus: "failed", dispatchRepair });
     if (outcome.action === "resume" || outcome.action === "repair" || outcome.action === "escalate") acted.push(row.id);
