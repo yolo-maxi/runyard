@@ -2198,7 +2198,9 @@ describe("Gated implement-change capability", () => {
     const src = readFileSync(tpl, "utf8");
     assert.match(src, /pnpm/);
     assert.match(src, /git.*push.*origin|push", "origin"/);
+    assert.match(src, /CodexAgent/);
     assert.match(src, /ClaudeCodeAgent/);
+    assert.match(src, /RUNYARD_IMPLEMENT_AGENT_CLI/);
   });
 });
 

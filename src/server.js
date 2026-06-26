@@ -957,15 +957,20 @@ function dispatchHubRepair(failedRun, decision) {
     // run-smithers envelope that ran on an arbitrary runner and nested a
     // redundant supervisor; a direct run keeps the execution routing intact so
     // only the inherited runner location can claim it.
-    const run = createRun(capability, repairInput, {
+    const createOptions = {
       requestedBy: "system:hub-supervisor",
       origin: { type: "hub-supervisor-repair", repairsRunId: failedRun.id, fingerprint: decision.fingerprint || "" }
-    });
+    };
+    if (!repairInput.__execution?.runnerLocation && failedRun.runnerId) {
+      createOptions.runnerId = failedRun.runnerId;
+    }
+    const run = createRun(capability, repairInput, createOptions);
     addRunEvent(failedRun.id, "run.supervisor.repair_child", `Hub dispatched code repair run ${run.id}`, {
       repairRunId: run.id,
       fingerprint: decision.fingerprint || "",
       targetBranch: repairInput.targetBranch,
-      runnerLocation: repairInput.__execution?.runnerLocation || ""
+      runnerLocation: repairInput.__execution?.runnerLocation || "",
+      runnerId: createOptions.runnerId || ""
     });
     // Return the child run id so the reconcile loop can park the parent ON this
     // specific child and re-run it fresh once the child terminates.

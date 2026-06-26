@@ -2,7 +2,7 @@
 // smithers-display-name: Implement Change (gated)
 // smithers-description: Runs an implementation agent for a change request, then gates it (pnpm install --frozen-lockfile, pnpm test, staged diff, a sane commit, push to origin) before optionally deploying to a configured production target. deploy=false stops after push and reports what would deploy.
 /** @jsxImportSource smithers-orchestrator */
-import { createSmithers, Sequence, ClaudeCodeAgent } from "smithers-orchestrator";
+import { createSmithers, Sequence, CodexAgent, ClaudeCodeAgent } from "smithers-orchestrator";
 import { existsSync } from "node:fs";
 import { z } from "zod/v4";
 import { resolveImproveRepo } from "./improve-repo.js";
@@ -99,15 +99,28 @@ const { Workflow, Task, smithers, outputs } = createSmithers({
   deploy: deployOut
 });
 
+const IMPLEMENT_AGENT_CLI = String(process.env.RUNYARD_IMPLEMENT_AGENT_CLI || "codex").toLowerCase();
+
 function createBuilder(repoDir) {
-  return new ClaudeCodeAgent({
-    model: "claude-opus-4-7",
+  const systemPrompt =
+    "You are an implementation agent working inside a git repository. Make the requested change with tight, idiomatic edits that match the surrounding code. " +
+    "Do NOT git commit, git push, or deploy, and do NOT run the test suite — a separate gated pipeline runs tests, commits, pushes, and deploys. Keep changes scoped; do not touch unrelated files.";
+  if (IMPLEMENT_AGENT_CLI === "claude") {
+    return new ClaudeCodeAgent({
+      model: process.env.RUNYARD_IMPLEMENT_AGENT_MODEL || "claude-opus-4-7",
+      cwd: repoDir,
+      dangerouslySkipPermissions: true,
+      timeoutMs: 45 * 60 * 1000,
+      systemPrompt
+    });
+  }
+  return new CodexAgent({
+    ...(process.env.RUNYARD_IMPLEMENT_AGENT_MODEL ? { model: process.env.RUNYARD_IMPLEMENT_AGENT_MODEL } : {}),
     cwd: repoDir,
-    dangerouslySkipPermissions: true,
+    sandbox: "danger-full-access",
+    nativeStructuredOutput: true,
     timeoutMs: 45 * 60 * 1000,
-    systemPrompt:
-      "You are an implementation agent working inside a git repository. Make the requested change with tight, idiomatic edits that match the surrounding code. " +
-      "Do NOT git commit, git push, or deploy, and do NOT run the test suite — a separate gated pipeline runs tests, commits, pushes, and deploys. Keep changes scoped; do not touch unrelated files."
+    systemPrompt
   });
 }
 

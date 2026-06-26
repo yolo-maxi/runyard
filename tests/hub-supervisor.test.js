@@ -149,6 +149,11 @@ describe("buildHubRepairInput (hub-side repair safety scoping)", () => {
     assert.equal(input.targetBranch, "hub-repair-x");
   });
 
+  it("refuses a main repair branch override", () => {
+    const input = buildHubRepairInput({ capabilitySlug: "canary", input: {} }, decision, { repairBranch: "main" });
+    assert.equal(input.targetBranch, "smithers-self-repair");
+  });
+
   it("inherits the failed run's execution routing so the repair stays on the same runner class", () => {
     const exec = { mode: "remote", runnerLocation: "canary-repair-proof", requested: true };
     const input = buildHubRepairInput({ capabilitySlug: "canary", input: { __execution: exec } }, decision);

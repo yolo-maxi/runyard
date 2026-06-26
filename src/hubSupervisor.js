@@ -222,7 +222,8 @@ export function decideReconcile(ctx = {}) {
 //   * the failed run's repo selector (repoDir / repo / project) is forwarded so
 //     the agent edits the intended repo.
 export function buildHubRepairInput(failedRun, decision, options = {}) {
-  const repairBranch = (options.repairBranch && String(options.repairBranch).trim()) || "smithers-self-repair";
+  const requestedRepairBranch = (options.repairBranch && String(options.repairBranch).trim()) || "";
+  const repairBranch = requestedRepairBranch && requestedRepairBranch !== "main" ? requestedRepairBranch : "smithers-self-repair";
   const wrappedEntry = String(options.wrappedEntry || "");
   const failedInput =
     failedRun?.input && typeof failedRun.input === "object" && !Array.isArray(failedRun.input) ? failedRun.input : {};
