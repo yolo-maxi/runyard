@@ -49,6 +49,7 @@ import {
   listWorkflowEndpoints,
   pruneDeadRunners,
   reapStuckRunIds,
+  reconcileFailedRecoverable,
   reconcileRunnerActiveRuns,
   recordWorkflowEndpointInvocation,
   recordAudit,
@@ -926,6 +927,40 @@ function dispatchRun(capability, input, options = {}) {
   }
 
   return { run: createRun(capability, input, options) };
+}
+
+// Phase 2 (flag-gated, default OFF): the hub's one-shot code-repair dispatcher.
+// Invoked by the failed-recoverable reconcile only when the classifier judged a
+// failure a deterministic workflow-code bug AND HUB_SUPERVISOR_REPAIR_ENABLED is
+// set. It creates a single `implement-change-gated` run that edits the failing
+// workflow's source, then returns true so the reconcile loop bumps the
+// per-fingerprint repair counter and resumes. Any error → false → the reconcile
+// loop escalates to an operator card instead of looping. Bounded by the
+// per-fingerprint repair cap enforced upstream in src/hubSupervisor.js.
+function dispatchHubRepair(failedRun, decision) {
+  try {
+    const capability = getCapability("implement-change-gated");
+    if (!capability || !capability.enabled) return false;
+    const wrapped = getCapability(failedRun.capabilitySlug);
+    const entry = wrapped?.workflow?.entry || "";
+    const workPrompt =
+      `A supervised run of '${failedRun.capabilitySlug}' failed with a deterministic workflow-code error.\n` +
+      `Error: ${decision.fingerprint || failedRun.error || "unknown"}\n` +
+      (entry ? `Likely source: ${entry}\n` : "") +
+      `Apply the smallest safe fix to the workflow source so a resume can succeed. Do not change unrelated behavior.`;
+    const { run } = dispatchRun(capability, { workPrompt, deploy: false }, {
+      requestedBy: "system:hub-supervisor",
+      origin: { type: "hub-supervisor-repair", repairsRunId: failedRun.id, fingerprint: decision.fingerprint || "" }
+    });
+    addRunEvent(failedRun.id, "run.supervisor.repair_child", `Hub dispatched code repair run ${run.id}`, {
+      repairRunId: run.id,
+      fingerprint: decision.fingerprint || ""
+    });
+    return Boolean(run);
+  } catch (error) {
+    console.error("hub repair dispatch failed:", error.message);
+    return false;
+  }
 }
 
 function withCapabilityLinks(cap) {
@@ -3952,6 +3987,22 @@ if (process.argv[1]?.endsWith("server.js")) {
       reapStuckRunsWithRetrospectives(env.runDeadlineMs);
     } catch (error) {
       console.error("Run reaper failed:", error.message);
+    }
+    try {
+      // Hub-as-supervisor backstop: resume runs a runner self-reported as
+      // `failed` but that still carry a resumable checkpoint and budget. The
+      // orphaned-runner case is handled inline by the reaper above; this catches
+      // clean failures the in-band supervisor isn't covering. Phase 2 code
+      // repair stays off by default (HUB_SUPERVISOR_REPAIR_ENABLED) — when
+      // disabled, deterministic code-bug failures escalate to an operator card
+      // instead of an auto-repair, which is the safe behavior while the on-box
+      // Codex CLI auth is expired.
+      const acted = reconcileFailedRecoverable({
+        dispatchRepair: env.hubSupervisorRepairEnabled ? dispatchHubRepair : null
+      });
+      if (acted.length) console.log(`Hub supervisor reconciled ${acted.length} failed-recoverable run(s): ${acted.join(", ")}`);
+    } catch (error) {
+      console.error("Hub supervisor reconcile failed:", error.message);
     }
     try {
       // Self-correct any drift in the cached per-runner active_runs counter by

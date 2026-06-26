@@ -184,6 +184,12 @@ export const env = {
   })(),
   // Optional max-runtime backstop for the reaper. Heartbeat/stall liveness is primary; 0 disables.
   runDeadlineMs: Number(process.env.SMITHERS_RUN_DEADLINE_MS || 0),
+  // Phase 2 hub-as-supervisor code repair. When ON, a deterministic workflow-code
+  // failure on a recoverable run triggers ONE bounded `implement-change-gated`
+  // repair before the hub resumes it. OFF (default) → such failures escalate to
+  // an operator approval card instead. Default off: the on-box Codex CLI auth is
+  // currently expired, so an auto-repair agent would just fail; escalate is safe.
+  hubSupervisorRepairEnabled: parseBool(process.env.HUB_SUPERVISOR_REPAIR_ENABLED, false),
   // Best-effort terminal run obstruction analysis. If no provider/API key is
   // configured, the artifact pass is skipped; deterministic retrospectives
   // still run normally.

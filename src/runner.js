@@ -228,9 +228,21 @@ async function register() {
 // the allowlisted, decrypted secrets the Hub injected with this run's claim;
 // they are merged into the child process env so the workflow's agent can use
 // them, and never written to disk/inputs/logs.
-async function launch(entry, input, secretEnv = {}) {
+async function launch(entry, input, secretEnv = {}, resume = null) {
   const workflowPath = path.isAbsolute(entry) ? entry : path.join(workspace, entry);
-  const { stdout } = await smithers(["up", workflowPath, "--input", JSON.stringify(input || {}), "-d", "--format", "json"], {
+  // Hub-as-supervisor resume: when the hub re-dispatched this run to recover it
+  // (its prior runner died or it failed recoverably), `resume` carries the prior
+  // Smithers run id. `--resume <sid> --force` reattaches to that durable run on
+  // the shared workspace and continues from the last checkpoint instead of
+  // starting from scratch. The internal `__resume` marker is stripped from the
+  // workflow input so it never reaches the workflow body.
+  const cleanInput = { ...(input || {}) };
+  delete cleanInput.__resume;
+  const args = ["up", workflowPath, "--input", JSON.stringify(cleanInput), "-d", "--format", "json"];
+  if (resume?.smithersRunId) {
+    args.push("--resume", String(resume.smithersRunId), "--force");
+  }
+  const { stdout } = await smithers(args, {
     env: { ...process.env, ...secretEnv }
   });
   try {
@@ -329,7 +341,16 @@ async function executeAssignment(assignment) {
     if (!entry) throw new Error(`capability ${capability.slug} has no workflow.entry`);
     await event(run.id, "runner.started", `Executing Smithers workflow ${entry} on ${name}`, { runnerId, entry, location });
 
-    const sid = await launch(entry, run.input, secretEnv);
+    // A hub-supervised resume carries the prior Smithers run id in __resume.
+    const resume = run.input && typeof run.input === "object" ? run.input.__resume : null;
+    const sid = await launch(entry, run.input, secretEnv, resume);
+    if (resume?.smithersRunId) {
+      await event(run.id, "runner.resumed", `Resuming Smithers run ${sid} from checkpoint (attempt ${resume.attempt || "?"})`, {
+        smithersRunId: sid,
+        resumedFrom: resume.smithersRunId,
+        attempt: resume.attempt || null
+      });
+    }
     await event(run.id, "smithers.dispatched", `Smithers run ${sid} started`, { smithersRunId: sid });
 
     // Stream Smithers events to the Hub until the run reaches a terminal state.
