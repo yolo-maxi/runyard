@@ -228,5 +228,5 @@ export const env = {
   drainGraceMs: Number(process.env.RUNYARD_DRAIN_GRACE_MS || 45 * 60_000),
   // Shared drain flag path; the runner checks it before claiming new work.
   drainFlagPath: path.join(dataDir, ".drain"),
-  version: "0.1.0"
+  version: "0.1.1"
 };

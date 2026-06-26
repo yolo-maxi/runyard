@@ -137,15 +137,13 @@ describe("Workflow source + code viewer", () => {
 });
 
 describe("Code viewer + ReactFlow asset surface", () => {
-  it("ships the vendored ReactFlow and highlight.js bundles", () => {
+  it("ships only the vendored ReactFlow and highlight.js stylesheets", () => {
     const vendor = path.join(process.cwd(), "public", "vendor");
-    for (const file of ["reactflow.bundle.js", "highlight.bundle.js", "reactflow.css", "highlight.css", "manifest.json"]) {
+    for (const file of ["reactflow.css", "highlight.css", "highlight-dark.css", "manifest.json"]) {
       assert.ok(existsSync(path.join(vendor, file)), `expected vendor file ${file} to exist (run pnpm build:vendor)`);
     }
-    const reactflowBundle = readFileSync(path.join(vendor, "reactflow.bundle.js"), "utf8");
-    assert.ok(reactflowBundle.includes("ReactFlow"), "reactflow.bundle.js should export ReactFlow");
-    const highlightBundle = readFileSync(path.join(vendor, "highlight.bundle.js"), "utf8");
-    assert.ok(highlightBundle.length > 1000, "highlight.bundle.js should be non-empty");
+    assert.ok(!existsSync(path.join(vendor, "reactflow.bundle.js")), "ReactFlow JS should be bundled into public/app.js");
+    assert.ok(!existsSync(path.join(vendor, "highlight.bundle.js")), "highlight.js should be bundled into public/app.js");
   });
 
   it("the workflow detail surface references the source endpoint, ReactFlow, and highlight.js", () => {
@@ -167,12 +165,14 @@ describe("Code viewer + ReactFlow asset surface", () => {
     assert.match(codeBlock, /from "highlight\.js/);
   });
 
-  it("serves the vendored CSS and JS bundles to the browser", async () => {
-    for (const file of ["reactflow.css", "highlight.css", "reactflow.bundle.js", "highlight.bundle.js"]) {
+  it("serves the vendored CSS bundles to the browser", async () => {
+    for (const file of ["reactflow.css", "highlight.css", "highlight-dark.css"]) {
       const res = await raw(`/public/vendor/${file}`);
       assert.equal(res.status, 200, `expected /public/vendor/${file} to serve 200`);
       assert.ok(res.buffer.length > 100, `expected /public/vendor/${file} to be non-empty`);
     }
+    assert.equal((await raw("/public/vendor/reactflow.bundle.js")).status, 404);
+    assert.equal((await raw("/public/vendor/highlight.bundle.js")).status, 404);
   });
 
   it("the app HTML links the vendored highlight.js + ReactFlow stylesheets", async () => {

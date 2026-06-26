@@ -24,10 +24,9 @@ TanStack DB collections), replacing `setInterval` polling with reactive collecti
 - **Entry:** `public/index.html` loads `<script type="module" src="/public/app.js">`.
   It also references `/public/styles.css`, `/public/vendor/highlight.css`,
   `/public/vendor/reactflow.css`, and the Telegram WebApp SDK via `<script>`.
-- **Vendoring:** `bin/build-vendor.mjs` (`pnpm build:vendor`) uses **esbuild** to bundle
-  `react`, `react-dom`, `@xyflow/react` → `public/vendor/reactflow.bundle.js` and
-  `highlight.js` → `public/vendor/highlight.bundle.js`, plus copies their CSS. Today
-  `app.js` mounts the ReactFlow graph via `React.createElement` pulled from that bundle.
+- **Vendoring:** `bin/build-vendor.mjs` (`pnpm build:vendor`) copies the ReactFlow
+  and highlight.js CSS files used by `/app`. JavaScript for `react`, `react-dom`,
+  `@xyflow/react`, and `highlight.js` is bundled into `public/app.js` by `build:web`.
 - **Router:** hash-based. `deepLinks.parse()` (app.js:89) turns `location.hash` into
   `{ segments, params, view }`; `render()` (app.js:1107) dispatches per `route.view`;
   `hashchange` (app.js:5097) re-renders. **Deep links are a documented product feature
@@ -98,16 +97,12 @@ dev-server/HMR contract change with Express. Lower risk; documented per the brie
   highlight.js, and all TanStack packages bundled in — to `public/app.js`
   (the file `index.html` already loads). JSX via esbuild `loader: jsx`,
   `jsx: automatic`. `--watch` mode for dev.
-- **Why self-contained, not externalized to `vendor/`:** the vendor bundle exposes a
-  single module with `{React, ReactDOM, ReactFlow}` named exports — it can't satisfy
-  bare `import {useState} from "react"` via import maps without friction. Bundling once
-  in `build:web` avoids shipping React twice and keeps one source of truth. Once
-  `app.js` is the React bundle, `vendor/reactflow.bundle.js` is no longer loaded at
-  runtime.
+- **Why self-contained, not externalized to `vendor/`:** the React app imports packages
+  directly. Bundling once in `build:web` avoids shipping React twice and keeps one
+  source of truth. `app.js` is the React bundle; vendor JavaScript bundles are no
+  longer shipped.
 - **`build:vendor` stays** — `index.html` still links `vendor/reactflow.css` and
-  `vendor/highlight.css`; those copies are produced by `build:vendor`. We keep running
-  it for CSS. (The now-unused vendor JS bundles can be pruned in the final cleanup
-  phase, optional.)
+  `vendor/highlight.css`; those copies are produced by `build:vendor`.
 - Output stays plain ES module served by `express.static` — **no server change**.
 - `package.json`: add `@tanstack/react-query`, `@tanstack/react-db`, `@tanstack/db`,
   `@tanstack/query-db-collection` to devDependencies (bundled, so dev is fine).
@@ -242,7 +237,7 @@ unavailable. See Phase 3c.
 ## 7. Evaluation gates (loop until all green)
 
 1. `pnpm install` clean (pnpm only). ✅ baseline
-2. `pnpm build:vendor` + `pnpm build:web` succeed, no errors. (build:web new)
+2. `pnpm build` succeeds, no errors.
 3. `pnpm test` ≥ 384 passing, 0 fail. ✅ baseline 384/0
 4. `pnpm start`, browser/headless smoke: app loads, main views render, **no console
    errors**, live data (runs list / run detail) updates reactively. Screenshot key views.

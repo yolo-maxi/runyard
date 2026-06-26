@@ -34,6 +34,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
+      - run: pnpm build
 
   build-push:
     name: Build & push ${{ matrix.name }}

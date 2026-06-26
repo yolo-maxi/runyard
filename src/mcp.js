@@ -101,7 +101,7 @@ process.stdin.on("data", async (chunk) => {
         response = {
           protocolVersion: request.params?.protocolVersion || "2024-11-05",
           capabilities: { tools: {} },
-          serverInfo: { name: "runyard-mcp", version: "0.1.0" }
+          serverInfo: { name: "runyard-mcp", version: "0.1.1" }
         };
       } else if (request.method === "tools/list") {
         response = { tools };

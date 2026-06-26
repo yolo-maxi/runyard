@@ -9,7 +9,8 @@
 // Run with `pnpm build:web`. Pass --watch for an incremental dev rebuild.
 //
 // Note: the stylesheets (reactflow.css, highlight.css) are still produced by
-// `pnpm build:vendor`, which index.html links directly. Keep running it too.
+// `pnpm build:vendor`, which index.html links directly. `pnpm build` runs both
+// steps for release builds.
 import { build, context } from "esbuild";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

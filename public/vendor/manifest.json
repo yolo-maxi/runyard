@@ -1,9 +1,5 @@
 {
-  "generatedAt": "2026-06-25T00:10:42.006Z",
-  "bundles": [
-    "reactflow.bundle.js",
-    "highlight.bundle.js"
-  ],
+  "bundles": [],
   "styles": [
     "reactflow.css",
     "highlight.css",

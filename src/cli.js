@@ -89,7 +89,7 @@ function ask(query, { hidden = false } = {}) {
 
 const invokedName = path.basename(process.argv[1] || "runyard").replace(/\.js$/, "");
 const program = new Command();
-program.name(invokedName || "runyard").description("Runyard CLI — self-hosted control plane for agent runs").version("0.1.0");
+program.name(invokedName || "runyard").description("Runyard CLI — self-hosted control plane for agent runs").version("0.1.1");
 program
   .option("--url <url>", "Hub URL")
   .option("--token <token>", "Hub access token")

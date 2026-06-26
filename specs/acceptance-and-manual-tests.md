@@ -50,7 +50,7 @@ This file captures user-facing acceptance criteria and manual tests for Runyard.
 - The workflow detail page exposes four tabs: **Overview**, **Visual graph**, **Code**, **Runs**, all reachable via deep links (`#workflows/<slug>/<tab>`).
 - The **Code** tab shows the actual workflow source with highlight.js syntax highlighting, virtual sub-tabs (Code / Agents / workflowGraph), a copy-source action, and an internal scroll container (no horizontally overflowing blob).
 - The **Visual graph** tab renders an interactive ReactFlow canvas (pan, wheel zoom, fit/reset, minimap) over the parsed workflow graph; the entry node connects to inferred tasks/steps with sequence/parallel edges, and approval/test/commit/push/deploy gates are colour-coded when inferable.
-- A static SVG fallback is rendered only when the vendored ReactFlow bundle fails to load.
+- ReactFlow and highlight.js JavaScript are bundled into `/public/app.js`; only their CSS is served from `/public/vendor/`.
 - Required agents/skills/runner tags appear as side pills on the graph.
 - The workflow source + parsed graph are available via `/api/capabilities/<slug>/source` for the CLI/MCP clients.
 - No horizontal overflow on phones — both the graph host and the code viewer scroll internally.

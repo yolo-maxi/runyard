@@ -3,6 +3,8 @@ import { execFileSync, spawn } from "node:child_process";
 import { createHash, createHmac } from "node:crypto";
 import path from "node:path";
 import express from "express";
+import { asyncHandler } from "./http.js";
+import { registerRunnerRoutes } from "./routes/runners.js";
 import { subscribeRunEvents } from "./runEventBus.js";
 import {
   addRunEvent,
@@ -33,7 +35,6 @@ import {
   recordScheduleFireResult,
   getRun,
   listRunResponseEndpointsForRun,
-  heartbeatRunner,
   listAccessTokens,
   listAgents,
   listApprovals,
@@ -43,7 +44,6 @@ import {
   listCapabilityVersionsFromRuns,
   listKnowledge,
   listRunEvents,
-  listRunners,
   listRuns,
   listSkills,
   listWorkflowEndpoints,
@@ -53,7 +53,6 @@ import {
   reconcileRunnerActiveRuns,
   recordWorkflowEndpointInvocation,
   recordAudit,
-  registerRunner,
   resolveApproval,
   revokeAccessToken,
   runOwnerTokenId,
@@ -2023,7 +2022,7 @@ app.get("/openapi.json", (req, res) => {
     openapi: "3.1.0",
     info: {
       title: "Runyard API (runyard)",
-      version: "0.1.0",
+      version: "0.1.1",
       description:
         "Self-hosted control plane for agent runs. The Web Hub, CLI, and MCP server all drive this same JSON API. " +
         "Authenticate every request with `Authorization: Bearer shub_...`; tokens carry scopes (api, mcp, runner, admin) and the bootstrap token is full admin. " +
@@ -2156,7 +2155,7 @@ app.get("/api/audit", requireAuth, requireScopes("admin"), (req, res) => {
 // CHECK (status) is read-only and safe. APPLY is operator-initiated, off over
 // HTTP by default (UPDATE_APPLY_ENABLED), and even when on stays admin-gated.
 // There is no maintainer phone-home anywhere in this surface.
-app.get("/api/update-status", requireAuth, requireScopes("admin"), async (req, res) => {
+app.get("/api/update-status", requireAuth, requireScopes("admin"), asyncHandler(async (req, res) => {
   if (req.query.refresh && env.updateCheckEnabled) {
     try {
       await updateChecker.check(true);
@@ -2180,7 +2179,7 @@ app.get("/api/update-status", requireAuth, requireScopes("admin"), async (req, r
     checkedAt: cached?.checkedAt ? new Date(cached.checkedAt).toISOString() : null,
     lastOutcome: latestAlert("update")
   });
-});
+}));
 
 app.get("/api/alerts", requireAuth, requireScopes("admin"), (req, res) => {
   res.json({ alerts: listAlerts({ kind: req.query.kind ? String(req.query.kind) : "", limit: Number(req.query.limit || 50) }) });
@@ -2337,7 +2336,7 @@ app.get("/api/workflow-endpoints/:endpointSlug", requireAuth, requireScopes("adm
   res.json({ endpoint });
 });
 
-app.post("/api/workflow-endpoints/:endpointSlug", async (req, res) => {
+app.post("/api/workflow-endpoints/:endpointSlug", asyncHandler(async (req, res) => {
   const endpoint = getWorkflowEndpoint(req.params.endpointSlug, { includeSecretHash: true });
   const presented = bearerFromRequest(req) || String(req.headers["x-smithers-endpoint-secret"] || "").trim();
   if (!endpoint || !presented || !timingSafeEqualStr(hashToken(presented), endpoint.secretHash)) {
@@ -2442,7 +2441,7 @@ app.post("/api/workflow-endpoints/:endpointSlug", async (req, res) => {
     deepLink: deepLinks.run(run.id),
     payloadHash
   });
-});
+}));
 
 app.delete("/api/tokens/:id", requireAuth, requireScopes("admin"), (req, res) => {
   // Don't let an operator revoke the last usable admin token and lock everyone out.
@@ -2900,7 +2899,7 @@ app.patch("/api/capabilities/:id", requireAuth, requireScopes("admin"), (req, re
   res.json({ capability: upsertCapability({ ...existing, ...req.body, slug: existing.slug }) });
 });
 
-app.post("/api/capabilities/:id/run", requireAuth, requireScopes("api", "mcp"), async (req, res) => {
+app.post("/api/capabilities/:id/run", requireAuth, requireScopes("api", "mcp"), asyncHandler(async (req, res) => {
   const capability = getCapability(req.params.id);
   if (!capability || !capability.enabled) return res.status(404).json({ error: "capability not found" });
   // Admin-only capabilities (e.g. reauth-cli, which drives a CLI login on the
@@ -2993,7 +2992,7 @@ app.post("/api/capabilities/:id/run", requireAuth, requireScopes("api", "mcp"), 
     deepLinkLogs: deepLinks.runLogs(run.id),
     deepLinkArtifacts: deepLinks.runArtifacts(run.id)
   });
-});
+}));
 
 // Curated repo/project catalog for the Run form's repo picker. Returns only
 // operator-configured friendly selector keys + a default Hub entry — never raw
@@ -3251,7 +3250,7 @@ app.post(
   requireAuth,
   requireScopes("api", "mcp", "admin"),
   rateLimit({ bucket: "schedule-run-now", max: 60, windowMs: 60_000 }),
-  async (req, res) => {
+  asyncHandler(async (req, res) => {
     const schedule = getSchedule(req.params.id);
     if (!schedule) return res.status(404).json({ error: "schedule not found" });
     const result = runScheduleNow(schedule, { trigger: "manual", actor: req.token?.name || req.token?.id || "" });
@@ -3265,7 +3264,7 @@ app.post(
       statusUrl: `/api/runs/${result.run.id}`,
       deepLink: deepLinks.run(result.run.id)
     });
-  }
+  })
 );
 
 app.get("/api/agents", requireAuth, (req, res) => res.json({ agents: listAgents(req.query.q || "").map(withAgentLinks) }));
@@ -3575,7 +3574,7 @@ app.post("/api/runs/:id/cancel", requireAuth, requireScopes("api", "mcp", "runne
   res.json({ run: result.run });
 });
 
-app.post("/api/runs/:id/rerun", requireAuth, requireScopes("api", "mcp"), async (req, res) => {
+app.post("/api/runs/:id/rerun", requireAuth, requireScopes("api", "mcp"), asyncHandler(async (req, res) => {
   const previous = getRun(req.params.id);
   if (!previous) return res.status(404).json({ error: "run not found" });
   const previousPresented = withRunLinks(previous);
@@ -3614,7 +3613,7 @@ app.post("/api/runs/:id/rerun", requireAuth, requireScopes("api", "mcp"), async 
     webUrl: `/app#runs/${run.id}`,
     deepLink: deepLinks.run(run.id)
   });
-});
+}));
 
 app.get("/api/runs/:id/artifacts", requireAuth, (req, res) => res.json({ artifacts: listArtifacts({ runId: req.params.id }).map(withArtifactLinks) }));
 function storeRunArtifact(runRecord, body = {}) {
@@ -3804,7 +3803,7 @@ function findExistingChildRunApproval(payload = {}) {
     return approvalChildRunId === childRunId && approvalNodeId === nodeId;
   }) || null;
 }
-app.post("/api/approvals", requireAuth, requireScopes("api", "mcp", "runner", "approvals"), async (req, res) => {
+app.post("/api/approvals", requireAuth, requireScopes("api", "mcp", "runner", "approvals"), asyncHandler(async (req, res) => {
   try {
     const payload = req.body?.payload && typeof req.body.payload === "object" ? req.body.payload : {};
     const existing = findExistingChildRunApproval(payload);
@@ -3832,7 +3831,7 @@ app.post("/api/approvals", requireAuth, requireScopes("api", "mcp", "runner", "a
     console.error("create approval failed:", error.message);
     res.status(400).json({ error: "could not create approval" });
   }
-});
+}));
 function resolveApprovalHttp(req, res, decision) {
   const approval = getApproval(req.params.id);
   if (!approval) return res.status(404).json({ error: "approval not found" });
@@ -3855,18 +3854,7 @@ app.post("/api/approvals/:id/request-changes", requireAuth, requireScopes("api",
   resolveApprovalHttp(req, res, "changes_requested")
 );
 
-app.post("/api/runners/register", requireAuth, requireScopes("runner"), (req, res) => {
-  const runner = registerRunner(req.body, req.token.id);
-  res.json({ runner });
-});
-app.get("/api/runners", requireAuth, (_req, res) => {
-  res.json({ runners: listRunners(), pool: runnerPoolStats() });
-});
-app.post("/api/runners/:id/heartbeat", requireAuth, requireScopes("runner"), (req, res) => res.json({ runner: heartbeatRunner(req.params.id, req.body) }));
-app.get("/api/runners/:id/next-run", requireAuth, requireScopes("runner"), async (req, res) => {
-  const { claimNextRun } = await import("./db.js");
-  res.json(claimNextRun(req.params.id) || {});
-});
+registerRunnerRoutes(app, { requireAuth, requireScopes });
 
 // --- In-app support chat ----------------------------------------------------
 // Backs the hovering "Runyard user support agent" panel mounted in /app. The
@@ -3878,7 +3866,7 @@ app.get("/api/chat/status", requireAuth, (_req, res) => {
   res.json(supportAgentInfo());
 });
 
-app.post("/api/chat", requireAuth, rateLimit({ bucket: "support-chat", max: 60, windowMs: 60_000 }), async (req, res) => {
+app.post("/api/chat", requireAuth, rateLimit({ bucket: "support-chat", max: 60, windowMs: 60_000 }), asyncHandler(async (req, res) => {
   const body = req.body || {};
   const messages = Array.isArray(body.messages) ? body.messages : [];
   if (!messages.length) return res.status(400).json({ error: "messages array required" });
@@ -3906,9 +3894,9 @@ app.post("/api/chat", requireAuth, rateLimit({ bucket: "support-chat", max: 60, 
   } catch (error) {
     res.status(503).json({ error: error.message || "support agent unavailable" });
   }
-});
+}));
 
-app.post("/api/telegram/webhook", async (req, res) => {
+app.post("/api/telegram/webhook", asyncHandler(async (req, res) => {
   // Telegram authenticates webhooks via a secret token header configured on setWebhook.
   // Without a configured secret we refuse to act, so the endpoint can't be used to forge approvals.
   if (!env.telegramWebhookSecret) return res.status(503).json({ ok: false, error: "telegram webhook not configured" });
@@ -3952,7 +3940,7 @@ app.post("/api/telegram/webhook", async (req, res) => {
     return res.json({ ok: true, approval: withApprovalLinks(resolved) });
   }
   res.json({ ok: true, ignored: "no callback query data" });
-});
+}));
 
 app.use((error, _req, res, _next) => {
   console.error(error);

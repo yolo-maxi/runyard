@@ -323,21 +323,21 @@ Reasoning:
 
 ## Web Product
 
-### Decision: Defer TanStack DB / Smithers Gateway React migration
+### Decision: React + TanStack Query app over stable REST contracts
 
-The app remains Express plus vanilla JS for this pass, with React limited to the vendored ReactFlow workflow graph. Smithers `0.24.2`, `@smithers-orchestrator/gateway-react`, and TanStack DB are promising for a future normalized client data layer, but adopting them now would mean introducing a second frontend architecture in the middle of the CLI/MCP parity work.
+The app is a bundled React console served from `public/app.js`, with TanStack Query as the request/cache layer and targeted TanStack DB collections where live resource sync is useful. The REST API remains the compatibility boundary for Web/API/CLI/MCP clients.
 
 Migration plan:
 
-- First define stable Hub resources for runs, events, artifacts, runners, approvals, and capabilities.
-- Add a small React island only where session/run data extraction is painful, backed by `@smithers-orchestrator/gateway-react` if it can read the same Gateway contracts.
-- Use TanStack DB collections for runs, events, artifacts, and runners after the REST shapes are stable; keep Web/API/CLI/MCP responses backward-compatible.
-- Replace ad hoc vanilla client joins incrementally, starting with run detail and queue/pool views.
+- Keep REST resources stable for runs, events, artifacts, runners, approvals, and capabilities.
+- Use React components for all app views and keep deep links hash-compatible with the old console.
+- Use TanStack DB collections where repeated resource joins need reactive updates; use TanStack Query for ordinary request/response views.
+- Keep Web/API/CLI/MCP responses backward-compatible.
 
 Reasoning:
 
-- TanStack DB is useful once the UI needs a reactive local data graph, but the immediate test path is API/CLI/MCP behavior.
-- The current console is not a React app; a wholesale rewrite would be higher risk than the requested compatibility work.
+- TanStack DB is useful for reactive local data graphs, but not every view needs it.
+- The server remains the source of truth; the frontend should not grow a second domain model.
 
 ### Decision: Web Hub is an operations console
 
@@ -368,7 +368,7 @@ Reasoning:
 The workflow detail page is organized into four explicit tabs surfaced as a deep-linkable sub-nav (`#workflows/<slug>/<tab>`):
 
 - **Overview** — description, required agents/skills/runner tags, approval policy, deep link, latest runs preview.
-- **Visual graph** — a ReactFlow canvas (pan, wheel zoom, fit/reset controls, minimap) over a graph derived server-side from the workflow source. A static SVG fallback renders only when the vendored ReactFlow bundle can't load.
+- **Visual graph** — a ReactFlow canvas (pan, wheel zoom, fit/reset controls, minimap) over a graph derived server-side from the workflow source.
 - **Code** — a syntax-highlighted (highlight.js) viewer for the workflow source with virtual sub-tabs Code / Agents / workflowGraph and a copy-source action. Read-only.
 - **Runs** — the recent runs list for this workflow with a "Run this workflow" entry point.
 
@@ -394,15 +394,15 @@ Reasoning:
 - The visual graph and code viewer both need the same authoritative payload; one endpoint avoids drift.
 - A first-pass parser keeps the implementation small while leaving an obvious extension point: when the orchestrator exposes a real `workflowGraph` description, the server can swap in that instead of regex-derived structure.
 
-### Decision: ReactFlow and highlight.js are vendored under `public/vendor/`
+### Decision: ReactFlow and highlight.js CSS is vendored under `public/vendor/`
 
-The browser console loads ReactFlow + React + ReactDOM and highlight.js from same-origin ES module bundles. The bundles are produced by `pnpm run build:vendor` (`bin/build-vendor.mjs` — uses esbuild) and committed alongside the matching stylesheets and a `manifest.json`.
+The browser console bundles React, ReactFlow, and highlight.js into `public/app.js` through `pnpm run build:web`. Only their stylesheets are copied under `public/vendor/` by `pnpm run build:vendor` and linked directly by `public/index.html`, alongside a `manifest.json`.
 
 Reasoning:
 
 - The Hub is private and self-hosted; loading external CDNs at runtime would weaken that posture.
-- Bundling once keeps the existing CSP (`script-src 'self'`) intact and the static Express server unchanged.
-- Re-run `pnpm run build:vendor` after upgrading any of those upstream packages.
+- Bundling JavaScript once keeps the existing CSP (`script-src 'self'`) intact and avoids duplicate React module identity.
+- Re-run `pnpm run build` after changing the web app or upgrading any of those upstream packages.
 
 ### Decision: Landing page and docs are public, console requires token
 

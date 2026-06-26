@@ -14,7 +14,7 @@ ARG NODE_VERSION=22
 ARG PNPM_VERSION=10.33.0
 
 # ---------------------------------------------------------------------------
-# Stage 1: build — install deps (frozen lockfile) + build the vendor bundle.
+# Stage 1: build — install deps (frozen lockfile) + build browser assets.
 # ---------------------------------------------------------------------------
 FROM node:${NODE_VERSION}-bookworm-slim AS build
 ARG PNPM_VERSION
@@ -27,11 +27,9 @@ RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 
-# Copy the rest of the source and build the browser vendor bundle into
-# public/vendor. (public/app.js ships prebuilt and committed — there is no
-# separate `build:web` step in this repo.)
+# Copy the rest of the source and build the browser assets from web/.
 COPY . .
-RUN pnpm build:vendor
+RUN pnpm build
 
 # Drop dev dependencies so we copy a lean node_modules into the runtime image.
 RUN pnpm prune --prod
