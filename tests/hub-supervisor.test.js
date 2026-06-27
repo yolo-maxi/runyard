@@ -79,6 +79,29 @@ describe("hubSupervisor.decideReconcile (pure)", () => {
     assert.equal(d.escalation, "max_attempts");
   });
 
+  it("escalates a config/env failure on the FIRST occurrence (no resume churn)", () => {
+    // The 'stalls on hello world' symptom: a missing-token error is config, not
+    // transient — resume can't fix it, so don't burn attempts churning.
+    const d = decideReconcile({
+      reason: "failed",
+      error: "run-smithers needs RUNYARD_HUB_TOKEN (or RUN_SMITHERS_HUB_TOKEN) on the runner.",
+      checkpoint: "run-1",
+      attempt: 0
+    });
+    assert.equal(d.action, "escalate");
+    assert.equal(d.escalation, "runner_misconfig");
+  });
+
+  it("escalates a missing agent binary (ENOENT) immediately", () => {
+    const d = decideReconcile({ reason: "failed", error: "spawn codex ENOENT", checkpoint: "run-1", attempt: 0 });
+    assert.equal(d.escalation, "runner_misconfig");
+  });
+
+  it("does NOT treat an ordinary transient error as config", () => {
+    const d = decideReconcile({ reason: "runner_offline", error: "econnreset talking to gateway", checkpoint: "run-1", attempt: 0 });
+    assert.equal(d.action, "resume");
+  });
+
   it("loop-breaker: same fingerprint, no forward progress N times → escalate", () => {
     const error = "econnreset talking to the model gateway";
     // First resume of this transient fingerprint is allowed...

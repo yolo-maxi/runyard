@@ -38,6 +38,31 @@ export const HUB_DEFAULT_CAPS = Object.freeze({
 
 export { classifyWorkflowCodeFailure, normalizeErrorFingerprint };
 
+// Operator-must-fix environment/config failures: a missing hub token, a missing
+// agent/engine binary, etc. Neither resume nor code-repair can fix these — only
+// the operator correcting the runner's env/image — so the supervisor should
+// escalate on the FIRST occurrence instead of burning resumes (which is what
+// surfaces in the UI as a trivial run that "stalls" while it silently churns
+// fail→resume→fail). Deliberately narrow: only patterns that are unambiguously
+// config, never a bare transient like a one-off 401.
+const CONFIG_FAILURE_RE = new RegExp(
+  [
+    "needs\\s+[A-Z_]*TOKEN", // run-smithers needs RUNYARD_HUB_TOKEN…
+    "needs\\s+[A-Z_]+\\s+on the runner",
+    "\\b[A-Z_]*HUB_TOKEN\\b.*\\b(required|missing|not set)\\b",
+    "command not found",
+    "\\bENOENT\\b",
+    "is not installed",
+    "not found in (\\$)?PATH"
+  ].join("|"),
+  "i"
+);
+
+export function classifyConfigFailure(error) {
+  const text = String(error || "");
+  return { isConfigFailure: text.length > 0 && CONFIG_FAILURE_RE.test(text) };
+}
+
 function intOr(value, fallback) {
   const n = Number(value);
   return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : fallback;
@@ -106,6 +131,19 @@ export function decideReconcile(ctx = {}) {
   // or a self-reported failure is safe to resume.
   if (reason === "run_stalled" || reason === "max_runtime") {
     return { ...base, action: "give_up", reason: `run ${reason} on a possibly-live runner; terminal fail (not safe to blind-resume)` };
+  }
+
+  // Operator-must-fix config/env failure (missing token, missing agent binary…).
+  // Resume/repair can't help — escalate on the FIRST occurrence so it surfaces an
+  // actionable card in seconds instead of churning fail→resume→fail (which reads
+  // as a run that "stalls" on something trivial).
+  if (classifyConfigFailure(error).isConfigFailure) {
+    return {
+      ...base,
+      action: "escalate",
+      escalation: "runner_misconfig",
+      reason: "runner environment/config failure (e.g. missing hub token or agent binary); resume can't fix it — operator must correct the runner config/image"
+    };
   }
 
   // No resumable substrate ⇒ there is nothing to resume *from*. Terminal fail
