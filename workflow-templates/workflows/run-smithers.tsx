@@ -20,8 +20,8 @@ import {
 import { resolveImproveRepo } from "./improve-repo.js";
 import { syncWorkflowToWorkspace, workflowFileFromEntry } from "./workflow-repair.js";
 
-const HUB_URL = String(process.env.RUN_SMITHERS_HUB_URL || process.env.SMITHERS_HUB_URL || process.env.HUB_URL || "http://127.0.0.1:43117").replace(/\/$/, "");
-const HUB_TOKEN = process.env.RUN_SMITHERS_HUB_TOKEN || process.env.SMITHERS_HUB_TOKEN || process.env.HUB_TOKEN || "";
+const HUB_URL = String(process.env.RUN_SMITHERS_HUB_URL || process.env.RUNYARD_HUB_URL || process.env.SMITHERS_HUB_URL || process.env.HUB_URL || "http://127.0.0.1:43117").replace(/\/$/, "");
+const HUB_TOKEN = process.env.RUN_SMITHERS_HUB_TOKEN || process.env.RUNYARD_HUB_TOKEN || process.env.SMITHERS_HUB_TOKEN || process.env.HUB_TOKEN || "";
 const POLL_INTERVAL_MS = Number(process.env.RUN_SMITHERS_POLL_INTERVAL_MS || 5_000);
 const POLL_DEADLINE_MS = Number(process.env.RUN_SMITHERS_POLL_DEADLINE_MS || process.env.SMITHERS_RUN_DEADLINE_MS || 0);
 
@@ -69,7 +69,7 @@ const { Workflow, Task, smithers, outputs } = createSmithers({
 
 async function hubJson(pathname: string, options: { method?: string; body?: unknown } = {}) {
   if (!HUB_TOKEN) {
-    throw new Error("run-smithers needs SMITHERS_HUB_TOKEN or RUN_SMITHERS_HUB_TOKEN on the runner.");
+    throw new Error("run-smithers needs RUNYARD_HUB_TOKEN (or RUN_SMITHERS_HUB_TOKEN) on the runner.");
   }
   const response = await fetch(`${HUB_URL}${pathname}`, {
     method: options.method || "GET",

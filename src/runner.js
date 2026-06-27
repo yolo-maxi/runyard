@@ -242,8 +242,17 @@ async function launch(entry, input, secretEnv = {}, resume = null) {
   if (resume?.smithersRunId) {
     args.push("--resume", String(resume.smithersRunId), "--force");
   }
+  // The run-smithers supervisor workflow calls back into the hub to spawn child
+  // runs; it needs a hub token + URL in its env. The runner already authenticated
+  // with one (resolved from RUNYARD_HUB_TOKEN / legacy names), so hand it down
+  // explicitly under the names the workflow reads — otherwise a runner set up with
+  // only RUNYARD_HUB_TOKEN leaves the supervisor with no token ("run-smithers
+  // needs SMITHERS_HUB_TOKEN…"). secretEnv still wins if it provides an override.
+  const supervisorEnv = {};
+  if (token) supervisorEnv.RUN_SMITHERS_HUB_TOKEN = token;
+  if (baseUrl) supervisorEnv.RUN_SMITHERS_HUB_URL = baseUrl;
   const { stdout } = await smithers(args, {
-    env: { ...process.env, ...secretEnv }
+    env: { ...process.env, ...supervisorEnv, ...secretEnv }
   });
   try {
     const parsed = JSON.parse(stdout);
