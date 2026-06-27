@@ -9,9 +9,11 @@
 #   - git                   (workflows clone/operate on repos)
 #   - docker CLI            (talks to the *guest* dockerd inside the CVM)
 #
-# Agent CLIs (`claude` / `codex`) are NOT baked in — they must be provided and
-# authenticated at runtime (mounted creds / encrypted env). No secrets in the
-# image. See DEPLOY-DSTACK.md.
+# Agent CLIs (`claude` / `codex`) ARE baked in (pinned, npm global) so a runner
+# image is self-sufficient — without them a fresh runner can't execute agent work
+# or re-auth. Only the BINARIES are in the image; auth (subscription login /
+# creds) is still provided at runtime via mounted creds / encrypted env. No
+# secrets in the image. See DEPLOY-DSTACK.md.
 #
 # On dstack the runner is a long-lived container in the runner CVM; each run
 # executes as work on this box (optionally driving `docker build` against the
@@ -23,12 +25,17 @@ ARG PNPM_VERSION=10.33.0
 ARG SMITHERS_VERSION=0.25.1
 ARG BUN_VERSION=1.3.14
 ARG DOCKER_CLI_VERSION=29.6.0
+# Agent CLIs the runner shells out to (codex/claude). Pinned + overridable.
+ARG CODEX_VERSION=0.142.2
+ARG CLAUDE_VERSION=2.1.195
 
 FROM node:${NODE_VERSION}-bookworm-slim AS runtime
 ARG PNPM_VERSION
 ARG SMITHERS_VERSION
 ARG BUN_VERSION
 ARG DOCKER_CLI_VERSION
+ARG CODEX_VERSION
+ARG CLAUDE_VERSION
 WORKDIR /app
 
 # Bun installs here; global packages link their binaries into $BUN_INSTALL/bin,
@@ -70,6 +77,16 @@ RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
 RUN set -eux; \
     bun add -g "smithers-orchestrator@${SMITHERS_VERSION}"; \
     smithers --version
+
+# Pinned agent CLIs the runner shells out to. Installed via npm global (node
+# image prefix is /usr/local → bins land on /usr/local/bin, already on PATH).
+# Binaries only — no auth/creds baked in.
+RUN set -eux; \
+    npm install -g --no-fund --no-audit \
+        "@openai/codex@${CODEX_VERSION}" \
+        "@anthropic-ai/claude-code@${CLAUDE_VERSION}"; \
+    codex --version; \
+    claude --version
 
 # App dependencies (frozen lockfile) then source.
 COPY package.json pnpm-lock.yaml ./
