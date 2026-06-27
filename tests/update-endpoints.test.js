@@ -18,6 +18,16 @@ process.env.RUNYARD_GIT_COMMIT = "deadbee";
 const { app, setUpdateCheckerForTest } = await import("../src/server.js");
 const { env } = await import("../src/env.js");
 const { createAccessToken, recordAlert, latestAlert, listAlerts } = await import("../src/db.js");
+const { readFileSync } = await import("node:fs");
+const pkgVersion = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
+
+describe("version is sourced from package.json (no hardcoded drift)", () => {
+  it("env.version equals package.json version", () => {
+    // Regression guard: the version was once hardcoded "0.1.1" in four files, so
+    // every release reported stale and showed a permanent 'update available' badge.
+    assert.equal(env.version, pkgVersion);
+  });
+});
 
 let server;
 let baseUrl;

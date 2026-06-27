@@ -2041,7 +2041,7 @@ app.get("/openapi.json", (req, res) => {
     openapi: "3.1.0",
     info: {
       title: "Runyard API (runyard)",
-      version: "0.1.1",
+      version: env.version,
       description:
         "Self-hosted control plane for agent runs. The Web Hub, CLI, and MCP server all drive this same JSON API. " +
         "Authenticate every request with `Authorization: Bearer shub_...`; tokens carry scopes (api, mcp, runner, admin) and the bootstrap token is full admin. " +

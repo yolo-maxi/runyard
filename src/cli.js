@@ -88,8 +88,17 @@ function ask(query, { hidden = false } = {}) {
 }
 
 const invokedName = path.basename(process.argv[1] || "runyard").replace(/\.js$/, "");
+// Read version straight from package.json — importing env.js here would trigger
+// its data-dir/secret side effects just to print --version.
+const cliVersion = (() => {
+  try {
+    return JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version || "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+})();
 const program = new Command();
-program.name(invokedName || "runyard").description("Runyard CLI — self-hosted control plane for agent runs").version("0.1.1");
+program.name(invokedName || "runyard").description("Runyard CLI — self-hosted control plane for agent runs").version(cliVersion);
 program
   .option("--url <url>", "Hub URL")
   .option("--token <token>", "Hub access token")

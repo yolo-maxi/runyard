@@ -1,6 +1,17 @@
 #!/usr/bin/env node
+import { readFileSync } from "node:fs";
 import { HubClient } from "./apiClient.js";
 import { resolveRemote } from "./config.js";
+
+// Version straight from package.json (importing env.js here would trigger its
+// data-dir/secret side effects in a stdio MCP process).
+const mcpVersion = (() => {
+  try {
+    return JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version || "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+})();
 
 // Resolve target hub from (in order): env, --remote <name> in argv, the current saved remote.
 const remoteArgIndex = process.argv.indexOf("--remote");
@@ -101,7 +112,7 @@ process.stdin.on("data", async (chunk) => {
         response = {
           protocolVersion: request.params?.protocolVersion || "2024-11-05",
           capabilities: { tools: {} },
-          serverInfo: { name: "runyard-mcp", version: "0.1.1" }
+          serverInfo: { name: "runyard-mcp", version: mcpVersion }
         };
       } else if (request.method === "tools/list") {
         response = { tools };

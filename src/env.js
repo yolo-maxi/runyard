@@ -14,6 +14,19 @@ export function firstEnv(...names) {
   return undefined;
 }
 
+// Single source of truth for the app version: package.json. Bumping it there now
+// flows to /api/version, /version, the OpenAPI doc, the CLI, MCP serverInfo, and
+// the update-available check — instead of the old hardcoded "0.1.1" that drifted
+// across four files and left every release showing a permanent update badge.
+export const pkgVersion = (() => {
+  try {
+    const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+    return (pkg && typeof pkg.version === "string" && pkg.version) || "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+})();
+
 const root = firstEnv("RUNYARD_HUB_ROOT", "SMITHERS_HUB_ROOT") || process.cwd();
 const dataDir = firstEnv("RUNYARD_HUB_DATA_DIR", "SMITHERS_HUB_DATA_DIR") || path.join(root, "data");
 
@@ -228,5 +241,5 @@ export const env = {
   drainGraceMs: Number(process.env.RUNYARD_DRAIN_GRACE_MS || 45 * 60_000),
   // Shared drain flag path; the runner checks it before claiming new work.
   drainFlagPath: path.join(dataDir, ".drain"),
-  version: "0.1.1"
+  version: pkgVersion
 };
