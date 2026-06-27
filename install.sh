@@ -27,7 +27,9 @@
 #   RUNYARD_BASE_URL     public base URL            (default http://<host>:<port>)
 #   RUNYARD_SERVICE_USER unix user to run as         (default current/sudo user)
 #   RUNYARD_INSTALL_RUNNER  1 to install the runner unit too (default 1)
-#   RUNYARD_INSTALL_AGENTS  1 to install codex/claude/smithers on a runner (default 1)
+#   RUNYARD_INSTALL_AGENTS  1 to also install codex/claude/smithers on a runner
+#                           (default 0 — opt-in; the UI manages agents, and a
+#                           forced global install can stall headless installs)
 #   RUNYARD_CODEX_VERSION   pinned @openai/codex version          (default 0.142.2)
 #   RUNYARD_CLAUDE_VERSION  pinned @anthropic-ai/claude-code ver  (default 2.1.195)
 #   RUNYARD_SMITHERS_VERSION pinned smithers-orchestrator version (default 0.22.0)
@@ -46,7 +48,7 @@ UPDATE_CHECK_ENABLED="${UPDATE_CHECK_ENABLED:-1}"
 REAUTH_ENABLED_VAL="${REAUTH_ENABLED:-}"
 # Agent CLIs the runner shells out to. A runner host needs codex/claude/smithers
 # on PATH; the hub does not. Pinned for reproducibility; override or set to 0 to skip.
-INSTALL_AGENTS="${RUNYARD_INSTALL_AGENTS:-1}"
+INSTALL_AGENTS="${RUNYARD_INSTALL_AGENTS:-0}"
 CODEX_PKG="@openai/codex@${RUNYARD_CODEX_VERSION:-0.142.2}"
 CLAUDE_PKG="@anthropic-ai/claude-code@${RUNYARD_CLAUDE_VERSION:-2.1.195}"
 SMITHERS_PKG="smithers-orchestrator@${RUNYARD_SMITHERS_VERSION:-0.22.0}"
@@ -135,11 +137,12 @@ install_deps() {
   ( cd "$HOME_DIR" && pnpm install --frozen-lockfile ) || die "pnpm install failed."
 }
 
-# ── 3b. Agent CLIs (runner-only): codex / claude / smithers ──────────────────
-# The runner shells out to these; without them a fresh runner host can't execute
-# work or re-auth (the "no codex on the machine" failure). Installed pinned so
-# every runner matches a known-good toolchain. Non-fatal: the hub runs without
-# them, and a runner can be fixed by hand. They still need a per-user login.
+# ── 3b. Agent CLIs (runner-only, OPT-IN): codex / claude / smithers ──────────
+# The runner shells out to these. OFF by default (RUNYARD_INSTALL_AGENTS=1 to
+# opt in): the container image bakes them in, the UI manages agents/auth, and a
+# forced global install here can stall an unattended `curl | bash` headless
+# install. When opted in: pinned for a known-good toolchain, non-fatal (the hub
+# runs without them; a runner can be fixed by hand), still needs a per-user login.
 install_agent_clis() {
   [ "$INSTALL_RUNNER" = "1" ] || return 0
   if [ "$INSTALL_AGENTS" != "1" ]; then
@@ -335,10 +338,10 @@ print_next_steps() {
    1. Open the Hub, sign in with the bootstrap token, mint a runner-scoped token.
    2. Put it in $ENV_DIR/runner.env (RUNYARD_HUB_TOKEN=...), then:
         systemctl restart runyard-runner
-   3. Log the runner's agent CLIs in (one-time, as $SERVICE_USER):
-        codex login        # device/browser flow
-        claude setup-token  # or: claude -> /login
-      (codex/claude/smithers were installed for you; they just need a login.)
+   3. Agent CLIs (codex/claude): manage + authenticate them from the Hub UI
+      (runner card -> Re-auth). The container image ships them; on a bare-host
+      runner that needs them, re-run with RUNYARD_INSTALL_AGENTS=1 (or install
+      them yourself) and they'll show up for the UI to authenticate.
    4. Updates: an admin sees an "update available" badge in the UI.
       Apply on the host with:   runyard update
       (drains runners, swaps, restarts, verifies, auto-rolls-back on failure.)

@@ -44,10 +44,12 @@ describe("install.sh — defensiveness + idempotency", () => {
     assert.match(install, /@openai\/codex@\$\{RUNYARD_CODEX_VERSION:-[\d.]+\}/);
     assert.match(install, /@anthropic-ai\/claude-code@\$\{RUNYARD_CLAUDE_VERSION:-[\d.]+\}/);
     assert.match(install, /smithers-orchestrator@\$\{RUNYARD_SMITHERS_VERSION:-[\d.]+\}/);
-    // Only on a runner host, and skippable via RUNYARD_INSTALL_AGENTS.
+    // Only on a runner host, and OPT-IN by default (off) so a headless
+    // `curl | bash` install can't stall on a forced global CLI install.
     assert.match(install, /install_agent_clis\(\)/);
     assert.match(install, /\[ "\$INSTALL_RUNNER" = "1" \] \|\| return 0/);
-    assert.match(install, /RUNYARD_INSTALL_AGENTS/);
+    assert.match(install, /INSTALL_AGENTS="\$\{RUNYARD_INSTALL_AGENTS:-0\}"/);
+    assert.match(install, /if \[ "\$INSTALL_AGENTS" != "1" \]; then/);
     // Non-fatal: warns rather than die on missing npm / failed install.
     assert.doesNotMatch(install, /die "agent CLI/);
     // Wired into main() right after deps, and reminds the operator to log in.
