@@ -31,11 +31,19 @@ function AuthHealthPill({ provider, info }) {
     );
   }
   const expired = info.ok === false;
+  // ok-but-not-fresh = the short access token lapsed but a refresh token keeps
+  // the login alive (the CLI refreshes on next run). Show "valid" — not red —
+  // and explain instead of dangling a stale "expires …" beside it.
+  const refreshing = !expired && info.fresh === false && info.refreshable;
   const tone = expired ? "failed" : "succeeded";
-  const label = expired ? "expired" : "valid";
-  const expiry = info.expiresAt ? ` · expires ${relativeTime(info.expiresAt)}` : "";
+  const label = expired ? "expired" : refreshing ? "valid · auto-refreshes" : "valid";
+  const expiry = refreshing
+    ? ""
+    : info.expiresAt
+    ? ` · expires ${relativeTime(info.expiresAt)}`
+    : "";
   const acct = info.accountId ? ` · ${info.accountId}` : "";
-  const title = [info.error || "", info.expiresAt || ""].filter(Boolean).join(" ");
+  const title = [info.error || "", info.note || "", info.expiresAt || ""].filter(Boolean).join(" · ");
   return (
     <span className={`status ${tone}`} title={title}>
       {provider}: {label}

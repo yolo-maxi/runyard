@@ -45,34 +45,82 @@ function toIso(ms) {
   }
 }
 
+// How long after the last refresh we still trust a refresh_token to mint a new
+// short token. The codex/claude refresh tokens are long-lived (weeks); this is a
+// conservative staleness ceiling so a genuinely-abandoned login eventually badges
+// expired, without flapping to "expired" the moment the ~1h access token lapses.
+const REFRESH_TTL_MS = Number(process.env.RUNYARD_AUTH_REFRESH_TTL_DAYS || 30) * 24 * 60 * 60 * 1000;
+
+function parseTimestamp(value) {
+  if (value == null) return null;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  const ms = Date.parse(String(value));
+  return Number.isFinite(ms) ? ms : null;
+}
+
 // Pure parser for ~/.codex/auth.json content. `nowMs` is injectable for tests.
+//
+// The id_token is a short-lived (~1h) access JWT; the refresh_token is the
+// long-lived credential the codex CLI silently uses to mint a fresh id_token on
+// each run. So health MUST consider both — judging "expired" solely from the 1h
+// id_token exp flips the badge red ~1h after every login even though the login is
+// fine. `ok` = id_token still valid OR a (recent) refresh_token is present.
 export function parseCodexAuth(auth, nowMs = Date.now()) {
   if (!auth || typeof auth !== "object") return { ok: false, error: "no codex auth" };
   const tokens = auth.tokens && typeof auth.tokens === "object" ? auth.tokens : null;
-  if (!tokens || !tokens.id_token) return { ok: false, error: "no codex session" };
-  const expMs = jwtExpMs(tokens.id_token);
+  const hasRefresh = Boolean(tokens && tokens.refresh_token);
+  if (!tokens || (!tokens.id_token && !hasRefresh)) return { ok: false, error: "no codex session" };
+
+  const expMs = tokens.id_token ? jwtExpMs(tokens.id_token) : null;
+  const lastRefreshMs = parseTimestamp(auth.last_refresh);
   const result = {};
   if (tokens.account_id) result.accountId = String(tokens.account_id);
-  if (expMs != null) {
-    result.expiresAt = toIso(expMs);
-    result.ok = expMs > nowMs;
-  } else {
-    // No decodable expiry — treat presence of a session as ok but surface that
-    // we could not verify the expiry so the UI can hint at it.
-    result.ok = true;
+  if (expMs != null) result.expiresAt = toIso(expMs);
+  if (lastRefreshMs != null) result.lastRefresh = toIso(lastRefreshMs);
+
+  // id_token valid: decodable + future, OR present-but-undecodable (can't prove
+  // expiry → stay lenient as before). refreshable: a refresh_token whose last
+  // refresh is within the staleness ceiling (unknown last_refresh ⇒ trust it).
+  const idTokenOk = tokens.id_token ? (expMs == null ? true : expMs > nowMs) : false;
+  const refreshable = hasRefresh && (lastRefreshMs == null || nowMs - lastRefreshMs < REFRESH_TTL_MS);
+
+  result.fresh = expMs != null && expMs > nowMs;
+  result.refreshable = refreshable;
+  result.ok = idTokenOk || refreshable;
+  if (!result.ok) {
+    result.error = hasRefresh ? "codex refresh token stale — re-auth recommended" : "codex session expired";
+  } else if (!result.fresh && refreshable) {
+    result.note = "id_token expired; codex refreshes it on next run";
+  } else if (expMs == null && idTokenOk) {
     result.error = "expiry not derivable from id_token";
   }
   return result;
 }
 
 // Pure parser for ~/.claude/.credentials.json content. `nowMs` injectable.
+// Same principle as codex: `accessToken`/`expiresAt` is short-lived; the
+// `refreshToken` keeps the login alive (Claude Code refreshes on use). Don't
+// badge "expired" just because the short access token lapsed.
 export function parseClaudeCredentials(creds, nowMs = Date.now()) {
   if (!creds || typeof creds !== "object") return { ok: false, error: "no claude credentials" };
   const oauth = creds.claudeAiOauth && typeof creds.claudeAiOauth === "object" ? creds.claudeAiOauth : null;
-  if (!oauth || oauth.expiresAt == null) return { ok: false, error: "no claude session" };
-  const expMs = Number(oauth.expiresAt);
-  if (!Number.isFinite(expMs)) return { ok: false, error: "invalid claude expiry" };
-  return { ok: expMs > nowMs, expiresAt: toIso(expMs) };
+  const hasRefresh = Boolean(oauth && oauth.refreshToken);
+  if (!oauth || (oauth.expiresAt == null && !hasRefresh)) return { ok: false, error: "no claude session" };
+
+  const expMs = oauth.expiresAt != null ? Number(oauth.expiresAt) : null;
+  const result = {};
+  if (expMs != null && Number.isFinite(expMs)) result.expiresAt = toIso(expMs);
+
+  const accessOk = expMs != null && Number.isFinite(expMs) && expMs > nowMs;
+  result.fresh = accessOk;
+  result.refreshable = hasRefresh;
+  result.ok = accessOk || hasRefresh;
+  if (!result.ok) {
+    result.error = expMs != null && !Number.isFinite(expMs) ? "invalid claude expiry" : "claude session expired";
+  } else if (!accessOk && hasRefresh) {
+    result.note = "access token expired; claude refreshes it on next run";
+  }
+  return result;
 }
 
 function readJsonSafe(filePath) {

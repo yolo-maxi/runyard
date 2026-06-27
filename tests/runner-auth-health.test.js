@@ -37,10 +37,32 @@ describe("codex auth health parser", () => {
     assert.ok(!serialized.includes("REFRESH-SHOULD-NOT-LEAK"));
   });
 
-  it("reports not-ok when the id_token is expired", () => {
+  it("reports not-ok when the id_token is expired AND there is no refresh token", () => {
     const auth = { tokens: { id_token: jwt(NOW / 1000 - 10), account_id: "acct_x" } };
     const health = parseCodexAuth(auth, NOW);
     assert.equal(health.ok, false);
+  });
+
+  it("stays ok when the id_token lapsed but a recent refresh_token can renew it", () => {
+    // The exact false-"expired" badge bug: ~1h after login the id_token exp
+    // passes, but the long-lived refresh_token keeps the login alive.
+    const auth = {
+      tokens: { id_token: jwt(NOW / 1000 - 10), refresh_token: "REFRESH", account_id: "acct_x" },
+      last_refresh: new Date(NOW - 60_000).toISOString()
+    };
+    const health = parseCodexAuth(auth, NOW);
+    assert.equal(health.ok, true);
+    assert.equal(health.fresh, false);
+    assert.equal(health.refreshable, true);
+    assert.ok(!JSON.stringify(health).includes("REFRESH"));
+  });
+
+  it("reports not-ok when the refresh_token is stale beyond the ceiling", () => {
+    const auth = {
+      tokens: { id_token: jwt(NOW / 1000 - 10), refresh_token: "REFRESH" },
+      last_refresh: new Date(NOW - 40 * 24 * 60 * 60 * 1000).toISOString() // 40d > 30d
+    };
+    assert.equal(parseCodexAuth(auth, NOW).ok, false);
   });
 
   it("reports not-ok when there is no session", () => {
@@ -65,9 +87,18 @@ describe("claude credentials health parser", () => {
     assert.ok(!JSON.stringify(health).includes("SHOULD-NOT-LEAK"));
   });
 
-  it("reports not-ok when expired or missing", () => {
+  it("reports not-ok when expired with no refresh token, or missing", () => {
     assert.equal(parseClaudeCredentials({ claudeAiOauth: { expiresAt: NOW - 1 } }, NOW).ok, false);
     assert.equal(parseClaudeCredentials({}, NOW).ok, false);
+  });
+
+  it("stays ok when the access token lapsed but a refresh token is present", () => {
+    const creds = { claudeAiOauth: { expiresAt: NOW - 1, refreshToken: "CLAUDE-REFRESH" } };
+    const health = parseClaudeCredentials(creds, NOW);
+    assert.equal(health.ok, true);
+    assert.equal(health.fresh, false);
+    assert.equal(health.refreshable, true);
+    assert.ok(!JSON.stringify(health).includes("CLAUDE-REFRESH"));
   });
 });
 
