@@ -27,6 +27,10 @@
 #   RUNYARD_BASE_URL     public base URL            (default http://<host>:<port>)
 #   RUNYARD_SERVICE_USER unix user to run as         (default current/sudo user)
 #   RUNYARD_INSTALL_RUNNER  1 to install the runner unit too (default 1)
+#   RUNYARD_INSTALL_AGENTS  1 to install codex/claude/smithers on a runner (default 1)
+#   RUNYARD_CODEX_VERSION   pinned @openai/codex version          (default 0.142.2)
+#   RUNYARD_CLAUDE_VERSION  pinned @anthropic-ai/claude-code ver  (default 2.1.195)
+#   RUNYARD_SMITHERS_VERSION pinned smithers-orchestrator version (default 0.22.0)
 #   REAUTH_ENABLED       set to 1 on a dedicated reauth runner host (default empty)
 #   UPDATE_CHECK_ENABLED passive update check        (default 1)
 set -euo pipefail
@@ -40,6 +44,12 @@ PORT="${RUNYARD_PORT:-43117}"
 INSTALL_RUNNER="${RUNYARD_INSTALL_RUNNER:-1}"
 UPDATE_CHECK_ENABLED="${UPDATE_CHECK_ENABLED:-1}"
 REAUTH_ENABLED_VAL="${REAUTH_ENABLED:-}"
+# Agent CLIs the runner shells out to. A runner host needs codex/claude/smithers
+# on PATH; the hub does not. Pinned for reproducibility; override or set to 0 to skip.
+INSTALL_AGENTS="${RUNYARD_INSTALL_AGENTS:-1}"
+CODEX_PKG="@openai/codex@${RUNYARD_CODEX_VERSION:-0.142.2}"
+CLAUDE_PKG="@anthropic-ai/claude-code@${RUNYARD_CLAUDE_VERSION:-2.1.195}"
+SMITHERS_PKG="smithers-orchestrator@${RUNYARD_SMITHERS_VERSION:-0.22.0}"
 
 log()  { printf '\033[1;36m[runyard-install]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[runyard-install] WARN:\033[0m %s\n' "$*"; }
@@ -123,6 +133,34 @@ clone_repo() {
 install_deps() {
   log "installing dependencies (pnpm install --frozen-lockfile)…"
   ( cd "$HOME_DIR" && pnpm install --frozen-lockfile ) || die "pnpm install failed."
+}
+
+# ── 3b. Agent CLIs (runner-only): codex / claude / smithers ──────────────────
+# The runner shells out to these; without them a fresh runner host can't execute
+# work or re-auth (the "no codex on the machine" failure). Installed pinned so
+# every runner matches a known-good toolchain. Non-fatal: the hub runs without
+# them, and a runner can be fixed by hand. They still need a per-user login.
+install_agent_clis() {
+  [ "$INSTALL_RUNNER" = "1" ] || return 0
+  if [ "$INSTALL_AGENTS" != "1" ]; then
+    log "skipping agent CLI install (RUNYARD_INSTALL_AGENTS=$INSTALL_AGENTS)."
+    return 0
+  fi
+  if ! command -v npm >/dev/null 2>&1; then
+    warn "npm not found — cannot install agent CLIs. Install manually: npm i -g $CODEX_PKG $CLAUDE_PKG $SMITHERS_PKG"
+    return 0
+  fi
+  log "installing runner agent CLIs (pinned): codex, claude, smithers…"
+  asroot npm install -g "$CODEX_PKG" "$CLAUDE_PKG" "$SMITHERS_PKG" \
+    || warn "agent CLI install failed — install manually: npm i -g $CODEX_PKG $CLAUDE_PKG $SMITHERS_PKG"
+  for b in codex claude smithers; do
+    if command -v "$b" >/dev/null 2>&1; then
+      log "  ✓ $b -> $(command -v "$b")"
+    else
+      warn "  ✗ $b not on PATH after install — check your npm global bin is on the runner user's PATH."
+    fi
+  done
+  log "agent CLIs ready. One-time login still required per runner user: 'codex login' and 'claude setup-token'."
 }
 
 # ── 4. Data dir (DB + secrets; never touched by updates) ─────────────────────
@@ -297,7 +335,11 @@ print_next_steps() {
    1. Open the Hub, sign in with the bootstrap token, mint a runner-scoped token.
    2. Put it in $ENV_DIR/runner.env (RUNYARD_HUB_TOKEN=...), then:
         systemctl restart runyard-runner
-   3. Updates: an admin sees an "update available" badge in the UI.
+   3. Log the runner's agent CLIs in (one-time, as $SERVICE_USER):
+        codex login        # device/browser flow
+        claude setup-token  # or: claude -> /login
+      (codex/claude/smithers were installed for you; they just need a login.)
+   4. Updates: an admin sees an "update available" badge in the UI.
       Apply on the host with:   runyard update
       (drains runners, swaps, restarts, verifies, auto-rolls-back on failure.)
 
@@ -318,6 +360,7 @@ main() {
   ensure_prereqs
   clone_repo
   install_deps
+  install_agent_clis
   ensure_data_dir
   write_env_files
   install_units

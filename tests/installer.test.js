@@ -38,6 +38,24 @@ describe("install.sh — defensiveness + idempotency", () => {
     assert.match(install, /RUNYARD_HUB_SESSION_SECRET=\$session_secret/);
   });
 
+  it("installs the pinned runner agent CLIs (codex/claude/smithers), gated + non-fatal", () => {
+    // The runner shells out to these; a fresh host without them is the
+    // "no codex on the machine" failure. Pinned for reproducibility.
+    assert.match(install, /@openai\/codex@\$\{RUNYARD_CODEX_VERSION:-[\d.]+\}/);
+    assert.match(install, /@anthropic-ai\/claude-code@\$\{RUNYARD_CLAUDE_VERSION:-[\d.]+\}/);
+    assert.match(install, /smithers-orchestrator@\$\{RUNYARD_SMITHERS_VERSION:-[\d.]+\}/);
+    // Only on a runner host, and skippable via RUNYARD_INSTALL_AGENTS.
+    assert.match(install, /install_agent_clis\(\)/);
+    assert.match(install, /\[ "\$INSTALL_RUNNER" = "1" \] \|\| return 0/);
+    assert.match(install, /RUNYARD_INSTALL_AGENTS/);
+    // Non-fatal: warns rather than die on missing npm / failed install.
+    assert.doesNotMatch(install, /die "agent CLI/);
+    // Wired into main() right after deps, and reminds the operator to log in.
+    assert.match(install, /install_deps\s*\n\s*install_agent_clis/);
+    assert.match(install, /codex login/);
+    assert.match(install, /claude setup-token/);
+  });
+
   it("ensures node 22 + pnpm", () => {
     assert.match(install, /node_major" -lt 22/);
     assert.match(install, /setup_22\.x/);
