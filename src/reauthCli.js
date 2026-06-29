@@ -10,6 +10,9 @@
 //   claude: `claude setup-token` runs the interactive OAuth and prints a
 //           long-lived CLAUDE_CODE_OAUTH_TOKEN. It does not save the token, so
 //           RunYard persists it in a runner-local 0600 file for future jobs.
+//           For remote/headless runners the preferred UX is to generate that
+//           token locally, paste it into the Hub's write-only field, and send it
+//           to this runner as an encrypted one-run secret.
 //
 // We stream-parse stdout, surface ONLY the verification URL + user code (+ TTL)
 // back to the Hub as run output so the UI can render "Open <url>, enter <code>",
@@ -78,6 +81,15 @@ function commandFor(provider) {
   return null;
 }
 
+function pastedClaudeOauthToken(input = {}, deps = {}) {
+  const secretName = String(input.oauthTokenSecretName || "").trim();
+  if (secretName && deps.secretEnv && typeof deps.secretEnv === "object" && deps.secretEnv[secretName]) {
+    return String(deps.secretEnv[secretName]);
+  }
+  if (deps.claudeOauthToken) return String(deps.claudeOauthToken);
+  return "";
+}
+
 // Derive post-login health (account id + expiry, no tokens) from the auth files
 // and the runner-local Claude OAuth token file.
 function deriveHealth(provider, deps) {
@@ -106,6 +118,12 @@ export function runReauth(input = {}, deps = {}) {
   const onVerification = typeof deps.onVerification === "function" ? deps.onVerification : () => {};
   const timeoutMs = Number(deps.timeoutMs || DEFAULT_TIMEOUT_MS);
   const home = deps.home || process.env.HOME || os.homedir();
+
+  const pastedToken = provider === "claude" ? pastedClaudeOauthToken(input, deps) : "";
+  if (pastedToken) {
+    writeClaudeOauthToken(pastedToken, { home });
+    return Promise.resolve({ status: "ok", ...deriveHealth(provider, { now: deps.now, home }) });
+  }
 
   return new Promise((resolve) => {
     let settled = false;

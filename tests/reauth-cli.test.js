@@ -168,6 +168,32 @@ describe("runReauth (mocked child process — never a live login)", () => {
     assert.ok(!serialized.includes("CLAUDE-REFRESH-SHOULD-NOT-LEAK"));
   });
 
+  it("stores a pasted Claude OAuth token from encrypted one-run secret env without spawning setup-token", async () => {
+    const NOW = Date.parse("2026-01-01T00:00:00.000Z");
+    const home = mkdtempSync(path.join(os.tmpdir(), "reauth-claude-paste-home-"));
+    let spawned = false;
+    const result = await runReauth(
+      { provider: "claude", oauthTokenSecretName: "RUNYARD_CLAUDE_OAUTH_TOKEN_RUNNER_X" },
+      {
+        home,
+        now: () => NOW,
+        secretEnv: { RUNYARD_CLAUDE_OAUTH_TOKEN_RUNNER_X: CLAUDE_TOKEN },
+        spawnFn: () => {
+          spawned = true;
+          return fakeChild();
+        }
+      }
+    );
+
+    const tokenPath = claudeOauthTokenPath(home);
+    assert.equal(result.status, "ok");
+    assert.equal(result.provider, "claude");
+    assert.equal(spawned, false);
+    assert.equal(readFileSync(tokenPath, "utf8"), CLAUDE_TOKEN);
+    assert.equal(statSync(tokenPath).mode & 0o777, 0o600);
+    assert.ok(!JSON.stringify(result).includes("CLAUDE-ACCESS-SHOULD-NOT-LEAK"));
+  });
+
   it("kills the process and fails with a clear message on timeout", async () => {
     const child = fakeChild();
     const spawnFn = () => {

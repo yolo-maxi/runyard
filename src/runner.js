@@ -318,6 +318,7 @@ async function executeAssignment(assignment) {
     if (reauthEnabled() && capability.slug === "reauth-cli") {
       await event(run.id, "runner.reauth", `Starting CLI re-auth on ${name}`, { runnerId, provider: run.input?.provider });
       const reauth = await runReauth(run.input || {}, {
+        secretEnv,
         onVerification: (info) =>
           client
             .post(`/api/runs/${run.id}/events`, {

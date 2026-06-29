@@ -13,7 +13,7 @@ Owner: Fran. Driven by Ocean. Build on Hetzner (`/home/xiko/smithers-hub`), depl
 
 ## Confirmed CLI facts (installed on Hetzner)
 - `codex-cli 0.140.0` supports `codex login --device-auth` (emits a verification URL + user code, then polls until authorized, then writes `~/.codex/auth.json`). Also `codex login status`.
-- `claude setup-token` issues a long-lived subscription token (interactive OAuth), prints it to the terminal, and does **not** save it. The printed token is meant to be supplied later as `CLAUDE_CODE_OAUTH_TOKEN`. `claude` subscription login credentials from `/login` live in `~/.claude/.credentials.json` (`claudeAiOauth`).
+- `claude setup-token` issues a long-lived subscription token (interactive OAuth), prints it to the terminal, and does **not** save it. It should be run locally on a machine where the operator can log into Claude normally. The printed token is then supplied to the headless runner as `CLAUDE_CODE_OAUTH_TOKEN`. `claude` subscription login credentials from `/login` live in `~/.claude/.credentials.json` (`claudeAiOauth`).
 
 ## Scope of work
 
@@ -35,14 +35,15 @@ Owner: Fran. Driven by Ocean. Build on Hetzner (`/home/xiko/smithers-hub`), depl
 - New capability `reauth-cli` (workflow-templates/workflows/reauth-cli.tsx), seeded in `src/seeds.js`. `requiredRunnerTags` so it targets a specific runner (input `runnerId`/tag). Input: `{ provider: "codex"|"claude", runnerTag }`.
 - Runner-side execution (gated branch in `src/smithers-runner.js`, mirroring the `supportWarm.js` special-path pattern, gated by an env flag e.g. `REAUTH_ENABLED=1` set only on runner hosts that should allow it):
   - codex: spawn `codex login --device-auth`, **stream-parse** the verification URL + user code from its stdout, immediately post them back as a run **artifact/output** (`outputs.reauth.verificationUrl`, `userCode`, `expiresInSec`) so the UI can show them while the process keeps polling. On success the process writes `auth.json` and exits 0 → complete run `{outputs.reauth:{status:"ok", provider, accountId, expiresAt}}`. On timeout (cap ~5 min) kill + fail with a clear message.
-  - claude: run `claude setup-token`, surface its URL/code the same way, capture the printed `CLAUDE_CODE_OAUTH_TOKEN`, write it only to a runner-local `0600` file, inject it into future Claude CLI child processes, and never emit token material through Hub outputs/artifacts/logs.
+  - claude: show instructions to run `claude setup-token` locally, accept the generated `CLAUDE_CODE_OAUTH_TOKEN` through a write-only Hub field, forward it to the target runner as an encrypted one-run secret, write it only to a runner-local `0600` file, inject it into future Claude CLI child processes, and never emit token material through Hub outputs/artifacts/logs.
   - NEVER post token material to outputs/artifacts/logs — only URL, code, status, account id, expiry.
 - The capability must be admin-scope to trigger.
 
 ### Part 4 — Secrets page UI (`public/app` / served Hub UI)
 - New "Secrets" nav entry (admin only). Sections:
   - Auth health strip (per runner: Codex / Claude valid + expiry; red when expired).
-  - "Re-auth" button per runner+provider → triggers `reauth-cli`, then **polls the run**; when `verificationUrl`+`userCode` appear, render "Open <url>, enter code <code>"; on completion show green healthy.
+  - Codex button → triggers `reauth-cli`, then **polls the run**; when `verificationUrl`+`userCode` appear, render "Open <url>, enter code <code>"; on completion show green healthy.
+  - Claude button → "Connect Claude" panel: tells the operator to run `claude setup-token` locally, paste `CLAUDE_CODE_OAUTH_TOKEN` into a write-only password field, sends it once to the selected runner, then clears the field and shows success.
   - Reusable secrets: list (names+desc only), add/edit (value write-only), delete. Clearly admin-gated.
 - Match existing app UI conventions (vanilla, same patterns as current `/app`).
 

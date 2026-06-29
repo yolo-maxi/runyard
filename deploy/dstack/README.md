@@ -89,11 +89,14 @@ runner and write CLI auth files to the persistent runner home:
 - Claude subscription login: `/runner-home/.claude/.credentials.json`
 - Claude CI/headless token from `claude setup-token`: `/runner-home/.claude/oauth-token`
 
-Anthropic's `claude setup-token` prints a long-lived `CLAUDE_CODE_OAUTH_TOKEN`
-and does not save it; RunYard stores that value in the runner-local
-`oauth-token` file with mode `0600` and injects it into future Claude CLI jobs as
-`CLAUDE_CODE_OAUTH_TOKEN`. The token value is never returned through Hub outputs,
-logs, or artifacts.
+Anthropic's `claude setup-token` is meant to be run on a machine where the
+operator can log into Claude normally. It prints a long-lived
+`CLAUDE_CODE_OAUTH_TOKEN` and does not save it. In the Hub, use **Connect
+Claude** on the runner card: paste that token into the write-only field, and
+RunYard sends it once to the selected runner via the encrypted one-run secret
+claim payload. The runner stores it in `oauth-token` with mode `0600` and
+injects it into future Claude CLI jobs as `CLAUDE_CODE_OAUTH_TOKEN`. The token
+value is never returned through Hub outputs, logs, or artifacts.
 
 Those auth files live on the same encrypted per-CVM disk as named volumes. They
 survive container recreation, `UpgradeApp`, and CVM reboot as long as the same

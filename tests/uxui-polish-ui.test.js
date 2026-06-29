@@ -16,6 +16,7 @@ const shell = readFileSync(path.join(root, "web", "app", "Shell.jsx"), "utf8");
 const content = readFileSync(path.join(root, "web", "app", "Content.jsx"), "utf8");
 const connect = readFileSync(path.join(root, "web", "views", "Connect.jsx"), "utf8");
 const settings = readFileSync(path.join(root, "web", "views", "Settings.jsx"), "utf8");
+const secrets = readFileSync(path.join(root, "web", "views", "Secrets.jsx"), "utf8");
 const tokens = readFileSync(path.join(root, "web", "views", "Tokens.jsx"), "utf8");
 const approvalList = readFileSync(path.join(root, "web", "components", "ApprovalList.jsx"), "utf8");
 const supportChat = readFileSync(path.join(root, "web", "components", "SupportChat.jsx"), "utf8");
@@ -59,6 +60,17 @@ describe("UX polish: simplified navigation groups related admin pages", () => {
     assert.match(content, /view === "secrets" \|\| view === "settings"[\s\S]*?<Settings \/>/);
     assert.match(connect, /<Tokens embedded \/>/);
     assert.match(settings, /<Secrets embedded \/>/);
+  });
+});
+
+describe("UX polish: runner auth explains Claude token paste flow", () => {
+  it("keeps Codex on device auth and Claude on local setup-token paste", () => {
+    assert.match(secrets, /Re-auth Codex/);
+    assert.match(secrets, /Connect Claude/);
+    assert.match(secrets, /claude setup-token/);
+    assert.match(secrets, /paste CLAUDE_CODE_OAUTH_TOKEN/);
+    assert.match(secrets, /oauthTokenSecretName/);
+    assert.match(secrets, /secretNames: \[secretName\]/);
   });
 });
 

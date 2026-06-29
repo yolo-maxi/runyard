@@ -16,6 +16,10 @@ import { useMe, meIsAdmin } from "../lib/me.js";
 
 const REAUTH_DEADLINE_MS = 5.5 * 60_000;
 
+function claudeTokenSecretName(runnerId) {
+  return `RUNYARD_CLAUDE_OAUTH_TOKEN_${String(runnerId || "RUNNER").replace(/[^A-Za-z0-9_]/g, "_").toUpperCase()}`.slice(0, 128);
+}
+
 // Mirror legacy status() pill: <span class="status online|offline|..."> .
 function StatusPill({ value }) {
   return <span className={`status ${value}`}>{value}</span>;
@@ -63,6 +67,8 @@ function ReauthControls({ runner }) {
   const [active, setActive] = useState(null);
   const [statusNode, setStatusNode] = useState(null);
   const [starting, setStarting] = useState(false);
+  const [showClaudeConnect, setShowClaudeConnect] = useState(false);
+  const [claudeToken, setClaudeToken] = useState("");
   const shownVerificationRef = useRef(false);
   const deadlineRef = useRef(0);
 
@@ -75,9 +81,19 @@ function ReauthControls({ runner }) {
     gcTime: 0
   });
 
-  async function start(provider) {
+  async function cleanupSecret(secretName) {
+    if (!secretName) return;
+    try {
+      await api(`/api/secrets/${encodeURIComponent(secretName)}`, { method: "DELETE" });
+      queryClient.invalidateQueries({ queryKey: ["secrets"] });
+    } catch {
+      /* best effort: encrypted at rest, never exposed via API */
+    }
+  }
+
+  async function startCodex() {
     const statusEl = (
-      <p className="muted">Starting {provider} re-auth…</p>
+      <p className="muted">Starting Codex device-code re-auth…</p>
     );
     setStatusNode(statusEl);
     setStarting(true);
@@ -86,12 +102,53 @@ function ReauthControls({ runner }) {
     try {
       const res = await api("/api/capabilities/reauth-cli/run", {
         method: "POST",
-        body: { input: { provider, runnerTag: "reauth" }, runnerId: runner.id }
+        body: { input: { provider: "codex", runnerTag: "reauth" }, runnerId: runner.id }
       });
-      setActive({ provider, runId: res.run.id });
+      setActive({ provider: "codex", runId: res.run.id });
     } catch (error) {
       setStatusNode(
         <p className="status failed">{error.message || "Re-auth failed to start"}</p>
+      );
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  async function connectClaude(event) {
+    event.preventDefault();
+    const token = claudeToken.trim();
+    if (!token) return toast("Paste the Claude OAuth token first", "error");
+    const secretName = claudeTokenSecretName(runner.id);
+    setStatusNode(<p className="muted">Sending Claude token to this runner…</p>);
+    setStarting(true);
+    shownVerificationRef.current = true;
+    deadlineRef.current = Date.now() + REAUTH_DEADLINE_MS;
+    try {
+      await api(`/api/secrets/${encodeURIComponent(secretName)}`, {
+        method: "PUT",
+        body: {
+          value: token,
+          description: `One-time Claude OAuth token transfer for runner ${runner.id}`
+        }
+      });
+      setClaudeToken("");
+      const res = await api("/api/capabilities/reauth-cli/run", {
+        method: "POST",
+        body: {
+          input: {
+            provider: "claude",
+            runnerTag: "reauth",
+            oauthTokenSecretName: secretName,
+            secretNames: [secretName]
+          },
+          runnerId: runner.id
+        }
+      });
+      setActive({ provider: "claude", runId: res.run.id, secretName });
+    } catch (error) {
+      await cleanupSecret(secretName);
+      setStatusNode(
+        <p className="status failed">{error.message || "Claude token transfer failed"}</p>
       );
     } finally {
       setStarting(false);
@@ -108,6 +165,7 @@ function ReauthControls({ runner }) {
       setStatusNode(
         <p className="status failed">{active.provider} re-auth timed out.</p>
       );
+      cleanupSecret(active.secretName);
       setActive(null);
       return;
     }
@@ -151,11 +209,12 @@ function ReauthControls({ runner }) {
       const reauth = run.output?.outputs?.reauth || {};
       setStatusNode(
         <p className="status succeeded">
-          {active.provider} re-authenticated
+          {active.provider === "claude" ? "Claude connected via OAuth token" : "codex re-authenticated"}
           {reauth.expiresAt ? ` · expires ${relativeTime(reauth.expiresAt)}` : ""}.
         </p>
       );
-      toast(`${active.provider} re-authenticated`, "ok");
+      cleanupSecret(active.secretName);
+      toast(active.provider === "claude" ? "Claude connected" : `${active.provider} re-authenticated`, "ok");
       setActive(null);
       // Refresh runner auth-health after the runner reports back.
       setTimeout(() => {
@@ -169,6 +228,7 @@ function ReauthControls({ runner }) {
           {active.provider} re-auth {status}: {run.error || ""}
         </p>
       );
+      cleanupSecret(active.secretName);
       toast(`${active.provider} re-auth ${status}`, "error");
       setActive(null);
     }
@@ -179,17 +239,52 @@ function ReauthControls({ runner }) {
   return (
     <>
       <div className="toolbar-actions">
-        {["codex", "claude"].map((provider) => (
-          <button
-            key={provider}
-            className="button"
-            disabled={busy}
-            onClick={() => start(provider)}
-          >
-            Re-auth {provider}
-          </button>
-        ))}
+        <button className="button" disabled={busy} onClick={startCodex}>
+          Re-auth Codex
+        </button>
+        <button
+          className="button"
+          disabled={busy}
+          onClick={() => setShowClaudeConnect((open) => !open)}
+          aria-expanded={showClaudeConnect ? "true" : "false"}
+        >
+          Connect Claude
+        </button>
       </div>
+      {showClaudeConnect ? (
+        <form className="panel claude-token-connect" onSubmit={connectClaude}>
+          <h4>Connect Claude with an OAuth token</h4>
+          <p className="muted">
+            On a machine where you can log into Claude normally, run{" "}
+            <code>claude setup-token</code>. Paste the resulting{" "}
+            <code>CLAUDE_CODE_OAUTH_TOKEN</code> here. RunYard sends it once to
+            this runner, stores it on that runner, and never shows it again.
+          </p>
+          <label>
+            Claude OAuth token{" "}
+            <input
+              type="password"
+              value={claudeToken}
+              autoComplete="off"
+              placeholder="paste CLAUDE_CODE_OAUTH_TOKEN"
+              onChange={(event) => setClaudeToken(event.target.value)}
+              disabled={busy}
+            />
+          </label>
+          <div className="toolbar-actions">
+            <button
+              type="button"
+              className="button"
+              onClick={() => copyText("claude setup-token", "Command copied")}
+            >
+              Copy command
+            </button>
+            <button type="submit" className="primary" disabled={busy || !claudeToken.trim()}>
+              Save to this runner
+            </button>
+          </div>
+        </form>
+      ) : null}
       {statusNode ? (
         <div className="reauth-status" id={`reauth-status-${runner.id}`}>
           {statusNode}
