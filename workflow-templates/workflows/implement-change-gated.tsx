@@ -6,6 +6,7 @@ import { createSmithers, Sequence, CodexAgent, ClaudeCodeAgent } from "smithers-
 import { existsSync } from "node:fs";
 import { z } from "zod/v4";
 import { resolveImproveRepo } from "./improve-repo.js";
+import { withAgentFallback } from "./agent-fallback.js";
 
 // Repo + deploy target are deployment-specific; set env vars on your runner.
 const PROD_REMOTE = process.env.GATED_PROD_REMOTE || "prod";
@@ -105,23 +106,31 @@ function createBuilder(repoDir) {
   const systemPrompt =
     "You are an implementation agent working inside a git repository. Make the requested change with tight, idiomatic edits that match the surrounding code. " +
     "Do NOT git commit, git push, or deploy, and do NOT run the test suite — a separate gated pipeline runs tests, commits, pushes, and deploys. Keep changes scoped; do not touch unrelated files.";
-  if (IMPLEMENT_AGENT_CLI === "claude") {
-    return new ClaudeCodeAgent({
-      model: process.env.RUNYARD_IMPLEMENT_AGENT_MODEL || "claude-opus-4-7",
-      cwd: repoDir,
-      dangerouslySkipPermissions: true,
-      timeoutMs: 45 * 60 * 1000,
-      systemPrompt
-    });
-  }
-  return new CodexAgent({
-    ...(process.env.RUNYARD_IMPLEMENT_AGENT_MODEL ? { model: process.env.RUNYARD_IMPLEMENT_AGENT_MODEL } : {}),
+  const claude = new ClaudeCodeAgent({
+    model:
+      process.env.RUNYARD_IMPLEMENT_CLAUDE_MODEL ||
+      (IMPLEMENT_AGENT_CLI === "claude" ? process.env.RUNYARD_IMPLEMENT_AGENT_MODEL : "") ||
+      "claude-opus-4-7",
+    cwd: repoDir,
+    dangerouslySkipPermissions: true,
+    timeoutMs: 45 * 60 * 1000,
+    systemPrompt
+  });
+  const codex = new CodexAgent({
+    ...(process.env.RUNYARD_IMPLEMENT_CODEX_MODEL
+      ? { model: process.env.RUNYARD_IMPLEMENT_CODEX_MODEL }
+      : IMPLEMENT_AGENT_CLI !== "claude" && process.env.RUNYARD_IMPLEMENT_AGENT_MODEL
+        ? { model: process.env.RUNYARD_IMPLEMENT_AGENT_MODEL }
+        : {}),
     cwd: repoDir,
     sandbox: "danger-full-access",
     nativeStructuredOutput: true,
     timeoutMs: 45 * 60 * 1000,
     systemPrompt
   });
+  return IMPLEMENT_AGENT_CLI === "claude"
+    ? withAgentFallback(claude, codex, { label: "implement-change-gated" })
+    : withAgentFallback(codex, claude, { label: "implement-change-gated" });
 }
 
 export default smithers((ctx) => {
@@ -129,7 +138,7 @@ export default smithers((ctx) => {
   // callers that fill in both `repo` and `project` (e.g. an alias pair) with different values.
   const improveInput = {
     ...ctx.input,
-    repo: ctx.input.repo || ctx.input.project,
+    repo: ctx.input.repoDir ? "" : ctx.input.repo || ctx.input.project,
     project: ""
   };
   const repoDir = resolveImproveRepo(improveInput, { env: process.env, cwd: process.cwd(), gitBin: GIT, gitEnv: TOOL_ENV });

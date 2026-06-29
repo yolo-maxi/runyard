@@ -2,12 +2,13 @@
 // smithers-display-name: Improve
 // smithers-description: Inspects an existing feature, UI, or workflow with a taste-led Product Manager, prioritizes improvements with acceptance checks, then dispatches a builder to apply them through the gated test/commit/push/deploy pipeline. PM analysis runs first; builder consumes that brief and the same gates as implement-change-gated run after.
 /** @jsxImportSource smithers-orchestrator */
-import { createSmithers, Sequence, ClaudeCodeAgent } from "smithers-orchestrator";
+import { createSmithers, Sequence, ClaudeCodeAgent, CodexAgent } from "smithers-orchestrator";
 import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod/v4";
 import { resolveImproveRepo } from "./improve-repo.js";
+import { createAgentFallbackPair } from "./agent-fallback.js";
 
 // Repo + deploy target are deployment-specific; set env vars on your runner.
 const PROD_REMOTE = process.env.GATED_PROD_REMOTE || "prod";
@@ -92,12 +93,17 @@ const { Workflow, Task, smithers, outputs } = createSmithers({
 });
 
 function createProductManager(repoDir) {
-  return new ClaudeCodeAgent({
-    model: "claude-opus-4-7",
+  return createAgentFallbackPair({
+    ClaudeCodeAgent,
+    CodexAgent,
+    primaryCli: process.env.RUNYARD_IMPROVE_AGENT_CLI || "claude",
+    label: "improve-product-manager",
     cwd: repoDir,
-    allowedTools: ["Read", "Grep", "Glob", "Bash"],
-    timeoutMs: 20 * 60 * 1000,
-    systemPrompt:
+    claude: {
+      model: process.env.RUNYARD_IMPROVE_CLAUDE_MODEL || "claude-opus-4-7",
+      allowedTools: ["Read", "Grep", "Glob", "Bash"],
+      timeoutMs: 20 * 60 * 1000,
+      systemPrompt:
       "You are a Product Manager with taste, reviewing an existing feature inside this repository. " +
       "Inspect the actual current behavior (read code, configs, prompts, UI, copy) before passing judgment. " +
       "Stay inside the requested target and product context. Do not broaden a narrow request into unrelated product, naming, landing-page, deploy, or architecture work. " +
@@ -107,20 +113,35 @@ function createProductManager(repoDir) {
       "For each improvement write a one-sentence rationale, a concrete change a builder can act on, and a verifiable acceptance check. " +
       "For UI, app, dashboard, or web-surface changes, include mobile readability, tap target, and narrow-viewport acceptance checks by default. " +
       "Cut anything you cannot defend as user-visible value. Do NOT modify files; you are reviewing only. Return only the requested JSON."
+    },
+    codex: {
+      ...(process.env.RUNYARD_IMPROVE_CODEX_MODEL ? { model: process.env.RUNYARD_IMPROVE_CODEX_MODEL } : {}),
+      sandbox: "read-only"
+    }
   });
 }
 
 function createBuilder(repoDir) {
-  return new ClaudeCodeAgent({
-    model: "claude-opus-4-7",
+  return createAgentFallbackPair({
+    ClaudeCodeAgent,
+    CodexAgent,
+    primaryCli: process.env.RUNYARD_IMPROVE_AGENT_CLI || "claude",
+    label: "improve-builder",
     cwd: repoDir,
-    dangerouslySkipPermissions: true,
-    timeoutMs: 45 * 60 * 1000,
-    systemPrompt:
+    claude: {
+      model: process.env.RUNYARD_IMPROVE_CLAUDE_MODEL || "claude-opus-4-7",
+      dangerouslySkipPermissions: true,
+      timeoutMs: 45 * 60 * 1000,
+      systemPrompt:
       "You are an implementation agent working inside a git repository. Apply the Product Manager's prioritized improvements with tight, idiomatic edits that match the surrounding code. " +
       "Do NOT git commit, git push, or deploy, and do NOT run the test suite — a separate gated pipeline runs tests, commits, pushes, and deploys. " +
       "Treat each acceptance check as a definition of done. Keep changes scoped to the listed improvements and hard scope contract; do not touch unrelated files. " +
       "For UI, app, dashboard, or web-surface changes, preserve mobile usability and verify text/layout at narrow widths where possible."
+    },
+    codex: {
+      ...(process.env.RUNYARD_IMPROVE_CODEX_MODEL ? { model: process.env.RUNYARD_IMPROVE_CODEX_MODEL } : {}),
+      sandbox: "danger-full-access"
+    }
   });
 }
 

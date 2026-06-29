@@ -2,12 +2,13 @@
 // smithers-display-name: Product Workflow (sequential)
 // smithers-description: Sequential product-development pipeline for the Runyard app. Researches competitors and maps their features, synthesizes a feature map against Runyard, prioritizes the gaps, then dispatches one gated implementation per feature — strictly one at a time so no two builders ever touch the repo at once. Each implementation reuses the implement-change-gated contract (pnpm test, staged diff, sane commit, push to main). execute=false plans and reports the runs it would create; execute=true queues them and waits for each to finish before starting the next.
 /** @jsxImportSource smithers-orchestrator */
-import { createSmithers, Sequence, ClaudeCodeAgent } from "smithers-orchestrator";
+import { createSmithers, Sequence, ClaudeCodeAgent, CodexAgent } from "smithers-orchestrator";
 import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod/v4";
 import { resolveImproveRepo } from "./improve-repo.js";
+import { createAgentFallbackPair } from "./agent-fallback.js";
 
 // The implementation step queues child Hub runs the same way run-smithers does,
 // so it needs the Hub URL + token on the runner. Plan-only (execute=false) runs
@@ -142,32 +143,52 @@ const { Workflow, Task, smithers, outputs } = createSmithers({
 });
 
 function createResearcher(repoDir) {
-  return new ClaudeCodeAgent({
-    model: "claude-opus-4-7",
+  return createAgentFallbackPair({
+    ClaudeCodeAgent,
+    CodexAgent,
+    primaryCli: process.env.RUNYARD_PRODUCT_AGENT_CLI || "claude",
+    label: "product-workflow-researcher",
     cwd: repoDir,
-    allowedTools: ["Read", "Grep", "Glob", "Bash", "WebSearch", "WebFetch"],
-    timeoutMs: 25 * 60 * 1000,
-    systemPrompt:
+    claude: {
+      model: process.env.RUNYARD_PRODUCT_RESEARCH_CLAUDE_MODEL || "claude-opus-4-7",
+      allowedTools: ["Read", "Grep", "Glob", "Bash", "WebSearch", "WebFetch"],
+      timeoutMs: 25 * 60 * 1000,
+      systemPrompt:
       "You are a product researcher mapping the competitive landscape for the Runyard app (a self-hosted control plane, runner, CLI, and MCP server for agent runs). " +
       "Inspect Runyard's own current capabilities in this repository first (read code, seeds, docs) so you compare against what already exists. " +
       "Then identify the most relevant competing or adjacent products and map their notable features. " +
       "Prefer current primary sources, record URLs, and distinguish observed facts from inference. Do not invent features you cannot attribute. " +
       "Do NOT modify files; you are researching only. Return only the requested JSON."
+    },
+    codex: {
+      ...(process.env.RUNYARD_PRODUCT_RESEARCH_CODEX_MODEL ? { model: process.env.RUNYARD_PRODUCT_RESEARCH_CODEX_MODEL } : {}),
+      sandbox: "read-only"
+    }
   });
 }
 
 function createStrategist(repoDir) {
-  return new ClaudeCodeAgent({
-    model: "claude-opus-4-7",
+  return createAgentFallbackPair({
+    ClaudeCodeAgent,
+    CodexAgent,
+    primaryCli: process.env.RUNYARD_PRODUCT_AGENT_CLI || "claude",
+    label: "product-workflow-strategist",
     cwd: repoDir,
-    allowedTools: ["Read", "Grep", "Glob", "Bash"],
-    timeoutMs: 20 * 60 * 1000,
-    systemPrompt:
+    claude: {
+      model: process.env.RUNYARD_PRODUCT_STRATEGY_CLAUDE_MODEL || "claude-opus-4-7",
+      allowedTools: ["Read", "Grep", "Glob", "Bash"],
+      timeoutMs: 20 * 60 * 1000,
+      systemPrompt:
       "You are a taste-led Product Manager for the Runyard app. Synthesize competitor research and the current codebase into a clear feature map, " +
       "then prioritize a small set of high-leverage features that fit Runyard's actual architecture and users. " +
       "Be ruthless about scope: every feature you prioritize must be buildable as one focused, gated change against this repository. " +
       "Write each feature as a self-contained implementation brief a coding agent can act on directly, with a verifiable acceptance check. " +
       "Do NOT modify files; you are planning only. Return only the requested JSON."
+    },
+    codex: {
+      ...(process.env.RUNYARD_PRODUCT_STRATEGY_CODEX_MODEL ? { model: process.env.RUNYARD_PRODUCT_STRATEGY_CODEX_MODEL } : {}),
+      sandbox: "read-only"
+    }
   });
 }
 

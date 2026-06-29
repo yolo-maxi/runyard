@@ -2,12 +2,13 @@
 // smithers-display-name: Workflow Doctor
 // smithers-description: Diagnoses failed Smithers workflows from redacted Hub run evidence, proposes the smallest workflow-source fix, and optionally applies it behind capability approval.
 /** @jsxImportSource smithers-orchestrator */
-import { createSmithers, Sequence, ClaudeCodeAgent } from "smithers-orchestrator";
+import { createSmithers, Sequence, ClaudeCodeAgent, CodexAgent } from "smithers-orchestrator";
 import { existsSync, realpathSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { z } from "zod/v4";
 import { syncWorkflowToWorkspace } from "./workflow-repair.js";
+import { createAgentFallbackPair } from "./agent-fallback.js";
 
 const HUB_URL = String(process.env.RUN_KNOWLEDGE_HUB_URL || process.env.SMITHERS_HUB_URL || process.env.HUB_URL || "http://127.0.0.1:43117").replace(/\/$/, "");
 const HUB_TOKEN = process.env.RUN_KNOWLEDGE_HUB_TOKEN || process.env.SMITHERS_HUB_TOKEN || process.env.HUB_TOKEN || "";
@@ -96,24 +97,44 @@ const { Workflow, Task, smithers, outputs } = createSmithers({
   result: resultSchema
 });
 
-const diagnostician = new ClaudeCodeAgent({
-  model: "claude-sonnet-4-6",
+const diagnostician = createAgentFallbackPair({
+  ClaudeCodeAgent,
+  CodexAgent,
+  primaryCli: process.env.RUNYARD_WORKFLOW_DOCTOR_AGENT_CLI || "claude",
+  label: "workflow-doctor-diagnose",
   cwd: process.cwd(),
-  systemPrompt:
+  claude: {
+    model: process.env.RUNYARD_WORKFLOW_DOCTOR_CLAUDE_MODEL || "claude-sonnet-4-6",
+    systemPrompt:
     "You diagnose Smithers workflow failures from supplied redacted evidence and source. " +
     "Distinguish deterministic workflow-code bugs from transient infrastructure/model/network failures. " +
     "When a code fix is appropriate, propose the smallest correct unified diff for only the target workflow file. Return JSON only."
+  },
+  codex: {
+    ...(process.env.RUNYARD_WORKFLOW_DOCTOR_CODEX_MODEL ? { model: process.env.RUNYARD_WORKFLOW_DOCTOR_CODEX_MODEL } : {}),
+    sandbox: "read-only"
+  }
 });
 
 function createFixer(repoRoot: string) {
-  return new ClaudeCodeAgent({
-    model: "claude-opus-4-7",
+  return createAgentFallbackPair({
+    ClaudeCodeAgent,
+    CodexAgent,
+    primaryCli: process.env.RUNYARD_WORKFLOW_DOCTOR_AGENT_CLI || "claude",
+    label: "workflow-doctor-fix",
     cwd: repoRoot,
-    dangerouslySkipPermissions: true,
-    timeoutMs: 30 * 60 * 1000,
-    systemPrompt:
+    claude: {
+      model: process.env.RUNYARD_WORKFLOW_DOCTOR_FIX_CLAUDE_MODEL || "claude-opus-4-7",
+      dangerouslySkipPermissions: true,
+      timeoutMs: 30 * 60 * 1000,
+      systemPrompt:
       "You are repairing one Smithers workflow source file. Edit ONLY the target workflow file named in the prompt. " +
       "Make the smallest deterministic fix supported by the supplied diagnosis. Do not commit, push, deploy, or edit unrelated files."
+    },
+    codex: {
+      ...(process.env.RUNYARD_WORKFLOW_DOCTOR_FIX_CODEX_MODEL ? { model: process.env.RUNYARD_WORKFLOW_DOCTOR_FIX_CODEX_MODEL } : {}),
+      sandbox: "danger-full-access"
+    }
   });
 }
 

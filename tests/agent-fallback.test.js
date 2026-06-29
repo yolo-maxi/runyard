@@ -1,0 +1,89 @@
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
+const { shouldFallbackAgent, withAgentFallback } = await import("../workflow-templates/workflows/agent-fallback.js");
+
+describe("workflow agent fallback", () => {
+  it("classifies auth, quota, rate-limit, and refusal errors as fallbackable", () => {
+    for (const message of [
+      "Claude run failed: 429 rate_limit",
+      "You've hit your monthly spend limit",
+      "token_invalidated",
+      "401 unauthorized",
+      "model refusal"
+    ]) {
+      assert.equal(shouldFallbackAgent(new Error(message)), true, message);
+    }
+  });
+
+  it("does not fallback for ordinary implementation errors", () => {
+    assert.equal(shouldFallbackAgent(new Error("TypeError: cannot read property of undefined")), false);
+  });
+
+  it("tries the fallback agent once and clears CLI-specific resume state", async () => {
+    const calls = [];
+    const primary = {
+      cliEngine: "claude-code",
+      async generate() {
+        calls.push("primary");
+        throw new Error("429 rate limit");
+      }
+    };
+    const fallback = {
+      cliEngine: "codex",
+      async generate(options) {
+        calls.push(["fallback", options.resumeSession, options.lastHeartbeat]);
+        return { text: "ok" };
+      }
+    };
+    const agent = withAgentFallback(primary, fallback, { label: "test" });
+    const result = await agent.generate({
+      resumeSession: "claude-session",
+      lastHeartbeat: { provider: "claude" },
+      onStderr: () => {}
+    });
+    assert.deepEqual(calls, ["primary", ["fallback", undefined, undefined]]);
+    assert.deepEqual(result, { text: "ok" });
+  });
+
+  it("does not fallback for non-fallbackable errors", async () => {
+    const agent = withAgentFallback(
+      {
+        cliEngine: "codex",
+        async generate() {
+          throw new Error("syntax error in generated code");
+        }
+      },
+      {
+        cliEngine: "claude-code",
+        async generate() {
+          throw new Error("should not run");
+        }
+      }
+    );
+    await assert.rejects(() => agent.generate(), /syntax error/);
+  });
+
+  it("ships fallback wiring in agent-backed workflow templates", () => {
+    for (const file of [
+      "app-skinner.tsx",
+      "idea-to-product.tsx",
+      "implement.tsx",
+      "implement-change-gated.tsx",
+      "improve.tsx",
+      "improve-no-deploy.tsx",
+      "product-workflow.tsx",
+      "run-knowledge-builder.tsx",
+      "runyard-support-agent.tsx",
+      "smart-contract-audit.tsx",
+      "workflow-doctor.tsx"
+    ]) {
+      const src = readFileSync(path.join(process.cwd(), "workflow-templates", "workflows", file), "utf8");
+      assert.match(src, /agent-fallback\.js|withAgentFallback|createAgentFallbackPair/, file);
+      assert.match(src, /CodexAgent/, file);
+      assert.match(src, /ClaudeCodeAgent/, file);
+    }
+  });
+});

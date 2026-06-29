@@ -2,8 +2,9 @@
 // smithers-display-name: Run Knowledge Builder
 // smithers-description: Reads recent Smithers Hub runs, redacts run evidence, and produces recommendation-only lessons and improvement ideas as a Markdown report.
 /** @jsxImportSource smithers-orchestrator */
-import { createSmithers, Sequence, ClaudeCodeAgent } from "smithers-orchestrator";
+import { createSmithers, Sequence, ClaudeCodeAgent, CodexAgent } from "smithers-orchestrator";
 import { z } from "zod/v4";
+import { createAgentFallbackPair } from "./agent-fallback.js";
 
 const DEFAULT_STATUSES = ["succeeded", "failed", "cancelled", "waiting_approval", "error", "rejected"];
 const HUB_URL = String(process.env.RUN_KNOWLEDGE_HUB_URL || process.env.SMITHERS_HUB_URL || process.env.HUB_URL || "http://127.0.0.1:43117").replace(/\/$/, "");
@@ -98,12 +99,22 @@ const { Workflow, Task, smithers, outputs } = createSmithers({
   report: reportSchema
 });
 
-const analyst = new ClaudeCodeAgent({
-  model: "claude-sonnet-4-6",
+const analyst = createAgentFallbackPair({
+  ClaudeCodeAgent,
+  CodexAgent,
+  primaryCli: process.env.RUNYARD_KNOWLEDGE_AGENT_CLI || "claude",
+  label: "run-knowledge-builder",
   cwd: "/tmp",
-  systemPrompt:
+  claude: {
+    model: process.env.RUNYARD_KNOWLEDGE_CLAUDE_MODEL || "claude-sonnet-4-6",
+    systemPrompt:
     "You analyze Smithers Hub run evidence. Use only the supplied redacted evidence. " +
     "Separate evidence from inference, cite run ids or deep links, avoid generic advice, and recommend changes without mutating skills, agents, workflows, or knowledge resources."
+  },
+  codex: {
+    ...(process.env.RUNYARD_KNOWLEDGE_CODEX_MODEL ? { model: process.env.RUNYARD_KNOWLEDGE_CODEX_MODEL } : {}),
+    sandbox: "read-only"
+  }
 });
 
 function redactText(value: unknown, max = 1000) {

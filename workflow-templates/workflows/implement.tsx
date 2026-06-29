@@ -2,10 +2,12 @@
 // smithers-display-name: Implement
 // smithers-description: Runs an implementation agent, then a validation pass, and returns structured implementation notes.
 /** @jsxImportSource smithers-orchestrator */
-import { createSmithers, Sequence, ClaudeCodeAgent } from "smithers-orchestrator";
+import { createSmithers, Sequence, ClaudeCodeAgent, CodexAgent } from "smithers-orchestrator";
 import { z } from "zod/v4";
+import { withAgentFallback } from "./agent-fallback.js";
 
 const REPO = process.env.IMPLEMENT_REPO_DIR || process.cwd();
+const IMPLEMENT_AGENT_CLI = String(process.env.RUNYARD_IMPLEMENT_AGENT_CLI || "codex").toLowerCase();
 
 const inputSchema = z.object({
   prompt: z.string().describe("What to implement.")
@@ -29,20 +31,45 @@ const { Workflow, Task, smithers, outputs } = createSmithers({
   validate: validateOutput
 });
 
-const builder = new ClaudeCodeAgent({
-  model: "claude-opus-4-7",
-  cwd: REPO,
-  dangerouslySkipPermissions: true,
-  timeoutMs: 45 * 60 * 1000,
+function makeAgents({ label, claudeModel, codexModel, systemPrompt, claudeAllowedTools }) {
+  const claude = new ClaudeCodeAgent({
+    model: claudeModel,
+    cwd: REPO,
+    ...(claudeAllowedTools ? { allowedTools: claudeAllowedTools } : { dangerouslySkipPermissions: true }),
+    timeoutMs: label === "validate" ? 20 * 60 * 1000 : 45 * 60 * 1000,
+    systemPrompt
+  });
+  const codex = new CodexAgent({
+    ...(codexModel ? { model: codexModel } : {}),
+    cwd: REPO,
+    sandbox: claudeAllowedTools ? "read-only" : "danger-full-access",
+    nativeStructuredOutput: true,
+    timeoutMs: label === "validate" ? 20 * 60 * 1000 : 45 * 60 * 1000,
+    systemPrompt
+  });
+  return IMPLEMENT_AGENT_CLI === "claude"
+    ? withAgentFallback(claude, codex, { label })
+    : withAgentFallback(codex, claude, { label });
+}
+
+const builder = makeAgents({
+  label: "implement",
+  claudeModel:
+    process.env.RUNYARD_IMPLEMENT_CLAUDE_MODEL ||
+    (IMPLEMENT_AGENT_CLI === "claude" ? process.env.RUNYARD_IMPLEMENT_AGENT_MODEL : "") ||
+    "claude-opus-4-7",
+  codexModel:
+    process.env.RUNYARD_IMPLEMENT_CODEX_MODEL ||
+    (IMPLEMENT_AGENT_CLI !== "claude" ? process.env.RUNYARD_IMPLEMENT_AGENT_MODEL : ""),
   systemPrompt:
     "You are an implementation agent working inside a git repository. Inspect the codebase first, keep edits scoped, preserve unrelated changes, and run focused verification when practical. Do not commit or push."
 });
 
-const validator = new ClaudeCodeAgent({
-  model: "claude-sonnet-4-6",
-  cwd: REPO,
-  allowedTools: ["Read", "Grep", "Glob", "Bash"],
-  timeoutMs: 20 * 60 * 1000,
+const validator = makeAgents({
+  label: "validate",
+  claudeModel: process.env.RUNYARD_VALIDATE_CLAUDE_MODEL || "claude-sonnet-4-6",
+  codexModel: process.env.RUNYARD_VALIDATE_CODEX_MODEL || "",
+  claudeAllowedTools: ["Read", "Grep", "Glob", "Bash"],
   systemPrompt:
     "You validate an implementation after edits. Inspect the diff and relevant tests. Report behavior covered, commands run, and remaining risks. Do not modify files."
 });

@@ -2,8 +2,9 @@
 // smithers-display-name: App Skinner
 // smithers-description: Explores visual skins for an app idea, proposes a shortlist, pauses for approval, then produces a concrete skin brief.
 /** @jsxImportSource smithers-orchestrator */
-import { createSmithers, ClaudeCodeAgent } from "smithers-orchestrator";
+import { createSmithers, ClaudeCodeAgent, CodexAgent } from "smithers-orchestrator";
 import { z } from "zod/v4";
+import { createAgentFallbackPair } from "./agent-fallback.js";
 
 const inputSchema = z.object({
   appIdea: z.string().describe("Raw app, miniapp, product, or feature idea to skin."),
@@ -61,14 +62,25 @@ const { Workflow, Task, Approval, Sequence, smithers, outputs } = createSmithers
   brief: briefSchema
 });
 
-const skinner = new ClaudeCodeAgent({
-  model: "claude-sonnet-4-6",
-  dangerouslySkipPermissions: false,
-  systemPrompt:
+const skinner = createAgentFallbackPair({
+  ClaudeCodeAgent,
+  CodexAgent,
+  primaryCli: process.env.RUNYARD_APP_SKINNER_AGENT_CLI || "claude",
+  label: "app-skinner",
+  cwd: process.cwd(),
+  claude: {
+    model: process.env.RUNYARD_APP_SKINNER_CLAUDE_MODEL || "claude-sonnet-4-6",
+    dangerouslySkipPermissions: false,
+    systemPrompt:
     "You are a taste-forward visual direction agent. You do not build the app. " +
     "Your job is to surface visual/brand decisions before implementation guesses them. " +
     "Create sharp, distinct skins with concrete design language, not vague mood words. " +
     "Prefer memorable, shareable, app-specific looks over generic SaaS polish. Return only the requested JSON."
+  },
+  codex: {
+    ...(process.env.RUNYARD_APP_SKINNER_CODEX_MODEL ? { model: process.env.RUNYARD_APP_SKINNER_CODEX_MODEL } : {}),
+    sandbox: "read-only"
+  }
 });
 
 function approvalSummary(proposal: any) {

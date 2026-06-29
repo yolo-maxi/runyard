@@ -2,10 +2,11 @@
 // smithers-display-name: Smart Contract Audit
 // smithers-description: Sandboxed Solidity audit. Sanitizes the target into /tmp, builds local auditor bundles, runs read-only Smithers audit agents over them, and consolidates findings into a Markdown report. Artifacts only; never writes the target.
 /** @jsxImportSource smithers-orchestrator */
-import { createSmithers, Sequence, Parallel, ClaudeCodeAgent } from "smithers-orchestrator";
+import { createSmithers, Sequence, Parallel, ClaudeCodeAgent, CodexAgent } from "smithers-orchestrator";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod/v4";
+import { createAgentFallbackPair } from "./agent-fallback.js";
 
 // The local audit skill (sandbox + bundle scripts + references) must be installed on the runner.
 const SKILL_DIR = process.env.AUDIT_SKILL_DIR || path.join(os.homedir(), "clawd", "skills", "audit");
@@ -72,13 +73,23 @@ const SPECIALTIES = [
 // Read-only auditor: reads its bundle and emits findings. Tool restrictions + a /tmp cwd keep it
 // from writing anywhere; it only ever sees the sanitized sandbox paths, never the target repo.
 function auditor() {
-  return new ClaudeCodeAgent({
-    model: "claude-sonnet-4-6",
+  return createAgentFallbackPair({
+    ClaudeCodeAgent,
+    CodexAgent,
+    primaryCli: process.env.RUNYARD_AUDIT_AGENT_CLI || "claude",
+    label: "smart-contract-audit",
     cwd: "/tmp",
-    allowedTools: ["Read", "Grep", "Glob"],
-    systemPrompt:
+    claude: {
+      model: process.env.RUNYARD_AUDIT_CLAUDE_MODEL || "claude-sonnet-4-6",
+      allowedTools: ["Read", "Grep", "Glob"],
+      systemPrompt:
       "You are an isolated smart-contract security auditor. Read your assigned bundle fully before reporting. " +
       "Use only file reads/search. Never write files, run commands, use the network, or touch anything outside the bundle."
+    },
+    codex: {
+      ...(process.env.RUNYARD_AUDIT_CODEX_MODEL ? { model: process.env.RUNYARD_AUDIT_CODEX_MODEL } : {}),
+      sandbox: "read-only"
+    }
   });
 }
 

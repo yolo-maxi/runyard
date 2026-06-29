@@ -667,6 +667,15 @@ describe("Smithers Hub API", () => {
     assert.equal(approval, undefined);
   });
 
+  it("ships the implement workflow with Codex/Claude fallback", () => {
+    const tpl = path.join(process.cwd(), "workflow-templates", "workflows", "implement.tsx");
+    assert.ok(existsSync(tpl));
+    const src = readFileSync(tpl, "utf8");
+    assert.match(src, /CodexAgent/);
+    assert.match(src, /ClaudeCodeAgent/);
+    assert.match(src, /withAgentFallback/);
+  });
+
   it("records explicit command origin on runs", async () => {
     const created = await api("/api/capabilities/hello/run", {
       method: "POST",
@@ -2201,6 +2210,7 @@ describe("Gated implement-change capability", () => {
     assert.match(src, /CodexAgent/);
     assert.match(src, /ClaudeCodeAgent/);
     assert.match(src, /RUNYARD_IMPLEMENT_AGENT_CLI/);
+    assert.match(src, /withAgentFallback/);
   });
 });
 

@@ -7,8 +7,9 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createSmithers, Sequence, ClaudeCodeAgent } from "smithers-orchestrator";
+import { createSmithers, Sequence, ClaudeCodeAgent, CodexAgent } from "smithers-orchestrator";
 import { z } from "zod/v4";
+import { createAgentFallbackPair } from "./agent-fallback.js";
 
 const PRODUCTS_ROOT = process.env.IDEA_PRODUCTS_ROOT || path.join(os.homedir(), "idea-products");
 const STATIC_ROOT = process.env.REPOBOX_STATIC_ROOT || process.env.STATIC_SITE_ROOT || "/var/www/runyard/subdomains";
@@ -112,25 +113,40 @@ const { Workflow, Task, smithers, outputs } = createSmithers({
   deploy: deploySchema
 });
 
-const strategist = new ClaudeCodeAgent({
-  model: "claude-sonnet-4-6",
+const strategist = createAgentFallbackPair({
+  ClaudeCodeAgent,
+  CodexAgent,
+  primaryCli: process.env.RUNYARD_IDEA_AGENT_CLI || "claude",
+  label: "idea-to-product-strategist",
   cwd: PRODUCTS_ROOT,
-  allowedTools: ["Read", "Grep", "Glob"],
-  systemPrompt:
+  claude: {
+    model: process.env.RUNYARD_IDEA_STRATEGIST_CLAUDE_MODEL || "claude-sonnet-4-6",
+    allowedTools: ["Read", "Grep", "Glob"],
+    systemPrompt:
     "You turn raw ideas into practical product briefs. Be creative first, then ruthless about scope. Return only the requested JSON. " +
     "Narrow-output contract: echo the user's ask verbatim into `originalAsk`, emit explicit `inScope` and `outOfScope` arrays, and a required `locale` field (BCP-47, e.g. en-US, it-IT). " +
     "Infer locale from the language of the ask; default to en-US when ambiguous. " +
     "Do not introduce product surface, audiences, or features the ask did not name unless the user explicitly opted in; when in doubt, list the missing surface under `outOfScope`. " +
     "Copy is product design: assume one language per page; never mix languages in visible UI copy unless the user explicitly requested a multilingual experience. " +
     "When the spec is multilingual, plan for URL-param language state plus an in-page selector, and treat translations as neutral meaning → neutral translation → independent language-specific rewrites (jokes/roasts/personality copy never translated literally)."
+  },
+  codex: {
+    ...(process.env.RUNYARD_IDEA_STRATEGIST_CODEX_MODEL ? { model: process.env.RUNYARD_IDEA_STRATEGIST_CODEX_MODEL } : {}),
+    sandbox: "read-only"
+  }
 });
 
-const builder = new ClaudeCodeAgent({
-  model: "claude-opus-4-7",
+const builder = createAgentFallbackPair({
+  ClaudeCodeAgent,
+  CodexAgent,
+  primaryCli: process.env.RUNYARD_IDEA_AGENT_CLI || "claude",
+  label: "idea-to-product-builder",
   cwd: PRODUCTS_ROOT,
-  dangerouslySkipPermissions: true,
-  timeoutMs: 60 * 60 * 1000,
-  systemPrompt:
+  claude: {
+    model: process.env.RUNYARD_IDEA_BUILDER_CLAUDE_MODEL || "claude-opus-4-7",
+    dangerouslySkipPermissions: true,
+    timeoutMs: 60 * 60 * 1000,
+    systemPrompt:
     "You are a senior product engineer. Build a small but polished product from the approved spec. " +
     "Use pnpm only. Keep the app self-contained, production-buildable, responsive, and free of secrets. " +
     "Do not deploy, do not edit Caddy, and do not touch files outside the assigned product directory. " +
@@ -139,14 +155,24 @@ const builder = new ClaudeCodeAgent({
     "If the spec is multilingual, wire language state through a URL param (e.g. ?lang=xx) and expose an in-page selector; render one selected language at a time, never side-by-side unless the spec explicitly requests it. " +
     "Specific-language copy must sound natural to a native speaker for that locale, audience, and context — translations should be contextual, never literal. " +
     "For jokes, roasts, or personality copy use the neutral meaning → neutral translation → independent language-specific rewrites pattern."
+  },
+  codex: {
+    ...(process.env.RUNYARD_IDEA_BUILDER_CODEX_MODEL ? { model: process.env.RUNYARD_IDEA_BUILDER_CODEX_MODEL } : {}),
+    sandbox: "danger-full-access"
+  }
 });
 
-const copywriter = new ClaudeCodeAgent({
-  model: "claude-sonnet-4-6",
+const copywriter = createAgentFallbackPair({
+  ClaudeCodeAgent,
+  CodexAgent,
+  primaryCli: process.env.RUNYARD_IDEA_AGENT_CLI || "claude",
+  label: "idea-to-product-copywriter",
   cwd: PRODUCTS_ROOT,
-  dangerouslySkipPermissions: true,
-  timeoutMs: 30 * 60 * 1000,
-  systemPrompt:
+  claude: {
+    model: process.env.RUNYARD_IDEA_COPYWRITER_CLAUDE_MODEL || "claude-sonnet-4-6",
+    dangerouslySkipPermissions: true,
+    timeoutMs: 30 * 60 * 1000,
+    systemPrompt:
     "You are a senior product copywriter and localization editor. Audit visible app copy in the assigned product directory against the spec's `locale`, audience, and tone. " +
     "Enforce: one language per page (no mixed-language UI copy unless the spec explicitly requests it); copy sounds natural to a native speaker of the spec locale; translations are contextual, not literal; " +
     "personality/joke/roast copy follows neutral meaning → neutral translation → independent language-specific rewrites. " +
@@ -155,6 +181,11 @@ const copywriter = new ClaudeCodeAgent({
     "If the violations cannot be fixed safely, return passed=false with actionable notes naming the offending files and lines. " +
     "Your final response must be one raw JSON object only, with no Markdown, no prose, and no code fence. Shape: " +
     "{\"passed\":true|false,\"patched\":true|false,\"locale\":\"en-US\",\"filesChanged\":[],\"findings\":[],\"notes\":\"...\"}."
+  },
+  codex: {
+    ...(process.env.RUNYARD_IDEA_COPYWRITER_CODEX_MODEL ? { model: process.env.RUNYARD_IDEA_COPYWRITER_CODEX_MODEL } : {}),
+    sandbox: "danger-full-access"
+  }
 });
 
 function slugify(input: string) {
