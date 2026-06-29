@@ -86,4 +86,9 @@ describe("workflow agent fallback", () => {
       assert.match(src, /ClaudeCodeAgent/, file);
     }
   });
+
+  it("keeps improve output schemas compatible with Codex structured output", () => {
+    const src = readFileSync(path.join(process.cwd(), "workflow-templates", "workflows", "improve.tsx"), "utf8");
+    assert.doesNotMatch(src, /z\.looseObject/, "Codex rejects loose structured-output schemas");
+  });
 });

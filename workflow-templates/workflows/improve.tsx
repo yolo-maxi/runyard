@@ -37,13 +37,13 @@ const TOOL_PATH = [
 ].filter(Boolean).join(":");
 const TOOL_ENV = { ...process.env, PATH: TOOL_PATH };
 
-const baselineOut = z.looseObject({ startHead: z.string(), repoDir: z.string().default("") });
-const reviewOut = z.looseObject({
+const baselineOut = z.object({ startHead: z.string(), repoDir: z.string().default("") });
+const reviewOut = z.object({
   summary: z.string().default(""),
   userPain: z.array(z.string()).default([]),
   improvements: z
     .array(
-      z.looseObject({
+      z.object({
         title: z.string(),
         rationale: z.string().default(""),
         change: z.string().default(""),
@@ -55,11 +55,11 @@ const reviewOut = z.looseObject({
   builderPrompt: z.string().default(""),
   risks: z.array(z.string()).default([])
 });
-const implementOut = z.looseObject({ summary: z.string().default(""), notes: z.string().default("") });
-const testOut = z.looseObject({ passed: z.boolean(), tail: z.string().default("") });
-const commitOut = z.looseObject({ commit: z.string(), message: z.string(), stat: z.string().default(""), files: z.array(z.string()).default([]) });
-const pushOut = z.looseObject({ pushed: z.boolean(), branch: z.string(), detail: z.string().default("") });
-const deployOut = z.looseObject({ deployed: z.boolean(), wouldDeploy: z.boolean().default(false), target: z.string().default(""), verify: z.string().default("") });
+const implementOut = z.object({ summary: z.string().default(""), notes: z.string().default("") });
+const testOut = z.object({ passed: z.boolean(), tail: z.string().default("") });
+const commitOut = z.object({ commit: z.string(), message: z.string(), stat: z.string().default(""), files: z.array(z.string()).default([]) });
+const pushOut = z.object({ pushed: z.boolean(), branch: z.string(), detail: z.string().default("") });
+const deployOut = z.object({ deployed: z.boolean(), wouldDeploy: z.boolean().default(false), target: z.string().default(""), verify: z.string().default("") });
 
 const inputSchema = z.object({
   target: z.string().describe("What to improve — a feature, UI, workflow slug, file path, or short description the PM should inspect."),
