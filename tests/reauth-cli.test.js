@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -51,6 +51,17 @@ describe("reauthEnabled gating", () => {
     assert.equal(reauthEnabled(), true);
     if (prev === undefined) delete process.env.REAUTH_ENABLED;
     else process.env.REAUTH_ENABLED = prev;
+  });
+
+  it("ships dstack runner settings needed for persistent CLI reauth", () => {
+    const compose = readFileSync(path.join(process.cwd(), "deploy", "dstack", "docker-compose.dstack.yml"), "utf8");
+    const docs = readFileSync(path.join(process.cwd(), "deploy", "dstack", "README.md"), "utf8");
+    assert.match(compose, /REAUTH_ENABLED:\s*"1"/);
+    assert.match(compose, /SMITHERS_RUNNER_TAGS:[^\n]*reauth/);
+    assert.match(compose, /HOME:\s*"\/runner-home"/);
+    assert.match(compose, /runner-home:\/runner-home/);
+    assert.match(docs, /\/runner-home\/\.codex\/auth\.json/);
+    assert.match(docs, /\/runner-home\/\.claude\/\.credentials\.json/);
   });
 });
 

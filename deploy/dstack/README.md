@@ -80,6 +80,18 @@ in the compose): `RUNYARD_HUB_SESSION_SECRET`, `RUNYARD_HUB_BOOTSTRAP_TOKEN`,
 `SECRETS_ENC_KEY` (hub); `RUNYARD_HUB_TOKEN`, `ANTHROPIC_API_KEY` /
 `OPENAI_API_KEY` (runner). The compose references them as `${VAR}` only.
 
+The dstack overlay also enables the runner-native CLI subscription re-auth path:
+the runner advertises the `reauth` tag, sets `REAUTH_ENABLED=1`, and sets
+`HOME=/runner-home`. Hub-triggered `reauth-cli` runs then execute on this CVM
+runner and write CLI auth files to the persistent runner home:
+
+- Codex: `/runner-home/.codex/auth.json`
+- Claude: `/runner-home/.claude/.credentials.json`
+
+Those auth files live on the same encrypted per-CVM disk as named volumes. They
+survive container recreation, `UpgradeApp`, and CVM reboot as long as the same
+app/disk/KMS keys are kept. They do **not** survive app destruction.
+
 ---
 
 ## 5. Storage & disk sizing
@@ -90,7 +102,8 @@ in the compose): `RUNYARD_HUB_SESSION_SECRET`, `RUNYARD_HUB_BOOTSTRAP_TOKEN`,
 - **Disk size is fixed at create time** — no elastic growth. Size deliberately.
 - Hub datastore (`hub-data`) is small/long-lived — keep it on the volume. Runner
   workspace (`runner-workspace`) is large scratch; persist only what matters back
-  to the hub (it already uploads outputs + traces as artifacts).
+  to the hub (it already uploads outputs + traces as artifacts). Runner HOME
+  (`runner-home`) is small/long-lived and stores CLI auth state for `reauth-cli`.
 - Starting point: hub data a few GB; runner workspace 20–50 GB by repo size. You
   cannot grow it after create.
 

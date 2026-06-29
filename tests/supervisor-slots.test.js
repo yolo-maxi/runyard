@@ -38,7 +38,7 @@ function drainClaims(runnerId, max = 50) {
 }
 
 function freshRunner(capacity, name) {
-  return registerRunner({ name, hostname: "test", tags: ["smithers"], capacity });
+  return registerRunner({ name, hostname: "test", tags: ["smithers", "vps"], capacity });
 }
 
 // Isolate each test from leftover queued runs in the shared module-level DB so

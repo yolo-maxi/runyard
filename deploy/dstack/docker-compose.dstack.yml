@@ -16,6 +16,8 @@
 #   4. Guest-docker socket mount for per-run `docker build` (you own the guest
 #      dockerd inside the CVM). Verify the app-compose parser allows it; else use
 #      a rootless DinD sidecar.
+#   5. Runner CLI re-auth enabled on this long-lived CVM runner only; CLI auth
+#      files live under a persistent HOME volume on the CVM's encrypted disk.
 
 services:
   hub:
@@ -37,8 +39,18 @@ services:
     environment:
       # The runner reaches the hub on the same CVM/compose by service name.
       RUNYARD_HUB_URL: "${RUNYARD_HUB_URL:-${RUNYARD_HUB_URL:-http://hub:80}}"
+      SMITHERS_RUNNER_LOCATION: "dstack"
+      SMITHERS_RUNNER_TAGS: "${SMITHERS_RUNNER_TAGS:-smithers,dstack,reauth}"
+      REAUTH_ENABLED: "1"
+      HOME: "/runner-home"
       # Guest CVM docker socket (you own it inside the CVM — not the host socket).
       DOCKER_HOST: "unix:///var/run/docker.sock"
     volumes:
+      # Persist Codex/Claude CLI auth files on the CVM's encrypted disk:
+      # /runner-home/.codex/auth.json and /runner-home/.claude/.credentials.json.
+      - runner-home:/runner-home
       # Per-run `docker build` against the guest dockerd. Verify parser policy.
       - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  runner-home:

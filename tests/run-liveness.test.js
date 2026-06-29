@@ -33,7 +33,7 @@ function oldIso(msAgo) {
 function startRun({ heartbeatMsAgo = 0, startedMsAgo = 60_000, capabilitySlug = "hello", input = { topic: "liveness" } } = {}) {
   const capability = getCapability(capabilitySlug);
   const run = createRun(capability, input);
-  const runner = registerRunner({ name: `runner-${run.id}`, hostname: "test", tags: ["smithers"] });
+  const runner = registerRunner({ name: `runner-${run.id}`, hostname: "test", tags: ["smithers", "vps"] });
   const assignment = claimNextRun(runner.id);
   assert.equal(assignment.run.id, run.id);
   transitionRun(run.id, "running", { started_at: oldIso(startedMsAgo), current_step: "running" });
