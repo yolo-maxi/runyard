@@ -152,7 +152,9 @@ const copywriter = new ClaudeCodeAgent({
     "personality/joke/roast copy follows neutral meaning → neutral translation → independent language-specific rewrites. " +
     "If multilingual is requested, require URL-param language state plus an in-page selector, with one selected language shown per page. " +
     "Patch the product directory in place to fix violations (limit edits to user-visible strings and locale wiring; do not refactor unrelated code, do not touch deploy/Caddy, do not leave secrets). " +
-    "If the violations cannot be fixed safely, return passed=false with actionable notes naming the offending files and lines. Return only the requested JSON."
+    "If the violations cannot be fixed safely, return passed=false with actionable notes naming the offending files and lines. " +
+    "Your final response must be one raw JSON object only, with no Markdown, no prose, and no code fence. Shape: " +
+    "{\"passed\":true|false,\"patched\":true|false,\"locale\":\"en-US\",\"filesChanged\":[],\"findings\":[],\"notes\":\"...\"}."
 });
 
 function slugify(input: string) {
@@ -386,7 +388,8 @@ export default smithers((ctx) => {
               `2. Compare each string to spec.locale and the rules above.\n` +
               `3. Patch the product directory in place to fix violations. Limit edits to user-visible strings and locale wiring. Do not refactor unrelated code, do not touch deploy/Caddy, do not leave secrets, do not exceed the product directory.\n` +
               `4. If any violation cannot be fixed safely, return passed=false with actionable notes naming the offending files/lines.\n\n` +
-              `Return JSON {"passed":true|false,"patched":true|false,"locale":"<bcp47>","filesChanged":[...],"findings":[...],"notes":"..."}.`}
+              `Return exactly one raw JSON object and nothing else. Do not include Markdown, prose, or a code fence.\n` +
+              `Required shape: {"passed":true|false,"patched":true|false,"locale":"<bcp47>","filesChanged":[...],"findings":[...],"notes":"..."}.`}
           </Task>
         )}
 
