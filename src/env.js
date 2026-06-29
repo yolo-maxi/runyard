@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
@@ -33,14 +33,26 @@ const dataDir = firstEnv("RUNYARD_HUB_DATA_DIR", "SMITHERS_HUB_DATA_DIR") || pat
 mkdirSync(dataDir, { recursive: true });
 mkdirSync(path.join(dataDir, "artifacts", "runs"), { recursive: true });
 
-// Default DB path. Prefer the RunYard-branded file, but transparently keep using
-// an existing legacy data/smithers-hub.sqlite so an in-place rename never orphans
-// a deployment's database.
-function defaultDbPath(dir) {
+// Default DB path. Canonical file is runyard.sqlite, but a legacy
+// smithers-hub.sqlite must never be orphaned. CRITICAL: if BOTH exist, use the
+// LARGER one — a fresh/empty file (a stray runyard.sqlite, or a leftover legacy)
+// must never shadow the populated database. This exact bug silently ran a live
+// hub on an empty 4 KB runyard.sqlite for days while its 387 MB real DB sat
+// orphaned beside it. Size comparison deterministically picks the real data.
+export function defaultDbPath(dir) {
   const runyardDb = path.join(dir, "runyard.sqlite");
-  if (existsSync(runyardDb)) return runyardDb;
   const legacyDb = path.join(dir, "smithers-hub.sqlite");
-  if (existsSync(legacyDb)) return legacyDb;
+  const runyardExists = existsSync(runyardDb);
+  const legacyExists = existsSync(legacyDb);
+  if (runyardExists && legacyExists) {
+    try {
+      // Larger main DB file = the one holding real data. Tie → canonical name.
+      return statSync(legacyDb).size > statSync(runyardDb).size ? legacyDb : runyardDb;
+    } catch {
+      return runyardDb;
+    }
+  }
+  if (legacyExists) return legacyDb;
   return runyardDb;
 }
 
