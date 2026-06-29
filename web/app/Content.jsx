@@ -6,12 +6,10 @@ import { Audit } from "../views/Audit.jsx";
 import { Settings } from "../views/Settings.jsx";
 import { Approvals, ApprovalDetail } from "../views/Approvals.jsx";
 import { Runners } from "../views/Runners.jsx";
-import { Tokens } from "../views/Tokens.jsx";
 import { Agents } from "../views/Agents.jsx";
 import { Connect } from "../views/Connect.jsx";
 import { Onboarding } from "../views/Onboarding.jsx";
 import { Schedules, ScheduleDetail } from "../views/Schedules.jsx";
-import { Secrets } from "../views/Secrets.jsx";
 import { Workflows } from "../views/Workflows.jsx";
 import { WorkflowDetail } from "../views/WorkflowDetail.jsx";
 import { Brand } from "../views/Brand.jsx";
@@ -43,7 +41,7 @@ export function Content({ me }) {
     const slug = view === "agents" ? segments[2] : segments[1];
     return <Agents tab={tab} slug={slug} />;
   }
-  if (view === "connect") return <Connect />;
+  if (view === "connect" || view === "tokens") return <Connect />;
   if (view === "onboarding") return <Onboarding />;
   if (view === "approvals") {
     return segments[1] ? <ApprovalDetail key={segments[1]} id={segments[1]} /> : <Approvals />;
@@ -52,10 +50,8 @@ export function Content({ me }) {
   if (view === "schedules") {
     return segments[1] ? <ScheduleDetail key={segments[1]} id={segments[1]} /> : <Schedules />;
   }
-  if (view === "tokens") return <Tokens />;
   if (view === "audit") return <Audit />;
-  if (view === "secrets") return <Secrets />;
-  if (view === "settings") return <Settings />;
+  if (view === "secrets" || view === "settings") return <Settings />;
   if (view === "brand") return <Brand />;
   return <Placeholder title="Runs" />;
 }

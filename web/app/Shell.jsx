@@ -26,6 +26,7 @@ const PRIMARY_VIEWS = new Map([
   ["dashboard", "home"],
   ["workflows", "workflows"],
   ["capabilities", "workflows"],
+  ["schedules", "schedules"],
   ["approvals", "approvals"],
   ["agents", "agents"],
   ["skills", "agents"],
@@ -33,14 +34,11 @@ const PRIMARY_VIEWS = new Map([
 ]);
 
 const ADMIN_LINKS = [
-  ["connect", "Connect"],
+  ["connect", "Connect & Tokens"],
   ["approvals", "Approvals"],
-  ["tokens", "Tokens"],
   ["runners", "Runners"],
-  ["schedules", "Schedules"],
-  ["secrets", "Secrets"],
   ["audit", "Audit"],
-  ["settings", "Settings"]
+  ["settings", "Settings & Secrets"]
 ];
 
 function SidebarButton({ view, primary, label, current }) {
@@ -99,6 +97,9 @@ export function Shell({ me }) {
           <a href="#workflows" data-primary-view="workflows" className={current === "workflows" ? "active" : undefined}>
             Workflows
           </a>
+          <a href="#schedules" data-primary-view="schedules" className={current === "schedules" ? "active" : undefined}>
+            Schedules
+          </a>
           <a href="#agents/agents" data-primary-view="agents" className={current === "agents" ? "active" : undefined}>
             Agents
           </a>
@@ -126,16 +127,6 @@ export function Shell({ me }) {
               <a className="mobile-menu-only" href="/llms.txt" role="menuitem">
                 llms.txt
               </a>
-              <button
-                type="button"
-                role="menuitem"
-                onClick={(e) => {
-                  e.currentTarget.closest("details")?.removeAttribute("open");
-                  navigate("#brand");
-                }}
-              >
-                Brand &amp; UI
-              </button>
               {ADMIN_LINKS.map(([view, label]) => (
                 <button
                   key={view}
@@ -159,6 +150,7 @@ export function Shell({ me }) {
         <nav className="sidebar" aria-label="Primary navigation">
           <SidebarButton view="home" primary="home" label="Runs" current={current} />
           <SidebarButton view="workflows" primary="workflows" label="Workflows" current={current} />
+          <SidebarButton view="schedules" primary="schedules" label="Schedules" current={current} />
           <SidebarButton view="agents" primary="agents" label="Agents" current={current} />
         </nav>
         <section id="content" className="content">

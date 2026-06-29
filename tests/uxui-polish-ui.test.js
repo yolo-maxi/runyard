@@ -13,6 +13,9 @@ const root = process.cwd();
 const css = readFileSync(path.join(root, "public", "styles.css"), "utf8");
 const indexHtml = readFileSync(path.join(root, "public", "index.html"), "utf8");
 const shell = readFileSync(path.join(root, "web", "app", "Shell.jsx"), "utf8");
+const content = readFileSync(path.join(root, "web", "app", "Content.jsx"), "utf8");
+const connect = readFileSync(path.join(root, "web", "views", "Connect.jsx"), "utf8");
+const settings = readFileSync(path.join(root, "web", "views", "Settings.jsx"), "utf8");
 const tokens = readFileSync(path.join(root, "web", "views", "Tokens.jsx"), "utf8");
 const approvalList = readFileSync(path.join(root, "web", "components", "ApprovalList.jsx"), "utf8");
 const supportChat = readFileSync(path.join(root, "web", "components", "SupportChat.jsx"), "utf8");
@@ -38,6 +41,24 @@ describe("UX polish: Tokens layout no longer overflows on desktop", () => {
     assert.match(css, /\.split-even\s*\{[\s\S]*?repeat\(2, minmax\(0, 1fr\)\)/);
     // Long monospace ids must wrap inside cells rather than widen the table.
     assert.match(css, /\.table \.muted\s*\{[\s\S]*?overflow-wrap:\s*anywhere/);
+  });
+});
+
+describe("UX polish: simplified navigation groups related admin pages", () => {
+  it("keeps Brand & UI routable without linking it in the admin menu", () => {
+    assert.doesNotMatch(shell, /Brand &amp; UI/);
+    assert.match(content, /view === "brand"[\s\S]*?<Brand \/>/);
+  });
+
+  it("routes Tokens through Connect and Secrets through Settings", () => {
+    assert.match(shell, /\["connect", "Connect & Tokens"\]/);
+    assert.match(shell, /\["settings", "Settings & Secrets"\]/);
+    assert.doesNotMatch(shell, /\[\s*"tokens"\s*,/);
+    assert.doesNotMatch(shell, /\[\s*"secrets"\s*,/);
+    assert.match(content, /view === "connect" \|\| view === "tokens"[\s\S]*?<Connect \/>/);
+    assert.match(content, /view === "secrets" \|\| view === "settings"[\s\S]*?<Settings \/>/);
+    assert.match(connect, /<Tokens embedded \/>/);
+    assert.match(settings, /<Secrets embedded \/>/);
   });
 });
 

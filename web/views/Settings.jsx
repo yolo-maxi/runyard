@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api.js";
 import { deepLinks } from "../lib/router.js";
 import { Toolbar, JsonBlock, StatusBadge } from "../components/ui.jsx";
+import { Secrets } from "./Secrets.jsx";
 
 // Deployment settings + Telegram approval status (admin). Ported from
 // renderSettings().
@@ -9,7 +10,7 @@ export function Settings() {
   const { data: setup, isLoading } = useQuery({ queryKey: ["setup"], queryFn: () => api("/api/setup") });
   return (
     <>
-      <Toolbar title="Settings" shareHash={deepLinks.settings()} />
+      <Toolbar title="Settings & Secrets" shareHash={deepLinks.settings()} />
       <section className="split">
         <div className="panel">
           <h2>Deployment</h2>
@@ -26,6 +27,7 @@ export function Settings() {
           </p>
         </div>
       </section>
+      <Secrets embedded />
     </>
   );
 }

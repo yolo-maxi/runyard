@@ -446,14 +446,14 @@ function SecretsBlock() {
   );
 }
 
-export function Secrets() {
+export function Secrets({ embedded = false } = {}) {
   const { data: me } = useMe();
   const { data: runners = [] } = useLiveQuery((q) => runnersCollection);
 
   if (!meIsAdmin(me)) {
     return (
       <>
-        <Toolbar title="Secrets" shareHash={deepLinks.secrets()} />
+        {embedded ? null : <Toolbar title="Secrets" shareHash={deepLinks.secrets()} />}
         <section className="panel">
           <div className="empty">
             <p>Admin only.</p>
@@ -469,7 +469,7 @@ export function Secrets() {
 
   return (
     <>
-      <Toolbar title="Secrets" shareHash={deepLinks.secrets()} />
+      {embedded ? null : <Toolbar title="Secrets" shareHash={deepLinks.secrets()} />}
       <section className="panel">
         <h2>Runner CLI auth health</h2>
         <p className="muted">

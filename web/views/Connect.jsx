@@ -4,6 +4,7 @@ import { deepLinks } from "../lib/router.js";
 import { toast } from "../lib/toast.js";
 import { copyText } from "../lib/clipboard.js";
 import { Toolbar } from "../components/ui.jsx";
+import { Tokens } from "./Tokens.jsx";
 
 // A read-only input + Copy button — mirrors legacy `.copy-row` markup so
 // styles.css applies unchanged. Copy always grabs the live value.
@@ -85,7 +86,7 @@ export function Connect() {
 
   return (
     <>
-      <Toolbar title="Connect an Agent or Teammate" shareHash={deepLinks.connect()} />
+      <Toolbar title="Connect & Tokens" shareHash={deepLinks.connect()} />
       <section className="panel">
         <h2>Connect agents</h2>
         <p className="muted">Now that your first capability has run, wire any of these channels. Bin names match the current build — copy and paste verbatim.</p>
@@ -148,7 +149,7 @@ export function Connect() {
                 <SecretRow id="invite-token" value={issued.token} label="Teammate token" />
                 <p className="muted">Install command:</p>
                 <CopyRow value={installCmd} ariaLabel="Install command" />
-                <p className="muted">Then they run <code>runyard mcp install --all</code>. Revoke anytime under Tokens.</p>
+                <p className="muted">Then they run <code>runyard mcp install --all</code>. Revoke anytime on this page.</p>
               </>
             ) : null}
           </div>
@@ -156,6 +157,14 @@ export function Connect() {
           <p className="muted">Every page, run, workflow, and artifact has a stable URL. Click any 🔗 in the console to copy one — paste into chat or docs.</p>
         </div>
       </section>
+      <section className="panel">
+        <h2>Access tokens</h2>
+        <p className="muted">
+          Create, inspect, and revoke API/MCP/runner/admin tokens from the same
+          place you use to connect agents and teammates.
+        </p>
+      </section>
+      <Tokens embedded />
     </>
   );
 }

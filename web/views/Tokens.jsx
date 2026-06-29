@@ -67,7 +67,7 @@ function TokenTable({ tokens, onRevoke }) {
 }
 
 // Access tokens (admin). Ported from renderTokens().
-export function Tokens() {
+export function Tokens({ embedded = false } = {}) {
   const queryClient = useQueryClient();
   const { data, isLoading } = useQuery({ queryKey: ["tokens"], queryFn: () => api("/api/tokens") });
 
@@ -116,7 +116,7 @@ export function Tokens() {
 
   return (
     <>
-      <Toolbar title="Access Tokens" shareHash={deepLinks.tokens()} />
+      {embedded ? null : <Toolbar title="Access Tokens" shareHash={deepLinks.tokens()} />}
       <section className="split split-even">
         <div className="panel">
           <h2>Create Token</h2>

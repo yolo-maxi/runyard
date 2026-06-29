@@ -19,9 +19,10 @@ const scheduleEditorJsx = readFileSync(path.join(root, "web", "components", "Sch
 const css = readFileSync(path.join(root, "public", "styles.css"), "utf8");
 
 describe("Schedules: nav + routing", () => {
-  it("adds a Schedules entry to the Admin menu", () => {
-    // Admin menu is the ADMIN_LINKS array in Shell.jsx: ["schedules", "Schedules"].
-    assert.match(shellJsx, /\[\s*"schedules"\s*,\s*"Schedules"\s*\]/);
+  it("adds Schedules to the primary side menu", () => {
+    assert.match(shellJsx, /\["schedules", "schedules"\]/);
+    assert.match(shellJsx, /SidebarButton view="schedules" primary="schedules" label="Schedules"/);
+    assert.doesNotMatch(shellJsx, /\[\s*"schedules"\s*,\s*"Schedules"\s*\]/);
   });
 
   it("ships deep-link helpers for the schedules list + detail", () => {
