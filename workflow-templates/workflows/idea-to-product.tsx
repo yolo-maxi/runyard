@@ -434,7 +434,7 @@ export default smithers((ctx) => {
               const mobileScript = [
                 "const fs = require('node:fs');",
                 "const path = require('node:path');",
-                "const dist = process.argv[2];",
+                "const dist = process.argv[1];",
                 "const idx = ['index.html','200.html'].map((f)=>path.join(dist,f)).find((f)=>fs.existsSync(f));",
                 "if (!idx) { console.log('mobile-check: missing index.html'); process.exit(2); }",
                 "const html = fs.readFileSync(idx,'utf8');",
