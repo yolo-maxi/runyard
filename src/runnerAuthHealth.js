@@ -21,6 +21,7 @@
 import { readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { parseClaudeOauthTokenHealth, readClaudeOauthToken } from "./claudeOauthToken.js";
 
 // Decode the `exp` (seconds since epoch) from a JWT WITHOUT retaining the token.
 // Returns a number (ms) or null. Never throws, never logs the token.
@@ -123,6 +124,12 @@ export function parseClaudeCredentials(creds, nowMs = Date.now()) {
   return result;
 }
 
+function bestClaudeHealth(credentialsHealth, tokenHealth) {
+  if (credentialsHealth?.ok) return credentialsHealth;
+  if (tokenHealth?.ok) return tokenHealth;
+  return credentialsHealth?.error === "credentials.json not found" ? tokenHealth || credentialsHealth : credentialsHealth;
+}
+
 function readJsonSafe(filePath) {
   try {
     return JSON.parse(readFileSync(filePath, "utf8"));
@@ -137,15 +144,20 @@ export function collectAuthHealth({
   now = Date.now(),
   home = process.env.HOME || os.homedir(),
   codexPath,
-  claudePath
+  claudePath,
+  claudeOauthToken,
+  claudeOauthTokenPath
 } = {}) {
   const codexFile = codexPath || path.join(home, ".codex", "auth.json");
   const claudeFile = claudePath || path.join(home, ".claude", ".credentials.json");
   const codexJson = readJsonSafe(codexFile);
   const claudeJson = readJsonSafe(claudeFile);
+  const token = claudeOauthToken ?? readClaudeOauthToken({ home, filePath: claudeOauthTokenPath });
+  const credentialsHealth = claudeJson ? parseClaudeCredentials(claudeJson, now) : { ok: false, error: "credentials.json not found" };
+  const tokenHealth = token ? parseClaudeOauthTokenHealth(token, now) : { ok: false, error: "CLAUDE_CODE_OAUTH_TOKEN not found" };
   return {
     codex: codexJson ? parseCodexAuth(codexJson, now) : { ok: false, error: "auth.json not found" },
-    claude: claudeJson ? parseClaudeCredentials(claudeJson, now) : { ok: false, error: "credentials.json not found" },
+    claude: bestClaudeHealth(credentialsHealth, tokenHealth),
     checkedAt: toIso(now)
   };
 }

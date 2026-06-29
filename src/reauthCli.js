@@ -7,8 +7,9 @@
 //
 //   codex:  `codex login --device-auth` emits a verification URL + user code,
 //           then polls until authorized and writes ~/.codex/auth.json.
-//   claude: `claude setup-token` runs the interactive OAuth and writes
-//           ~/.claude/.credentials.json.
+//   claude: `claude setup-token` runs the interactive OAuth and prints a
+//           long-lived CLAUDE_CODE_OAUTH_TOKEN. It does not save the token, so
+//           RunYard persists it in a runner-local 0600 file for future jobs.
 //
 // We stream-parse stdout, surface ONLY the verification URL + user code (+ TTL)
 // back to the Hub as run output so the UI can render "Open <url>, enter <code>",
@@ -23,6 +24,7 @@
 import { spawn as nodeSpawn } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
+import { extractClaudeOauthToken, writeClaudeOauthToken } from "./claudeOauthToken.js";
 import { collectAuthHealth } from "./runnerAuthHealth.js";
 
 const CODEX_BIN = process.env.REAUTH_CODEX_BIN || "codex";
@@ -76,7 +78,8 @@ function commandFor(provider) {
   return null;
 }
 
-// Derive post-login health (account id + expiry, no tokens) from the auth files.
+// Derive post-login health (account id + expiry, no tokens) from the auth files
+// and the runner-local Claude OAuth token file.
 function deriveHealth(provider, deps) {
   const health = collectAuthHealth({ now: deps.now ? deps.now() : Date.now(), home: deps.home });
   const p = provider === "codex" ? health.codex : health.claude;
@@ -108,6 +111,7 @@ export function runReauth(input = {}, deps = {}) {
     let settled = false;
     let postedVerification = false;
     let parsed = {};
+    let outputTail = "";
     let stderrTail = "";
     let timer = null;
 
@@ -140,6 +144,7 @@ export function runReauth(input = {}, deps = {}) {
 
     const onChunk = (buf) => {
       const text = String(buf || "");
+      outputTail = (outputTail + text).slice(-12_000);
       const next = cmd.parse(text);
       parsed = { ...parsed, ...next };
       // Post the verification details the moment we have BOTH url and code.
@@ -170,6 +175,10 @@ export function runReauth(input = {}, deps = {}) {
     child.on("exit", (code) => {
       if (settled) return;
       if (code === 0) {
+        if (provider === "claude") {
+          const token = extractClaudeOauthToken(outputTail);
+          if (token) writeClaudeOauthToken(token, { home });
+        }
         finish({ status: "ok", ...deriveHealth(provider, { now: deps.now, home }) });
       } else {
         const tail = stripAnsi(stderrTail).trim().slice(-300);

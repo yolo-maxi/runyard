@@ -13,6 +13,7 @@
 // on the dedicated support-runner, so the general runner pool is untouched.
 
 import { execFile } from "node:child_process";
+import { readClaudeOauthToken } from "./claudeOauthToken.js";
 
 const CLAUDE_BIN = process.env.SUPPORT_WARM_CLAUDE_BIN || "claude";
 const CLAUDE_MODEL = process.env.SUPPORT_WARM_MODEL || "claude-sonnet-4-6";
@@ -127,10 +128,15 @@ function buildPrompt({ messages, context }) {
 
 function runClaude(args, { timeoutMs }) {
   return new Promise((resolve, reject) => {
+    const env = { ...process.env };
+    if (!env.CLAUDE_CODE_OAUTH_TOKEN) {
+      const token = readClaudeOauthToken();
+      if (token) env.CLAUDE_CODE_OAUTH_TOKEN = token;
+    }
     execFile(
       CLAUDE_BIN,
       args,
-      { timeout: timeoutMs, maxBuffer: MAX_BUFFER, cwd: process.env.HOME || "/home/xiko", env: process.env },
+      { timeout: timeoutMs, maxBuffer: MAX_BUFFER, cwd: process.env.HOME || "/home/xiko", env },
       (error, stdout, stderr) => {
         if (error) {
           error.stderr = String(stderr || "");

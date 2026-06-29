@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 const { parseCodexAuth, parseClaudeCredentials, collectAuthHealth } = await import("../src/runnerAuthHealth.js");
+const { parseClaudeOauthTokenHealth } = await import("../src/claudeOauthToken.js");
 
 // Build a JWT with a given exp (seconds). Header/payload only — signature is a
 // placeholder; the parser only base64url-decodes the payload for `exp`.
@@ -99,6 +100,33 @@ describe("claude credentials health parser", () => {
     assert.equal(health.fresh, false);
     assert.equal(health.refreshable, true);
     assert.ok(!JSON.stringify(health).includes("CLAUDE-REFRESH"));
+  });
+});
+
+describe("claude oauth token health parser", () => {
+  it("reports ok for a setup-token JSON token without leaking material", () => {
+    const token = JSON.stringify({
+      accessToken: "CLAUDE-ACCESS-SHOULD-NOT-LEAK",
+      refreshToken: "CLAUDE-REFRESH-SHOULD-NOT-LEAK",
+      expiresAt: NOW + 3600_000
+    });
+    const health = parseClaudeOauthTokenHealth(token, NOW);
+    assert.equal(health.ok, true);
+    assert.equal(health.source, "CLAUDE_CODE_OAUTH_TOKEN");
+    assert.ok(health.expiresAt);
+    assert.ok(!JSON.stringify(health).includes("SHOULD-NOT-LEAK"));
+  });
+
+  it("falls back to the oauth token when credentials.json is absent", () => {
+    const health = collectAuthHealth({
+      now: NOW,
+      codexPath: "/nope/auth.json",
+      claudePath: "/nope/creds.json",
+      claudeOauthToken: JSON.stringify({ accessToken: "X-LEAK", expiresAt: NOW + 3600_000 })
+    });
+    assert.equal(health.claude.ok, true);
+    assert.equal(health.claude.source, "CLAUDE_CODE_OAUTH_TOKEN");
+    assert.ok(!JSON.stringify(health).includes("X-LEAK"));
   });
 });
 

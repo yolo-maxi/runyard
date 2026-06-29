@@ -18,6 +18,7 @@ import { extractSmithersFailure } from "./smithersFailure.js";
 import { supportWarmEnabled, warmSupportReply } from "./supportWarm.js";
 import { collectAuthHealth } from "./runnerAuthHealth.js";
 import { reauthEnabled, runReauth } from "./reauthCli.js";
+import { readClaudeOauthToken } from "./claudeOauthToken.js";
 import { isDraining, resolveDataDir } from "./drain.js";
 import { resolveSmithersBin, resolveExecWrapper } from "./resolveSmithersBin.js";
 
@@ -251,6 +252,8 @@ async function launch(entry, input, secretEnv = {}, resume = null) {
   const supervisorEnv = {};
   if (token) supervisorEnv.RUN_SMITHERS_HUB_TOKEN = token;
   if (baseUrl) supervisorEnv.RUN_SMITHERS_HUB_URL = baseUrl;
+  const claudeOauthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN || readClaudeOauthToken();
+  if (claudeOauthToken && !secretEnv.CLAUDE_CODE_OAUTH_TOKEN) supervisorEnv.CLAUDE_CODE_OAUTH_TOKEN = claudeOauthToken;
   const { stdout } = await smithers(args, {
     env: { ...process.env, ...supervisorEnv, ...secretEnv }
   });

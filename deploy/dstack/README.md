@@ -86,7 +86,14 @@ the runner advertises the `reauth` tag, sets `REAUTH_ENABLED=1`, and sets
 runner and write CLI auth files to the persistent runner home:
 
 - Codex: `/runner-home/.codex/auth.json`
-- Claude: `/runner-home/.claude/.credentials.json`
+- Claude subscription login: `/runner-home/.claude/.credentials.json`
+- Claude CI/headless token from `claude setup-token`: `/runner-home/.claude/oauth-token`
+
+Anthropic's `claude setup-token` prints a long-lived `CLAUDE_CODE_OAUTH_TOKEN`
+and does not save it; RunYard stores that value in the runner-local
+`oauth-token` file with mode `0600` and injects it into future Claude CLI jobs as
+`CLAUDE_CODE_OAUTH_TOKEN`. The token value is never returned through Hub outputs,
+logs, or artifacts.
 
 Those auth files live on the same encrypted per-CVM disk as named volumes. They
 survive container recreation, `UpgradeApp`, and CVM reboot as long as the same

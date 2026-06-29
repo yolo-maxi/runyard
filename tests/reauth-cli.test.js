@@ -1,11 +1,12 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 const { parseCodexDeviceAuth, parseClaudeSetupToken, runReauth, reauthEnabled } = await import("../src/reauthCli.js");
+const { claudeOauthTokenPath, extractClaudeOauthToken } = await import("../src/claudeOauthToken.js");
 
 // A realistic codex `login --device-auth` stdout sample.
 const CODEX_STDOUT = [
@@ -22,6 +23,12 @@ const CLAUDE_STDOUT = [
   "Enter the code shown after approving: ABCD-1234"
 ].join("\n");
 
+const CLAUDE_TOKEN = JSON.stringify({
+  accessToken: "CLAUDE-ACCESS-SHOULD-NOT-LEAK",
+  refreshToken: "CLAUDE-REFRESH-SHOULD-NOT-LEAK",
+  expiresAt: "2027-01-01T00:00:00.000Z"
+});
+
 describe("reauth output parsers", () => {
   it("extracts the verification URL, user code, and TTL from codex device-auth stdout", () => {
     const parsed = parseCodexDeviceAuth(CODEX_STDOUT);
@@ -34,6 +41,11 @@ describe("reauth output parsers", () => {
     const parsed = parseClaudeSetupToken(CLAUDE_STDOUT);
     assert.equal(parsed.verificationUrl, "https://claude.ai/oauth/authorize?scope=token");
     assert.equal(parsed.userCode, "ABCD-1234");
+  });
+
+  it("extracts Claude OAuth token output without requiring a credentials file", () => {
+    assert.equal(extractClaudeOauthToken(`CLAUDE_CODE_OAUTH_TOKEN='${CLAUDE_TOKEN}'`), CLAUDE_TOKEN);
+    assert.equal(extractClaudeOauthToken(`export CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-abc_DEF.123`), "sk-ant-oat01-abc_DEF.123");
   });
 
   it("tolerates partial/streamed chunks without crashing", () => {
@@ -62,6 +74,7 @@ describe("reauthEnabled gating", () => {
     assert.match(compose, /runner-home:\/runner-home/);
     assert.match(docs, /\/runner-home\/\.codex\/auth\.json/);
     assert.match(docs, /\/runner-home\/\.claude\/\.credentials\.json/);
+    assert.match(docs, /\/runner-home\/\.claude\/oauth-token/);
   });
 });
 
@@ -122,6 +135,37 @@ describe("runReauth (mocked child process — never a live login)", () => {
     const serialized = JSON.stringify({ result, verifications });
     assert.ok(!serialized.includes("ACCESS-LEAK"));
     assert.ok(!serialized.includes("id_token"));
+  });
+
+  it("persists Claude setup-token output as a runner-local oauth token and does not emit it", async () => {
+    const NOW = Date.parse("2026-01-01T00:00:00.000Z");
+    const home = mkdtempSync(path.join(os.tmpdir(), "reauth-claude-home-"));
+    const child = fakeChild();
+    const spawnFn = () => {
+      setImmediate(() => {
+        child.stdout.emit("data", Buffer.from(`${CLAUDE_STDOUT}\nCLAUDE_CODE_OAUTH_TOKEN='${CLAUDE_TOKEN}'\n`));
+        setImmediate(() => child.emit("exit", 0));
+      });
+      return child;
+    };
+
+    const verifications = [];
+    const result = await runReauth(
+      { provider: "claude" },
+      { spawnFn, home, now: () => NOW, onVerification: (info) => verifications.push(info) }
+    );
+
+    const tokenPath = claudeOauthTokenPath(home);
+    assert.equal(result.status, "ok");
+    assert.equal(result.provider, "claude");
+    assert.ok(result.expiresAt);
+    assert.equal(verifications.length, 1);
+    assert.equal(existsSync(tokenPath), true);
+    assert.equal(readFileSync(tokenPath, "utf8"), CLAUDE_TOKEN);
+    assert.equal(statSync(tokenPath).mode & 0o777, 0o600);
+    const serialized = JSON.stringify({ result, verifications });
+    assert.ok(!serialized.includes("CLAUDE-ACCESS-SHOULD-NOT-LEAK"));
+    assert.ok(!serialized.includes("CLAUDE-REFRESH-SHOULD-NOT-LEAK"));
   });
 
   it("kills the process and fails with a clear message on timeout", async () => {
