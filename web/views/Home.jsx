@@ -33,7 +33,7 @@ function filtersToQuery(filters) {
   return p.toString();
 }
 
-function HomeFilterBar({ filters, open }) {
+function HomeFilterBar({ filters, matchingCount = 0 }) {
   const navigate = useNavigate();
   const [q, setQ] = useState(filters.q);
   const [status, setStatus] = useState(filters.status);
@@ -52,12 +52,16 @@ function HomeFilterBar({ filters, open }) {
     const rl = (TIME_RANGE_OPTIONS.find((o) => o.value === filters.range) || {}).label || filters.range;
     activeChips.push({ kind: "range", label: rl });
   }
+  const active = Boolean(filters.q || filters.status || filters.range || filters.cursor);
 
   return (
-    <details className="runs-filter-details" open={open || activeChips.length > 0}>
-      <summary className="runs-filter-summary">
-        Filters{activeChips.length ? <> <span className="filter-active-count">{activeChips.length} active</span></> : null}
-      </summary>
+    <section className="runs-filter-panel" aria-label="Runs search and filters">
+      <div className="runs-filter-heading">
+        <h2>Search runs</h2>
+        {active ? (
+          <span className="runs-filter-count" aria-live="polite">{matchingCount} matching</span>
+        ) : null}
+      </div>
       <form
         className="runs-filter-bar"
         id="runs-filter-bar"
@@ -79,9 +83,7 @@ function HomeFilterBar({ filters, open }) {
           </select>
         </label>
         <button type="submit" className="button">Apply</button>
-        {activeChips.length ? (
-          <button type="button" className="button" id="runs-filter-clear" onClick={() => navigate("#runs")}>Clear filters</button>
-        ) : null}
+        <button type="button" className="button" id="runs-filter-clear" disabled={!active} onClick={() => navigate("#runs")}>Clear</button>
         {activeChips.length ? (
           <div className="runs-filter-chips" aria-label="Active filters">
             {activeChips.map((c) => (
@@ -93,7 +95,7 @@ function HomeFilterBar({ filters, open }) {
           </div>
         ) : null}
       </form>
-    </details>
+    </section>
   );
 }
 
@@ -211,7 +213,7 @@ export function Home() {
         <PrimaryActionBar runners={runners} capabilities={capabilities} />
       )}
       <RerunDraftBanner draft={draft} onDiscard={() => setDraftTick((n) => n + 1)} />
-      <HomeFilterBar filters={filters} open={filtersActive} />
+      <HomeFilterBar filters={filters} matchingCount={totalMatching} />
       {gettingStarted ? (
         <div className="empty empty-runs" role="region" aria-label="No runs yet">
           <p className="empty-runs-headline"><strong>No runs yet</strong></p>
@@ -239,8 +241,16 @@ export function Home() {
         <>
           <h2 className="section-heading">Matching runs <span className="muted">{totalMatching} total</span></h2>
           {runs.length ? (
-            <section className="run-grid">
-              {runs.map((run) => <RunCard key={run.id} run={run} artifacts={artifactsByRun.get(run.id) || []} now={now} />)}
+            <section className="run-history-list">
+              {runs.map((run) => (
+                <RunCard
+                  key={run.id}
+                  run={run}
+                  artifacts={artifactsByRun.get(run.id) || []}
+                  now={now}
+                  variant={isActiveRun(run) ? "card" : "row"}
+                />
+              ))}
             </section>
           ) : (
             <p className="muted">No runs match the current filters. <a href="#runs">Clear filters</a> to see everything.</p>
@@ -264,8 +274,8 @@ export function Home() {
             </p>
           ) : null}
           {completed.length ? (
-            <section className="run-grid">
-              {completed.slice(0, 30).map((run) => <RunCard key={run.id} run={run} artifacts={artifactsByRun.get(run.id) || []} now={now} />)}
+            <section className="run-history-list">
+              {completed.slice(0, 30).map((run) => <RunCard key={run.id} run={run} artifacts={artifactsByRun.get(run.id) || []} now={now} variant="row" />)}
             </section>
           ) : (
             <p className="muted">Completed runs and their artifacts will appear here.</p>

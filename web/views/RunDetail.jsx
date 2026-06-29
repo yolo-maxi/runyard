@@ -83,6 +83,7 @@ export function RunDetail({ runId, focus = "" }) {
   const statusKey = String(run.status || "").toLowerCase();
   const artifacts = data.artifacts || [];
   const ioBytes = payloadBytes({ input: run.input ?? null, output: run.output ?? null });
+  const active = isActiveRun(run);
 
   const chips = [];
   if (project) chips.push(<span className="chip chip-project" title={`Project: ${project}`} key="p"><Icon name="project" /> {project}</span>);
@@ -121,12 +122,14 @@ export function RunDetail({ runId, focus = "" }) {
       {focus === "artifacts" ? <p className="muted">Linked directly to this run's artifacts.</p> : null}
       <RunDiagnostics diagnostics={diagnostics} />
 
-      <RunSection
-        runId={run.id} name="console" status={statusKey} title="Live console"
-        meta={isActiveRun(run) ? "streaming" : "history"}
-      >
-        <LiveConsole runId={run.id} live={isActiveRun(run)} />
-      </RunSection>
+      {active ? (
+        <RunSection
+          runId={run.id} name="console" status={statusKey} title="Live console"
+          meta="streaming"
+        >
+          <LiveConsole runId={run.id} live />
+        </RunSection>
+      ) : null}
 
       <RunSection runId={run.id} name="io" status={statusKey} title="Inputs & outputs" meta={`${ioBytes ? formatBytes(ioBytes) : "empty"} total`}>
         <RunIO run={run} />
@@ -147,6 +150,15 @@ export function RunDetail({ runId, focus = "" }) {
       >
         <RunArtifacts artifacts={artifacts} />
       </RunSection>
+
+      {!active ? (
+        <RunSection
+          runId={run.id} name="console" status={statusKey} title="Console history"
+          meta="captured stream"
+        >
+          <LiveConsole runId={run.id} live={false} />
+        </RunSection>
+      ) : null}
 
       <RunSection runId={run.id} name="context" status={statusKey} title="Run context" meta={origin}>
         {description ? <p className="run-detail-desc">{description}</p> : null}

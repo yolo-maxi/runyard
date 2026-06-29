@@ -1770,6 +1770,162 @@ details.advanced[open] summary {
   font-size: var(--fs-sm);
 }
 
+.run-history-list {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.run-history-row {
+  display: grid;
+  grid-template-columns: minmax(108px, auto) minmax(220px, 1.5fr) minmax(160px, 0.8fr) minmax(150px, auto) auto;
+  align-items: center;
+  gap: 10px 14px;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--line);
+  border-radius: 8px;
+  min-width: 0;
+}
+
+.run-history-row.failed,
+.run-history-row.error,
+.run-history-row.cancelled,
+.run-history-row.rejected {
+  border-left-color: var(--danger);
+  background: linear-gradient(90deg, #fff7f7, var(--panel) 42%);
+}
+
+.run-history-row.succeeded,
+.run-history-row.recovered,
+.run-history-row.approved {
+  border-left-color: var(--ok);
+}
+
+.run-history-status,
+.run-history-main,
+.run-history-chips,
+.run-history-meta,
+.run-history-actions {
+  min-width: 0;
+}
+
+.run-history-title {
+  margin: 0;
+  font-size: var(--fs-base);
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.run-history-title a {
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.run-history-title a:hover {
+  color: var(--brand);
+  text-decoration: underline;
+}
+
+.run-history-sub {
+  margin: 3px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-xs);
+}
+
+.run-history-signal {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.run-history-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.run-history-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  white-space: nowrap;
+}
+
+.run-history-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+}
+
+.run-history-actions .share-link,
+.run-history-actions .btn-sm,
+.run-history-actions .button.btn-sm,
+.run-history-actions .overflow-menu > summary {
+  min-height: 36px;
+}
+
+@media (max-width: 900px) {
+  .run-history-row {
+    grid-template-columns: minmax(96px, auto) minmax(0, 1fr) auto;
+    grid-template-areas:
+      "status main actions"
+      "chips  main actions"
+      "meta   meta meta";
+  }
+
+  .run-history-status { grid-area: status; }
+  .run-history-main { grid-area: main; }
+  .run-history-chips { grid-area: chips; }
+  .run-history-meta {
+    grid-area: meta;
+    flex-direction: row;
+    flex-wrap: wrap;
+    white-space: normal;
+  }
+  .run-history-actions { grid-area: actions; }
+}
+
+@media (max-width: 640px) {
+  .run-history-row {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "status"
+      "main"
+      "chips"
+      "meta"
+      "actions";
+    align-items: start;
+    padding: 12px;
+  }
+
+  .run-history-actions {
+    justify-content: flex-start;
+    width: 100%;
+  }
+
+  .run-history-actions .share-link,
+  .run-history-actions .btn-sm,
+  .run-history-actions .button.btn-sm,
+  .run-history-actions .overflow-menu > summary {
+    min-height: 44px;
+  }
+
+  .run-history-actions .overflow-menu-list button,
+  .run-history-actions .overflow-menu-list a {
+    min-height: 44px;
+  }
+}
+
 .artifact-list {
   margin: 4px 0 0;
   padding-left: 18px;
@@ -3824,39 +3980,31 @@ button.run-id-mono:focus-visible,
 }
 
 /* ---- Runs filter bar (Home: search + status + time range) ---- */
-/* Collapsible filter shell — the "Filters" summary is the only thing visible
-   until clicked (or until a filter is active, which auto-opens it). */
-.runs-filter-details {
+.runs-filter-panel {
   margin: 0 0 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
 }
-.runs-filter-summary {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-  list-style: none;
+
+.runs-filter-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.runs-filter-heading h2 {
+  margin: 0;
+  font-size: var(--fs-base);
+}
+
+.runs-filter-count {
+  color: var(--brand-2);
   font-size: var(--fs-sm);
   font-weight: var(--fw-semibold);
-  color: var(--muted);
-  padding: 5px 10px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--soft);
-  width: fit-content;
-}
-.runs-filter-summary::-webkit-details-marker { display: none; }
-.runs-filter-summary::before {
-  content: "▸";
-  font-size: var(--fs-2xs);
-  transition: transform 0.15s ease;
-}
-.runs-filter-details[open] > .runs-filter-summary::before { transform: rotate(90deg); }
-.filter-active-count {
-  font-weight: var(--fw-semibold);
-  color: var(--brand-2);
-}
-.runs-filter-details[open] > .runs-filter-summary {
-  margin-bottom: 10px;
 }
 
 .runs-filter-bar {
@@ -3864,11 +4012,10 @@ button.run-id-mono:focus-visible,
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
-  padding: 10px 12px;
+  padding: 0;
   margin: 0;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--panel);
+  border: 0;
+  background: transparent;
 }
 
 /* Single condensed totals strip — replaces the old runner-pool chip row plus
@@ -3912,19 +4059,27 @@ button.run-id-mono:focus-visible,
 
 .runs-filter-bar label {
   display: inline-flex;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
   font-size: var(--fs-sm);
   color: var(--muted);
 }
 
 .runs-filter-bar input[type="search"] {
   min-width: 220px;
-  padding: 6px 10px;
+  min-height: 44px;
+  padding: 8px 10px;
 }
 
 .runs-filter-bar select {
-  padding: 6px 10px;
+  min-height: 44px;
+  padding: 8px 10px;
+}
+
+.runs-filter-bar .button,
+.runs-filter-bar button {
+  min-height: 44px;
 }
 
 .runs-filter-chips {
@@ -3939,7 +4094,8 @@ button.run-id-mono:focus-visible,
   align-items: center;
   gap: 4px;
   font-size: var(--fs-xs);
-  padding: 2px 8px;
+  min-height: 44px;
+  padding: 3px 6px 3px 10px;
   border-radius: 999px;
   background: var(--soft);
   border: 1px solid var(--line);
@@ -3949,6 +4105,8 @@ button.run-id-mono:focus-visible,
   border: none;
   background: transparent;
   cursor: pointer;
+  min-width: 44px;
+  min-height: 44px;
   padding: 0 0 0 2px;
   font-size: var(--fs-sm);
   color: var(--muted);
@@ -3964,6 +4122,40 @@ button.run-id-mono:focus-visible,
 }
 
 .runs-pagination .muted { margin: 0; }
+
+@media (max-width: 640px) {
+  .runs-filter-panel {
+    padding: 10px;
+  }
+
+  .runs-filter-heading {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+
+  .runs-filter-bar,
+  .runs-filter-bar label,
+  .runs-filter-bar input[type="search"],
+  .runs-filter-bar select,
+  .runs-filter-bar .button,
+  .runs-filter-bar button {
+    width: 100%;
+  }
+
+  .runs-filter-chips {
+    width: 100%;
+  }
+
+  .runs-filter-chip {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+  }
+
+  .runs-filter-chip button {
+    width: auto;
+  }
+}
 
 /* ---- Next-best-action (Home hero card) ---- */
 .nba-card {
@@ -6107,12 +6299,19 @@ button.cron-preset:hover {
 .run-card-chips,
 .run-card-failure,
 .run-card-failure-row,
+.run-history-row,
+.run-history-row > *,
+.run-history-sub,
+.run-history-chips,
+.run-history-actions,
 .chip {
   min-width: 0;
 }
 .run-card-title a,
+.run-history-title a,
 .run-cap-link,
 .run-desc,
+.run-history-signal,
 .run-card-failure-cause,
 .run-reason-hint span,
 .diagnostics-event-type,

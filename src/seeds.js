@@ -210,7 +210,7 @@ export const seedCapabilities = [
         approval: { type: "object", description: "Approval request payload when the watcher escalated." }
       }
     },
-    requiredRunnerTags: ["smithers"],
+    requiredRunnerTags: ["smithers", "vps"],
     requiredSkills: ["smithers-supervision"],
     requiredAgents: ["smithers-watcher"],
     approvalPolicy: { required: false },

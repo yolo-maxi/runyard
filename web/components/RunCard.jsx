@@ -23,9 +23,34 @@ function QueueBanner({ run }) {
   );
 }
 
+function runSignal(run, reasonHint, active) {
+  if (run.failedStep && reasonHint) return `Failed step: ${run.failedStep} · ${truncate(reasonHint, 120)}`;
+  if (run.failedStep) return `Failed step: ${run.failedStep}`;
+  if (reasonHint) return truncate(reasonHint, 140);
+  if (run.currentStep) return active ? run.currentStep : `Last step: ${run.currentStep}`;
+  return active ? "starting…" : "No step detail";
+}
+
+function RunActions({ run, size = "sm" }) {
+  return (
+    <>
+      <button className="btn-sm" onClick={() => rerunRun(run.id)}>Re-run</button>
+      <OverflowMenu
+        size={size}
+        label="More run actions"
+        items={[
+          { label: "Edit & re-run", onSelect: () => editRerunById(run.id) },
+          { label: "Run log", href: deepLinks.runLogs(run.id) },
+          { label: "Artifacts", href: deepLinks.runArtifacts(run.id) }
+        ]}
+      />
+    </>
+  );
+}
+
 // One run summary card. Ported from legacy runCard(). Driven by the live run
 // object so its status/progress update reactively as the collection refetches.
-export function RunCard({ run, artifacts = [], now = Date.now() }) {
+export function RunCard({ run, artifacts = [], now = Date.now(), variant = "card" }) {
   const active = isActiveRun(run);
   const slug = run.capabilitySlug || "";
   const title = runTitle(run);
@@ -36,9 +61,47 @@ export function RunCard({ run, artifacts = [], now = Date.now() }) {
   const execution = runExecutionLabel(run);
   const durStr = formatDuration(runDurationMs(run, now));
   const created = relativeTime(run.createdAt, now);
-  const reasonHint = isDiagnosticRun(run) ? run.reasonHint || "" : "";
+  const reasonHint = isDiagnosticRun(run) ? run.reasonHint || run.error || run.failureType || "" : "";
   const showFailureBlock = (run.status === "failed" || run.status === "error") && (reasonHint || run.failedStep);
   const showArtifacts = !active && artifacts.length > 0;
+  const signal = runSignal(run, reasonHint, active);
+
+  if (variant === "row" && !active) {
+    return (
+      <article className={`run-history-row ${run.status}`} id={`run-${run.id}`}>
+        <div className="run-history-status">
+          <StatusBadge value={run.status} />
+        </div>
+        <div className="run-history-main">
+          <h3 className="run-history-title">
+            <a href={deepLinks.run(run.id)}>{title}</a>
+          </h3>
+          <p className="run-history-sub">
+            {slug ? (
+              <a className="run-cap-link" href={deepLinks.workflow(slug)} title="Open this workflow">
+                {run.capabilityName || slug}
+              </a>
+            ) : null}
+            <span className="run-origin" title="Origin">{origin}</span>
+          </p>
+          <p className="run-history-signal" title={reasonHint || run.currentStep || ""}>{signal}</p>
+        </div>
+        <div className="run-history-chips" aria-label="Run context">
+          {project ? <span className="chip chip-project" title="Project / target"><Icon name="project" /> {project}</span> : null}
+          {branch ? <span className="chip chip-branch" title="Branch"><Icon name="branch" /> {branch}</span> : null}
+        </div>
+        <div className="run-history-meta">
+          <span title={run.createdAt || ""}>{created}</span>
+          {durStr ? <span>{durStr}</span> : null}
+          <a href={deepLinks.runArtifacts(run.id)}>{artifacts.length} artifact{artifacts.length === 1 ? "" : "s"}</a>
+        </div>
+        <div className="run-history-actions">
+          <ShareButton hash={deepLinks.run(run.id)} label="Copy share link to this run" />
+          <RunActions run={run} />
+        </div>
+      </article>
+    );
+  }
 
   return (
     <article className={`run-card ${active ? "active" : "done"} ${run.status}`} id={`run-${run.id}`}>
@@ -106,16 +169,7 @@ export function RunCard({ run, artifacts = [], now = Date.now() }) {
         {/* One clear action per card; everything secondary collapses into the
             overflow menu so the runs grid stays calm. The card title and the
             workflow chip above already link to detail / the workflow. */}
-        <button className="btn-sm" onClick={() => rerunRun(run.id)}>Re-run</button>
-        <OverflowMenu
-          size="sm"
-          label="More run actions"
-          items={[
-            { label: "Edit & re-run", onSelect: () => editRerunById(run.id) },
-            { label: "Run log", href: deepLinks.runLogs(run.id) },
-            { label: "Artifacts", href: deepLinks.runArtifacts(run.id) }
-          ]}
-        />
+        <RunActions run={run} />
       </footer>
     </article>
   );

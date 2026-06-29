@@ -12,6 +12,9 @@ import { cleanFailureText } from "../web/lib/runHelpers.js";
 const root = process.cwd();
 const runHelpers = readFileSync(path.join(root, "web", "lib", "runHelpers.js"), "utf8");
 const homeChrome = readFileSync(path.join(root, "web", "components", "HomeChrome.jsx"), "utf8");
+const home = readFileSync(path.join(root, "web", "views", "Home.jsx"), "utf8");
+const runCard = readFileSync(path.join(root, "web", "components", "RunCard.jsx"), "utf8");
+const runDetail = readFileSync(path.join(root, "web", "views", "RunDetail.jsx"), "utf8");
 const shell = readFileSync(path.join(root, "web", "app", "Shell.jsx"), "utf8");
 const css = readFileSync(path.join(root, "public", "styles.css"), "utf8");
 
@@ -76,5 +79,60 @@ describe("Runs dashboard: mobile navigation & chrome", () => {
     assert.match(shell, /data-badge=\{kind\}/);
     assert.match(shell, /kind="runs"/);
     assert.match(homeChrome, /in the last 24h/);
+  });
+});
+
+describe("Runs page: filter toolbar, history rows, and detail order", () => {
+  it("keeps runs search and filters visible without a disclosure", () => {
+    assert.match(home, /function HomeFilterBar\(\{ filters, matchingCount = 0 \}\)/);
+    assert.match(home, /className="runs-filter-panel"/);
+    assert.match(home, /id="runs-filter-q"/);
+    assert.match(home, /id="runs-filter-status"/);
+    assert.match(home, /id="runs-filter-range"/);
+    assert.match(home, /id="runs-filter-clear"/);
+    assert.match(home, /filtersToQuery\(merged\)/);
+    assert.ok(!/runs-filter-details/.test(home), "filter controls should not hide behind details");
+    assert.match(css, /\.runs-filter-panel/);
+    assert.match(css, /\.runs-filter-bar input\[type="search"\]\s*\{[^}]*min-height:\s*44px/s);
+    assert.match(css, /@media \(max-width:\s*640px\)\s*\{[^}]*\.runs-filter-panel/s);
+    assert.match(css, /\.runs-filter-bar,\s*\n\s*\.runs-filter-bar label,\s*\n\s*\.runs-filter-bar input\[type="search"\]/);
+  });
+
+  it("renders completed and matching runs with the compact history row variant while preserving active cards", () => {
+    assert.match(runCard, /variant = "card"/);
+    assert.match(runCard, /className=\{`run-history-row \$\{run\.status\}`\}/);
+    assert.match(runCard, /deepLinks\.run\(run\.id\)/);
+    assert.match(runCard, /deepLinks\.workflow\(slug\)/);
+    assert.match(runCard, /deepLinks\.runLogs\(run\.id\)/);
+    assert.match(runCard, /deepLinks\.runArtifacts\(run\.id\)/);
+    assert.match(runCard, /rerunRun\(run\.id\)/);
+    assert.match(runCard, /editRerunById\(run\.id\)/);
+    assert.match(runCard, /ShareButton hash=\{deepLinks\.run\(run\.id\)\}/);
+    assert.match(home, /className="run-grid live in-flight"/);
+    assert.match(home, /variant=\{isActiveRun\(run\) \? "card" : "row"\}/);
+    assert.match(home, /variant="row"/);
+    assert.match(css, /\.run-history-list/);
+    assert.match(css, /\.run-history-row\s*\{[^}]*grid-template-columns/s);
+    assert.match(css, /@media \(max-width:\s*640px\)\s*\{[^}]*\.run-history-row\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s);
+    assert.match(css, /\.run-history-actions \.share-link,[\s\S]*min-height:\s*44px/);
+  });
+
+  it("orders terminal run detail around outcome before console history", () => {
+    const firstConsole = runDetail.indexOf("{active ? (");
+    const io = runDetail.indexOf('name="io"');
+    const log = runDetail.indexOf('name="log"');
+    const artifacts = runDetail.indexOf('name="artifacts"');
+    const history = runDetail.indexOf('title="Console history"');
+    const context = runDetail.indexOf('name="context"');
+    assert.ok(firstConsole > -1 && firstConsole < io, "active live console should remain first");
+    assert.ok(io < log, "Inputs & outputs should precede Run log");
+    assert.ok(log < artifacts, "Run log should precede Artifacts");
+    assert.ok(artifacts < history, "Artifacts should precede terminal Console history");
+    assert.ok(history < context, "Console history should precede Run context");
+    assert.match(runDetail, /focus === "logs"/);
+    assert.match(runDetail, /focus === "artifacts"/);
+    assert.match(runDetail, /ShareButton hash=\{deepLinks\.runLogs\(run\.id\)\}/);
+    assert.match(runDetail, /ShareButton hash=\{deepLinks\.runArtifacts\(run\.id\)\}/);
+    assert.match(css, /\.run-section-summary\s*\{[^}]*min-height:\s*44px/s);
   });
 });
