@@ -3979,7 +3979,7 @@ button.run-id-mono:focus-visible,
   font-weight: var(--fw-semibold);
 }
 
-/* ---- Runs filter bar (Home: search + status + time range) ---- */
+/* ---- Runs filter bar (Home: search + status + time range + workflows) ---- */
 .runs-filter-panel {
   margin: 0 0 12px;
   padding: 12px;
@@ -4082,6 +4082,54 @@ button.run-id-mono:focus-visible,
   min-height: 44px;
 }
 
+.runs-workflow-filter {
+  flex: 1 1 360px;
+  min-width: 280px;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  margin: 0;
+}
+
+.runs-workflow-filter legend {
+  margin-bottom: 4px;
+  font-size: var(--fs-sm);
+}
+
+.runs-workflow-filter-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 4px 8px;
+  max-height: 118px;
+  overflow: auto;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--soft);
+}
+
+.runs-filter-bar .runs-workflow-filter-option {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  color: var(--ink);
+  font-size: var(--fs-xs);
+}
+
+.runs-workflow-filter-option input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.runs-workflow-filter-option span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .runs-filter-chips {
   display: flex;
   flex-wrap: wrap;
@@ -4138,9 +4186,15 @@ button.run-id-mono:focus-visible,
   .runs-filter-bar label,
   .runs-filter-bar input[type="search"],
   .runs-filter-bar select,
+  .runs-workflow-filter,
   .runs-filter-bar .button,
   .runs-filter-bar button {
     width: 100%;
+  }
+
+  .runs-workflow-filter-list {
+    grid-template-columns: 1fr;
+    max-height: 180px;
   }
 
   .runs-filter-chips {

@@ -15,12 +15,51 @@ import { PrimaryActionBar, IncidentCard, HomeStatStrip } from "../components/Hom
 import { ApprovalList } from "../components/ApprovalList.jsx";
 import { relativeTime } from "../lib/format.js";
 
+const DEFAULT_HIDDEN_WORKFLOWS = ["runyard-support-agent", "reauth-cli"];
+
+function parseWorkflowParam(value = "") {
+  return [...new Set(String(value || "").split(",").map((slug) => slug.trim()).filter(Boolean))];
+}
+
+function workflowParamFromParams(params) {
+  if (params.has("workflows")) return params.get("workflows") || "";
+  if (params.has("capabilities")) return params.get("capabilities") || "";
+  if (params.has("capability")) return params.get("capability") || "";
+  return null;
+}
+
+function defaultWorkflowSlugs(capabilities = []) {
+  return capabilities
+    .map((cap) => cap.slug)
+    .filter(Boolean)
+    .filter((slug) => !DEFAULT_HIDDEN_WORKFLOWS.includes(slug));
+}
+
+function sortedWorkflowOptions(capabilities = []) {
+  return [...capabilities]
+    .filter((cap) => cap?.slug)
+    .sort((a, b) => {
+      const ah = DEFAULT_HIDDEN_WORKFLOWS.includes(a.slug) ? 1 : 0;
+      const bh = DEFAULT_HIDDEN_WORKFLOWS.includes(b.slug) ? 1 : 0;
+      if (ah !== bh) return ah - bh;
+      return String(a.name || a.slug).localeCompare(String(b.name || b.slug));
+    });
+}
+
+function sameSet(a = [], b = []) {
+  if (a.length !== b.length) return false;
+  const set = new Set(a);
+  return b.every((item) => set.has(item));
+}
+
 function filtersFromParams(params) {
+  const workflowParam = workflowParamFromParams(params);
   return {
     q: params.get("q") || "",
     status: params.get("status") || "",
     range: params.get("range") || "",
-    cursor: params.get("cursor") || ""
+    cursor: params.get("cursor") || "",
+    workflows: workflowParam == null ? undefined : parseWorkflowParam(workflowParam)
   };
 }
 
@@ -29,21 +68,43 @@ function filtersToQuery(filters) {
   if (filters.q) p.set("q", filters.q);
   if (filters.status) p.set("status", filters.status);
   if (filters.range) p.set("range", filters.range);
+  if (Array.isArray(filters.workflows)) p.set("workflows", filters.workflows.join(","));
   if (filters.cursor) p.set("cursor", filters.cursor);
   return p.toString();
 }
 
-function HomeFilterBar({ filters, matchingCount = 0 }) {
+function HomeFilterBar({ filters, capabilities = [], matchingCount = 0 }) {
   const navigate = useNavigate();
+  const workflowOptions = sortedWorkflowOptions(capabilities);
+  const defaultWorkflows = defaultWorkflowSlugs(capabilities);
+  const selectedWorkflows = Array.isArray(filters.workflows) ? filters.workflows : defaultWorkflows;
+  const workflowFilterKey = Array.isArray(filters.workflows) ? filters.workflows.join(",") : "";
   const [q, setQ] = useState(filters.q);
   const [status, setStatus] = useState(filters.status);
   const [range, setRange] = useState(filters.range);
-  useEffect(() => { setQ(filters.q); setStatus(filters.status); setRange(filters.range); }, [filters.q, filters.status, filters.range]);
+  const [workflows, setWorkflows] = useState(selectedWorkflows);
+  useEffect(() => {
+    setQ(filters.q);
+    setStatus(filters.status);
+    setRange(filters.range);
+    setWorkflows(Array.isArray(filters.workflows) ? filters.workflows : defaultWorkflows);
+  }, [filters.q, filters.status, filters.range, workflowFilterKey, defaultWorkflows.join(",")]);
 
   function apply(next) {
-    const merged = { q, status, range, cursor: "", ...next };
+    const nextWorkflows = next && Object.hasOwn(next, "workflows") ? next.workflows : workflows;
+    const merged = {
+      q,
+      status,
+      range,
+      cursor: "",
+      ...next,
+      workflows: sameSet(nextWorkflows, defaultWorkflows) ? undefined : nextWorkflows
+    };
     const query = filtersToQuery(merged);
     navigate(`#runs${query ? `?${query}` : ""}`);
+  }
+  function toggleWorkflow(slug) {
+    setWorkflows((current) => current.includes(slug) ? current.filter((item) => item !== slug) : [...current, slug]);
   }
   const activeChips = [];
   if (filters.q) activeChips.push({ kind: "q", label: `“${truncate(filters.q, 24)}”` });
@@ -52,7 +113,8 @@ function HomeFilterBar({ filters, matchingCount = 0 }) {
     const rl = (TIME_RANGE_OPTIONS.find((o) => o.value === filters.range) || {}).label || filters.range;
     activeChips.push({ kind: "range", label: rl });
   }
-  const active = Boolean(filters.q || filters.status || filters.range || filters.cursor);
+  if (Array.isArray(filters.workflows)) activeChips.push({ kind: "workflows", label: `${filters.workflows.length} workflow${filters.workflows.length === 1 ? "" : "s"}` });
+  const active = Boolean(filters.q || filters.status || filters.range || filters.cursor || Array.isArray(filters.workflows));
 
   return (
     <section className="runs-filter-panel" aria-label="Runs search and filters">
@@ -82,6 +144,23 @@ function HomeFilterBar({ filters, matchingCount = 0 }) {
             {TIME_RANGE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </label>
+        {workflowOptions.length ? (
+          <fieldset className="runs-workflow-filter">
+            <legend className="muted">Workflows</legend>
+            <div className="runs-workflow-filter-list">
+              {workflowOptions.map((cap) => (
+                <label key={cap.slug} className="runs-workflow-filter-option">
+                  <input
+                    type="checkbox"
+                    checked={workflows.includes(cap.slug)}
+                    onChange={() => toggleWorkflow(cap.slug)}
+                  />
+                  <span>{cap.name || cap.slug}</span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+        ) : null}
         <button type="submit" className="button">Apply</button>
         <button type="button" className="button" id="runs-filter-clear" disabled={!active} onClick={() => navigate("#runs")}>Clear</button>
         {activeChips.length ? (
@@ -89,7 +168,7 @@ function HomeFilterBar({ filters, matchingCount = 0 }) {
             {activeChips.map((c) => (
               <span className="runs-filter-chip" data-filter-chip={c.kind} key={c.kind}>
                 {c.label}{" "}
-                <button type="button" aria-label={`Clear ${c.kind} filter`} data-clear-filter={c.kind} onClick={() => apply({ [c.kind]: "" })}>×</button>
+                <button type="button" aria-label={`Clear ${c.kind} filter`} data-clear-filter={c.kind} onClick={() => apply(c.kind === "workflows" ? { workflows: defaultWorkflows } : { [c.kind]: "" })}>×</button>
               </span>
             ))}
           </div>
@@ -117,7 +196,7 @@ export function Home() {
   const route = useHashRoute();
   const navigate = useNavigate();
   const filters = filtersFromParams(route.params);
-  const filtersActive = Boolean(filters.q || filters.status || filters.range || filters.cursor);
+  const filtersActive = Boolean(filters.q || filters.status || filters.range || filters.cursor || Array.isArray(filters.workflows));
   const now = useNow(1000, true);
   const [draftTick, setDraftTick] = useState(0);
 
@@ -143,6 +222,7 @@ export function Home() {
       p.set("limit", "30");
       if (filters.q) p.set("q", filters.q);
       if (filters.status) p.set("status", filters.status);
+      if (Array.isArray(filters.workflows)) p.set("workflows", filters.workflows.join(","));
       const since = timeRangeToSinceISO(filters.range);
       if (since) p.set("since", since);
       if (filters.cursor) p.set("cursor", filters.cursor);
@@ -213,7 +293,7 @@ export function Home() {
         <PrimaryActionBar runners={runners} capabilities={capabilities} />
       )}
       <RerunDraftBanner draft={draft} onDiscard={() => setDraftTick((n) => n + 1)} />
-      <HomeFilterBar filters={filters} matchingCount={totalMatching} />
+      <HomeFilterBar filters={filters} capabilities={capabilities} matchingCount={totalMatching} />
       {gettingStarted ? (
         <div className="empty empty-runs" role="region" aria-label="No runs yet">
           <p className="empty-runs-headline"><strong>No runs yet</strong></p>

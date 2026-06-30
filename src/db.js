@@ -22,6 +22,16 @@ export const db = new DatabaseSync(env.dbPath);
 db.exec("PRAGMA journal_mode = WAL");
 db.exec("PRAGMA foreign_keys = ON");
 
+const INTERNAL_SUPPORT_RUN_WHERE = "COALESCE(json_extract(input, '$.__origin.type'), '') = 'support-chat'";
+const SUPPORT_AGENT_CAPABILITY_SLUG = "runyard-support-agent";
+const REAUTH_CAPABILITY_SLUG = "reauth-cli";
+export const DEFAULT_HIDDEN_RUN_SLUGS = [SUPPORT_AGENT_CAPABILITY_SLUG, REAUTH_CAPABILITY_SLUG];
+const DEFAULT_HIDDEN_RUN_WHERE = [
+  INTERNAL_SUPPORT_RUN_WHERE,
+  `capability_slug IN (${DEFAULT_HIDDEN_RUN_SLUGS.map((slug) => `'${slug}'`).join(", ")})`
+].join(" OR ");
+const VISIBLE_RUN_WHERE = `NOT (${DEFAULT_HIDDEN_RUN_WHERE})`;
+
 function json(value, fallback = null) {
   if (value === undefined) return JSON.stringify(fallback);
   return JSON.stringify(value);
@@ -1405,9 +1415,19 @@ export function findActiveSupervisorByToken(token, wrappedCapability = "") {
 // Build the WHERE clause shared by listRuns / countRuns so search/time/cursor
 // filters stay aligned. Returns SQL fragment + bound positional params. Cursor
 // is the createdAt of the last row from the previous page (exclusive bound).
-function buildRunFilterClause({ status = "", q = "", since = "", until = "", cursor = "" } = {}) {
+function buildRunFilterClause({ status = "", q = "", since = "", until = "", cursor = "", capabilitySlugs = [], includeInternal = false } = {}) {
   const where = [];
   const params = [];
+  if (!includeInternal) {
+    where.push(VISIBLE_RUN_WHERE);
+  }
+  const slugs = Array.isArray(capabilitySlugs)
+    ? [...new Set(capabilitySlugs.map((slug) => String(slug || "").trim()).filter(Boolean))]
+    : [];
+  if (slugs.length) {
+    where.push(`capability_slug IN (${slugs.map(() => "?").join(", ")})`);
+    params.push(...slugs);
+  }
   if (status) {
     where.push("status = ?");
     params.push(status);
@@ -1436,15 +1456,15 @@ function buildRunFilterClause({ status = "", q = "", since = "", until = "", cur
   return { clause, params };
 }
 
-export function listRuns({ status = "", limit = 100, q = "", since = "", until = "", cursor = "" } = {}) {
-  const { clause, params } = buildRunFilterClause({ status, q, since, until, cursor });
+export function listRuns({ status = "", limit = 100, q = "", since = "", until = "", cursor = "", capabilitySlugs = [], includeInternal = false } = {}) {
+  const { clause, params } = buildRunFilterClause({ status, q, since, until, cursor, capabilitySlugs, includeInternal });
   const sql = `SELECT * FROM runs ${clause} ORDER BY created_at DESC LIMIT ?`;
   const rows = all(sql, [...params, limit]);
   return rows.map(normalizeRun);
 }
 
-export function countRuns({ status = "", q = "", since = "", until = "" } = {}) {
-  const { clause, params } = buildRunFilterClause({ status, q, since, until });
+export function countRuns({ status = "", q = "", since = "", until = "", capabilitySlugs = [], includeInternal = false } = {}) {
+  const { clause, params } = buildRunFilterClause({ status, q, since, until, capabilitySlugs, includeInternal });
   const sql = `SELECT COUNT(*) AS count FROM runs ${clause}`;
   return one(sql, params).count;
 }
@@ -2400,6 +2420,33 @@ function runnerMatches(capability, runner, run) {
   return executionIntentMatchesRunnerTags(executionIntentFromInput(run?.input || {}), runner.tags || []);
 }
 
+export function supportRunnerAvailability() {
+  const capability = getCapability(SUPPORT_AGENT_CAPABILITY_SLUG);
+  if (!capability || !capability.enabled) {
+    return { available: false, reason: "support capability is not installed", runners: [] };
+  }
+  const runners = listRunners().filter((runner) => runner.online && runnerMatches(capability, runner, { input: {} }));
+  if (!runners.length) {
+    return {
+      available: false,
+      reason: `no online runner advertises required tags: ${(capability.requiredRunnerTags || []).join(", ") || "(none)"}`,
+      runners: []
+    };
+  }
+  return {
+    available: true,
+    reason: "",
+    runners: runners.map((runner) => ({
+      id: runner.id,
+      name: runner.name,
+      tags: runner.tags,
+      capacity: runner.capacity,
+      workRuns: runner.workRuns,
+      availableSlots: runner.availableSlots
+    }))
+  };
+}
+
 export function claimNextRun(runnerId) {
   const runner = getRunner(runnerId);
   if (!runner || !runner.online) return null;
@@ -2414,7 +2461,7 @@ export function claimNextRun(runnerId) {
   // Fast reject only if BOTH pools are saturated — no candidate of either kind
   // could be claimed this pass.
   if (load.work >= runner.capacity && load.supervisors >= supervisorCapacity) return null;
-  const queued = listRuns({ status: "queued", limit: 200 });
+  const queued = listRuns({ status: "queued", limit: 200, includeInternal: true });
   for (const candidate of queued) {
     // Targeting: a run pre-assigned to a specific runner (e.g. "run on my laptop" vs "run on the VPS")
     // is only claimable by that runner. Untargeted runs are claimable by any matching runner.
@@ -2529,10 +2576,10 @@ export function latestAlert(kind) {
 // Counts queued / assigned / running runs — exposed so the Hub UI can render
 // a "queue depth" stat without scanning the whole run list.
 export function runnerPoolStats() {
-  const queued = one("SELECT COUNT(*) AS count FROM runs WHERE status = 'queued'").count;
-  const assigned = one("SELECT COUNT(*) AS count FROM runs WHERE status = 'assigned'").count;
-  const running = one("SELECT COUNT(*) AS count FROM runs WHERE status = 'running'").count;
-  const waitingApproval = one("SELECT COUNT(*) AS count FROM runs WHERE status = 'waiting_approval'").count;
+  const queued = one(`SELECT COUNT(*) AS count FROM runs WHERE status = 'queued' AND ${VISIBLE_RUN_WHERE}`).count;
+  const assigned = one(`SELECT COUNT(*) AS count FROM runs WHERE status = 'assigned' AND ${VISIBLE_RUN_WHERE}`).count;
+  const running = one(`SELECT COUNT(*) AS count FROM runs WHERE status = 'running' AND ${VISIBLE_RUN_WHERE}`).count;
+  const waitingApproval = one(`SELECT COUNT(*) AS count FROM runs WHERE status = 'waiting_approval' AND ${VISIBLE_RUN_WHERE}`).count;
   const runners = listRunners();
   const live = runners.filter((r) => r.online);
   const totalCapacity = live.reduce((sum, r) => sum + (r.capacity || 0), 0);
@@ -2881,10 +2928,12 @@ export function recordScheduleFireResult(idValue, runId, status = "queued", fire
 export function dashboardStats() {
   const counts = {};
   for (const table of ["capabilities", "agents", "skills", "knowledge_resources", "runners", "runs", "artifacts", "approvals"]) {
-    counts[table] = one(`SELECT COUNT(*) AS count FROM ${table}`).count;
+    counts[table] = table === "runs"
+      ? one(`SELECT COUNT(*) AS count FROM runs WHERE ${VISIBLE_RUN_WHERE}`).count
+      : one(`SELECT COUNT(*) AS count FROM ${table}`).count;
   }
   counts.pendingApprovals = one("SELECT COUNT(*) AS count FROM approvals WHERE status='pending'").count;
-  counts.runningRuns = one("SELECT COUNT(*) AS count FROM runs WHERE status IN ('queued', 'assigned', 'running', 'waiting_approval')").count;
+  counts.runningRuns = one(`SELECT COUNT(*) AS count FROM runs WHERE status IN ('queued', 'assigned', 'running', 'waiting_approval') AND ${VISIBLE_RUN_WHERE}`).count;
   // Pool / queue breakdown so the UI can render runner capacity and a
   // queue-depth chip without having to fan-out to /api/runners + /api/runs.
   const pool = runnerPoolStats();

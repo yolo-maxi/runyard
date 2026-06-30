@@ -84,15 +84,21 @@ describe("Runs dashboard: mobile navigation & chrome", () => {
 
 describe("Runs page: filter toolbar, history rows, and detail order", () => {
   it("keeps runs search and filters visible without a disclosure", () => {
-    assert.match(home, /function HomeFilterBar\(\{ filters, matchingCount = 0 \}\)/);
+    assert.match(home, /function HomeFilterBar\(\{ filters, capabilities = \[\], matchingCount = 0 \}\)/);
     assert.match(home, /className="runs-filter-panel"/);
     assert.match(home, /id="runs-filter-q"/);
     assert.match(home, /id="runs-filter-status"/);
     assert.match(home, /id="runs-filter-range"/);
     assert.match(home, /id="runs-filter-clear"/);
+    assert.match(home, /DEFAULT_HIDDEN_WORKFLOWS = \["runyard-support-agent", "reauth-cli"\]/);
+    assert.match(home, /className="runs-workflow-filter"/);
+    assert.match(home, /type="checkbox"/);
+    assert.match(home, /Array\.isArray\(filters\.workflows\)/);
+    assert.match(home, /p\.set\("workflows", filters\.workflows\.join\(","\)\)/);
     assert.match(home, /filtersToQuery\(merged\)/);
     assert.ok(!/runs-filter-details/.test(home), "filter controls should not hide behind details");
     assert.match(css, /\.runs-filter-panel/);
+    assert.match(css, /\.runs-workflow-filter-list/);
     assert.match(css, /\.runs-filter-bar input\[type="search"\]\s*\{[^}]*min-height:\s*44px/s);
     assert.match(css, /@media \(max-width:\s*640px\)\s*\{[^}]*\.runs-filter-panel/s);
     assert.match(css, /\.runs-filter-bar,\s*\n\s*\.runs-filter-bar label,\s*\n\s*\.runs-filter-bar input\[type="search"\]/);

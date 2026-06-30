@@ -16,7 +16,7 @@ process.env.SMITHERS_OBSTRUCTION_ANALYSIS_ENABLED = "0";
 
 const { app, notifyTelegram } = await import("../src/server.js");
 const { env } = await import("../src/env.js");
-const { addRunEvent, autoQueueLegacyRunStartApprovals, createApproval, getRun, listRuns, transitionRun, updateRun } = await import("../src/db.js");
+const { addRunEvent, autoQueueLegacyRunStartApprovals, countRuns, createApproval, createRun, getCapability, getRun, listRuns, transitionRun, updateRun } = await import("../src/db.js");
 const {
   RUN_OBSTRUCTION_ANALYSIS_ARTIFACT_NAME,
   setRunObstructionAnalyzerForTest
@@ -133,7 +133,7 @@ function sleep(ms) {
 async function waitForLatestRunByCapability(capabilitySlug, timeoutMs = 2000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const run = listRuns({ limit: 200 }).find((entry) => entry.capabilitySlug === capabilitySlug);
+    const run = listRuns({ limit: 200, includeInternal: true }).find((entry) => entry.capabilitySlug === capabilitySlug);
     if (run) return run;
     await sleep(20);
   }
@@ -262,10 +262,23 @@ describe("Smithers Hub API", () => {
     delete process.env.OPENAI_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
 
+    const visibleBefore = countRuns();
+    const internalBefore = countRuns({ includeInternal: true });
+    const offlineStatus = await api("/api/chat/status");
+    assert.equal(offlineStatus.configured, false);
+    assert.equal(offlineStatus.provider, "runner");
+    assert.match(offlineStatus.runner?.reason || "", /required tags|runner/i);
+
+    const supportRunner = await api("/api/runners/register", {
+      method: "POST",
+      body: { name: "support-runner-test", hostname: "support", tags: ["support"], capacity: 2 }
+    });
+
     const status = await api("/api/chat/status");
     assert.equal(status.configured, true);
     assert.equal(status.provider, "runner");
     assert.equal(status.model, "runyard-support-agent");
+    assert.equal(status.runner?.available, true);
 
     const pending = api("/api/chat", {
       method: "POST",
@@ -277,6 +290,21 @@ describe("Smithers Hub API", () => {
 
     const run = await waitForLatestRunByCapability("runyard-support-agent");
     assert.equal(run.status, "queued");
+    assert.equal(run.input?.__origin?.type, "support-chat");
+    assert.equal(countRuns(), visibleBefore, "support chat runs are hidden from normal run counts");
+    assert.equal(countRuns({ includeInternal: true }), internalBefore + 1, "support chat still creates internal execution state");
+
+    const listedWhileQueued = await api("/api/runs?limit=500");
+    assert.equal(listedWhileQueued.total, visibleBefore);
+    assert.ok(!listedWhileQueued.runs.some((entry) => entry.id === run.id || entry.capabilitySlug === "runyard-support-agent"));
+    const dashboardWhileQueued = await api("/api/dashboard");
+    assert.equal(dashboardWhileQueued.stats.runs, visibleBefore);
+    assert.ok(!dashboardWhileQueued.recentRuns.some((entry) => entry.id === run.id || entry.capabilitySlug === "runyard-support-agent"));
+
+    const claim = await api(`/api/runners/${supportRunner.runner.id}/next-run`);
+    assert.equal(claim.run.id, run.id);
+    assert.equal(claim.capability.slug, "runyard-support-agent");
+
     transitionRun(run.id, "running", { current_step: "test runner" });
     transitionRun(run.id, "succeeded", {
       current_step: "done",
@@ -287,6 +315,83 @@ describe("Smithers Hub API", () => {
     assert.equal(result.provider, "runner");
     assert.equal(result.model, "runyard-support-agent");
     assert.equal(result.reply, "You are on the runs page.");
+
+    const real = await api("/api/capabilities/hello/run", {
+      method: "POST",
+      body: { input: { name: "visible real run" } }
+    });
+    const listedAfterRealRun = await api("/api/runs?limit=500");
+    assert.ok(listedAfterRealRun.runs.some((entry) => entry.id === real.run.id && entry.capabilitySlug === "hello"));
+    assert.ok(!listedAfterRealRun.runs.some((entry) => entry.id === run.id || entry.capabilitySlug === "runyard-support-agent"));
+  });
+
+  it("keeps timed-out support executions out of normal runs and stats", async () => {
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    const previousTimeout = process.env.RUNYARD_HUB_SUPPORT_AGENT_TIMEOUT_MS;
+    process.env.RUNYARD_HUB_SUPPORT_AGENT_TIMEOUT_MS = "1";
+    const visibleBefore = countRuns();
+    const internalBefore = countRuns({ includeInternal: true });
+    try {
+      const response = await raw("/api/chat", {
+        method: "POST",
+        body: {
+          messages: [{ role: "user", content: "please time out locally" }],
+          context: { view: "runs", hash: "#runs", title: "Runyard" }
+        }
+      });
+      assert.equal(response.status, 503);
+      assert.match(response.data?.error || "", /timed out|support agent/i);
+      assert.equal(countRuns(), visibleBefore);
+      assert.equal(countRuns({ includeInternal: true }), internalBefore + 1);
+      const listed = await api("/api/runs?limit=500");
+      assert.equal(listed.total, visibleBefore);
+      assert.ok(!listed.runs.some((entry) => entry.capabilitySlug === "runyard-support-agent"));
+      const dashboard = await api("/api/dashboard");
+      assert.equal(dashboard.stats.runs, visibleBefore);
+      assert.ok(!dashboard.recentRuns.some((entry) => entry.capabilitySlug === "runyard-support-agent"));
+    } finally {
+      if (previousTimeout == null) delete process.env.RUNYARD_HUB_SUPPORT_AGENT_TIMEOUT_MS;
+      else process.env.RUNYARD_HUB_SUPPORT_AGENT_TIMEOUT_MS = previousTimeout;
+    }
+  });
+
+  it("hides support-agent and reauth runs from default runs views", async () => {
+    const visibleBefore = countRuns();
+    const internalBefore = countRuns({ includeInternal: true });
+    const supportRun = createRun(getCapability("runyard-support-agent"), {
+      messages: [{ role: "user", content: "internal support check" }],
+      __origin: { type: "support-chat", label: "Runyard support chat" }
+    });
+    const reauthRun = createRun(getCapability("reauth-cli"), { provider: "codex", runnerTag: "reauth" });
+
+    assert.equal(countRuns(), visibleBefore);
+    assert.equal(countRuns({ includeInternal: true }), internalBefore + 2);
+    assert.ok(listRuns({ limit: 500, includeInternal: true }).some((entry) => entry.id === supportRun.id));
+    assert.ok(listRuns({ limit: 500, includeInternal: true }).some((entry) => entry.id === reauthRun.id));
+
+    const listed = await api("/api/runs?limit=500");
+    assert.equal(listed.total, visibleBefore);
+    assert.ok(!listed.runs.some((entry) => entry.id === supportRun.id || entry.capabilitySlug === "runyard-support-agent"));
+    assert.ok(!listed.runs.some((entry) => entry.id === reauthRun.id || entry.capabilitySlug === "reauth-cli"));
+
+    const dashboard = await api("/api/dashboard");
+    assert.equal(dashboard.stats.runs, visibleBefore);
+    assert.ok(!dashboard.recentRuns.some((entry) => entry.id === supportRun.id || entry.capabilitySlug === "runyard-support-agent"));
+    assert.ok(!dashboard.recentRuns.some((entry) => entry.id === reauthRun.id || entry.capabilitySlug === "reauth-cli"));
+
+    const hiddenOnly = await api("/api/runs?workflows=runyard-support-agent,reauth-cli&limit=500");
+    assert.ok(hiddenOnly.total >= 2);
+    assert.ok(hiddenOnly.runs.some((entry) => entry.id === supportRun.id));
+    assert.ok(hiddenOnly.runs.some((entry) => entry.id === reauthRun.id));
+
+    const mixed = await api(`/api/runs?workflows=hello,reauth-cli&limit=500`);
+    assert.ok(mixed.runs.some((entry) => entry.id === reauthRun.id));
+    assert.ok(!mixed.runs.some((entry) => entry.id === supportRun.id));
+
+    const none = await api("/api/runs?workflows=&limit=500");
+    assert.equal(none.total, 0);
+    assert.deepEqual(none.runs, []);
   });
 
   it("renders support chat actions as explicit choice buttons instead of auto-running them", async () => {
@@ -300,6 +405,8 @@ describe("Smithers Hub API", () => {
     assert.match(code, /legacyActions/);
     assert.match(code, /"Do it"/);
     assert.doesNotMatch(code, /parseAgentActions/);
+    assert.doesNotMatch(code, /support run queued/i);
+    assert.doesNotMatch(code, /queued this as Runyard support run/i);
   });
 
   it("enriches the support chat prompt with real, redacted run data from the operator's screen", async () => {
@@ -319,7 +426,7 @@ describe("Smithers Hub API", () => {
     // Snapshot existing support runs so we wait for OUR new one, not a stale
     // support run left queued/succeeded by an earlier test.
     const existing = new Set(
-      listRuns({ limit: 500 }).filter((r) => r.capabilitySlug === "runyard-support-agent").map((r) => r.id)
+      listRuns({ limit: 500, includeInternal: true }).filter((r) => r.capabilitySlug === "runyard-support-agent").map((r) => r.id)
     );
     const pending = api("/api/chat", {
       method: "POST",
@@ -332,7 +439,7 @@ describe("Smithers Hub API", () => {
     let supportRun = null;
     const deadline = Date.now() + 3000;
     while (Date.now() < deadline && !supportRun) {
-      supportRun = listRuns({ limit: 500 }).find(
+      supportRun = listRuns({ limit: 500, includeInternal: true }).find(
         (r) => r.capabilitySlug === "runyard-support-agent" && !existing.has(r.id)
       );
       if (!supportRun) await sleep(20);

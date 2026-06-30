@@ -15,7 +15,7 @@
 // The HTTP path follows runObstructionAnalysis.js — pluggable backend, single
 // HTTP fetch, no streaming, with a generous JSON response budget.
 
-import { addRunEvent, createRun, getCapability, getRun } from "./db.js";
+import { addRunEvent, createRun, getCapability, getRun, supportRunnerAvailability } from "./db.js";
 
 const DEFAULT_TIMEOUT_MS = 45_000;
 const DEFAULT_MAX_OUTPUT_TOKENS = 1500;
@@ -142,17 +142,19 @@ export function supportAgentConfigured(config = {}) {
   if (injectedChat) return true;
   const c = resolveConfig(config);
   if (!c.enabled) return false;
-  if (c.provider === "runner") return Boolean(getCapability(SUPPORT_AGENT_CAPABILITY_SLUG)?.enabled);
+  if (c.provider === "runner") return supportRunnerAvailability().available;
   return Boolean(c.enabled && c.url && c.apiKey && c.model);
 }
 
 export function supportAgentInfo(config = {}) {
   const c = resolveConfig(config);
+  const runner = c.provider === "runner" ? supportRunnerAvailability() : null;
   return {
     configured: supportAgentConfigured(config),
     provider: c.provider,
     model: c.provider === "runner" ? SUPPORT_AGENT_CAPABILITY_SLUG : c.model,
-    enabled: c.enabled
+    enabled: c.enabled,
+    ...(runner ? { runner } : {})
   };
 }
 
@@ -279,6 +281,10 @@ async function callRunnerProvider(provider, { messages, system, context, signal 
   if (!capability || !capability.enabled) {
     throw new Error("support agent runner capability is not installed");
   }
+  const runner = supportRunnerAvailability();
+  if (!runner.available) {
+    throw new Error(`support agent runner unavailable: ${runner.reason}`);
+  }
   const run = createRun(capability, {
     system,
     messages,
@@ -322,12 +328,8 @@ async function callRunnerProvider(provider, { messages, system, context, signal 
     await new Promise((resolve) => setTimeout(resolve, pollDelay()));
     poll += 1;
   }
-  return {
-    reply:
-      `I queued this as Runyard support run ${run.id}, but it is still waiting on the runner pool. ` +
-      `Open #runs/${run.id} for progress.`,
-    raw: { runId: run.id, status: getRun(run.id)?.status || "unknown", timeout: true }
-  };
+  const status = getRun(run.id)?.status || "unknown";
+  throw new Error(`support agent timed out while answering in chat (internal status: ${status})`);
 }
 
 function truncate(text, max = 240) {

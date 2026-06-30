@@ -15,6 +15,7 @@ import {
   createApproval,
   createArtifact,
   createRun,
+  DEFAULT_HIDDEN_RUN_SLUGS,
   countWorkflowEndpointInvocations,
   dashboardStats,
   findActiveSupervisorByToken,
@@ -3304,10 +3305,23 @@ app.get("/api/runs", requireAuth, (req, res) => {
   reapStuckRunsWithRetrospectives(env.runDeadlineMs);
   const status = req.query.status || "";
   const limit = Math.min(Number(req.query.limit || 100), 500);
-  // Optional capability filter — used by the workflow detail page to list
-  // recent runs for a single workflow. We filter in memory (run volumes are
-  // already capped by the DB layer) to keep the SQL surface small.
-  const capability = req.query.capability || req.query.capabilitySlug || "";
+  // Optional workflow filter. `capability` / `capabilitySlug` are the legacy
+  // single-workflow aliases; `workflows` / `capabilities` accept comma-separated
+  // slugs for the Runs page multi-check filter.
+  const capability = String(req.query.capability || req.query.capabilitySlug || "").trim();
+  const hasWorkflowParam = Object.hasOwn(req.query, "workflows") || Object.hasOwn(req.query, "capabilities");
+  const workflowParam = hasWorkflowParam ? String(req.query.workflows || req.query.capabilities || "").trim() : "";
+  const workflowSlugs = [
+    ...new Set(
+      [
+        ...workflowParam.split(","),
+        capability
+      ].map((slug) => String(slug || "").trim()).filter(Boolean)
+    )
+  ];
+  const includeInternal = workflowSlugs.some((slug) => DEFAULT_HIDDEN_RUN_SLUGS.includes(slug));
+  const explicitEmptyWorkflowFilter = hasWorkflowParam && !capability && workflowSlugs.length === 0;
+  const capabilitySlugs = explicitEmptyWorkflowFilter ? ["__runyard-no-workflow__"] : workflowSlugs;
   // Optional text query (matches workflow name/slug, run id, step, error) and
   // ISO time range. Cursor pagination is the createdAt of the last row from
   // the previous page; clients pass it back verbatim to fetch the next slice.
@@ -3315,16 +3329,12 @@ app.get("/api/runs", requireAuth, (req, res) => {
   const since = String(req.query.since || "").trim();
   const until = String(req.query.until || "").trim();
   const cursor = String(req.query.cursor || "").trim();
-  const filters = { status, q, since, until };
-  const filtered = !capability && (q || since || until || cursor);
+  const filters = { status, q, since, until, capabilitySlugs, includeInternal };
+  const filtered = Boolean(q || since || until || cursor || workflowSlugs.length || explicitEmptyWorkflowFilter);
   let rows;
   let total;
   let nextCursor = null;
-  if (capability) {
-    rows = listRuns({ status, limit: Math.max(limit, 200) });
-    rows = rows.filter((r) => r.capabilitySlug === capability).slice(0, limit);
-    total = rows.length;
-  } else if (filtered) {
+  if (filtered) {
     // Over-fetch by one to detect whether another page exists.
     const page = listRuns({ ...filters, cursor, limit: limit + 1 });
     if (page.length > limit) {
@@ -3349,7 +3359,8 @@ app.get("/api/runs", requireAuth, (req, res) => {
     nextCursor,
     pool: runnerPoolStats(),
     ...(capability ? { capability } : {}),
-    ...(filtered ? { filters: { q, status, since, until, cursor } } : {})
+    ...(workflowSlugs.length ? { workflows: workflowSlugs } : {}),
+    ...(filtered ? { filters: { q, status, since, until, cursor, workflows: workflowSlugs } } : {})
   });
 });
 app.get("/api/runs/:id", requireAuth, (req, res) => {
