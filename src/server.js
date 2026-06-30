@@ -1,9 +1,16 @@
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { execFileSync, spawn } from "node:child_process";
-import { createHash, createHmac } from "node:crypto";
 import path from "node:path";
 import express from "express";
 import { asyncHandler } from "./http.js";
+import { createRateLimiter, securityHeaders } from "./httpMiddleware.js";
+import { createCliTarballBuilder, installScript } from "./clientInstall.js";
+import {
+  hubMenuPayload as buildHubMenuPayload,
+  openApiDocument,
+  renderLlmsTxt
+} from "./discoveryDocs.js";
+import { absoluteDeepLink, deepLinks, withAgentLinks, withArtifactLinks, withCapabilityLinks } from "./deepLinks.js";
 import { registerRunnerRoutes } from "./routes/runners.js";
 import { subscribeRunEvents } from "./runEventBus.js";
 import { buildHubRepairInput } from "./hubSupervisor.js";
@@ -83,16 +90,12 @@ import {
 import { env } from "./env.js";
 import { getVersionInfo } from "./version.js";
 import { createUpdateChecker } from "./updateCheck.js";
-import { now, slugify } from "./ids.js";
-import { describeCron, isValidTimezone, nextRuns, validateCron } from "./cron.js";
-import { buildRunRetrospectiveArtifact, RUN_RETROSPECTIVE_ARTIFACT_NAME } from "./runRetrospective.js";
+import { now } from "./ids.js";
 import { classifyFailureStatus, failureEventType, normalizeFailureStatus } from "./runFailureClass.js";
 import {
-  analyzeRunObstructions,
-  obstructionAnalyzerConfigured,
-  redactAnalysisText,
-  RUN_OBSTRUCTION_ANALYSIS_ARTIFACT_NAME
-} from "./runObstructionAnalysis.js";
+  buildRunTimeline,
+  timelinePage
+} from "./runTimeline.js";
 import {
   capabilityVersioningEnabled,
   executionIntentFromInput,
@@ -105,30 +108,12 @@ import {
   safeResponseEndpointAuditDetail
 } from "./runResponseEndpoint.js";
 import { scheduleRunResponseEndpointDelivery } from "./runResponseEndpointDelivery.js";
+import { createRunTerminalArtifactService } from "./runTerminalArtifacts.js";
 import {
-  DIAGNOSTIC_STATUSES,
-  isFocusEvent,
-  isLogEvent,
   redactSnippet,
-  reverseFind,
   summarizeRunEvents
 } from "./runEventSummary.js";
-import {
-  ACTION_INPUT_KEYS,
-  BRANCH_INPUT_KEYS,
-  CHANGE_INPUT_KEYS,
-  DESCRIPTION_INPUT_KEYS,
-  ORIGIN_INPUT_KEYS,
-  PATH_INPUT_KEYS,
-  PROJECT_INPUT_KEYS,
-  REPO_INPUT_KEYS,
-  TITLE_INPUT_KEYS,
-  firstContextString,
-  firstString,
-  normalizeOrigin,
-  truncate,
-  uniqueNonempty
-} from "./presentation.js";
+import { truncate } from "./presentation.js";
 import { chatWithSupportAgent, supportAgentInfo } from "./runyardSupportAgent.js";
 import { buildSupportLiveContext } from "./supportContext.js";
 import { hashToken, parseCookies, sign, timingSafeEqualStr, unsign } from "./security.js";
@@ -142,10 +127,52 @@ import {
 } from "./workflowSource.js";
 import {
   bodySizeBytes,
-  stableJsonString,
   workflowEndpointPayloadHash,
   workflowEndpointRunInput
 } from "./workflowEndpointSubmission.js";
+import {
+  attachChainToInput,
+  chainMetadata,
+  nextChainedRunInput,
+  nextChainedRunOrigin
+} from "./workflowChain.js";
+import {
+  TELEGRAM_WEBAPP_SESSION_MAX_AGE_MS,
+  authenticateTelegramWebAppSession,
+  createTelegramWebAppSession,
+  telegramSessionCanAccess,
+  telegramUserLabel,
+  verifyTelegramWebAppInitData
+} from "./telegramWebAppAuth.js";
+import {
+  approvalDecisionLabel,
+  firstCsvValue,
+  parseTelegramApprovalCallback,
+  shouldNotifyTelegram as shouldNotifyTelegramApproval,
+  telegramApprovalButtonClearPayload,
+  telegramApprovalMessagePayload,
+  telegramApprovalTarget as resolveTelegramApprovalTarget
+} from "./telegramApprovals.js";
+import {
+  approvalCreateInput,
+  decisionTriggersTerminalDelivery,
+  defaultApprovalComment,
+  findExistingChildRunApproval as findMatchingChildRunApproval
+} from "./approvalRoutes.js";
+import {
+  approvalContext as buildApprovalContext,
+  sanitizeForDisplay,
+  withApprovalLinks as decorateApprovalLinks
+} from "./approvalPresentation.js";
+import {
+  buildQueueIndex,
+  deriveRunDescription,
+  deriveRunTitle,
+  withRunLinks as decorateRunLinks
+} from "./runPresentation.js";
+import {
+  runDiagnostics as buildRunDiagnostics
+} from "./runDiagnostics.js";
 import {
   SUPERVISOR_CAPABILITY_SLUG,
   buildSupervisorInput,
@@ -153,6 +180,22 @@ import {
   mintSupervisionToken,
   stripSupervisionInternals
 } from "./supervision.js";
+import {
+  cleanRerunInput,
+  findActiveDuplicateRerun as findDuplicateRerun
+} from "./runRerun.js";
+import { schedulePreview, validateScheduleBody, withScheduleView } from "./scheduleHelpers.js";
+import { bearerFromRequest, requestOrigin, requireBodySlug } from "./requestContext.js";
+import {
+  actorName as secretActorName,
+  secretsDisabledResponse,
+  validateSecretUpsert
+} from "./secretsRoutes.js";
+import {
+  revokeTokenDecision,
+  tokenCreateInput
+} from "./tokenRoutes.js";
+import { maybeRecordFailureClassAlert as maybeRecordFailureAlert } from "./failureAlerts.js";
 
 const app = express();
 app.disable("x-powered-by");
@@ -181,462 +224,30 @@ app.use(express.urlencoded({ extended: false }));
 
 const startedAt = Date.now();
 const SESSION_COOKIE_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 365;
-const TELEGRAM_WEBAPP_SESSION_PREFIX = "telegram-webapp:";
-const TELEGRAM_WEBAPP_SESSION_MAX_AGE_MS = 1000 * 60 * 60 * 24;
-const TELEGRAM_WEBAPP_AUTH_MAX_AGE_SECONDS = 10 * 60;
-const TELEGRAM_WEBAPP_AUTH_FUTURE_SKEW_SECONDS = 60;
-const pendingObstructionAnalyses = new Set();
+const rateLimiter = createRateLimiter();
+const rateLimit = rateLimiter.middleware;
 
 function publicUrl(req) {
   return `${req.protocol}://${req.get("host")}`;
 }
 
-function normalizeChainSteps(value) {
-  const raw = Array.isArray(value) ? value : [];
-  return raw
-    .map((step) => {
-      if (typeof step === "string") return { capability: step, input: {} };
-      if (!step || typeof step !== "object") return null;
-      const capability = String(step.capability || step.capabilitySlug || step.slug || "").trim();
-      if (!capability) return null;
-      const input = step.input && typeof step.input === "object" && !Array.isArray(step.input) ? step.input : {};
-      return {
-        capability,
-        input,
-        title: step.title ? String(step.title) : "",
-        passPreviousOutput: step.passPreviousOutput !== false
-      };
-    })
-    .filter(Boolean)
-    .slice(0, 20);
-}
-
-function chainMetadata(input = {}) {
-  const chain = normalizeChainSteps(input.__chain || input.chain);
-  const index = Number.isFinite(Number(input.__chainIndex)) ? Number(input.__chainIndex) : 0;
-  return { chain, index: Math.max(0, index) };
-}
-
-// --- Deep-link helpers -------------------------------------------------------
-// Stable hash routes consumed by the web app (and by anyone who pastes the
-// link into chat). These are added to API responses as a non-breaking
-// `deepLink` field so clients don't have to know the URL scheme.
-const deepLinks = {
-  run: (id) => `/app#runs/${encodeURIComponent(id)}`,
-  runLogs: (id) => `/app#runs/${encodeURIComponent(id)}/logs`,
-  runArtifacts: (id) => `/app#runs/${encodeURIComponent(id)}/artifacts`,
-  workflow: (slug) => `/app#workflows/${encodeURIComponent(slug)}`,
-  workflowRuns: (slug) => `/app#workflows/${encodeURIComponent(slug)}/runs`,
-  workflowEdit: (slug) => `/app#workflows/${encodeURIComponent(slug)}/edit`,
-  workflowRun: (slug) => `/app#workflows/${encodeURIComponent(slug)}/run`,
-  agent: (slug) => `/app#agents/agents/${encodeURIComponent(slug)}`,
-  artifact: (artifact) => {
-    const id = typeof artifact === "object" ? artifact.id : artifact;
-    const runId = typeof artifact === "object" ? artifact.runId : "";
-    return runId
-      ? `/app#runs/${encodeURIComponent(runId)}/artifacts/${encodeURIComponent(id)}`
-      : `/app#runs`;
-  },
-  approval: (id) => `/app#approvals/${encodeURIComponent(id)}`
+const runPresentationDeps = {
+  getCapability,
+  getRun
 };
 
-// --- Run summary derivation --------------------------------------------------
-// Runs don't carry an explicit title/description; we derive readable defaults
-// from input, capability, and timing so cards and detail pages have substance
-// even on workflows that don't set them. Backward-compatible: all originals
-// stay; we add `title`, `description`, `project`, `branch`, `durationMs`.
-function deriveRunTitle(run) {
-  const fromInput = firstString(run.input, TITLE_INPUT_KEYS);
-  if (fromInput) return truncate(fromInput, 90);
-  return run.capabilityName || run.capabilitySlug || "Run";
-}
-
-function deriveRunDescription(run) {
-  const fromInput = firstString(run.input, DESCRIPTION_INPUT_KEYS);
-  if (fromInput) return truncate(fromInput, 240);
-  const titleField = firstString(run.input, TITLE_INPUT_KEYS);
-  if (titleField && titleField.length > 90) return truncate(titleField, 240);
-  const parts = [];
-  if (run.capabilityName) parts.push(run.capabilityName);
-  if (run.currentStep) parts.push(run.currentStep);
-  return truncate(parts.join(" — "), 240);
-}
-
-function normalizeSupervisionLineage(value) {
-  if (Array.isArray(value)) return value;
-  if (typeof value !== "string" || !value.trim()) return [];
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function runPresentation(run) {
-  if (!run || typeof run !== "object") return { run, input: {}, output: null, supervision: null };
-  const storedInput = run.input && typeof run.input === "object" && !Array.isArray(run.input) ? run.input : {};
-  const rawInput = stripSupervisionInternals(run.input || {});
-  const rawOutput = run.output && typeof run.output === "object" && !Array.isArray(run.output) ? run.output : null;
-  const superviseOutput = rawOutput?.outputs?.supervise && typeof rawOutput.outputs.supervise === "object" && !Array.isArray(rawOutput.outputs.supervise)
-    ? rawOutput.outputs.supervise
-    : rawOutput;
-  const isHubSupervisionEnvelope = typeof storedInput.__supervisionToken === "string" && storedInput.__supervisionToken.trim();
-  const wrappedCapability = run.capabilitySlug === SUPERVISOR_CAPABILITY_SLUG && isHubSupervisionEnvelope && typeof rawInput.wrappedCapability === "string"
-    ? rawInput.wrappedCapability.trim()
-    : "";
-  if (!wrappedCapability) {
-    return { run, input: rawInput, output: run.output, supervision: null };
-  }
-
-  const wrappedInput = rawInput.wrappedInput && typeof rawInput.wrappedInput === "object" && !Array.isArray(rawInput.wrappedInput)
-    ? stripSupervisionInternals(rawInput.wrappedInput)
-    : {};
-  const wrappedCapabilityRecord = getCapability(wrappedCapability);
-  const childRunId = typeof superviseOutput?.wrappedRunId === "string"
-    ? superviseOutput.wrappedRunId
-    : typeof superviseOutput?.wrapped_run_id === "string"
-      ? superviseOutput.wrapped_run_id
-      : "";
-  const childRun = childRunId ? getRun(childRunId) : null;
-  const childOutput = childRun && childRun.output !== undefined ? childRun.output : null;
-  const lineage = normalizeSupervisionLineage(superviseOutput?.lineage);
-  const effectiveRun = {
-    ...run,
-    capabilitySlug: wrappedCapability,
-    capabilityName: wrappedCapabilityRecord?.name || wrappedCapability,
-    input: wrappedInput,
-    output: childOutput
-  };
-  return {
-    run: effectiveRun,
-    input: wrappedInput,
-    output: childOutput,
-    supervision: {
-      supervisorRunId: run.id,
-      supervisorCapabilitySlug: SUPERVISOR_CAPABILITY_SLUG,
-      childRunId,
-      wrappedCapability,
-      wrappedCapabilityName: wrappedCapabilityRecord?.name || wrappedCapability,
-      outcome: superviseOutput?.outcome || "",
-      attempts: lineage.length,
-      lineage,
-      ...(superviseOutput?.approval ? { approval: superviseOutput.approval } : {})
-    }
-  };
-}
-
-function outputNode(output, name) {
-  if (!output || typeof output !== "object" || Array.isArray(output)) return null;
-  const nodes = output.outputs && typeof output.outputs === "object" && !Array.isArray(output.outputs)
-    ? output.outputs
-    : output;
-  const node = nodes?.[name];
-  return node && typeof node === "object" && !Array.isArray(node) ? node : null;
-}
-
-function runOutcomeSummary(run) {
-  const output = run?.output && typeof run.output === "object" && !Array.isArray(run.output) ? run.output : null;
-  const baseline = outputNode(output, "baseline");
-  const commit = outputNode(output, "commit");
-  const review = outputNode(output, "review");
-  const files = Array.isArray(commit?.files) ? commit.files.map((file) => String(file || "").trim()).filter(Boolean) : [];
-  const improvements = Array.isArray(review?.improvements) ? review.improvements : [];
-  const noChangeRationale = Boolean(
-    review
-    && improvements.length === 0
-    && (
-      String(review.summary || "").trim()
-      || (Array.isArray(review.risks) && review.risks.some((risk) => String(risk || "").trim()))
-      || (Array.isArray(review.userPain) && review.userPain.some((line) => String(line || "").trim()))
-    )
-  );
-  let workProduct = "none";
-  if (files.length) workProduct = `${files.length} changed file${files.length === 1 ? "" : "s"}`;
-  else if (noChangeRationale) workProduct = "explicit no-change review";
-  else if (output) workProduct = "output only";
-  return {
-    repo: String(baseline?.repoDir || run?.project || "").trim() || "unresolved",
-    changedFiles: files.length,
-    files,
-    workProduct,
-    classification: run?.status || "unknown"
-  };
-}
-
-function runOrigin(run) {
-  const input = run?.input || {};
-  const candidates = [
-    normalizeOrigin(input.__origin),
-    normalizeOrigin(input.origin),
-    normalizeOrigin(input.source),
-    normalizeOrigin(input.context?.origin),
-    normalizeOrigin(input.metadata?.origin)
-  ].filter(Boolean);
-  const origin = candidates[0] || null;
-  if (!origin) {
-    const text = firstContextString(input, ORIGIN_INPUT_KEYS);
-    return text ? { label: text } : null;
-  }
-  if (!origin.label) {
-    const bits = uniqueNonempty([origin.type, origin.name, origin.chat, origin.thread, origin.messageId]);
-    origin.label = bits.join(": ");
-  }
-  return origin.label ? origin : null;
-}
-
-function runDurationMs(run) {
-  if (!run?.createdAt) return null;
-  const start = Date.parse(run.startedAt || run.createdAt);
-  const end = Date.parse(run.completedAt || new Date().toISOString());
-  if (Number.isNaN(start) || Number.isNaN(end)) return null;
-  return Math.max(0, end - start);
-}
-
-// --- Failure / cancellation diagnostics -------------------------------------
-// Event classification/redaction lives in runEventSummary.js; this layer adds
-// DB-backed context such as linked approvals and diagnostic artifacts.
-function findFailureEvent(events) {
-  return reverseFind(events, (event) => {
-    const type = String(event?.type || "");
-    if (/^run\.(?:failed|cancelled|errored)$/i.test(type)) return true;
-    if (/^(?:node|task|step|workflow)\.(?:failed|errored|cancelled)$/i.test(type)) return true;
-    if (/^Node(?:Failed|Cancelled)$/.test(type)) return true;
-    if (/^Run(?:Failed|Cancelled)$/.test(type)) return true;
-    return false;
-  });
-}
-
-function failureStep(run, events, failureEvent) {
-  const data = failureEvent?.data;
-  if (data && typeof data === "object") {
-    const field = data.step || data.node || data.taskId || data.task || data.nodeId;
-    if (field) return String(field);
-  }
-  if (run?.currentStep) return run.currentStep;
-  const lastStep = reverseFind(events, (event) => /^workflow\.step$/i.test(event.type));
-  return lastStep?.message || "";
-}
-
-function focusedTimeline(events, failureEvent) {
-  if (!events?.length) return [];
-  const failureIndex = failureEvent ? events.findIndex((e) => e.id === failureEvent.id) : events.length - 1;
-  const anchor = failureIndex < 0 ? events.length - 1 : failureIndex;
-  const window = events.slice(Math.max(0, anchor - 12), Math.min(events.length, anchor + 4));
-  return window.filter(isFocusEvent).map((event) => ({
-    id: event.id,
-    type: event.type,
-    message: redactSnippet(event.message, 320),
-    createdAt: event.createdAt,
-    data: sanitizeForDisplay(event.data || {})
-  }));
-}
-
-function logExcerpts(events, failureEvent) {
-  if (!events?.length) return [];
-  const failureIndex = failureEvent ? events.findIndex((e) => e.id === failureEvent.id) : events.length - 1;
-  const end = failureIndex < 0 ? events.length : failureIndex + 1;
-  const window = events.slice(Math.max(0, end - 30), end);
-  const logs = window.filter(isLogEvent);
-  return logs.slice(-12).map((event) => ({
-    id: event.id,
-    type: event.type,
-    createdAt: event.createdAt,
-    message: redactSnippet(event.message, 600)
-  }));
-}
-
-function diagnosticArtifactScore(artifact) {
-  const name = String(artifact?.name || "").toLowerCase();
-  const mime = String(artifact?.mimeType || "").toLowerCase();
-  let score = 0;
-  if (/error|failure|stderr|stdout|trace|diagnostic|panic|crash|core\b/.test(name)) score += 3;
-  if (/\.(?:log|txt)$/.test(name)) score += 1;
-  if (mime === "text/x-log") score += 2;
-  if (mime.startsWith("text/")) score += 1;
-  return score;
-}
-
-function diagnosticArtifacts(artifacts) {
-  return (artifacts || [])
-    .map((artifact) => ({ artifact, score: diagnosticArtifactScore(artifact) }))
-    .filter((entry) => entry.score > 0)
-    .sort((a, b) =>
-      b.score - a.score
-      || String(b.artifact.createdAt || "").localeCompare(String(a.artifact.createdAt || ""))
-    )
-    .slice(0, 6)
-    .map((entry) => withArtifactLinks(entry.artifact));
-}
-
-function relevantApproval(runId) {
-  if (!runId) return null;
-  const approvals = listApprovals().filter((a) => a.runId === runId);
-  if (!approvals.length) return null;
-  return (
-    approvals.find((a) => a.status === "pending")
-    || approvals.find((a) => a.decision === "changes_requested")
-    || approvals.find((a) => a.decision === "rejected")
-    || approvals[0]
-  );
-}
-
-function approvalSummaryForDiagnostics(approval) {
-  if (!approval) return null;
-  return {
-    id: approval.id,
-    status: approval.status,
-    decision: approval.decision || "",
-    title: approval.title || "",
-    comment: approval.comment ? truncate(approval.comment, 600) : "",
-    requestedBy: approval.requestedBy || "",
-    resolvedBy: approval.resolvedBy || "",
-    resolvedAt: approval.resolvedAt || "",
-    deepLink: deepLinks.approval(approval.id)
-  };
-}
+const runDiagnosticsDeps = {
+  listApprovals,
+  sanitizeForDisplay,
+  withArtifactLinks
+};
 
 function runDiagnostics(run, events = [], artifacts = []) {
-  if (!run || !DIAGNOSTIC_STATUSES.has(run.status)) return null;
-  const sortedEvents = [...events].sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
-  const failureEvent = findFailureEvent(sortedEvents);
-  const approval = relevantApproval(run.id);
-  const cancelEvent = reverseFind(sortedEvents, (event) => /^run\.cancelled$/i.test(event.type));
-  // Only treat the approval comment as the cancellation reason when the
-  // approval actually drove the cancellation. Otherwise prefer the run-level
-  // event/error so we don't surface a stale "Approved from Web/API" comment
-  // on an unrelated cancel.
-  const approvalCausedCancel = Boolean(
-    approval
-    && (approval.decision === "changes_requested"
-      || approval.decision === "rejected"
-      || approval.status === "rejected")
-  );
-  let headline;
-  if (run.status === "failed" || run.status === "error") {
-    headline = redactSnippet(run.error || failureEvent?.message || run.currentStep || "Run failed", 200);
-  } else if (run.status === "cancelled" || run.status === "rejected") {
-    headline = redactSnippet(
-      (approvalCausedCancel && approval?.comment)
-      || cancelEvent?.message
-      || failureEvent?.message
-      || (approval?.comment)
-      || run.currentStep
-      || "Run cancelled",
-      200
-    );
-  } else if (run.status === "waiting_approval") {
-    headline = truncate(approval?.title || run.currentStep || "Waiting for approval", 200);
-  } else {
-    headline = truncate(run.currentStep || run.status, 200);
-  }
-  const step = failureStep(run, sortedEvents, failureEvent);
-  return {
-    status: run.status,
-    headline,
-    reason: redactSnippet(run.error || failureEvent?.message || headline, 600),
-    failedStep: step || "",
-    failureType: failureEvent?.type || (cancelEvent ? cancelEvent.type : ""),
-    failedAt: failureEvent?.createdAt || cancelEvent?.createdAt || run.completedAt || null,
-    cancelledBy:
-      run.status === "cancelled" || run.status === "rejected"
-        ? approval?.resolvedBy
-          || (cancelEvent?.data && (cancelEvent.data.cancelledBy || cancelEvent.data.actor)) || ""
-        : "",
-    approval: approvalSummaryForDiagnostics(approval),
-    timeline: focusedTimeline(sortedEvents, failureEvent || cancelEvent || null),
-    logExcerpts: logExcerpts(sortedEvents, failureEvent || cancelEvent || null),
-    artifacts: diagnosticArtifacts(artifacts),
-    createdAt: run.createdAt,
-    completedAt: run.completedAt
-  };
-}
-
-// Cheap short hint for run cards — does not run extra DB queries; built only
-// from the fields already in the run row. The detail page enriches this with
-// the structured diagnostics object instead.
-function quickReasonHint(run) {
-  if (!run || !DIAGNOSTIC_STATUSES.has(run.status)) return "";
-  if (run.status === "failed" || run.status === "error") {
-    return truncate(run.error || run.currentStep || "Run failed", 140);
-  }
-  if (run.status === "cancelled" || run.status === "rejected") {
-    return truncate(run.error || run.currentStep || "Run cancelled", 140);
-  }
-  if (run.status === "waiting_approval") {
-    return truncate(run.currentStep || "Waiting for approval", 140);
-  }
-  return "";
-}
-
-// The step name that was current when a diagnostic run stopped. Cheap (no DB
-// scan) — falls back to `currentStep`, which the executor updates as the run
-// progresses, so a failed run row can show "step build · cause snippet" with
-// no extra query. The detail page still computes the richer event-derived step
-// via `failureStep()`.
-function quickFailedStep(run) {
-  if (!run || !DIAGNOSTIC_STATUSES.has(run.status)) return "";
-  return String(run.currentStep || "").slice(0, 80);
-}
-
-// Caller-side helper so we can pre-compute a queue index once per response
-// and avoid an N+1 DB scan when rendering a long list of runs. `queueIndex`
-// is a Map of runId -> 1-based position in the FIFO of currently-queued runs.
-function buildQueueIndex(runs) {
-  const queued = (runs || [])
-    .filter((r) => r && r.status === "queued")
-    .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
-  const map = new Map();
-  queued.forEach((run, i) => map.set(run.id, i + 1));
-  return { map, total: queued.length };
+  return buildRunDiagnostics(run, events, artifacts, runDiagnosticsDeps);
 }
 
 function withRunLinks(run, queueIndex = null) {
-  if (!run || typeof run !== "object") return run;
-  const presentation = runPresentation(run);
-  const visibleRun = presentation.run || run;
-  const visibleInput = presentation.input || {};
-  const visibleOutput = presentation.output;
-  const origin = runOrigin(run);
-  const execution = executionIntentFromInput(visibleInput || {});
-  const reasonHint = quickReasonHint(visibleRun);
-  const failedStep = quickFailedStep(visibleRun);
-  const queue = run.status === "queued" && queueIndex
-    ? { position: queueIndex.map.get(run.id) || null, total: queueIndex.total }
-    : null;
-  return {
-    ...run,
-    capabilitySlug: visibleRun.capabilitySlug,
-    capabilityName: visibleRun.capabilityName,
-    // Internal supervision plumbing (the bypass token / marker) must never
-    // reach an API caller. For supervised runs, callers see the wrapped
-    // workflow's input/output and can inspect the envelope under `supervision`.
-    input: visibleInput,
-    output: visibleOutput,
-    ...(presentation.supervision
-      ? {
-          actualCapabilitySlug: run.capabilitySlug,
-          actualCapabilityName: run.capabilityName,
-          supervision: presentation.supervision
-        }
-      : {}),
-    title: deriveRunTitle(visibleRun),
-    description: deriveRunDescription(visibleRun),
-    project: firstContextString(visibleInput, PROJECT_INPUT_KEYS),
-    branch: firstContextString(visibleInput, BRANCH_INPUT_KEYS),
-    origin,
-    originLabel: origin?.label || "",
-    outcomeSummary: runOutcomeSummary(visibleRun),
-    execution,
-    durationMs: runDurationMs(run),
-    reasonHint,
-    failedStep,
-    ...(queue ? { queue } : {}),
-    deepLink: deepLinks.run(run.id),
-    deepLinkLogs: deepLinks.runLogs(run.id),
-    deepLinkArtifacts: deepLinks.runArtifacts(run.id),
-    ...(visibleRun.capabilitySlug ? { deepLinkWorkflow: deepLinks.workflow(visibleRun.capabilitySlug) } : {})
-  };
+  return decorateRunLinks(run, queueIndex, runPresentationDeps);
 }
 
 // When we have a single run (not a list), compute its queue position on the
@@ -647,6 +258,30 @@ function decorateSingleRun(run) {
   const queueIndex = buildQueueIndex(listRuns({ status: "queued", limit: 500 }));
   return withRunLinks(run, queueIndex);
 }
+
+const {
+  dispatchRunResponseEndpointDelivery,
+  recordRunTerminalArtifacts,
+  reapStuckRunsWithRetrospectives,
+  storeRunArtifact
+} = createRunTerminalArtifactService({
+  env,
+  createArtifact,
+  getRun,
+  listArtifacts,
+  listRunEvents,
+  getCapability,
+  withArtifactLinks,
+  withRunLinks,
+  withCapabilityLinks,
+  summarizeRunEvents,
+  runDiagnostics,
+  scrubStoredSecrets,
+  addRunEvent,
+  scheduleRunResponseEndpointDelivery,
+  reconcileRepairChildTerminal,
+  reapStuckRunIds
+});
 
 // Single choke point for turning a run request into a created run, applying the
 // default supervision envelope. `improve` / `idea-to-product` (and anything
@@ -762,448 +397,34 @@ function dispatchHubRepair(failedRun, decision) {
   }
 }
 
-function withCapabilityLinks(cap) {
-  if (!cap || typeof cap !== "object") return cap;
-  return {
-    ...cap,
-    deepLink: deepLinks.workflow(cap.slug),
-    deepLinkRuns: deepLinks.workflowRuns(cap.slug),
-    deepLinkEdit: deepLinks.workflowEdit(cap.slug),
-    deepLinkRun: deepLinks.workflowRun(cap.slug)
-  };
-}
-
-function withAgentLinks(agent) {
-  if (!agent || typeof agent !== "object") return agent;
-  return { ...agent, deepLink: deepLinks.agent(agent.slug) };
-}
-
-function withArtifactLinks(artifact) {
-  if (!artifact || typeof artifact !== "object") return artifact;
-  return { ...artifact, deepLink: deepLinks.artifact(artifact), deepLinkRun: deepLinks.run(artifact.runId) };
-}
-
-// Build the unified per-run timeline backing GET /api/runs/:id/timeline.
-// Pulls only from existing helpers — runs row, run_events, and the artifacts
-// table — so the timeline is always derived (no extra writes, nothing to
-// re-index). Each source is normalized into `{ts, kind, source, payload}`:
-//   * status transitions come from the runs row's create/assign/start/complete
-//     timestamps so the tail still shows the lifecycle even if a runner
-//     forgot to emit the matching run.* event.
-//   * run events are passed through as kind=event.
-//   * artifacts split into retrospective / obstruction / artifact based on
-//     either the canonical filename or metadata.kind, matching the same
-//     logic the storage layer already uses.
-function buildRunTimeline(run) {
-  const entries = [];
-  const transitions = [
-    ["created", run.createdAt, "queued"],
-    ["assigned", run.assignedAt, "assigned"],
-    ["started", run.startedAt, "running"],
-    ["completed", run.completedAt, run.status]
-  ];
-  for (const [transition, ts, status] of transitions) {
-    if (!ts) continue;
-    entries.push({
-      ts,
-      kind: "status",
-      source: "runs",
-      payload: {
-        runId: run.id,
-        transition,
-        status,
-        currentStep: run.currentStep || null,
-        ...(transition === "completed" && run.error ? { error: run.error } : {})
-      }
-    });
-  }
-  for (const event of listRunEvents(run.id)) {
-    entries.push({
-      ts: event.createdAt,
-      kind: "event",
-      source: "run_events",
-      payload: {
-        id: event.id,
-        type: event.type,
-        message: event.message,
-        data: event.data
-      }
-    });
-  }
-  for (const artifact of listArtifacts({ runId: run.id })) {
-    const linked = withArtifactLinks(artifact);
-    const metaKind = artifact.metadata && typeof artifact.metadata === "object" ? artifact.metadata.kind || "" : "";
-    let kind = "artifact";
-    let source = "artifacts:runner";
-    if (artifact.name === RUN_RETROSPECTIVE_ARTIFACT_NAME || metaKind === "run-retrospective") {
-      kind = "retrospective";
-      source = "artifacts:retrospective";
-    } else if (artifact.name === RUN_OBSTRUCTION_ANALYSIS_ARTIFACT_NAME || metaKind === "run-obstruction-analysis") {
-      kind = "obstruction";
-      source = "artifacts:obstruction";
-    }
-    entries.push({
-      ts: artifact.createdAt,
-      kind,
-      source,
-      payload: {
-        id: artifact.id,
-        name: artifact.name,
-        mimeType: artifact.mimeType,
-        sizeBytes: artifact.sizeBytes,
-        metadata: artifact.metadata || {},
-        deepLink: linked.deepLink || null,
-        deepLinkRun: linked.deepLinkRun || null
-      }
-    });
-  }
-  entries.sort((a, b) => (a.ts < b.ts ? -1 : a.ts > b.ts ? 1 : 0));
-  return entries;
-}
-
 function hubMenuPayload(req) {
-  const capabilities = listCapabilities().map((capability) => {
-    const linked = withCapabilityLinks(capability);
-    return {
-      slug: linked.slug,
-      name: linked.name,
-      description: linked.description,
-      category: linked.category,
-      requiredRunnerTags: linked.requiredRunnerTags,
-      deepLink: linked.deepLink,
-      runWithCli: `runyard run ${linked.slug} --where local --input '{}'`,
-      runWithMcp: { tool: "run_capability", arguments: { id: linked.slug, input: {}, executionMode: "local" } }
-    };
-  });
-  return {
-    product: "Runyard",
-    codebase: "runyard",
-    hub: {
-      sourceOfTruth: true,
-      status: `${publicUrl(req)}/api/runs/{runId}`,
-      logs: `${publicUrl(req)}/api/runs/{runId}/logs`,
-      artifacts: `${publicUrl(req)}/api/runs/{runId}/artifacts`,
-      note: "Runs, outputs, logs, and artifacts are recorded in the Hub even when execution happens on a local runner. For improve, repoDir selects the allowlisted runner-local git repo to edit; the Hub remains the source of truth for logs and artifacts."
-    },
-    discovery: [
-      { surface: "MCP", action: "Call get_menu, then list_capabilities or describe_capability." },
-      { surface: "CLI", action: "Run runyard menu, then runyard capabilities or runyard capability <slug>." },
-      { surface: "Web", action: "Open /app and use Workflows, Runs, Approvals, and Connect." }
-    ],
-    executionModes: [
-      {
-        id: "local",
-        label: "Run locally",
-        runnerLocation: "local",
-        cli: "runyard run <capability> --where local --input '<json>'",
-        mcp: { tool: "run_capability", arguments: { id: "<capability>", input: {}, executionMode: "local" } },
-        runner: "runyard runner start --location local",
-        result: "The local runner executes the workflow; outputs and artifacts are fetched from the Hub."
-      },
-      {
-        id: "remote",
-        label: "Run remotely",
-        runnerLocation: "vps",
-        cli: "runyard run <capability> --where remote --input '<json>'",
-        mcp: { tool: "run_capability", arguments: { id: "<capability>", input: {}, executionMode: "remote" } },
-        runner: "Use the shared VPS/remote runner pool tagged vps or remote.",
-        result: "A remote runner executes the workflow; outputs and artifacts are fetched from the Hub."
-      }
-    ],
-    tools: [
-      "get_menu",
-      "list_capabilities",
-      "describe_capability",
-      "run_capability",
-      "get_run_status",
-      "get_run_logs",
-      "get_run_artifacts",
-      "list_runners",
-      "list_pending_approvals"
-    ],
-    capabilities,
+  return buildHubMenuPayload({
+    baseUrl: publicUrl(req),
+    capabilities: listCapabilities().map(withCapabilityLinks),
     pool: runnerPoolStats()
-  };
+  });
 }
 
-function absoluteDeepLink(link) {
-  try {
-    return new URL(link, env.baseUrl).toString();
-  } catch {
-    return `${String(env.baseUrl || "").replace(/\/$/, "")}${link}`;
-  }
-}
-
-function hasOwn(object, key) {
-  return Object.prototype.hasOwnProperty.call(object || {}, key);
-}
-
-const SECRET_FIELD_RE = /(token|secret|password|passwd|credential|authorization|cookie|api[_-]?key|private[_-]?key)/i;
-
-function sanitizeForDisplay(value, depth = 0) {
-  if (value == null || typeof value === "boolean" || typeof value === "number") return value;
-  if (typeof value === "string") return truncate(value, 500);
-  if (depth >= 3) return "[nested value]";
-  if (Array.isArray(value)) {
-    const items = value.slice(0, 12).map((item) => sanitizeForDisplay(item, depth + 1));
-    return value.length > items.length ? [...items, `... ${value.length - items.length} more`] : items;
-  }
-  if (typeof value === "object") {
-    const entries = Object.entries(value).slice(0, 24);
-    const output = {};
-    for (const [key, item] of entries) {
-      output[key] = SECRET_FIELD_RE.test(key) ? "[redacted]" : sanitizeForDisplay(item, depth + 1);
-    }
-    if (Object.keys(value).length > entries.length) output._truncated = `${Object.keys(value).length - entries.length} more fields`;
-    return output;
-  }
-  return String(value);
-}
-
-function approvalInput(approval, run = null) {
-  const payloadInput = approval?.payload?.input;
-  if (payloadInput && typeof payloadInput === "object" && !Array.isArray(payloadInput)) return payloadInput;
-  return run?.input && typeof run.input === "object" ? run.input : {};
-}
-
-function approvalPayloadSummary(approval) {
-  const payload = approval?.payload || {};
-  const summary = {};
-  if (payload.capability) summary.capability = payload.capability;
-  if (payload.input) summary.input = sanitizeForDisplay(payload.input);
-  for (const [key, value] of Object.entries(payload)) {
-    if (key === "capability" || key === "input") continue;
-    summary[key] = SECRET_FIELD_RE.test(key) ? "[redacted]" : sanitizeForDisplay(value);
-  }
-  return summary;
-}
-
-function approvalRequestedBy(approval, input) {
-  const payloadOrigin = approval?.payload?.origin;
-  if (payloadOrigin && typeof payloadOrigin === "object") {
-    const name = firstString(payloadOrigin, ["name", "tokenName", "actor", "source"]);
-    const via = firstString(payloadOrigin, ["via", "type", "channel"]);
-    if (name && via) return `${via}: ${name}`;
-    if (name) return name;
-  }
-  const inputOrigin = firstContextString(input, ORIGIN_INPUT_KEYS);
-  return inputOrigin || approval?.requestedBy || "workflow";
-}
-
-function approvalProjectContext(input) {
-  const project = firstContextString(input, PROJECT_INPUT_KEYS);
-  const repo = firstContextString(input, REPO_INPUT_KEYS);
-  const pathValue = firstContextString(input, PATH_INPUT_KEYS);
-  const branch = firstContextString(input, BRANCH_INPUT_KEYS);
-  const targetBranch = firstContextString(input, ["targetBranch", "TARGET_BRANCH"]) || branch;
-  const display = uniqueNonempty([project, repo, pathValue]).join(" / ");
-  return {
-    project,
-    repo,
-    path: pathValue,
-    branch,
-    targetBranch,
-    display
-  };
-}
-
-function approvalProposedChange(input, run, approval) {
-  const fromInput = firstContextString(input, CHANGE_INPUT_KEYS);
-  if (fromInput) return truncate(fromInput, 700);
-  const runDescription = run ? deriveRunDescription(run) : "";
-  if (runDescription) return truncate(runDescription, 700);
-  return truncate(approval?.description || "", 700);
-}
-
-function approvalProposedAction(input, run, workflowName, deploy, targetBranch) {
-  const fromInput = firstContextString(input, ACTION_INPUT_KEYS);
-  if (fromInput) return truncate(fromInput, 320);
-  if (!run) return "Mark this approval approved.";
-  const parts = [`Queue ${workflowName || "this workflow"} for runner execution`];
-  if (deploy != null) parts.push(deploy ? "with deploy enabled" : "with deploy disabled");
-  if (targetBranch) parts.push(`targeting ${targetBranch}`);
-  return `${parts.join(", ")}.`;
-}
+const approvalPresentationDeps = {
+  getRun,
+  getCapability,
+  deriveRunTitle,
+  deriveRunDescription
+};
 
 function approvalContext(approval) {
-  const run = approval?.runId ? getRun(approval.runId) : null;
-  const input = approvalInput(approval, run);
-  const capabilitySlug = approval?.payload?.capability || run?.capabilitySlug || "";
-  const capability = capabilitySlug ? getCapability(capabilitySlug) : null;
-  const workflowName = run?.capabilityName || capability?.name || capabilitySlug || "";
-  const deployPresent = hasOwn(input, "deploy");
-  const deploy = deployPresent ? Boolean(input.deploy) : null;
-  const project = approvalProjectContext(input);
-  const proposedChange = approvalProposedChange(input, run, approval);
-  return {
-    approval: {
-      id: approval?.id || "",
-      status: approval?.status || ""
-    },
-    requestedBy: approvalRequestedBy(approval, input),
-    workflow: workflowName
-      ? {
-          slug: capabilitySlug,
-          name: workflowName,
-          version: run?.workflowVersion || capability?.version || null,
-          deepLink: capabilitySlug ? deepLinks.workflow(capabilitySlug) : ""
-        }
-      : null,
-    project,
-    deploy,
-    branch: project.branch || "",
-    targetBranch: project.targetBranch || "",
-    run: run
-      ? {
-          id: run.id,
-          status: run.status,
-          title: deriveRunTitle(run),
-          description: deriveRunDescription(run),
-          currentStep: run.currentStep,
-          deepLink: deepLinks.run(run.id)
-        }
-      : null,
-    inputTitle: firstContextString(input, TITLE_INPUT_KEYS),
-    proposedAction: approvalProposedAction(input, run, workflowName, deploy, project.targetBranch),
-    proposedChange,
-    whatHappensIfApproved: run
-      ? "The run will move from waiting_approval to queued, then a matching runner can execute it."
-      : "This approval will be marked approved.",
-    whatHappensIfChangesRequested: run
-      ? "The approval will record changes_requested, the run will be cancelled, and the comment should describe the requested changes."
-      : "This approval will record changes_requested.",
-    whatHappensIfRejected: run ? "The run will be cancelled and will not execute." : "This approval will be marked rejected."
-  };
+  return buildApprovalContext(approval, approvalPresentationDeps);
 }
 
 function withApprovalLinks(approval) {
-  if (!approval || typeof approval !== "object") return approval;
-  return {
-    ...approval,
-    deepLink: deepLinks.approval(approval.id),
-    ...(approval.runId ? { deepLinkRun: deepLinks.run(approval.runId) } : {}),
-    context: approvalContext(approval),
-    payloadSummary: approvalPayloadSummary(approval)
-  };
-}
-
-function csvValues(value) {
-  return String(value || "")
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-}
-
-function firstCsvValue(value) {
-  return csvValues(value)[0] || "";
-}
-
-function telegramApprovalUserAllowlist() {
-  return new Set(csvValues(env.telegramApprovalUserIds || env.telegramApprovalChatId).map(String));
-}
-
-function telegramUserLabel(user) {
-  const handle = user?.username || [user?.first_name, user?.last_name].filter(Boolean).join(" ");
-  return `telegram:${handle || user?.id || "user"}`;
-}
-
-function parseTelegramUser(raw) {
-  if (!raw) return null;
-  try {
-    const user = JSON.parse(raw);
-    if (user && user.id != null) return user;
-  } catch {
-    return null;
-  }
-  return null;
-}
-
-function verifyTelegramWebAppInitData(initData) {
-  if (!env.telegramBotToken) return { ok: false, code: 503, error: "telegram webapp auth not configured" };
-  if (typeof initData !== "string" || !initData.trim() || initData.length > 8192) {
-    return { ok: false, code: 400, error: "missing telegram init data" };
-  }
-
-  const params = new URLSearchParams(initData);
-  const hash = params.get("hash") || "";
-  if (!/^[a-f0-9]{64}$/i.test(hash)) return { ok: false, code: 401, error: "invalid telegram signature" };
-
-  const pairs = [];
-  for (const [key, value] of params.entries()) {
-    if (key !== "hash") pairs.push([key, value]);
-  }
-  if (!pairs.length) return { ok: false, code: 401, error: "invalid telegram signature" };
-
-  pairs.sort(([a], [b]) => a.localeCompare(b));
-  const dataCheckString = pairs.map(([key, value]) => `${key}=${value}`).join("\n");
-  const secret = createHmac("sha256", "WebAppData").update(env.telegramBotToken).digest();
-  const expectedHash = createHmac("sha256", secret).update(dataCheckString).digest("hex");
-  if (!timingSafeEqualStr(hash.toLowerCase(), expectedHash)) {
-    return { ok: false, code: 401, error: "invalid telegram signature" };
-  }
-
-  const authDate = Number(params.get("auth_date") || 0);
-  const nowSeconds = Math.floor(Date.now() / 1000);
-  if (!Number.isFinite(authDate) || authDate <= 0 || authDate > nowSeconds + TELEGRAM_WEBAPP_AUTH_FUTURE_SKEW_SECONDS) {
-    return { ok: false, code: 401, error: "invalid telegram auth date" };
-  }
-  if (nowSeconds - authDate > TELEGRAM_WEBAPP_AUTH_MAX_AGE_SECONDS) {
-    return { ok: false, code: 401, error: "telegram auth expired" };
-  }
-
-  const user = parseTelegramUser(params.get("user"));
-  if (!user) return { ok: false, code: 401, error: "telegram user missing" };
-  const allowlist = telegramApprovalUserAllowlist();
-  if (!allowlist.size) return { ok: false, code: 503, error: "telegram approval operator not configured" };
-  if (!allowlist.has(String(user.id))) return { ok: false, code: 403, error: "telegram user is not authorized" };
-
-  return { ok: true, authDate, user };
-}
-
-function createTelegramWebAppSession(user) {
-  const issuedAt = Math.floor(Date.now() / 1000);
-  const payload = {
-    type: "telegram-webapp",
-    uid: String(user.id),
-    name: telegramUserLabel(user),
-    scopes: ["approvals"],
-    iat: issuedAt,
-    exp: issuedAt + Math.floor(TELEGRAM_WEBAPP_SESSION_MAX_AGE_MS / 1000)
-  };
-  return `${TELEGRAM_WEBAPP_SESSION_PREFIX}${Buffer.from(JSON.stringify(payload)).toString("base64url")}`;
-}
-
-function authenticateTelegramWebAppSession(value) {
-  if (!String(value || "").startsWith(TELEGRAM_WEBAPP_SESSION_PREFIX)) return null;
-  try {
-    const encoded = String(value).slice(TELEGRAM_WEBAPP_SESSION_PREFIX.length);
-    const payload = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
-    if (payload?.type !== "telegram-webapp" || !payload.uid || !Array.isArray(payload.scopes)) return null;
-    if (Number(payload.exp || 0) <= Math.floor(Date.now() / 1000)) return null;
-    if (!telegramApprovalUserAllowlist().has(String(payload.uid))) return null;
-    return {
-      id: `telegram-webapp:${payload.uid}`,
-      name: payload.name || `telegram:${payload.uid}`,
-      scopes: payload.scopes,
-      authMethod: "telegram-webapp",
-      telegramUserId: String(payload.uid)
-    };
-  } catch {
-    return null;
-  }
+  return decorateApprovalLinks(approval, approvalPresentationDeps);
 }
 
 function authenticateSessionValue(value) {
-  return authenticateTelegramWebAppSession(value) || authenticateToken(value);
-}
-
-function telegramSessionCanAccess(req) {
-  if (req.method === "GET" && req.path === "/api/me") return true;
-  if (req.method === "GET" && /^\/api\/approvals(?:\/[^/]+)?\/?$/.test(req.path)) return true;
-  if (req.method === "POST" && /^\/api\/approvals\/[^/]+\/(?:approve|reject|request-changes)\/?$/.test(req.path)) return true;
-  if (req.method === "GET" && /^\/api\/runs(?:\/[^/]+(?:\/(?:events|logs|artifacts))?)?\/?$/.test(req.path)) return true;
-  if (req.method === "GET" && /^\/api\/artifacts\/[^/]+\/download\/?$/.test(req.path)) return true;
-  return false;
+  return authenticateTelegramWebAppSession(value, {
+    approvalUserIds: env.telegramApprovalUserIds,
+    approvalChatId: env.telegramApprovalChatId
+  }) || authenticateToken(value);
 }
 
 function authFromRequest(req) {
@@ -1233,69 +454,8 @@ function requireScopes(...needed) {
   };
 }
 
-function requestOrigin(req, input = {}) {
-  const token = req.token || {};
-  const scopes = token.scopes || [];
-  const via = scopes.includes("mcp") && !scopes.includes("api") ? "mcp" : scopes.includes("runner") && !scopes.includes("api") ? "runner" : "token";
-  const explicit = normalizeOrigin(req.body?.origin) || normalizeOrigin(input?.origin) || normalizeOrigin(input?.source) || normalizeOrigin(input?.context?.origin);
-  const headerOrigin = normalizeOrigin({
-    label: req.headers["x-smithers-origin"] || "",
-    url: req.headers["x-smithers-origin-url"] || "",
-    chat: req.headers["x-smithers-origin-chat"] || "",
-    thread: req.headers["x-smithers-origin-thread"] || "",
-    messageId: req.headers["x-smithers-origin-message-id"] || ""
-  });
-  return {
-    requestedBy: `${via}: ${token.name || token.id || "unknown"}`,
-    origin: {
-      label: `${via}: ${token.name || token.id || "unknown"}`,
-      type: via,
-      name: token.name || "",
-      scopes,
-      ...(headerOrigin || {}),
-      ...(explicit || {})
-    }
-  };
-}
-
-function bearerFromRequest(req) {
-  const header = req.headers.authorization || "";
-  return header.toLowerCase().startsWith("bearer ") ? header.slice(7).trim() : "";
-}
-
-const ACTIVE_RERUN_STATUSES = new Set(["queued", "assigned", "running", "waiting_approval"]);
-
-function rerunFingerprint(input) {
-  return createHash("sha256").update(stableJsonString(input || {})).digest("hex");
-}
-
-function logicalRerunInput(run) {
-  const rawInput = run?.input && typeof run.input === "object" && !Array.isArray(run.input) ? run.input : {};
-  const isSupervisor = run?.capabilitySlug === SUPERVISOR_CAPABILITY_SLUG
-    && typeof rawInput.__supervisionToken === "string"
-    && typeof rawInput.wrappedCapability === "string";
-  const logicalInput = isSupervisor && rawInput.wrappedInput && typeof rawInput.wrappedInput === "object" && !Array.isArray(rawInput.wrappedInput)
-    ? rawInput.wrappedInput
-    : rawInput;
-  const clean = stripSupervisionInternals(logicalInput || {});
-  delete clean.__origin;
-  return {
-    capabilitySlug: isSupervisor ? rawInput.wrappedCapability : run?.capabilitySlug,
-    input: clean,
-    isSupervisor
-  };
-}
-
 function findActiveDuplicateRerun({ previousRunId, capabilitySlug, input }) {
-  const expectedFingerprint = rerunFingerprint(input);
-  const candidates = listRuns({ limit: 500, includeInternal: true })
-    .filter((run) => ACTIVE_RERUN_STATUSES.has(run.status))
-    .map((run) => ({ run, logical: logicalRerunInput(run) }))
-    .filter(({ logical }) => logical.capabilitySlug === capabilitySlug)
-    .filter(({ logical }) => logical.input?.rerunOf === previousRunId)
-    .filter(({ logical }) => rerunFingerprint(logical.input) === expectedFingerprint);
-
-  return candidates.find(({ logical }) => logical.isSupervisor)?.run || candidates[0]?.run || null;
+  return findDuplicateRerun(listRuns({ limit: 500, includeInternal: true }), { previousRunId, capabilitySlug, input });
 }
 
 function sendSessionValue(res, value, maxAge = SESSION_COOKIE_MAX_AGE_MS) {
@@ -1312,37 +472,6 @@ function sendSession(res, token) {
   sendSessionValue(res, token);
 }
 
-function requireBodySlug(body, fallback) {
-  return body.slug || slugify(body.name || body.title || fallback);
-}
-
-// Minimal in-memory fixed-window rate limiter keyed by client + bucket.
-const rateBuckets = new Map();
-function rateLimit({ bucket, max, windowMs }) {
-  return (req, res, next) => {
-    const key = `${bucket}:${req.ip}`;
-    const nowMs = Date.now();
-    const entry = rateBuckets.get(key);
-    if (!entry || nowMs > entry.reset) {
-      rateBuckets.set(key, { count: 1, reset: nowMs + windowMs });
-      return next();
-    }
-    if (entry.count >= max) {
-      res.setHeader("retry-after", Math.ceil((entry.reset - nowMs) / 1000));
-      return res.status(429).json({ error: "too many requests" });
-    }
-    entry.count += 1;
-    next();
-  };
-}
-
-// Periodically evict expired buckets so distinct client IPs can't leak memory.
-const rateSweep = setInterval(() => {
-  const nowMs = Date.now();
-  for (const [key, entry] of rateBuckets) if (nowMs > entry.reset) rateBuckets.delete(key);
-}, 60_000);
-rateSweep.unref?.();
-
 // Restrict a run's lifecycle endpoints to the runner that owns it (or any admin token).
 function requireRunOwnerOrAdmin(req, res, next) {
   const scopes = req.token?.scopes || [];
@@ -1353,161 +482,38 @@ function requireRunOwnerOrAdmin(req, res, next) {
 }
 
 function telegramApprovalTarget() {
-  const approvalChatId = firstCsvValue(env.telegramApprovalChatId);
-  if (approvalChatId) return { chatId: approvalChatId, private: true };
-  if (env.telegramChatId) {
-    const threadId = Number(env.telegramThreadId);
-    return {
-      chatId: env.telegramChatId,
-      private: false,
-      ...(env.telegramThreadId && Number.isFinite(threadId) ? { threadId } : {})
-    };
-  }
-  return null;
-}
-
-function htmlEscape(value) {
-  return String(value ?? "").replace(/[&<>"']/g, (char) => {
-    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char];
+  return resolveTelegramApprovalTarget({
+    approvalChatId: env.telegramApprovalChatId,
+    telegramChatId: env.telegramChatId,
+    telegramThreadId: env.telegramThreadId
   });
 }
 
-function telegramCode(value) {
-  return `<code>${htmlEscape(value)}</code>`;
-}
-
-function telegramLabeledLine(label, value) {
-  if (value == null || value === "") return "";
-  return `<b>${htmlEscape(label)}:</b> ${htmlEscape(value)}`;
-}
-
-function telegramApprovalText(approval) {
-  const context = approvalContext(approval);
-  const workflow = context.workflow?.name
-    ? `${context.workflow.name}${context.workflow.slug ? ` (${context.workflow.slug})` : ""}`
-    : "Unknown workflow";
-  const proposedChange = truncate(context.proposedChange || approval?.title || approval?.description || "Approval request", 900);
-  const proposedAction = truncate(context.proposedAction || "Resolve this approval.", 320);
-  const branchLine = context.targetBranch ? telegramLabeledLine("Target branch", context.targetBranch) : telegramLabeledLine("Branch", context.branch);
-  const runLine = approval.runId
-    ? `${telegramCode(approval.runId)}${context.run?.status ? ` (${htmlEscape(context.run.status)})` : ""}`
-    : "No run attached";
-  return [
-    `<b>${htmlEscape(env.instanceName)} approval requested</b>`,
-    "",
-    "<b>Thing being approved</b>",
-    "<b>Proposed change</b>",
-    `<pre>${htmlEscape(proposedChange)}</pre>`,
-    "",
-    "<b>Decision / action</b>",
-    htmlEscape(proposedAction),
-    "",
-    "<b>Workflow</b>",
-    htmlEscape(workflow),
-    "",
-    telegramLabeledLine("Originator", context.requestedBy || "unknown"),
-    context.project?.display ? telegramLabeledLine("Project / repo / path", truncate(context.project.display, 180)) : "",
-    branchLine,
-    context.deploy == null ? "" : telegramLabeledLine("Deploy", context.deploy ? "yes" : "no"),
-    "",
-    "<b>Run</b>",
-    runLine,
-    telegramLabeledLine("Approval", approval.id),
-    "",
-    "Use the buttons below to decide."
-  ]
-    .filter(Boolean)
-    .join("\n");
-}
-
-function telegramApprovalOpenButton(target, approvalUrl) {
-  if (target.private) return { text: "Open approval", web_app: { url: approvalUrl } };
-  return { text: "Open approval", url: approvalUrl };
-}
-
-function isRunStartApproval(approval) {
-  const payload = approval?.payload || {};
-  const kind = String(payload.approvalKind || payload.kind || "").toLowerCase();
-  const scope = String(payload.approvalScope || payload.scope || "").toLowerCase();
-  if (kind || scope) return kind === "run_start" || scope === "workflow_start";
-
-  return Boolean(approval?.runId && payload.capability && payload.input && /^Approve\b/.test(approval.title || ""));
-}
-
-function runStartApprovalPolicy(approval) {
-  const payload = approval?.payload || {};
-  const run = approval?.runId ? getRun(approval.runId) : null;
-  const capabilitySlug = payload.capability || run?.capabilitySlug || "";
-  return capabilitySlug ? getCapability(capabilitySlug)?.approvalPolicy || {} : {};
-}
-
 function shouldNotifyTelegram(approval) {
-  if (!approval) return false;
-  if (!isRunStartApproval(approval)) return true;
-  // Default: notify on run-start approvals too, unless the capability's policy
-  // explicitly opts out (notifyTelegram:false / telegramNotify:false). Previously
-  // run-start gates were silent unless they opted in, so operators never saw
-  // "approve before this workflow runs" prompts.
-  const policy = runStartApprovalPolicy(approval) || {};
-  if (policy.notifyTelegram === false || policy.telegramNotify === false) return false;
-  if (policy.notifications?.telegram === false || policy.notify?.telegram === false) return false;
-  return true;
+  return shouldNotifyTelegramApproval(approval, { getRun, getCapability });
 }
 
 async function notifyTelegram(approval) {
   const target = telegramApprovalTarget();
   if (!env.telegramBotToken || !target) return;
   if (!shouldNotifyTelegram(approval)) return;
-  const approvalUrl = absoluteDeepLink(deepLinks.approval(approval.id));
+  const approvalUrl = absoluteDeepLink(deepLinks.approval(approval.id), env.baseUrl);
   try {
     const response = await fetch(`https://api.telegram.org/bot${env.telegramBotToken}/sendMessage`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        chat_id: target.chatId,
-        ...(target.threadId ? { message_thread_id: target.threadId } : {}),
-        text: telegramApprovalText(approval),
-        parse_mode: "HTML",
-        reply_markup: {
-          inline_keyboard: [
-            [telegramApprovalOpenButton(target, approvalUrl)],
-            [
-              { text: "Approve", callback_data: `approval:approve:${approval.id}` },
-              { text: "Request changes", callback_data: `approval:request_changes:${approval.id}` },
-              { text: "Reject", callback_data: `approval:reject:${approval.id}` }
-            ]
-          ]
-        }
-      })
+      body: JSON.stringify(telegramApprovalMessagePayload({
+        target,
+        approval,
+        approvalUrl,
+        approvalContext,
+        instanceName: env.instanceName
+      }))
     });
     if (!response.ok) console.error("Telegram notification failed:", response.status);
   } catch (error) {
     console.error("Telegram notification failed:", error.message);
   }
-}
-
-function parseTelegramApprovalCallback(data) {
-  if (typeof data !== "string" || !data.trim()) return { ok: false, code: 400, error: "missing callback data" };
-  const parts = data.split(":");
-  let action = "";
-  let approvalId = "";
-  if (parts.length === 2) {
-    [action, approvalId] = parts;
-  } else if (parts.length === 3 && parts[0] === "approval") {
-    [, action, approvalId] = parts;
-  } else {
-    return { ok: false, code: 400, error: "invalid callback data format" };
-  }
-  const normalizedAction = action.replace(/-/g, "_");
-  if (!["approve", "reject", "request_changes", "changes_requested", "changes"].includes(normalizedAction)) {
-    return { ok: false, code: 400, error: "invalid approval decision" };
-  }
-  if (!/^appr_[a-f0-9]{20}$/.test(approvalId)) return { ok: false, code: 400, error: "invalid approval id" };
-  return {
-    ok: true,
-    approvalId,
-    decision: normalizedAction === "approve" ? "approved" : normalizedAction === "reject" ? "rejected" : "changes_requested"
-  };
 }
 
 async function answerTelegramCallbackQuery(callbackQueryId, text) {
@@ -1526,15 +532,7 @@ async function answerTelegramCallbackQuery(callbackQueryId, text) {
 
 async function clearTelegramApprovalButtons(callback) {
   if (!env.telegramBotToken) return;
-  const payload = callback.inline_message_id
-    ? { inline_message_id: callback.inline_message_id, reply_markup: { inline_keyboard: [] } }
-    : callback.message?.chat?.id && callback.message?.message_id
-      ? {
-          chat_id: callback.message.chat.id,
-          message_id: callback.message.message_id,
-          reply_markup: { inline_keyboard: [] }
-        }
-      : null;
+  const payload = telegramApprovalButtonClearPayload(callback);
   if (!payload) return;
   try {
     const response = await fetch(`https://api.telegram.org/bot${env.telegramBotToken}/editMessageReplyMarkup`, {
@@ -1548,27 +546,7 @@ async function clearTelegramApprovalButtons(callback) {
   }
 }
 
-function approvalDecisionLabel(decision) {
-  if (decision === "approved") return "Approved";
-  if (decision === "changes_requested") return "Changes requested";
-  return "Rejected";
-}
-
-app.use((req, res, next) => {
-  const appSurface = req.path === "/app";
-  const frameAncestors = appSurface ? "'self' https://web.telegram.org https://*.telegram.org" : "'none'";
-  res.setHeader("x-content-type-options", "nosniff");
-  res.setHeader("referrer-policy", "strict-origin-when-cross-origin");
-  if (!appSurface) res.setHeader("x-frame-options", "DENY");
-  res.setHeader(
-    "content-security-policy",
-    `default-src 'self'; script-src 'self' https://telegram.org; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors ${frameAncestors}; base-uri 'none'; form-action 'self'; object-src 'none'`
-  );
-  if (env.baseUrl.startsWith("https://")) {
-    res.setHeader("strict-transport-security", "max-age=31536000; includeSubDomains");
-  }
-  next();
-});
+app.use(securityHeaders({ baseUrl: env.baseUrl }));
 
 // General API rate limit (defense against scraping/abuse); login has a stricter bucket below.
 app.use("/api", rateLimit({ bucket: "api", max: 1200, windowMs: 60_000 }));
@@ -1591,20 +569,7 @@ app.get("/version", (_req, res) => {
   res.json({ version: info.version, gitTag: info.gitTag, gitCommit: info.gitCommit });
 });
 
-// --- Zero-friction client install -------------------------------------------
-// Tarball of the CLI/MCP client (commander is dependency-free, so we vendor it -> no npm needed).
-let cliTarballPath = null;
-function buildCliTarball() {
-  if (cliTarballPath && existsSync(cliTarballPath)) return cliTarballPath;
-  const out = path.join(env.dataDir, "cli.tgz");
-  const paths = ["bin", "src", "package.json"];
-  if (existsSync(path.join(env.root, "workflow-templates"))) paths.push("workflow-templates");
-  // -h dereferences symlinks so pnpm's symlinked node_modules/commander is archived as real files.
-  if (existsSync(path.join(env.root, "node_modules", "commander"))) paths.push("node_modules/commander");
-  execFileSync("tar", ["czhf", out, "-C", env.root, ...paths]);
-  cliTarballPath = out;
-  return out;
-}
+const buildCliTarball = createCliTarballBuilder({ root: env.root, dataDir: env.dataDir });
 
 app.get("/cli.tgz", (_req, res) => {
   try {
@@ -1616,56 +581,7 @@ app.get("/cli.tgz", (_req, res) => {
 
 // One-line installer: `curl -fsSL <hub>/install.sh | bash` (prefix with RUNYARD_HUB_TOKEN=... to auto-login).
 app.get("/install.sh", (req, res) => {
-  const hub = publicUrl(req);
-  res.type("text/plain").send(`#!/usr/bin/env bash
-set -euo pipefail
-HUB_URL="\${RUNYARD_HUB_URL:-\${SMITHERS_HUB_URL:-${hub}}}"
-APP="$HOME/.runyard/app"
-BIN="$HOME/.local/bin"
-echo "Installing RunYard client from $HUB_URL ..."
-command -v node >/dev/null 2>&1 || { echo "Error: Node.js 18+ is required (https://nodejs.org)."; exit 1; }
-command -v curl >/dev/null 2>&1 || { echo "Error: curl is required."; exit 1; }
-mkdir -p "$APP" "$BIN"
-tmp="$(mktemp)"
-curl -fsSL "$HUB_URL/cli.tgz" -o "$tmp"
-tar xzf "$tmp" -C "$APP"
-rm -f "$tmp"
-cat > "$BIN/runyard" <<WRAP
-#!/usr/bin/env bash
-exec node "$APP/src/cli.js" "\\$@"
-WRAP
-cat > "$BIN/runyard-mcp" <<WRAP
-#!/usr/bin/env bash
-exec node "$APP/src/mcp.js" "\\$@"
-WRAP
-chmod +x "$BIN/runyard" "$BIN/runyard-mcp"
-TOKEN="\${RUNYARD_HUB_TOKEN:-\${SMITHERS_HUB_TOKEN:-}}"
-REMOTE="\${RUNYARD_HUB_REMOTE:-\${SMITHERS_HUB_REMOTE:-}}"
-# Ask for the token + a name for this connection (org) on first run.
-if [ -z "$TOKEN" ] && [ -r /dev/tty ]; then
-  printf "Paste your RunYard access token (Web Hub -> Connect): " > /dev/tty
-  read -r TOKEN < /dev/tty
-fi
-if [ -z "$REMOTE" ] && [ -r /dev/tty ]; then
-  printf "Name this org connection [default]: " > /dev/tty
-  read -r REMOTE < /dev/tty
-fi
-REMOTE="\${REMOTE:-default}"
-if [ -n "$TOKEN" ]; then
-  node "$APP/src/cli.js" login --remote "$REMOTE" --url "$HUB_URL" --token "$TOKEN" >/dev/null && echo "Logged in to $HUB_URL (remote: $REMOTE)"
-else
-  echo "No token entered. Log in later with:  runyard login --url $HUB_URL"
-fi
-case ":$PATH:" in
-  *":$BIN:"*) ;;
-  *) echo "Add this to your shell profile:  export PATH=\\"$BIN:\\$PATH\\"" ;;
-esac
-echo ""
-echo "Installed. Next:"
-echo "  runyard capabilities      # see what you can run"
-echo "  runyard tail <run-id>     # watch a run's unified timeline"
-echo "  runyard mcp install --all # connect every AI agent on this machine"
-`);
+  res.type("text/plain").send(installScript(publicUrl(req)));
 });
 
 app.get("/", (req, res) => {
@@ -1683,122 +599,11 @@ app.use("/public", express.static(path.join(env.root, "public")));
 app.get("/llms.txt", (req, res) => {
   const menu = hubMenuPayload(req);
   const base = publicUrl(req);
-  const lines = [];
-  lines.push(`# ${menu.product || "Runyard"} (codebase: ${menu.codebase || "runyard"})`);
-  lines.push("");
-  lines.push("Self-hosted control plane for agent runs. Agents discover capabilities");
-  lines.push("over MCP/CLI/HTTP, runners execute them, and the Hub stores the durable");
-  lines.push("record of logs, events, artifacts, approvals, skills, agents, and knowledge.");
-  lines.push("One private deployment per company/org.");
-  lines.push("");
-  lines.push("Primary agent interface:");
-  lines.push("- MCP server: runyard-mcp");
-  lines.push(`- HTTP API: ${base}/api`);
-  lines.push(`- OpenAPI: ${base}/openapi.json`);
-  lines.push(`- Menu: ${base}/api/menu`);
-  lines.push(`- Capability catalog: ${base}/api/capabilities`);
-  lines.push(`- Setup docs: ${base}/docs/quickstart`);
-  lines.push("");
-  lines.push("Tools (mirrors get_menu):");
-  for (const tool of menu.tools || []) lines.push(`- ${tool}`);
-  lines.push("");
-  lines.push("Capabilities (mirrors get_menu):");
-  for (const cap of menu.capabilities || []) {
-    const desc = cap.description ? ` — ${cap.description}` : "";
-    lines.push(`- ${cap.slug}: ${cap.name}${desc}`);
-  }
-  lines.push("");
-  lines.push("Execution modes:");
-  for (const mode of menu.executionModes || []) lines.push(`- ${mode.id} → runners tagged ${mode.runnerLocation}`);
-  lines.push("");
-  lines.push("Authenticate with a Hub access token using Bearer auth. Tokens carry");
-  lines.push("scopes (api, mcp, runner, admin); the first one is written to");
-  lines.push("data/bootstrap-token.txt on the server's machine on first boot and is");
-  lines.push("full admin.");
-  lines.push("");
-  lines.push("Run path:");
-  lines.push("1. Discover with get_menu / list_capabilities.");
-  lines.push("2. Choose local or remote execution.");
-  lines.push("3. Start with run_capability or `runyard run --where local|remote`.");
-  lines.push("4. Fetch status, logs, outputs, artifacts, and the unified timeline from the Hub.");
-  lines.push("5. Operators can run `runyard tail <run-id>` for an NDJSON timeline stream.");
-  lines.push("");
-  lines.push("Response endpoints (optional):");
-  lines.push("- POST /api/capabilities/:id/run accepts an optional responseEndpoint:");
-  lines.push("  { type: \"http\"|\"telegram\", config: { ... } }");
-  lines.push("- Polling /api/runs/:id is always available and stays canonical.");
-  lines.push("- Endpoint config is validated server-side; secrets are not echoed");
-  lines.push("  back in API responses, events, or audit log entries.");
-  lines.push("- When the run reaches a terminal state (succeeded/failed/cancelled)");
-  lines.push("  the Hub posts a sanitized payload to http endpoints and a concise");
-  lines.push("  message to telegram endpoints; telegram delivery requires");
-  lines.push("  TELEGRAM_BOT_TOKEN (or SMITHERS_TELEGRAM_BOT_TOKEN) to be set on");
-  lines.push("  the Hub. Delivery state (status / attempts / last_error /");
-  lines.push("  delivered_at) is visible on GET /api/runs/:id under");
-  lines.push("  responseEndpoints[].");
-  res.type("text/plain").send(`${lines.join("\n")}\n`);
+  res.type("text/plain").send(renderLlmsTxt(menu, base));
 });
 
 app.get("/openapi.json", (req, res) => {
-  res.json({
-    openapi: "3.1.0",
-    info: {
-      title: "Runyard API (runyard)",
-      version: env.version,
-      description:
-        "Self-hosted control plane for agent runs. The Web Hub, CLI, and MCP server all drive this same JSON API. " +
-        "Authenticate every request with `Authorization: Bearer shub_...`; tokens carry scopes (api, mcp, runner, admin) and the bootstrap token is full admin. " +
-        "Typical flow: discover capabilities (GET /menu or /capabilities), start a run (POST /capabilities/{id}/run with executionMode local|remote), then poll /runs/{id} and read /runs/{id}/timeline, /logs, and /artifacts. " +
-        "Runs that need a human checkpoint enter waiting_approval and are resolved via /approvals/{id}/approve|reject|request-changes. " +
-        "Liveness endpoints (/healthz, /readyz, /api/version) and discovery copy (/llms.txt, this document) are unauthenticated and served from the repo root, not under /api."
-    },
-    servers: [{ url: `${publicUrl(req)}/api` }],
-    security: [{ bearerAuth: [] }],
-    components: { securitySchemes: { bearerAuth: { type: "http", scheme: "bearer" } } },
-    paths: {
-      "/menu": { get: { summary: "Discover the Runyard MCP/CLI menu: tools, capability catalog, and local/remote execution modes (same source as get_menu and /llms.txt)" } },
-      "/capabilities": { get: { summary: "List capabilities" }, post: { summary: "Create/update capability (admin)" } },
-      "/capabilities/{id}": { get: { summary: "Describe capability and its input schema" }, patch: { summary: "Update capability (admin)" } },
-      "/capabilities/{id}/run": { post: { summary: "Run capability. Body: {input, executionMode: local|remote}. improve.repoDir selects an allowlisted runner-local repo while logs/artifacts stay in the Hub. Accepts an optional responseEndpoint ({type: http|telegram, config}) so the caller can have the terminal-state reply delivered when the run finishes (http endpoints receive a sanitized JSON payload; telegram endpoints receive a concise message and require TELEGRAM_BOT_TOKEN on the Hub). Polling /runs/{id} remains the canonical fallback; delivery state is exposed on /runs/{id}.responseEndpoints[]." } },
-      "/runs": { get: { summary: "List runs (filter by status, q, capability)" } },
-      "/runs/{id}": { get: { summary: "Get run: status, outputs, error, and responseEndpoints[] delivery state" } },
-      "/runs/{id}/events": { get: { summary: "Get run events" }, post: { summary: "Append run event (runner)" } },
-      "/runs/{id}/timeline": { get: { summary: "Get a unified ascending run timeline built from status transitions, events, and artifacts. Supports since=<iso> and limit=<n>; used by `runyard tail`." } },
-      "/runs/{id}/logs": { get: { summary: "Get run log lines" } },
-      "/runs/{id}/artifacts": { get: { summary: "List run artifacts" }, post: { summary: "Upload artifact (runner)" } },
-      "/runs/{id}/rerun": { post: { summary: "Re-queue the run with the same or edited input" } },
-      "/runs/{id}/cancel": { post: { summary: "Cancel a queued or running run" } },
-      "/artifacts/{id}/download": { get: { summary: "Download an artifact's bytes" } },
-      "/approvals": { get: { summary: "List approvals" } },
-      "/approvals/{id}/approve": { post: { summary: "Approve request" } },
-      "/approvals/{id}/reject": { post: { summary: "Reject request" } },
-      "/approvals/{id}/request-changes": { post: { summary: "Request changes" } },
-      "/agents": { get: { summary: "List reusable agent roles" }, post: { summary: "Create/update agent (admin)" } },
-      "/skills": { get: { summary: "List skills" }, post: { summary: "Create/update skill (admin)" } },
-      "/knowledge": { get: { summary: "List knowledge resources" }, post: { summary: "Create/update knowledge resource (admin)" } },
-      "/tokens": { get: { summary: "List access tokens (admin)" }, post: { summary: "Issue a scoped access token (admin)" } },
-      "/audit": { get: { summary: "Read the audit log (admin)" } },
-      "/chat/status": { get: { summary: "In-app Assistant status: resolved provider (runner|anthropic|openai) and whether it is configured" } },
-      "/chat": { post: { summary: "Ask the in-app Assistant. Body: {messages, context}. Answers first; any app-changing action is returned as a confirmation button, never executed server-side." } },
-      "/workflow-endpoints": { get: { summary: "List configured authenticated workflow endpoints (admin)" }, post: { summary: "Create/update an authenticated workflow endpoint (admin)" } },
-      "/workflow-endpoints/{slug}": { get: { summary: "Describe a workflow endpoint (admin)" }, post: { summary: "Submit data to a fixed authenticated workflow endpoint (per-endpoint secret, rate-limited, deduped)" } },
-      "/schedules": {
-        get: { summary: "List schedules (cron jobs) with next/last run and a human-readable preview" },
-        post: { summary: "Create a schedule (admin). Body: {name, capabilitySlug, cron|runAt, timezone, input, enabled}. Cron schedules fire recurringly; runAt fires once. Fires honor the capability's approval policy and supervision." }
-      },
-      "/schedules/preview": { get: { summary: "Validate a cron expression (query: cron, timezone) and return a description plus the next fire times" } },
-      "/schedules/{id}": {
-        get: { summary: "Get a schedule" },
-        patch: { summary: "Update a schedule (admin)" },
-        delete: { summary: "Delete a schedule (admin)" }
-      },
-      "/schedules/{id}/enable": { post: { summary: "Enable a schedule (admin)" } },
-      "/schedules/{id}/disable": { post: { summary: "Disable a schedule (admin)" } },
-      "/schedules/{id}/run-now": { post: { summary: "Fire a schedule immediately without changing its cadence" } },
-      "/runners/register": { post: { summary: "Register runner" } },
-      "/runners/{id}/next-run": { get: { summary: "Claim next run for runner" } }
-    }
-  });
+  res.json(openApiDocument({ baseUrl: publicUrl(req), version: env.version }));
 });
 
 app.get("/api/menu", requireAuth, requireScopes("api", "mcp"), (req, res) => {
@@ -1831,7 +636,12 @@ app.post("/api/auth/token-login", rateLimit({ bucket: "login", max: 10, windowMs
 });
 
 app.post("/api/auth/telegram-webapp", rateLimit({ bucket: "telegram-webapp-login", max: 30, windowMs: 60_000 }), (req, res) => {
-  const verified = verifyTelegramWebAppInitData(req.body.initData || "");
+  const verified = verifyTelegramWebAppInitData(req.body.initData || "", {
+    botToken: env.telegramBotToken,
+    approvalUserIds: env.telegramApprovalUserIds,
+    approvalChatId: env.telegramApprovalChatId,
+    timingSafeEqualStr
+  });
   if (!verified.ok) return res.status(verified.code).json({ error: verified.error });
   const sessionValue = createTelegramWebAppSession(verified.user);
   const actor = telegramUserLabel(verified.user);
@@ -1861,11 +671,9 @@ app.get("/api/tokens", requireAuth, requireScopes("admin"), (_req, res) => {
 });
 
 app.post("/api/tokens", requireAuth, requireScopes("admin"), (req, res) => {
-  const scopes = Array.isArray(req.body.scopes) && req.body.scopes.length ? req.body.scopes : ["api", "mcp"];
-  const days = Number(req.body.expiresInDays || 0);
-  const expiresAt = days > 0 ? new Date(Date.now() + days * 86_400_000).toISOString() : null;
-  const token = createAccessToken(req.body.name || "access token", undefined, scopes, { expiresAt });
-  recordAudit(req.token.name, "token.created", token.id, { scopes, expiresAt });
+  const input = tokenCreateInput(req.body || {});
+  const token = createAccessToken(input.name, undefined, input.scopes, { expiresAt: input.expiresAt });
+  recordAudit(req.token.name, "token.created", token.id, { scopes: input.scopes, expiresAt: input.expiresAt });
   res.json({ token });
 });
 
@@ -1988,35 +796,22 @@ app.post("/api/update/apply", requireAuth, requireScopes("admin"), (req, res) =>
 // token gets 403 from requireScopes before reaching the handler.
 function requireSecretsEnabled(_req, res, next) {
   if (!secretsEnabled()) {
-    return res.status(503).json({
-      error: "secrets store disabled",
-      message: "Set SECRETS_ENC_KEY (a 32-byte base64/hex key) on the Hub to enable encrypted secrets."
-    });
+    const response = secretsDisabledResponse();
+    return res.status(response.status).json(response.body);
   }
   next();
 }
-
-const SECRET_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/; // env-var-safe names
-const SECRET_VALUE_MAX = 32 * 1024;
 
 app.get("/api/secrets", requireAuth, requireScopes("admin"), requireSecretsEnabled, (_req, res) => {
   res.json({ secrets: listSecretMeta(), enabled: true });
 });
 
 app.put("/api/secrets/:key", requireAuth, requireScopes("admin"), requireSecretsEnabled, (req, res) => {
-  const key = String(req.params.key || "").trim();
-  if (!SECRET_KEY_RE.test(key)) {
-    return res.status(400).json({ error: "invalid secret key", message: "Use an env-var-safe name: letters, digits, underscore; must not start with a digit." });
-  }
-  const value = req.body?.value;
-  if (typeof value !== "string" || !value.length) {
-    return res.status(400).json({ error: "value is required" });
-  }
-  if (value.length > SECRET_VALUE_MAX) {
-    return res.status(413).json({ error: "secret value too large" });
-  }
+  const validated = validateSecretUpsert({ key: req.params.key, value: req.body?.value });
+  if (!validated.ok) return res.status(validated.status).json(validated.body);
+  const { key, value } = validated;
   const created = !secretExists(key);
-  const meta = upsertSecret({ key, value, description: String(req.body?.description || ""), createdBy: req.token?.name || req.token?.id || "" });
+  const meta = upsertSecret({ key, value, description: String(req.body?.description || ""), createdBy: secretActorName(req.token) });
   // Audit records the key + actor only — never the value.
   recordAudit(req.token.name, created ? "secret.created" : "secret.updated", key, { key });
   res.status(created ? 201 : 200).json({ secret: meta });
@@ -2166,14 +961,9 @@ app.post("/api/workflow-endpoints/:endpointSlug", asyncHandler(async (req, res) 
 }));
 
 app.delete("/api/tokens/:id", requireAuth, requireScopes("admin"), (req, res) => {
-  // Don't let an operator revoke the last usable admin token and lock everyone out.
   const tokens = listAccessTokens();
-  const target = tokens.find((entry) => entry.id === req.params.id);
-  if (!target) return res.status(404).json({ error: "token not found" });
-  const activeAdmins = tokens.filter((entry) => entry.active && entry.scopes.includes("admin"));
-  if (target.active && target.scopes.includes("admin") && activeAdmins.length <= 1) {
-    return res.status(409).json({ error: "cannot revoke the last active admin token" });
-  }
+  const decision = revokeTokenDecision(tokens, req.params.id);
+  if (!decision.ok) return res.status(decision.status).json(decision.body);
   const revoked = revokeAccessToken(req.params.id);
   recordAudit(req.token.name, "token.revoked", req.params.id, {});
   res.json({ token: revoked });
@@ -2289,10 +1079,7 @@ app.post("/api/capabilities/:id/run", requireAuth, requireScopes("api", "mcp"), 
   if (input && typeof input === "object" && !Array.isArray(input) && "responseEndpoint" in input) {
     delete input.responseEndpoint;
   }
-  if (Array.isArray(req.body.chain) && input && typeof input === "object" && !Array.isArray(input)) {
-    input.__chain = normalizeChainSteps(req.body.chain);
-    input.__chainIndex = 0;
-  }
+  attachChainToInput(input, req.body.chain);
   const execution = normalizeExecutionIntent(input, req.body || {});
   const origin = requestOrigin(req, input);
   // Capability version pinning + rollback (RUNYARD_CAPABILITY_VERSIONING).
@@ -2375,106 +1162,6 @@ app.get("/api/repo-options", requireAuth, (_req, res) => {
 // capability would do. The created run's origin records the schedule + creator
 // for audit. See src/cron.js (parser) and src/db.js (storage + idempotent claim).
 
-const SCHEDULE_NAME_MAX = 120;
-const SCHEDULE_INPUT_MAX_BYTES = 16 * 1024;
-
-function validateScheduleBody(body = {}, { partial = false } = {}) {
-  const out = {};
-  const has = (key) => Object.prototype.hasOwnProperty.call(body, key);
-
-  if (!partial || has("name")) {
-    const name = String(body.name || "").trim();
-    if (!name) return { ok: false, error: "name is required" };
-    if (name.length > SCHEDULE_NAME_MAX) return { ok: false, error: `name must be <= ${SCHEDULE_NAME_MAX} characters` };
-    out.name = name;
-  }
-  if (has("description")) out.description = String(body.description || "").slice(0, 2000);
-
-  if (!partial || has("capabilitySlug") || has("capability")) {
-    const slug = String(body.capabilitySlug || body.capability || "").trim();
-    if (!slug) return { ok: false, error: "capabilitySlug is required" };
-    const capability = getCapability(slug);
-    if (!capability || !capability.enabled) return { ok: false, error: `unknown or disabled capability "${slug}"` };
-    out.capabilitySlug = capability.slug;
-  }
-
-  let timezone = "UTC";
-  if (has("timezone")) {
-    timezone = String(body.timezone || "UTC").trim() || "UTC";
-    if (!isValidTimezone(timezone)) return { ok: false, error: `invalid timezone "${timezone}"` };
-    out.timezone = timezone;
-  }
-
-  if (has("cron")) {
-    const cron = String(body.cron || "").trim();
-    if (cron) {
-      const check = validateCron(cron, out.timezone || timezone);
-      if (!check.ok) return { ok: false, error: `invalid cron expression: ${check.error}` };
-    }
-    out.cron = cron;
-  }
-  if (has("runAt")) {
-    if (body.runAt) {
-      const when = new Date(body.runAt);
-      if (Number.isNaN(when.getTime())) return { ok: false, error: "runAt is not a valid date" };
-      out.runAt = when.toISOString();
-    } else {
-      out.runAt = null;
-    }
-  }
-
-  if (!partial) {
-    const cron = out.cron || "";
-    const runAt = out.runAt || null;
-    if (!cron && !runAt) return { ok: false, error: "a cron expression or a runAt time is required" };
-    if (runAt && !cron && runAt <= now()) return { ok: false, error: "runAt must be in the future" };
-  }
-
-  if (has("input")) {
-    const input = body.input;
-    if (input != null && (typeof input !== "object" || Array.isArray(input))) {
-      return { ok: false, error: "input must be a JSON object" };
-    }
-    const obj = input || {};
-    if (Buffer.byteLength(JSON.stringify(obj), "utf8") > SCHEDULE_INPUT_MAX_BYTES) {
-      return { ok: false, error: "input payload too large" };
-    }
-    out.input = obj;
-  } else if (!partial) {
-    out.input = {};
-  }
-
-  if (has("enabled")) {
-    out.enabled = !(body.enabled === false || body.enabled === "false" || body.enabled === 0);
-  }
-
-  return { ok: true, value: out };
-}
-
-// Decorate a schedule with a human-readable preview (description + the next few
-// fire times) and a deep link, computed server-side so the cron logic stays
-// single-sourced and the UI never has to re-implement it.
-function withScheduleView(schedule) {
-  if (!schedule) return schedule;
-  let preview = null;
-  if (schedule.cron) {
-    try {
-      preview = {
-        description: describeCron(schedule.cron, schedule.timezone),
-        nextRuns: nextRuns(schedule.cron, 3, new Date(), schedule.timezone)
-      };
-    } catch {
-      preview = null;
-    }
-  } else if (schedule.runAt) {
-    preview = {
-      description: `Once at ${schedule.runAt}`,
-      nextRuns: schedule.enabled && schedule.nextRunAt ? [schedule.nextRunAt] : []
-    };
-  }
-  return { ...schedule, preview, deepLink: `/app#schedules/${encodeURIComponent(schedule.id)}` };
-}
-
 // Fire a single schedule: create a run via the shared dispatch path and record
 // the outcome on the schedule row + audit log. Does NOT advance next_run_at
 // (claimScheduleFire owns that). Returns { ok, run } or { ok:false, error }.
@@ -2545,16 +1232,9 @@ app.get("/api/schedules", requireAuth, (_req, res) => {
 app.get("/api/schedules/preview", requireAuth, (req, res) => {
   const cron = String(req.query.cron || "").trim();
   const timezone = String(req.query.timezone || "UTC").trim() || "UTC";
-  if (!cron) return res.status(400).json({ error: "cron query parameter is required" });
-  if (!isValidTimezone(timezone)) return res.status(400).json({ error: `invalid timezone "${timezone}"` });
-  const check = validateCron(cron, timezone);
-  if (!check.ok) return res.json({ valid: false, error: check.error });
-  res.json({
-    valid: true,
-    timezone,
-    description: describeCron(cron, timezone),
-    nextRuns: nextRuns(cron, 5, new Date(), timezone)
-  });
+  const preview = schedulePreview(cron, timezone);
+  if (!preview.ok) return res.status(preview.status).json({ error: preview.error });
+  res.json(preview.value);
 });
 
 app.get("/api/schedules/:id", requireAuth, (req, res) => {
@@ -2564,7 +1244,7 @@ app.get("/api/schedules/:id", requireAuth, (req, res) => {
 });
 
 app.post("/api/schedules", requireAuth, requireScopes("admin"), (req, res) => {
-  const validated = validateScheduleBody(req.body || {}, { partial: false });
+  const validated = validateScheduleBody(req.body || {}, { partial: false, getCapability });
   if (!validated.ok) return res.status(400).json({ error: validated.error });
   const schedule = createSchedule({
     ...validated.value,
@@ -2581,7 +1261,7 @@ app.post("/api/schedules", requireAuth, requireScopes("admin"), (req, res) => {
 app.patch("/api/schedules/:id", requireAuth, requireScopes("admin"), (req, res) => {
   const existing = getSchedule(req.params.id);
   if (!existing) return res.status(404).json({ error: "schedule not found" });
-  const validated = validateScheduleBody(req.body || {}, { partial: true });
+  const validated = validateScheduleBody(req.body || {}, { partial: true, getCapability });
   if (!validated.ok) return res.status(400).json({ error: validated.error });
   const schedule = updateSchedule(req.params.id, validated.value);
   recordAudit(req.token.name, "schedule.updated", schedule.id, { fields: Object.keys(validated.value) });
@@ -2813,38 +1493,15 @@ app.get("/api/runs/:id/timeline", requireAuth, (req, res) => {
   if (!run) return res.status(404).json({ error: "run not found" });
   const since = String(req.query.since || "").trim();
   const limitRaw = Number(req.query.limit);
-  const limit = Math.max(1, Math.min(Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : 200, 1000));
-
-  const sorted = buildRunTimeline(run);
-  const filtered = since ? sorted.filter((entry) => entry.ts > since) : sorted;
-  let slice = filtered.slice(0, limit);
-  let truncated = filtered.length > slice.length;
-  // Tie-handling: if the page boundary splits entries that share the same ts,
-  // either drop the trailing ties (so the next `since=lastTs` call picks them
-  // up cleanly) or, when the entire page is a single tie, expand past the
-  // limit so the cursor can advance.
-  if (truncated && slice.length) {
-    const lastTs = slice[slice.length - 1].ts;
-    if (filtered[slice.length] && filtered[slice.length].ts === lastTs) {
-      let trim = slice.length;
-      while (trim > 0 && slice[trim - 1].ts === lastTs) trim -= 1;
-      if (trim > 0) {
-        slice = slice.slice(0, trim);
-      } else {
-        let extend = slice.length;
-        while (filtered[extend] && filtered[extend].ts === lastTs) extend += 1;
-        slice = filtered.slice(0, extend);
-        truncated = filtered.length > slice.length;
-      }
-    }
-  }
+  const sorted = buildRunTimeline(run, {
+    events: listRunEvents(run.id),
+    artifacts: listArtifacts({ runId: run.id }),
+    withArtifactLinks
+  });
+  const page = timelinePage(sorted, { since, limit: limitRaw });
   res.json({
     runId: run.id,
-    entries: slice,
-    limit,
-    since: since || null,
-    nextSince: slice.length ? slice[slice.length - 1].ts : since || null,
-    truncated
+    ...page
   });
 });
 app.post("/api/runs/:id/events", requireAuth, requireScopes("runner"), requireRunOwnerOrAdmin, (req, res) => {
@@ -2875,27 +1532,9 @@ function queueNextChainedRun(parentRun, output, req) {
     addRunEvent(parentRun.id, "run.chain.failed", `Next chained capability not found: ${next.capability}`, { capability: next.capability, index });
     return null;
   }
-  const nextInput = {
-    ...(next.input || {}),
-    __chain: chain,
-    __chainIndex: index + 1,
-    previousRun: {
-      id: parentRun.id,
-      capabilitySlug: parentRun.capabilitySlug,
-      capabilityName: parentRun.capabilityName,
-      status: parentRun.status,
-      deepLink: deepLinks.run(parentRun.id)
-    }
-  };
-  if (next.passPreviousOutput !== false) nextInput.previousOutput = output || parentRun.output || null;
+  const nextInput = nextChainedRunInput({ parentRun, output, chain, index, next });
   const origin = requestOrigin(req, {
-    origin: {
-      label: `Chained from ${parentRun.capabilitySlug} ${parentRun.id}`,
-      type: "workflow-chain",
-      parentRunId: parentRun.id,
-      chainIndex: index + 1,
-      chainLength: chain.length
-    }
+    origin: nextChainedRunOrigin(parentRun, chain, index)
   });
   const child = createRun(capability, nextInput, {
     requestedBy: origin.requestedBy || "workflow-chain",
@@ -2918,20 +1557,7 @@ function queueNextChainedRun(parentRun, output, req) {
 }
 
 function maybeRecordFailureClassAlert(status) {
-  if (!status || status === "failed") return;
-  const since = new Date(Date.now() - 60 * 60_000).toISOString();
-  const count = countRuns({ status, since, includeInternal: true });
-  if (count < 3) return;
-  const kind = `failure:${status}`;
-  const latest = latestAlert(kind);
-  if (latest?.createdAt && Date.now() - Date.parse(latest.createdAt) < 60 * 60_000) return;
-  recordAlert({
-    kind,
-    level: status === "provider_limited" || status === "infra_unavailable" ? "warning" : "info",
-    title: `Repeated ${status} runs`,
-    message: `${count} runs ended as ${status} in the last hour.`,
-    data: { status, count, windowMinutes: 60 }
-  });
+  return maybeRecordFailureAlert(status, { countRuns, latestAlert, recordAlert });
 }
 
 app.post("/api/runs/:id/complete", requireAuth, requireScopes("runner"), requireRunOwnerOrAdmin, (req, res) => {
@@ -2977,11 +1603,7 @@ app.post("/api/runs/:id/rerun", requireAuth, requireScopes("api", "mcp"), asyncH
   if (!capability || !capability.enabled) return res.status(404).json({ error: "capability not found" });
   const editedInput = req.body?.input && typeof req.body.input === "object" && !Array.isArray(req.body.input) ? req.body.input : null;
   const baseInput = editedInput || previousPresented.input;
-  const input = baseInput && typeof baseInput === "object" && !Array.isArray(baseInput) ? { ...baseInput } : {};
-  delete input.__origin;
-  delete input.__supervisionToken;
-  delete input.__supervisedChild;
-  input.rerunOf = previous.id;
+  const input = cleanRerunInput(baseInput, previous.id);
   const force = req.body?.force === true;
   if (!force) {
     const existing = findActiveDuplicateRerun({ previousRunId: previous.id, capabilitySlug: capability.slug, input });
@@ -3026,162 +1648,6 @@ app.post("/api/runs/:id/rerun", requireAuth, requireScopes("api", "mcp"), asyncH
 }));
 
 app.get("/api/runs/:id/artifacts", requireAuth, (req, res) => res.json({ artifacts: listArtifacts({ runId: req.params.id }).map(withArtifactLinks) }));
-function storeRunArtifact(runRecord, body = {}) {
-  const workflowSlug = slugify(runRecord.capabilitySlug || runRecord.capabilityName || "workflow") || "workflow";
-  const runDate = String(runRecord.createdAt || now()).slice(0, 10) || "unknown-date";
-  const runDir = path.join(env.artifactDir, "runs", workflowSlug, runDate, runRecord.id);
-  mkdirSync(runDir, { recursive: true });
-  const safeName = String(body.name || "artifact.txt")
-    .replace(/[/\\]/g, "-")
-    .replace(/[\0\r\n]/g, "")
-    .trim() || "artifact.txt";
-  const filePath = path.join(runDir, safeName);
-  // Scrub injected secret values out of text artifacts before they hit disk.
-  // Base64 (binary) uploads are left as-is — a plaintext secret can only leak
-  // through the textual content path, which is what workflows actually use.
-  const content = body.contentBase64
-    ? Buffer.from(body.contentBase64, "base64")
-    : Buffer.from(String(scrubStoredSecrets(String(body.content ?? ""))));
-  writeFileSync(filePath, content);
-  const stats = statSync(filePath);
-  return createArtifact({
-    runId: runRecord.id,
-    name: safeName,
-    mimeType: body.mimeType || "application/octet-stream",
-    sizeBytes: stats.size,
-    path: filePath,
-    metadata: body.metadata || {}
-  });
-}
-
-function ensureRunRetrospectiveArtifact(runId) {
-  const run = getRun(runId);
-  if (!run) return null;
-  const existing = listArtifacts({ runId });
-  if (existing.some((artifact) => artifact.name === RUN_RETROSPECTIVE_ARTIFACT_NAME || artifact.metadata?.kind === "run-retrospective")) {
-    return null;
-  }
-  const artifacts = existing.map(withArtifactLinks);
-  const events = listRunEvents(runId);
-  const linkedRun = withRunLinks(run);
-  const capability = getCapability(run.capabilitySlug);
-  const linkedCapability = capability ? withCapabilityLinks(capability) : null;
-  const artifact = buildRunRetrospectiveArtifact({
-    run: linkedRun,
-    capability: linkedCapability,
-    artifacts,
-    logSummary: summarizeRunEvents(events),
-    diagnostics: runDiagnostics(run, events, artifacts),
-    generatedAt: now()
-  });
-  return storeRunArtifact(run, artifact);
-}
-
-function hasRunObstructionAnalysisArtifact(artifacts = []) {
-  return artifacts.some(
-    (artifact) =>
-      artifact.name === RUN_OBSTRUCTION_ANALYSIS_ARTIFACT_NAME
-      || artifact.metadata?.kind === "run-obstruction-analysis"
-  );
-}
-
-async function ensureRunObstructionAnalysisArtifact(runId) {
-  if (!obstructionAnalyzerConfigured(env)) return null;
-  const run = getRun(runId);
-  if (!run || !["succeeded", "failed", "cancelled"].includes(run.status)) return null;
-  const existing = listArtifacts({ runId });
-  if (hasRunObstructionAnalysisArtifact(existing)) return null;
-  const artifacts = existing.map(withArtifactLinks);
-  const events = listRunEvents(runId);
-  const linkedRun = withRunLinks(run);
-  const capability = getCapability(run.capabilitySlug);
-  const linkedCapability = capability ? withCapabilityLinks(capability) : null;
-  const artifact = await analyzeRunObstructions(
-    {
-      run: linkedRun,
-      capability: linkedCapability,
-      artifacts,
-      logSummary: summarizeRunEvents(events),
-      diagnostics: runDiagnostics(run, events, artifacts),
-      generatedAt: now()
-    },
-    { config: env }
-  );
-  if (!artifact) return null;
-  if (hasRunObstructionAnalysisArtifact(listArtifacts({ runId }))) return null;
-  return storeRunArtifact(run, artifact);
-}
-
-function recordRunRetrospectiveArtifact(runId) {
-  try {
-    return ensureRunRetrospectiveArtifact(runId);
-  } catch (error) {
-    console.error(`Run retrospective artifact failed for ${runId}:`, error.message);
-    addRunEvent(runId, "run.retrospective_failed", "Run retrospective artifact generation failed", {
-      error: String(error.message || error).slice(0, 500)
-    });
-    return null;
-  }
-}
-
-async function recordRunObstructionAnalysisArtifact(runId) {
-  try {
-    return await ensureRunObstructionAnalysisArtifact(runId);
-  } catch (error) {
-    console.error(`Run obstruction analysis artifact failed for ${runId}:`, redactAnalysisText(error.message || error, 500));
-    addRunEvent(runId, "run.obstruction_analysis_failed", "Run obstruction analysis artifact generation failed", {
-      error: redactAnalysisText(error.message || error, 500)
-    });
-    return null;
-  }
-}
-
-function scheduleRunObstructionAnalysisArtifact(runId) {
-  if (!runId || pendingObstructionAnalyses.has(runId) || !obstructionAnalyzerConfigured(env)) return;
-  pendingObstructionAnalyses.add(runId);
-  setImmediate(() => {
-    recordRunObstructionAnalysisArtifact(runId).finally(() => {
-      pendingObstructionAnalyses.delete(runId);
-    });
-  });
-}
-
-// Best-effort outbound delivery of a terminal run's response endpoints
-// (slice 2 of the response-egress contract). Polling /api/runs/:id remains
-// the canonical fallback; this is fire-and-forget so it never blocks the
-// HTTP terminal-state response. Idempotency lives inside the delivery
-// module — already-delivered endpoints are skipped, so re-running this for
-// a repeated terminal update produces no duplicates.
-function dispatchRunResponseEndpointDelivery(runId) {
-  if (!runId) return;
-  setImmediate(() => {
-    scheduleRunResponseEndpointDelivery(runId).catch((error) => {
-      console.error(`Run response endpoint delivery failed for ${runId}:`, error?.message || error);
-    });
-  });
-}
-
-function recordRunTerminalArtifacts(runId) {
-  const retrospective = recordRunRetrospectiveArtifact(runId);
-  scheduleRunObstructionAnalysisArtifact(runId);
-  dispatchRunResponseEndpointDelivery(runId);
-  // Phase 2: if this terminal run was a hub-dispatched code-repair child, drive
-  // its parked parent — re-run it fresh on repair success, escalate on failure.
-  // No-op for every other run. Never let a hook error mask the terminal report.
-  try {
-    reconcileRepairChildTerminal(runId);
-  } catch (error) {
-    console.error("repair-child completion hook failed:", error.message);
-  }
-  return retrospective;
-}
-
-function reapStuckRunsWithRetrospectives(maxMs) {
-  const runIds = reapStuckRunIds(maxMs);
-  for (const runId of runIds) recordRunTerminalArtifacts(runId);
-  return runIds.length;
-}
-
 app.post("/api/runs/:id/artifacts", requireAuth, requireScopes("runner"), requireRunOwnerOrAdmin, (req, res) => {
   const runRecord = getRun(req.params.id);
   if (!runRecord) return res.status(404).json({ error: "run not found" });
@@ -3211,16 +1677,9 @@ app.get("/api/approvals/:id", requireAuth, (req, res) => {
   res.json({ approval: withApprovalLinks(approval) });
 });
 function findExistingChildRunApproval(payload = {}) {
-  const childRunId = String(payload.childRunId || payload.child?.runId || "").trim();
-  const nodeId = String(payload.nodeId || payload.approvalNode || payload.child?.nodeId || "").trim();
-  if (!childRunId || !nodeId) return null;
-  return listApprovals("pending").find((approval) => {
-    const approvalPayload = approval.payload || {};
-    const approvalChildRunId = String(approvalPayload.childRunId || approvalPayload.child?.runId || "").trim();
-    const approvalNodeId = String(approvalPayload.nodeId || approvalPayload.approvalNode || approvalPayload.child?.nodeId || "").trim();
-    return approvalChildRunId === childRunId && approvalNodeId === nodeId;
-  }) || null;
+  return findMatchingChildRunApproval(listApprovals("pending"), payload);
 }
+
 app.post("/api/approvals", requireAuth, requireScopes("api", "mcp", "runner", "approvals"), asyncHandler(async (req, res) => {
   try {
     const payload = req.body?.payload && typeof req.body.payload === "object" ? req.body.payload : {};
@@ -3233,16 +1692,7 @@ app.post("/api/approvals", requireAuth, requireScopes("api", "mcp", "runner", "a
     // before this guard — threw an unhandled SQLITE_CONSTRAINT that crashed the
     // whole hub. The card still surfaces; it just carries the id in its payload
     // (which the run-smithers watcher polls) instead of a dangling FK link.
-    const requestedRunId = req.body?.runId || payload.childRunId || null;
-    const linkedRunId = requestedRunId && getRun(requestedRunId) ? requestedRunId : null;
-
-    const approval = createApproval({
-      runId: linkedRunId,
-      title: String(req.body?.title || "Approval requested").slice(0, 240),
-      description: String(req.body?.description || "").slice(0, 2000),
-      requestedBy: String(req.body?.requestedBy || req.token?.name || "workflow").slice(0, 120),
-      payload
-    });
+    const approval = createApproval(approvalCreateInput(req.body || {}, req.token || {}, { getRun }));
     await notifyTelegram(approval);
     res.status(201).json({ approval: withApprovalLinks(approval), idempotent: false });
   } catch (error) {
@@ -3254,14 +1704,12 @@ function resolveApprovalHttp(req, res, decision) {
   const approval = getApproval(req.params.id);
   if (!approval) return res.status(404).json({ error: "approval not found" });
   if (approval.status !== "pending") return res.status(409).json({ error: "approval is not pending", approval: withApprovalLinks(approval) });
-  const defaultComment =
-    decision === "approved" ? "Approved from Web/API" : decision === "changes_requested" ? "Changes requested from Web/API" : "Rejected from Web/API";
-  const resolved = resolveApproval(req.params.id, decision, req.token.name, req.body.comment || defaultComment);
+  const resolved = resolveApproval(req.params.id, decision, req.token.name, req.body.comment || defaultApprovalComment(decision));
   // Approval rejection / changes_requested transitions the linked run to
   // `cancelled` via resolveApproval's direct updateRun call. Fire response-
   // endpoint delivery here so an approval-driven terminal state behaves the
   // same as /api/runs/:id/{complete,fail,cancel} for slice 2 egress.
-  if (resolved?.runId && (decision === "rejected" || decision === "changes_requested")) {
+  if (resolved?.runId && decisionTriggersTerminalDelivery(decision)) {
     dispatchRunResponseEndpointDelivery(resolved.runId);
   }
   res.json({ approval: withApprovalLinks(resolved) });
@@ -3469,6 +1917,5 @@ export {
   fireDueSchedules,
   notifyTelegram,
   parseTelegramApprovalCallback,
-  telegramApprovalTarget,
-  telegramApprovalText
+  telegramApprovalTarget
 };
