@@ -2354,6 +2354,34 @@ details.advanced[open] summary {
   margin-bottom: 0;
 }
 
+.run-outcome-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.run-outcome-summary p {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--soft);
+  min-width: 0;
+}
+
+.run-outcome-summary span,
+.run-outcome-summary strong {
+  display: block;
+  min-width: 0;
+}
+
+.run-outcome-summary strong {
+  margin-top: 3px;
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+
 .run-id-mono {
   display: inline-block;
   font-family: var(--font-mono);

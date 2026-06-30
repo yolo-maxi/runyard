@@ -71,6 +71,26 @@ export function RunMetaStrip({ run }) {
   return <ul className="run-meta-strip" aria-label="Run metadata">{items}</ul>;
 }
 
+export function RunOutcomeSummary({ summary }) {
+  if (!summary) return null;
+  const items = [
+    ["Repo", summary.repo || "unresolved"],
+    ["Changed files", String(summary.changedFiles ?? 0)],
+    ["Work product", summary.workProduct || "none"],
+    ["Classification", summary.classification || "unknown"]
+  ];
+  return (
+    <section className="run-outcome-summary" aria-label="Run outcome summary">
+      {items.map(([label, value]) => (
+        <p key={label}>
+          <span className="muted">{label}</span>
+          <strong>{value}</strong>
+        </p>
+      ))}
+    </section>
+  );
+}
+
 // --- Diagnostics panel (ported from renderRunDiagnostics) -------------------
 const LIVE_STATUSES = new Set(["queued", "assigned", "running", "pending"]);
 

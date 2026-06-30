@@ -15,6 +15,7 @@ const homeChrome = readFileSync(path.join(root, "web", "components", "HomeChrome
 const home = readFileSync(path.join(root, "web", "views", "Home.jsx"), "utf8");
 const runCard = readFileSync(path.join(root, "web", "components", "RunCard.jsx"), "utf8");
 const runDetail = readFileSync(path.join(root, "web", "views", "RunDetail.jsx"), "utf8");
+const runDetailParts = readFileSync(path.join(root, "web", "components", "RunDetailParts.jsx"), "utf8");
 const shell = readFileSync(path.join(root, "web", "app", "Shell.jsx"), "utf8");
 const css = readFileSync(path.join(root, "public", "styles.css"), "utf8");
 
@@ -154,6 +155,10 @@ describe("Runs page: filter toolbar, history rows, and detail order", () => {
     assert.ok(history < context, "Console history should precede Run context");
     assert.match(runDetail, /focus === "logs"/);
     assert.match(runDetail, /focus === "artifacts"/);
+    assert.match(runDetail, /<RunOutcomeSummary summary=\{run\.outcomeSummary\} \/>/);
+    assert.match(runDetailParts, /function RunOutcomeSummary/);
+    assert.match(runDetailParts, /Changed files/);
+    assert.match(css, /\.run-outcome-summary/);
     assert.match(runDetail, /ShareButton hash=\{deepLinks\.runLogs\(run\.id\)\}/);
     assert.match(runDetail, /ShareButton hash=\{deepLinks\.runArtifacts\(run\.id\)\}/);
     assert.match(css, /\.run-section-summary\s*\{[^}]*min-height:\s*44px/s);

@@ -341,6 +341,44 @@ function runPresentation(run) {
   };
 }
 
+function outputNode(output, name) {
+  if (!output || typeof output !== "object" || Array.isArray(output)) return null;
+  const nodes = output.outputs && typeof output.outputs === "object" && !Array.isArray(output.outputs)
+    ? output.outputs
+    : output;
+  const node = nodes?.[name];
+  return node && typeof node === "object" && !Array.isArray(node) ? node : null;
+}
+
+function runOutcomeSummary(run) {
+  const output = run?.output && typeof run.output === "object" && !Array.isArray(run.output) ? run.output : null;
+  const baseline = outputNode(output, "baseline");
+  const commit = outputNode(output, "commit");
+  const review = outputNode(output, "review");
+  const files = Array.isArray(commit?.files) ? commit.files.map((file) => String(file || "").trim()).filter(Boolean) : [];
+  const improvements = Array.isArray(review?.improvements) ? review.improvements : [];
+  const noChangeRationale = Boolean(
+    review
+    && improvements.length === 0
+    && (
+      String(review.summary || "").trim()
+      || (Array.isArray(review.risks) && review.risks.some((risk) => String(risk || "").trim()))
+      || (Array.isArray(review.userPain) && review.userPain.some((line) => String(line || "").trim()))
+    )
+  );
+  let workProduct = "none";
+  if (files.length) workProduct = `${files.length} changed file${files.length === 1 ? "" : "s"}`;
+  else if (noChangeRationale) workProduct = "explicit no-change review";
+  else if (output) workProduct = "output only";
+  return {
+    repo: String(baseline?.repoDir || run?.project || "").trim() || "unresolved",
+    changedFiles: files.length,
+    files,
+    workProduct,
+    classification: run?.status || "unknown"
+  };
+}
+
 function normalizeOrigin(value) {
   if (!value) return null;
   if (typeof value === "string") return { label: value };
@@ -385,7 +423,20 @@ function runDurationMs(run) {
 // structured diagnostics object so the web app can show "why" up-front instead
 // of forcing operators to scrape the raw log timeline. The same object backs
 // the short reason hint on run cards.
-const DIAGNOSTIC_STATUSES = new Set(["failed", "error", "cancelled", "rejected", "waiting_approval"]);
+const DIAGNOSTIC_STATUSES = new Set([
+  "failed",
+  "error",
+  "cancelled",
+  "rejected",
+  "waiting_approval",
+  "blocked_by_gate",
+  "blocked_by_preflight",
+  "provider_limited",
+  "timed_out",
+  "invalid_output",
+  "infra_unavailable",
+  "needs_human"
+]);
 
 const FOCUS_EVENT_PATTERNS = [
   /^run\.(?:failed|cancelled|errored|started|succeeded|created)$/i,
@@ -848,6 +899,7 @@ function withRunLinks(run, queueIndex = null) {
     branch: firstContextString(visibleInput, BRANCH_INPUT_KEYS),
     origin,
     originLabel: origin?.label || "",
+    outcomeSummary: runOutcomeSummary(visibleRun),
     execution,
     durationMs: runDurationMs(run),
     reasonHint,

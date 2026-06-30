@@ -22,6 +22,7 @@ import { reauthEnabled, runReauth } from "./reauthCli.js";
 import { readClaudeOauthToken } from "./claudeOauthToken.js";
 import { isDraining, resolveDataDir } from "./drain.js";
 import { resolveSmithersBin, resolveExecWrapper } from "./resolveSmithersBin.js";
+import { resolveImproveRepo } from "../workflow-templates/workflows/improve-repo.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -223,13 +224,69 @@ function authOkFor(capability, health = currentAuthHealth()) {
   return missing;
 }
 
-function preflightAssignment(_run, capability, entry) {
+function preflightImproveRepo(run, capability) {
+  if (capability?.slug !== "improve") return [];
+  try {
+    resolveImproveRepo(run?.input || {}, {
+      env: process.env,
+      cwd: workspace,
+      gitBin: "git",
+      gitEnv: process.env
+    });
+    return [];
+  } catch (error) {
+    return [`improve repo preflight failed: ${error.message || error}`];
+  }
+}
+
+function preflightAssignment(run, capability, entry) {
   if (!entry) return [`capability ${capability?.slug || "unknown"} has no workflow.entry`];
   const workflowPath = path.isAbsolute(entry) ? entry : path.join(workspace, entry);
   const failures = [];
   if (!existsSync(workflowPath)) failures.push(`workflow file not found: ${workflowPath}`);
+  failures.push(...preflightImproveRepo(run, capability));
   failures.push(...authOkFor(capability));
   return failures;
+}
+
+function isObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value);
+}
+
+function hasExplicitNoChangeRationale(review) {
+  if (!isObject(review)) return false;
+  const improvements = Array.isArray(review.improvements) ? review.improvements : [];
+  if (improvements.length) return false;
+  return Boolean(
+    String(review.summary || "").trim()
+    || (Array.isArray(review.risks) && review.risks.some((risk) => String(risk || "").trim()))
+    || (Array.isArray(review.userPain) && review.userPain.some((line) => String(line || "").trim()))
+  );
+}
+
+function productiveOutcomeFailure(capability, outputs) {
+  if (!isObject(outputs) || !Object.keys(outputs).length) {
+    return {
+      status: RUN_FAILURE_CLASSES.INVALID_OUTPUT,
+      error: "invalid output: succeeded workflow produced no node outputs"
+    };
+  }
+  if (capability?.slug !== "improve") return null;
+  const baseline = outputs.baseline;
+  if (!isObject(baseline) || !String(baseline.repoDir || "").trim()) {
+    return {
+      status: RUN_FAILURE_CLASSES.BLOCKED_BY_PREFLIGHT,
+      error: "preflight failed: improve completed without a resolved target repo"
+    };
+  }
+  const commit = outputs.commit;
+  const files = Array.isArray(commit?.files) ? commit.files.filter((file) => String(file || "").trim()) : [];
+  if (files.length) return null;
+  if (hasExplicitNoChangeRationale(outputs.review)) return null;
+  return {
+    status: RUN_FAILURE_CLASSES.INVALID_OUTPUT,
+    error: "invalid output: improve succeeded without changed files or an explicit no-change rationale"
+  };
 }
 
 function materializeAgentRuntimePack(run, pack) {
@@ -570,13 +627,16 @@ async function executeAssignment(assignment) {
     });
 
     const supervisionFailure = state === "succeeded" ? runSmithersSupervisionFailure(capability, outputs) : "";
-    if (state === "succeeded" && !supervisionFailure) {
+    const outcomeFailure = state === "succeeded" && !supervisionFailure ? productiveOutcomeFailure(capability, outputs) : null;
+    if (state === "succeeded" && !supervisionFailure && !outcomeFailure) {
       await client.post(`/api/runs/${run.id}/complete`, { output: { smithersRunId: sid, outputs } });
       console.log(`Completed ${run.id} via smithers ${sid}`);
     } else {
       let error;
       if (supervisionFailure) {
         error = supervisionFailure;
+      } else if (outcomeFailure) {
+        error = outcomeFailure.error;
       } else if (deadlineExceeded) {
         error = `smithers run ${sid} exceeded runner deadline (${maxRunMs}ms) and was cancelled`;
       } else {
@@ -589,7 +649,7 @@ async function executeAssignment(assignment) {
           ? `smithers run ${sid} failed${failure.failedStep ? ` at node '${failure.failedStep}'` : ""}: ${failure.error}`.slice(0, 2000)
           : `smithers run ${sid} ended in state '${state}'`;
       }
-      await failRun(run.id, error, deadlineExceeded ? RUN_FAILURE_CLASSES.TIMED_OUT : "");
+      await failRun(run.id, error, outcomeFailure?.status || (deadlineExceeded ? RUN_FAILURE_CLASSES.TIMED_OUT : ""));
       console.log(`Run ${run.id} ended '${state}' (smithers ${sid})`);
     }
   } catch (error) {

@@ -17,6 +17,7 @@ const { app } = await import("../src/server.js");
 let server;
 let baseUrl;
 const token = "shub_test_token_source";
+const improveSource = readFileSync(new URL("../workflow-templates/workflows/improve.tsx", import.meta.url), "utf8");
 
 function api(pathname) {
   return fetch(`${baseUrl}${pathname}`, {
@@ -50,6 +51,13 @@ after(async () => {
 });
 
 describe("Workflow source + code viewer", () => {
+  it("keeps Improve repo resolution explicit and no-op success gated", () => {
+    assert.doesNotMatch(improveSource, /probeRunyardRepoFallback/);
+    assert.doesNotMatch(improveSource, /applyRunyardRepoFallback/);
+    assert.match(improveSource, /GATE FAILED: improve produced no changed files/);
+    assert.match(improveSource, /noChangeEvidence/);
+  });
+
   it("returns source, parsed metadata, sections, and a graph for a real workflow", async () => {
     const data = await api("/api/capabilities/implement-change-gated/source");
     assert.equal(data.available, true);
