@@ -20,6 +20,7 @@ const {
   RUN_SMITHERS_FINGERPRINT_LIMIT,
   assertSupervisionSucceeded,
   classifyChildState,
+  classifyFailureClass,
   classifyWorkflowCodeFailure,
   createWatcherState,
   decideNextAction,
@@ -153,6 +154,33 @@ describe("run-smithers watcher classifier + three-strike rule", () => {
     assert.equal(decision.action, "retry");
     assert.equal(state.approvalRequested, false);
     assert.equal(state.outcome, null);
+  });
+
+  it("does not auto-retry non-retryable failure classes", () => {
+    const state = createWatcherState({ capabilitySlug: "hello", maxAttempts: 5, fingerprintThreshold: 3 });
+    recordChildAttempt(state, {
+      runId: "run_preflight",
+      status: "blocked_by_preflight",
+      error: "preflight failed: workflow file not found"
+    });
+    const decision = decideNextAction(state, classifyChildState({ status: "blocked_by_preflight" }));
+    assert.equal(classifyFailureClass({ status: "blocked_by_preflight" }), "blocked_by_preflight");
+    assert.equal(decision.action, "approval");
+    assert.equal(decision.escalation, "non_retryable_failure_class");
+    assert.equal(decision.failureClass, "blocked_by_preflight");
+    assert.equal(state.approvalRequested, true);
+  });
+
+  it("still retries retryable provider and infra failure classes within budget", () => {
+    const state = createWatcherState({ capabilitySlug: "hello", maxAttempts: 5, fingerprintThreshold: 3 });
+    recordChildAttempt(state, {
+      runId: "run_rate",
+      status: "provider_limited",
+      error: "provider returned 429 rate limit"
+    });
+    const decision = decideNextAction(state, classifyChildState({ status: "provider_limited" }));
+    assert.equal(decision.action, "retry");
+    assert.equal(state.approvalRequested, false);
   });
 
   it("escalates to approval after the same normalized fingerprint appears three times", () => {

@@ -3572,6 +3572,23 @@ function queueNextChainedRun(parentRun, output, req) {
   return child;
 }
 
+function maybeRecordFailureClassAlert(status) {
+  if (!status || status === "failed") return;
+  const since = new Date(Date.now() - 60 * 60_000).toISOString();
+  const count = countRuns({ status, since, includeInternal: true });
+  if (count < 3) return;
+  const kind = `failure:${status}`;
+  const latest = latestAlert(kind);
+  if (latest?.createdAt && Date.now() - Date.parse(latest.createdAt) < 60 * 60_000) return;
+  recordAlert({
+    kind,
+    level: status === "provider_limited" || status === "infra_unavailable" ? "warning" : "info",
+    title: `Repeated ${status} runs`,
+    message: `${count} runs ended as ${status} in the last hour.`,
+    data: { status, count, windowMinutes: 60 }
+  });
+}
+
 app.post("/api/runs/:id/complete", requireAuth, requireScopes("runner"), requireRunOwnerOrAdmin, (req, res) => {
   // Scrub injected secret values out of the run output before it is persisted
   // or echoed back through any read API.
@@ -3595,6 +3612,7 @@ app.post("/api/runs/:id/fail", requireAuth, requireScopes("runner"), requireRunO
     addRunEvent(req.params.id, "run.transition_ignored", `Ignored late '${status}' report; run already terminal as '${result.run.status}'`, { attempted: status, terminal: result.run.status });
   }
   if (!result.idempotent) addRunEvent(req.params.id, failureEventType(status), error || `Run ended as ${status}`, { failureClass: status });
+  if (!result.idempotent) maybeRecordFailureClassAlert(status);
   if (!result.idempotent) recordRunTerminalArtifacts(result.run.id);
   res.json({ run: result.run });
 });

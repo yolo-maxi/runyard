@@ -234,6 +234,35 @@ export const seedCapabilities = [
     workflow: { engine: "smithers", entry: ".smithers/workflows/hello.tsx" }
   },
   {
+    slug: "runyard-smoke-check",
+    name: "RunYard Smoke Check",
+    description: "Cheap golden smoke workflow that verifies Hub to runner to Smithers output plumbing without spending model tokens.",
+    category: "Operations",
+    keywords: ["smoke", "health", "runner", "golden", "reliability"],
+    inputSchema: {
+      type: "object",
+      properties: {
+        label: { type: "string", description: "Operator label for the smoke run." },
+        expectRunner: { type: "boolean", description: "Reserved for future stricter runner checks." }
+      }
+    },
+    outputSchema: {
+      type: "object",
+      properties: {
+        ok: { type: "boolean" },
+        label: { type: "string" },
+        checkedAt: { type: "string" },
+        checks: { type: "array" },
+        summary: { type: "string" }
+      }
+    },
+    requiredRunnerTags: ["smithers"],
+    requiredAgents: [],
+    approvalPolicy: { required: false },
+    supervision: { default: false, internal: false },
+    workflow: { engine: "smithers", entry: ".smithers/workflows/runyard-smoke-check.tsx" }
+  },
+  {
     slug: "runyard-support-agent",
     name: "Runyard Support Agent",
     description:

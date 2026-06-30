@@ -65,6 +65,9 @@ describe("runner auth health via heartbeat", () => {
     const surfaced = list.runners.find((r) => r.id === runner.id);
     assert.ok(surfaced.authHealth);
     assert.equal(surfaced.authHealth.codex.ok, true);
+    assert.ok(surfaced.health);
+    assert.equal(surfaced.health.state, "degraded");
+    assert.ok(surfaced.health.issues.some((issue) => issue.includes("claude auth")));
     // No token material anywhere in the API response.
     assert.ok(!JSON.stringify(list).includes("LEAK"));
   });
@@ -85,6 +88,8 @@ describe("runner auth health via heartbeat", () => {
     assert.ok(stored.authHealth.hub, "hub auth status surfaced");
     assert.equal(stored.authHealth.hub.ok, false);
     assert.equal(stored.authHealth.hub.error, "HTTP 401: unauthorized");
+    assert.equal(stored.health.state, "unhealthy");
+    assert.ok(stored.health.score < 100);
     assert.ok(!("access_token" in stored.authHealth.hub), "no token material survives");
   });
 

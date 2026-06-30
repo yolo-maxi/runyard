@@ -2239,6 +2239,27 @@ describe("Failure / cancellation diagnostics", () => {
     assert.equal(row.status, "failed");
     assert.match(row.reasonHint, /compile error/);
   });
+
+  it("records a thresholded alert after repeated richer failure classes", async () => {
+    const runner = await api("/api/runners/register", {
+      method: "POST",
+      body: { name: "alert-runner", hostname: "alert", tags: ["smithers", "node"], capacity: 3 }
+    });
+    for (let i = 0; i < 3; i += 1) {
+      const created = await api("/api/capabilities/hello/run", {
+        method: "POST",
+        body: { input: { topic: `provider-alert-${i}` } }
+      });
+      const claim = await api(`/api/runners/${runner.runner.id}/next-run`);
+      assert.equal(claim.run.id, created.run.id);
+      await api(`/api/runs/${created.run.id}/fail`, {
+        method: "POST",
+        body: { status: "provider_limited", error: "provider returned 429 rate limit" }
+      });
+    }
+    const alerts = await api("/api/alerts?kind=failure%3Aprovider_limited");
+    assert.ok(alerts.alerts.some((alert) => alert.kind === "failure:provider_limited"));
+  });
 });
 
 describe("Smart Contract Audit capability", () => {
