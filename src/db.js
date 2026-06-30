@@ -2619,6 +2619,8 @@ export function runnerPoolStats() {
   const live = runners.filter((r) => r.online);
   const totalCapacity = live.reduce((sum, r) => sum + (r.capacity || 0), 0);
   const totalActive = live.reduce((sum, r) => sum + (r.activeRuns || 0), 0);
+  const unhealthyRunners = runners.filter((r) => r.health?.state === "unhealthy" || r.health?.state === "offline").length;
+  const degradedRunners = runners.filter((r) => r.health?.state === "degraded").length;
   return {
     queued,
     assigned,
@@ -2628,7 +2630,9 @@ export function runnerPoolStats() {
     totalActive,
     availableSlots: Math.max(0, totalCapacity - totalActive),
     onlineRunners: live.length,
-    runners: runners.length
+    runners: runners.length,
+    unhealthyRunners,
+    degradedRunners
   };
 }
 
