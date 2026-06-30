@@ -1154,6 +1154,11 @@ export function listAgents(q = "") {
   ).map((row) => normalizeEditable(row, ["id", "slug", "name", "description", "instructions"]));
 }
 
+export function getAgent(slug) {
+  const row = one("SELECT * FROM agents WHERE slug = ?", [slug]);
+  return normalizeEditable(row, ["id", "slug", "name", "description", "instructions"]);
+}
+
 export function upsertAgent(input) {
   const existing = one("SELECT * FROM agents WHERE slug = ?", [input.slug]);
   const timestamp = now();
@@ -1190,6 +1195,11 @@ export function listSkills(q = "") {
     ? all("SELECT * FROM skills WHERE name LIKE ? OR slug LIKE ? OR description LIKE ? OR body LIKE ? ORDER BY name", [like, like, like, like])
     : all("SELECT * FROM skills ORDER BY name")
   ).map((row) => normalizeEditable(row, ["id", "slug", "name", "description", "body"]));
+}
+
+export function getSkill(slug) {
+  const row = one("SELECT * FROM skills WHERE slug = ?", [slug]);
+  return normalizeEditable(row, ["id", "slug", "name", "description", "body"]);
 }
 
 export function upsertSkill(input) {
@@ -2482,6 +2492,44 @@ export function supportRunnerAvailability() {
   };
 }
 
+export function buildAgentRuntimePack(capability) {
+  const requiredAgentSlugs = [...new Set((capability?.requiredAgents || []).map((slug) => String(slug || "").trim()).filter(Boolean))];
+  const requiredSkillSlugs = new Set((capability?.requiredSkills || []).map((slug) => String(slug || "").trim()).filter(Boolean));
+  const agents = [];
+  const missingAgents = [];
+  for (const slug of requiredAgentSlugs) {
+    const agent = getAgent(slug);
+    if (!agent) {
+      missingAgents.push(slug);
+      continue;
+    }
+    agents.push(agent);
+    for (const skillSlug of agent.skillSlugs || []) {
+      if (skillSlug) requiredSkillSlugs.add(skillSlug);
+    }
+  }
+  const skills = [];
+  const missingSkills = [];
+  for (const slug of [...requiredSkillSlugs]) {
+    const skill = getSkill(slug);
+    if (!skill) {
+      missingSkills.push(slug);
+      continue;
+    }
+    skills.push(skill);
+  }
+  return {
+    schemaVersion: 1,
+    capturedAt: now(),
+    capability: capability
+      ? { slug: capability.slug, name: capability.name, version: capability.version, requiredAgents: requiredAgentSlugs, requiredSkills: [...requiredSkillSlugs] }
+      : null,
+    agents,
+    skills,
+    missing: { agents: missingAgents, skills: missingSkills }
+  };
+}
+
 export function claimNextRun(runnerId) {
   const runner = getRunner(runnerId);
   if (!runner || !runner.online) return null;
@@ -2528,7 +2576,15 @@ export function claimNextRun(runnerId) {
     // never written into run.input/output/artifacts/logs, so secret values
     // never land in stored state or any non-runner API response.
     const secretEnv = getDecryptedSecretEnv(secretNamesForRun(capability, claimedRun?.input));
-    const payload = { run: claimedRun, capability };
+    const agentRuntimePack = buildAgentRuntimePack(capability);
+    addRunEvent(candidate.id, "run.agent_runtime_pack", "Captured agent/skill runtime pack", {
+      schemaVersion: agentRuntimePack.schemaVersion,
+      capturedAt: agentRuntimePack.capturedAt,
+      agents: agentRuntimePack.agents.map((agent) => ({ slug: agent.slug, version: agent.version })),
+      skills: agentRuntimePack.skills.map((skill) => ({ slug: skill.slug, version: skill.version })),
+      missing: agentRuntimePack.missing
+    });
+    const payload = { run: claimedRun, capability, agentRuntimePack };
     if (Object.keys(secretEnv).length) payload.secretEnv = secretEnv;
     return payload;
   }

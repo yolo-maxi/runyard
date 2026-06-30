@@ -9,6 +9,7 @@ import path from "node:path";
 import { z } from "zod/v4";
 import { resolveImproveRepo } from "./improve-repo.js";
 import { createAgentFallbackPair } from "./agent-fallback.js";
+import { runyardAgentSystemPrompt } from "./runyard-runtime.js";
 
 // Repo + deploy target are deployment-specific; set env vars on your runner.
 const PROD_REMOTE = process.env.GATED_PROD_REMOTE || "prod";
@@ -93,6 +94,17 @@ const { Workflow, Task, smithers, outputs } = createSmithers({
 });
 
 function createProductManager(repoDir) {
+  const systemPrompt = runyardAgentSystemPrompt(
+    "product-manager",
+    [
+      "You are reviewing an existing feature inside this repository.",
+      "Inspect the actual current behavior (read code, configs, prompts, UI, copy) before passing judgment.",
+      "Stay inside the requested target and product context. Do not broaden a narrow request into unrelated product, naming, landing-page, deploy, or architecture work.",
+      "If you cannot find target-specific improvements, return an empty improvements array and explain the blocker in risks.",
+      "Do NOT modify files; you are reviewing only. Return only the requested JSON."
+    ].join(" "),
+    { skillSlugs: ["product-review", "spec-writing"] }
+  );
   return createAgentFallbackPair({
     ClaudeCodeAgent,
     CodexAgent,
@@ -103,16 +115,7 @@ function createProductManager(repoDir) {
       model: process.env.RUNYARD_IMPROVE_CLAUDE_MODEL || "claude-opus-4-7",
       allowedTools: ["Read", "Grep", "Glob", "Bash"],
       timeoutMs: 20 * 60 * 1000,
-      systemPrompt:
-      "You are a Product Manager with taste, reviewing an existing feature inside this repository. " +
-      "Inspect the actual current behavior (read code, configs, prompts, UI, copy) before passing judgment. " +
-      "Stay inside the requested target and product context. Do not broaden a narrow request into unrelated product, naming, landing-page, deploy, or architecture work. " +
-      "If you cannot find target-specific improvements, return an empty improvements array and explain the blocker in risks. " +
-      "Lead with the user's real experience: what is confusing, slow, ugly, surprising, or broken? " +
-      "Name concrete frictions in plain language and rank improvements by user impact, then effort. " +
-      "For each improvement write a one-sentence rationale, a concrete change a builder can act on, and a verifiable acceptance check. " +
-      "For UI, app, dashboard, or web-surface changes, include mobile readability, tap target, and narrow-viewport acceptance checks by default. " +
-      "Cut anything you cannot defend as user-visible value. Do NOT modify files; you are reviewing only. Return only the requested JSON."
+      systemPrompt
     },
     codex: {
       ...(process.env.RUNYARD_IMPROVE_CODEX_MODEL ? { model: process.env.RUNYARD_IMPROVE_CODEX_MODEL } : {}),
@@ -122,6 +125,17 @@ function createProductManager(repoDir) {
 }
 
 function createBuilder(repoDir) {
+  const systemPrompt = runyardAgentSystemPrompt(
+    "implementation-agent",
+    [
+      "You are an implementation agent working inside a git repository.",
+      "Apply the Product Manager's prioritized improvements with tight, idiomatic edits that match the surrounding code.",
+      "Do NOT git commit, git push, or deploy, and do NOT run the test suite — a separate gated pipeline runs tests, commits, pushes, and deploys.",
+      "Treat each acceptance check as a definition of done.",
+      "For UI, app, dashboard, or web-surface changes, preserve mobile usability and verify text/layout at narrow widths where possible."
+    ].join(" "),
+    { skillSlugs: ["implementation"] }
+  );
   return createAgentFallbackPair({
     ClaudeCodeAgent,
     CodexAgent,
@@ -132,11 +146,7 @@ function createBuilder(repoDir) {
       model: process.env.RUNYARD_IMPROVE_CLAUDE_MODEL || "claude-opus-4-7",
       dangerouslySkipPermissions: true,
       timeoutMs: 45 * 60 * 1000,
-      systemPrompt:
-      "You are an implementation agent working inside a git repository. Apply the Product Manager's prioritized improvements with tight, idiomatic edits that match the surrounding code. " +
-      "Do NOT git commit, git push, or deploy, and do NOT run the test suite — a separate gated pipeline runs tests, commits, pushes, and deploys. " +
-      "Treat each acceptance check as a definition of done. Keep changes scoped to the listed improvements and hard scope contract; do not touch unrelated files. " +
-      "For UI, app, dashboard, or web-surface changes, preserve mobile usability and verify text/layout at narrow widths where possible."
+      systemPrompt
     },
     codex: {
       ...(process.env.RUNYARD_IMPROVE_CODEX_MODEL ? { model: process.env.RUNYARD_IMPROVE_CODEX_MODEL } : {}),

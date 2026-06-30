@@ -232,6 +232,24 @@ function preflightAssignment(_run, capability, entry) {
   return failures;
 }
 
+function materializeAgentRuntimePack(run, pack) {
+  if (!pack || typeof pack !== "object") return {};
+  const runtimeDir = path.join(workspace, ".smithers", "runtime-packs");
+  mkdirSync(runtimeDir, { recursive: true });
+  const file = path.join(runtimeDir, `${run.id}.agent-runtime.json`);
+  writeFileSync(file, JSON.stringify(pack, null, 2), { mode: 0o600 });
+  return {
+    RUNYARD_AGENT_RUNTIME_PACK_FILE: file,
+    RUNYARD_AGENT_RUNTIME_PACK: JSON.stringify({
+      schemaVersion: pack.schemaVersion,
+      capturedAt: pack.capturedAt,
+      capability: pack.capability,
+      agents: (pack.agents || []).map((agent) => ({ slug: agent.slug, version: agent.version })),
+      skills: (pack.skills || []).map((skill) => ({ slug: skill.slug, version: skill.version }))
+    })
+  };
+}
+
 async function smithers(args, opts = {}) {
   // Prepend the deployer-configured exec wrapper, if any:
   //   wrapper set  -> `<wrapper[0]> <wrapper[1..]> <smithersBin> <args>`
@@ -469,7 +487,8 @@ async function executeAssignment(assignment) {
 
     // A hub-supervised resume carries the prior Smithers run id in __resume.
     const resume = run.input && typeof run.input === "object" ? run.input.__resume : null;
-    const sid = await launch(entry, run.input, secretEnv, resume);
+    const runtimeEnv = materializeAgentRuntimePack(run, assignment.agentRuntimePack);
+    const sid = await launch(entry, run.input, { ...runtimeEnv, ...secretEnv }, resume);
     if (resume?.smithersRunId) {
       await event(run.id, "runner.resumed", `Resuming Smithers run ${sid} from checkpoint (attempt ${resume.attempt || "?"})`, {
         smithersRunId: sid,

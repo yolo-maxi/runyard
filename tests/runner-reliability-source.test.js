@@ -14,7 +14,7 @@ describe("runner reliability source guards", () => {
 
   it("runs preflight before launching the expensive Smithers workflow", () => {
     const preflightIndex = runnerSource.indexOf("preflightAssignment(run, capability, entry)");
-    const launchIndex = runnerSource.indexOf("const sid = await launch(entry, run.input, secretEnv, resume)");
+    const launchIndex = runnerSource.indexOf("const sid = await launch(entry, run.input,");
     assert.ok(preflightIndex > 0, "preflight call should exist");
     assert.ok(launchIndex > 0, "launch call should exist");
     assert.ok(preflightIndex < launchIndex, "preflight should happen before launch");
