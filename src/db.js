@@ -2223,6 +2223,30 @@ export function runnerIsLive(lastHeartbeatAt) {
   return Date.now() - last <= env.runnerOfflineMs;
 }
 
+function runnerHealthSummary({ live, capacity, load, authHealth }) {
+  const issues = [];
+  let score = 100;
+  if (!live) {
+    issues.push("offline");
+    score -= 60;
+  }
+  if (capacity <= 0) {
+    issues.push("no capacity");
+    score -= 30;
+  } else if ((load?.work || 0) >= capacity) {
+    issues.push("work pool full");
+    score -= 15;
+  }
+  for (const [provider, health] of Object.entries(authHealth || {})) {
+    if (!health || typeof health !== "object" || health.ok !== false) continue;
+    issues.push(`${provider} auth: ${health.error || "not ready"}`);
+    score -= provider === "hub" ? 45 : 20;
+  }
+  score = Math.max(0, Math.min(100, score));
+  const state = score >= 85 ? "healthy" : score >= 60 ? "degraded" : score > 0 ? "unhealthy" : "offline";
+  return { score, state, issues };
+}
+
 export function getRunner(runnerId) {
   const row = one("SELECT * FROM runners WHERE id = ?", [runnerId]);
   if (!row) return null;
@@ -2237,6 +2261,8 @@ export function getRunner(runnerId) {
   // stale/leaked counter can never falsely starve the queue. Supervisors live in
   // their own pool and never consume a work slot (see runnerLoad/claimNextRun).
   const load = runnerLoad(row.id);
+  const authHealth = parseJson(row.auth_health, null);
+  const health = runnerHealthSummary({ live, capacity, load, authHealth });
   return {
     id: row.id,
     name: row.name,
@@ -2252,9 +2278,10 @@ export function getRunner(runnerId) {
     workRuns: load.work,
     supervisorRuns: load.supervisors,
     availableSlots: Math.max(0, capacity - load.work),
+    health,
     // Per-runner CLI auth health (Codex/Claude). Booleans + expiry + account id
     // only — never token material. Null until the runner reports it.
-    authHealth: parseJson(row.auth_health, null),
+    authHealth,
     createdAt: row.created_at,
     lastHeartbeatAt: row.last_heartbeat_at
   };

@@ -156,6 +156,7 @@ function createBuilder(repoDir) {
 // still surfaces its own configuration error.
 function probeRunyardRepoFallback() {
   const explicit = [
+    process.env.RUNYARD_HUB_ROOT,
     process.env.SMITHERS_HUB_ROOT,
     process.env.IMPROVE_REPO_DIR,
     process.env.GATED_REPO_DIR
@@ -165,6 +166,9 @@ function probeRunyardRepoFallback() {
   const cwd = process.cwd();
   const candidates = [
     ...explicit,
+    path.resolve(cwd, "..", "runyard"),
+    path.resolve(os.homedir(), "runyard"),
+    path.resolve(os.homedir(), "clawd", "runyard"),
     path.resolve(cwd, "..", "smithers-hub"),
     path.resolve(os.homedir(), "smithers-hub"),
     path.resolve(os.homedir(), "clawd", "smithers-hub")
@@ -179,7 +183,10 @@ function applyRunyardRepoFallback(error, input, options) {
   const explicitRepoDir = String(input?.repoDir || "").trim();
   const friendlyKey = String(input?.repo || input?.project || "").trim();
   if (explicitRepoDir) throw error;
-  if (friendlyKey && friendlyKey !== "smithers-hub") throw error;
+  // "runyard" is the canonical default-repo key; "smithers-hub" stays a
+  // back-compat alias. Any other friendly key is caller-pinned and must not
+  // silently fall back to the default checkout.
+  if (friendlyKey && friendlyKey !== "runyard" && friendlyKey !== "smithers-hub") throw error;
   const fallback = probeRunyardRepoFallback();
   if (!fallback) throw error;
   // Backfill IMPROVE_REPO_DIR so improveAllowedRoots also accepts the

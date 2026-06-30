@@ -19,6 +19,29 @@ export const RUN_SMITHERS_DEFAULT_MAX_ATTEMPTS = 8;
 export const RUN_SMITHERS_DEFAULT_MAX_CODE_REPAIRS = 1;
 export const RUN_SMITHERS_LINEAGE_SCHEMA_VERSION = "smithers.hub.run-smithers.watcher.v1";
 
+const RETRYABLE_FAILURE_CLASSES = new Set(["provider_limited", "timed_out", "infra_unavailable"]);
+const NON_RETRYABLE_FAILURE_CLASSES = new Set(["blocked_by_gate", "blocked_by_preflight", "invalid_output", "needs_human"]);
+
+const FAILURE_CLASS_PATTERNS = [
+  ["blocked_by_preflight", /\b(preflight|missing workflow|workflow file not found|auth not ready|runner tags|repo path|not writable|no workflow\.entry)\b/i],
+  ["blocked_by_gate", /\b(gate failed|test failed|lint failed|typecheck failed|build failed|verification failed|eval failed)\b/i],
+  ["provider_limited", /\b(429|rate limit|rate-limit|quota|usage limit|provider limited|temporarily overloaded)\b/i],
+  ["timed_out", /\b(timeout|timed out|deadline exceeded|exceeded runner deadline|etimedout)\b/i],
+  ["invalid_output", /\b(invalid output|schema|zod|json parse|structured output|expected .* got|missing required)\b/i],
+  ["infra_unavailable", /\b(enospc|econnrefused|econnreset|network|dns|host unavailable|runner offline|runner heartbeat expired|spawn failed|enoent)\b/i],
+  ["needs_human", /\b(needs human|operator approval|approval required|manual review|human required)\b/i]
+];
+
+export function classifyFailureClass({ status = "", error = "" } = {}) {
+  const normalizedStatus = String(status || "").trim().toLowerCase();
+  if (RETRYABLE_FAILURE_CLASSES.has(normalizedStatus) || NON_RETRYABLE_FAILURE_CLASSES.has(normalizedStatus)) return normalizedStatus;
+  const text = String(error || "");
+  for (const [failureClass, pattern] of FAILURE_CLASS_PATTERNS) {
+    if (pattern.test(text)) return failureClass;
+  }
+  return "failed";
+}
+
 // Deterministic workflow-code failures: re-running the same input will not fix
 // them, so they are candidates for a one-shot code repair rather than a blind
 // retry. These match JS exceptions a workflow template raises and stacks that
@@ -140,6 +163,12 @@ export function classifyChildState(run = null) {
       checkpoint: checkpoint || null
     };
   }
+  if (NON_RETRYABLE_FAILURE_CLASSES.has(status)) {
+    return { kind: status, terminal: true, recoverable: false, promotedSuccess: false, failureClass: status };
+  }
+  if (RETRYABLE_FAILURE_CLASSES.has(status)) {
+    return { kind: status, terminal: true, recoverable: false, promotedSuccess: false, retryable: true, failureClass: status };
+  }
   if (status === "cancelled") {
     return { kind: "cancelled", terminal: true, recoverable: false, promotedSuccess: false };
   }
@@ -222,6 +251,7 @@ export function recordChildAttempt(state, attempt = {}) {
     throw new TypeError("recordChildAttempt requires a watcher state");
   }
   const fingerprint = normalizeErrorFingerprint(attempt.error || attempt.failureReason || "");
+  const failureClass = classifyFailureClass({ status: attempt.status, error: attempt.error || attempt.failureReason || "" });
   const entry = {
     runId: attempt.runId || "",
     capability: attempt.capability || state.capabilitySlug || "",
@@ -229,6 +259,7 @@ export function recordChildAttempt(state, attempt = {}) {
     error: String(attempt.error || attempt.failureReason || "").slice(0, 600),
     failedStep: attempt.failedStep || attempt.currentStep || "",
     checkpoint: attempt.checkpoint || null,
+    failureClass,
     fingerprint,
     recordedAt: attempt.recordedAt || ""
   };
@@ -274,12 +305,42 @@ export function decideNextAction(state, childClassification = null) {
   const last = state.attempts[state.attempts.length - 1] || null;
   const fingerprint = last?.fingerprint || "";
   const count = fingerprint ? state.fingerprintCounts[fingerprint] : 0;
+  const failureClass = last?.failureClass || classification.failureClass || "failed";
 
   // Operator cancellations are intent, never a bug — don't repair or auto-resume.
   if (classification.kind === "cancelled") {
     return {
       action: "give_up",
       reason: "child run was cancelled; the supervisor does not auto-resume operator cancellations"
+    };
+  }
+
+  if (NON_RETRYABLE_FAILURE_CLASSES.has(failureClass)) {
+    state.approvalRequested = true;
+    return {
+      action: "approval",
+      escalation: "non_retryable_failure_class",
+      reason: `Child ended as ${failureClass}; not retrying a deterministic/operator-gated failure automatically.`,
+      fingerprint,
+      count,
+      failureClass,
+      options: [
+        {
+          id: "fix_precondition",
+          label: "Fix the precondition, gate, or input",
+          effect: "operator fixes the missing dependency/auth/input/gate failure, then starts a fresh run"
+        },
+        {
+          id: "retry_anyway",
+          label: "Retry once anyway",
+          effect: "operator explicitly accepts a retry despite the non-retryable class"
+        },
+        {
+          id: "abandon",
+          label: "Abandon the wrapped goal",
+          effect: "stop autonomous attempts and mark the supervising run needs_recovery"
+        }
+      ]
     };
   }
 
@@ -466,6 +527,7 @@ export function watcherSummary(state) {
       runId: entry.runId,
       capability: entry.capability,
       status: entry.status,
+      failureClass: entry.failureClass || "",
       failedStep: entry.failedStep,
       fingerprint: entry.fingerprint,
       checkpoint: entry.checkpoint,
