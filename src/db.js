@@ -2618,7 +2618,8 @@ export function runnerPoolStats() {
   const runners = listRunners();
   const live = runners.filter((r) => r.online);
   const totalCapacity = live.reduce((sum, r) => sum + (r.capacity || 0), 0);
-  const totalActive = live.reduce((sum, r) => sum + (r.activeRuns || 0), 0);
+  const totalActive = live.reduce((sum, r) => sum + (r.workRuns || 0), 0);
+  const totalSupervisors = live.reduce((sum, r) => sum + (r.supervisorRuns || 0), 0);
   const unhealthyRunners = runners.filter((r) => r.health?.state === "unhealthy" || r.health?.state === "offline").length;
   const degradedRunners = runners.filter((r) => r.health?.state === "degraded").length;
   return {
@@ -2628,6 +2629,7 @@ export function runnerPoolStats() {
     waitingApproval,
     totalCapacity,
     totalActive,
+    totalSupervisors,
     availableSlots: Math.max(0, totalCapacity - totalActive),
     onlineRunners: live.length,
     runners: runners.length,

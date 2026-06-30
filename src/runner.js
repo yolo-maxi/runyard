@@ -103,6 +103,7 @@ let runnerId = process.env.SMITHERS_RUNNER_ID || loadCachedRunnerId() || "";
 // against this set instead of a single `busy` flag so multiple runs can
 // progress in parallel.
 const activeRuns = new Set();
+const activeRunKinds = new Map();
 let completedRuns = 0;
 let intervalHandle = null;
 // Hub claim-auth health. A runner can register + heartbeat fine yet have every
@@ -138,6 +139,29 @@ function recordClaimAuth(ok, error) {
         `Check RUNYARD_HUB_TOKEN / SMITHERS_HUB_URL in runner.env, then restart.\n`
     );
   }
+}
+
+function isSupervisorCapability(capability) {
+  return capability?.slug === "run-smithers";
+}
+
+function activeRunnerLoad() {
+  let work = 0;
+  let supervisors = 0;
+  for (const kind of activeRunKinds.values()) {
+    if (kind === "supervisor") supervisors += 1;
+    else work += 1;
+  }
+  return { work, supervisors };
+}
+
+function supervisorConcurrencyLimit() {
+  return Math.max(1, Math.ceil(concurrency * Number(process.env.SMITHERS_SUPERVISOR_SLOT_RATIO || 1)));
+}
+
+function hasClaimCapacity() {
+  const load = activeRunnerLoad();
+  return load.work < concurrency || load.supervisors < supervisorConcurrencyLimit();
 }
 
 // Startup self-check: prove the configured token actually authenticates AND can
@@ -385,6 +409,7 @@ async function executeAssignment(assignment) {
   const secretEnv = assignment.secretEnv && typeof assignment.secretEnv === "object" ? assignment.secretEnv : {};
   const entry = capability.workflow?.entry || capability.workflow?.file;
   activeRuns.add(run.id);
+  activeRunKinds.set(run.id, isSupervisorCapability(capability) ? "supervisor" : "work");
   try {
     await client.post(`/api/runs/${run.id}/start`, {});
 
@@ -553,6 +578,7 @@ async function executeAssignment(assignment) {
     console.error(`Run ${run.id} failed:`, error.message);
   } finally {
     activeRuns.delete(run.id);
+    activeRunKinds.delete(run.id);
     completedRuns += 1;
     maybeExitAfterRuns();
   }
@@ -599,11 +625,12 @@ async function tick() {
   try {
     // Heartbeat first so the Hub UI sees the capacity / active-slot update
     // even on a tick where we have no spare capacity to claim more work.
+    const load = activeRunnerLoad();
     await client
       .post(`/api/runners/${runnerId}/heartbeat`, {
         tags,
         capacity: concurrency,
-        activeRuns: activeRuns.size,
+        activeRuns: load.work + load.supervisors,
         currentRunId: activeRuns.size ? [...activeRuns][0] : null,
         auth: currentAuthHealth()
       })
@@ -625,7 +652,7 @@ async function tick() {
       // Fill every empty slot in this tick so a fast-arriving backlog drains as
       // quickly as the runner can poll. Each executeAssignment runs as its own
       // async task; we don't await them so multiple runs progress concurrently.
-      while (activeRuns.size < concurrency) {
+      while (hasClaimCapacity()) {
         let assignment;
         try {
           assignment = await client.get(`/api/runners/${runnerId}/next-run`);

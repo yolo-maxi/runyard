@@ -22,6 +22,7 @@ const {
   reconcileRunnerActiveRuns,
   registerRunner,
   runnerLoad,
+  runnerPoolStats,
   supervisorPoolSize,
   transitionRun
 } = await import("../src/db.js");
@@ -166,5 +167,23 @@ describe("active_runs reconciliation from ground truth", () => {
     reconcileRunnerActiveRuns(); // normalize first
     const corrected = reconcileRunnerActiveRuns();
     assert.equal(corrected.find((c) => c.id === runner.id), undefined, "no correction needed");
+  });
+
+  it("pool summary counts work slots, not supervisor envelopes or cached drift", () => {
+    const runner = freshRunner(4, "pool-summary");
+    createRun(getCapability("run-smithers"), { wrappedCapability: "hello", wrappedInput: {} });
+    createRun(getCapability("hello"), { topic: "work-1" });
+    createRun(getCapability("hello"), { topic: "work-2" });
+    drainClaims(runner.id);
+
+    // Simulate the runner heartbeat/counter reading total local processes
+    // instead of bounded work slots. The pool UI must still show 2/4 work slots
+    // used, with the supervisor surfaced separately.
+    db.prepare("UPDATE runners SET active_runs = ? WHERE id = ?").run(3, runner.id);
+    const pool = runnerPoolStats();
+    assert.ok(pool.totalCapacity >= 4);
+    assert.equal(pool.totalActive, 2);
+    assert.equal(pool.totalSupervisors, 1);
+    assert.ok(pool.availableSlots >= 2);
   });
 });
