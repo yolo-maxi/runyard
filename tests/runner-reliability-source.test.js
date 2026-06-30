@@ -31,6 +31,7 @@ describe("runner reliability source guards", () => {
     assert.ok(guardIndex < completeIndex, "productive outcome guard should run before complete");
     assert.match(runnerSource, /invalid output: succeeded workflow produced no node outputs/);
     assert.match(runnerSource, /invalid output: improve succeeded without changed files/);
+    assert.match(runnerSource, /baseline\?\.repoDir \|\| baseline\?\.repo_dir/);
     assert.match(runnerSource, /hasExplicitNoChangeRationale/);
   });
 });

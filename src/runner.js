@@ -273,7 +273,8 @@ function productiveOutcomeFailure(capability, outputs) {
   }
   if (capability?.slug !== "improve") return null;
   const baseline = outputs.baseline;
-  if (!isObject(baseline) || !String(baseline.repoDir || "").trim()) {
+  const baselineRepoDir = baseline?.repoDir || baseline?.repo_dir;
+  if (!isObject(baseline) || !String(baselineRepoDir || "").trim()) {
     return {
       status: RUN_FAILURE_CLASSES.BLOCKED_BY_PREFLIGHT,
       error: "preflight failed: improve completed without a resolved target repo"
