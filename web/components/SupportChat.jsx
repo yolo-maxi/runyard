@@ -284,11 +284,21 @@ function MessageBubble({ message, showSeparator, senderChanged, onActivate }) {
     </div>
   ) : null;
   const senderChange = senderChanged ? " support-chat-msg-wrap--sender-change" : "";
+  // Small 'You' / 'Support' caption rendered above the first bubble of each
+  // run so the speaker is explicit at every handoff. Only shown on sender
+  // switches (the wrapper carries align-items so the caption hugs the same
+  // edge as the bubble it labels).
+  const senderLabel = senderChanged ? (
+    <div className="support-chat-sender-label" aria-hidden="true">
+      {role === "user" ? "You" : "Support"}
+    </div>
+  ) : null;
   if (message.error) {
     return (
       <>
         {separator}
         <div className={`support-chat-msg-wrap support-chat-msg-wrap--error${senderChange}`}>
+          {senderLabel}
           <div className="support-chat-msg error">{message.content}</div>
           {meta}
           <SupportButtons message={message} onActivate={onActivate} />
@@ -300,6 +310,7 @@ function MessageBubble({ message, showSeparator, senderChanged, onActivate }) {
     <>
       {separator}
       <div className={`support-chat-msg-wrap support-chat-msg-wrap--${role}${senderChange}`}>
+        {senderLabel}
         <div className={`support-chat-msg ${role}`}>{message.content}</div>
         {meta}
         <SupportButtons message={message} onActivate={onActivate} />
@@ -625,7 +636,10 @@ export function SupportChat({ me }) {
       working = working.map((tab) => (tab.id === tabId ? { ...tab, draft: "" } : tab));
       commit(working, activeId);
       setBusy(true);
-      setTransientStatus({ message: "Thinking…", tone: "info" });
+      // Use the "progress" tone (animated dot, ink-soft) — "warn" is reserved
+      // strictly for offline/error so the two are visually distinguishable
+      // without reading the copy.
+      setTransientStatus({ message: "Thinking…", tone: "progress" });
 
       try {
         const tab = working.find((t) => t.id === tabId);
@@ -700,7 +714,8 @@ export function SupportChat({ me }) {
         working = appendMessage(working, tabId, "user", label);
         commit(working, activeId);
         setBusy(true);
-        setTransientStatus({ message: "Working…", tone: "info" });
+        // Progress tone (animated dot) — warn is reserved for failure.
+        setTransientStatus({ message: "Working…", tone: "progress" });
         try {
           await runActions(working, tabId, actions);
           setTransientStatus(null);

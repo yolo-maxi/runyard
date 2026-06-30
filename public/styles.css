@@ -4824,8 +4824,15 @@ button.run-id-mono:focus-visible,
 }
 .support-chat-actions button,
 .support-chat-actions .support-chat-overflow-trigger {
-  min-height: 28px;
-  padding: 2px 8px;
+  /* Match the 44px floor used by the destructive close (✕) / overflow (⋮)
+   * triggers — the new (＋) and reset (↺) actions were 28px and finger-fiddly
+   * on touch. */
+  min-height: 44px;
+  min-width: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 12px;
   border-radius: 6px;
   font-size: var(--fs-base);
   background: transparent;
@@ -4945,6 +4952,19 @@ button.run-id-mono:focus-visible,
 .support-chat-msg-wrap--sender-change {
   margin-top: 12px;
 }
+/* Lightweight 'You' / 'Support' caption that anchors a sender switch so the
+ * speaker is explicit at every handoff — particularly important on phones
+ * where there's no avatar/timestamp to disambiguate when scrolling back. The
+ * wrapper is column-flex with alignment set per role, so the caption picks up
+ * the bubble's edge automatically. */
+.support-chat-sender-label {
+  font-size: var(--fs-xs);
+  color: var(--ink-soft);
+  font-weight: var(--fw-medium);
+  letter-spacing: 0.02em;
+  padding: 0 6px;
+  margin-top: 2px;
+}
 /* Hide the per-message stamp by default — repeating it under every bubble
  * created a noisy ladder of times. Time anchoring now happens via the
  * grouped .support-chat-time-separator (first message + gap > 5 min); the
@@ -5006,11 +5026,41 @@ button.run-id-mono:focus-visible,
   }
 }
 .support-chat-status {
-  padding: 6px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* 44px floor so the pill matches the surrounding header controls as a
+   * predictable tap target on touch devices, even when the text is short
+   * ("Thinking…"). The tap surface is the full pill, not just the glyph. */
+  min-height: 44px;
+  padding: 10px 12px;
   font-size: var(--fs-xs);
   color: var(--ink-soft);
   background: var(--soft);
   border-bottom: 1px solid var(--line);
+}
+/* Progress tone: assistant is mid-response. Calm ink-soft colour with a
+ * subtle pulsing dot so a glance distinguishes "working" from the amber
+ * warn used for offline/error — no text reading required. */
+.support-chat-status[data-tone="progress"] {
+  color: var(--ink-soft);
+  background: var(--soft);
+}
+.support-chat-status[data-tone="progress"]::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--brand);
+  animation: support-chat-progress-pulse 1.2s ease-in-out infinite;
+  flex: 0 0 auto;
+}
+@keyframes support-chat-progress-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .support-chat-status[data-tone="progress"]::before { animation: none; opacity: 0.85; }
 }
 /* Amber treatment reserved for offline / error states so "Thinking…" reads
  * as a calm progress note rather than a warning. */
@@ -5038,6 +5088,11 @@ button.run-id-mono:focus-visible,
   line-height: 1.45;
   white-space: pre-wrap;
   word-wrap: break-word;
+  /* Long unbroken tokens (run ids, URLs, error strings) used to overflow the
+   * bubble and force a horizontal page scroll on narrow viewports. Break
+   * anywhere so the bubble always wraps inside the rail. */
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .support-chat-msg.user {
   align-self: flex-end;
@@ -5259,12 +5314,16 @@ button.run-id-mono:focus-visible,
  * to the edge. Tighten the bubble cap and add a real margin so the meta has
  * room to breathe inside the panel padding. */
 @media (max-width: 480px) {
+  /* Widen the bubble cap and drop horizontal padding so long tokens (60-char
+   * run ids, error strings) wrap cleanly at 360px width without forcing a
+   * horizontal page scroll. */
   .support-chat-msg-wrap {
-    max-width: 82%;
-    margin-inline: 8px;
+    max-width: 92%;
+    margin-inline: 4px;
   }
   .support-chat-msg {
-    max-width: 82%;
+    max-width: 92%;
+    padding: 8px 10px;
   }
   .support-chat-msg-meta {
     padding-inline: 4px;
