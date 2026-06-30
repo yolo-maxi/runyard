@@ -1556,6 +1556,41 @@ function workflowEndpointPayloadHash(body) {
   return `sha256:${createHash("sha256").update(stableJsonString(body)).digest("hex")}`;
 }
 
+const ACTIVE_RERUN_STATUSES = new Set(["queued", "assigned", "running", "waiting_approval"]);
+
+function rerunFingerprint(input) {
+  return createHash("sha256").update(stableJsonString(input || {})).digest("hex");
+}
+
+function logicalRerunInput(run) {
+  const rawInput = run?.input && typeof run.input === "object" && !Array.isArray(run.input) ? run.input : {};
+  const isSupervisor = run?.capabilitySlug === SUPERVISOR_CAPABILITY_SLUG
+    && typeof rawInput.__supervisionToken === "string"
+    && typeof rawInput.wrappedCapability === "string";
+  const logicalInput = isSupervisor && rawInput.wrappedInput && typeof rawInput.wrappedInput === "object" && !Array.isArray(rawInput.wrappedInput)
+    ? rawInput.wrappedInput
+    : rawInput;
+  const clean = stripSupervisionInternals(logicalInput || {});
+  delete clean.__origin;
+  return {
+    capabilitySlug: isSupervisor ? rawInput.wrappedCapability : run?.capabilitySlug,
+    input: clean,
+    isSupervisor
+  };
+}
+
+function findActiveDuplicateRerun({ previousRunId, capabilitySlug, input }) {
+  const expectedFingerprint = rerunFingerprint(input);
+  const candidates = listRuns({ limit: 500, includeInternal: true })
+    .filter((run) => ACTIVE_RERUN_STATUSES.has(run.status))
+    .map((run) => ({ run, logical: logicalRerunInput(run) }))
+    .filter(({ logical }) => logical.capabilitySlug === capabilitySlug)
+    .filter(({ logical }) => logical.input?.rerunOf === previousRunId)
+    .filter(({ logical }) => rerunFingerprint(logical.input) === expectedFingerprint);
+
+  return candidates.find(({ logical }) => logical.isSupervisor)?.run || candidates[0]?.run || null;
+}
+
 function bodySizeBytes(req) {
   const declared = Number(req.headers["content-length"] || 0);
   const actual = Buffer.byteLength(stableJsonString(req.body || {}), "utf8");
@@ -3689,6 +3724,21 @@ app.post("/api/runs/:id/rerun", requireAuth, requireScopes("api", "mcp"), asyncH
   delete input.__supervisionToken;
   delete input.__supervisedChild;
   input.rerunOf = previous.id;
+  const force = req.body?.force === true;
+  if (!force) {
+    const existing = findActiveDuplicateRerun({ previousRunId: previous.id, capabilitySlug: capability.slug, input });
+    if (existing) {
+      addRunEvent(previous.id, "run.rerun_deduped", `Duplicate re-run reused ${existing.id}`, { runId: existing.id });
+      return res.status(202).json({
+        deduped: true,
+        run: withRunLinks(existing),
+        previousRun: withRunLinks(previous),
+        statusUrl: `/api/runs/${existing.id}`,
+        webUrl: `/app#runs/${existing.id}`,
+        deepLink: deepLinks.run(existing.id)
+      });
+    }
+  }
   const origin = requestOrigin(req, {
     ...input,
     origin: {

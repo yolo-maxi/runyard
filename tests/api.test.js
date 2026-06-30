@@ -821,6 +821,20 @@ describe("Smithers Hub API", () => {
     assert.equal(edited.run.input.rerunOf, created.run.id);
     assert.equal(edited.run.origin.type, "hub-rerun");
   });
+
+  it("dedupes duplicate active rerun requests for the same input", async () => {
+    const created = await api("/api/capabilities/hello/run", {
+      method: "POST",
+      body: { input: { goal: "dedupe me" } }
+    });
+    const first = await api(`/api/runs/${created.run.id}/rerun`, { method: "POST", body: {} });
+    const duplicate = await api(`/api/runs/${created.run.id}/rerun`, { method: "POST", body: {} });
+    assert.equal(duplicate.deduped, true);
+    assert.equal(duplicate.run.id, first.run.id);
+
+    const forced = await api(`/api/runs/${created.run.id}/rerun`, { method: "POST", body: { force: true } });
+    assert.notEqual(forced.run.id, first.run.id);
+  });
 });
 
 describe("Run response endpoints (slice 1)", () => {

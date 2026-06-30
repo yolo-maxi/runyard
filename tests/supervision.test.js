@@ -223,6 +223,26 @@ describe("supervision envelope over the API", () => {
     assert.match(getRun(rerun.run.id).input.__supervisionToken, /^sup_/);
   });
 
+  it("dedupes duplicate active reruns of supervised workflows", async () => {
+    const first = await api("/api/capabilities/improve/run", {
+      method: "POST",
+      body: { input: { target: "dedupe rerun target", repo: "runyard" } }
+    });
+    const input = { target: "dedupe rerun target edited", repo: "runyard" };
+    const rerun = await api(`/api/runs/${first.run.id}/rerun`, {
+      method: "POST",
+      body: { input }
+    });
+    const duplicate = await api(`/api/runs/${first.run.id}/rerun`, {
+      method: "POST",
+      body: { input }
+    });
+
+    assert.equal(duplicate.deduped, true);
+    assert.equal(duplicate.run.id, rerun.run.id);
+    assert.equal(getRun(duplicate.run.id).capabilitySlug, "run-smithers");
+  });
+
   it("presents supervised child output instead of the supervisor envelope output", async () => {
     const parent = await api("/api/capabilities/research/run", {
       method: "POST",

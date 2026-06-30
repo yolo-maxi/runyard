@@ -85,7 +85,7 @@ describe("Runs dashboard: mobile navigation & chrome", () => {
 
 describe("Runs page: filter toolbar, history rows, and detail order", () => {
   it("keeps runs search and filters visible without a disclosure", () => {
-    assert.match(home, /function HomeFilterBar\(\{ filters, capabilities = \[\], matchingCount = 0 \}\)/);
+    assert.match(home, /function HomeFilterBar\(\{ filters, capabilities = \[\]/);
     assert.match(home, /className="runs-filter-panel"/);
     assert.match(home, /id="runs-filter-q"/);
     assert.match(home, /id="runs-filter-status"/);
@@ -108,9 +108,27 @@ describe("Runs page: filter toolbar, history rows, and detail order", () => {
     assert.match(css, /\.runs-filter-bar,\s*\n\s*\.runs-filter-bar label,\s*\n\s*\.runs-filter-bar input\[type="search"\]/);
   });
 
-  it("renders completed and matching runs with the compact history row variant while preserving active cards", () => {
+  it("hides support-agent runs by default and surfaces a toggle chip to reveal them", () => {
+    // The runs view filters DEFAULT_HIDDEN_WORKFLOWS client-side unless the
+    // operator flips the persistent toggle (origin-scoped via localStorage).
+    assert.match(home, /SHOW_INTERNAL_STORAGE_KEY = "runs\.showInternalWorkflows"/);
+    assert.match(home, /useLocalStorage\(SHOW_INTERNAL_STORAGE_KEY, false\)/);
+    assert.match(home, /isInternalRun/);
+    assert.match(home, /baseRuns\.filter\(\(r\) => !isInternalRun\(r\)\)/);
+    assert.match(home, /runs-internal-toggle/);
+    assert.match(home, /Support runs hidden/);
+    assert.match(home, /Showing support runs/);
+    assert.match(css, /\.runs-filter-chip\.runs-internal-toggle/);
+  });
+
+  it("renders every run — active and historical — as a unified history row", () => {
     assert.match(runCard, /variant = "card"/);
-    assert.match(runCard, /className=\{`run-history-row \$\{run\.status\}`\}/);
+    // Row variant now accepts active runs too; the className adds " active"
+    // (and the row gets a pulse dot) so the status badge stays the only visual
+    // differentiator between in-flight and historical rows.
+    assert.match(runCard, /if \(variant === "row"\)/);
+    assert.match(runCard, /run-history-row \$\{run\.status\}\$\{active \? " active" : ""\}/);
+    assert.match(runCard, /run-pulse run-pulse-row/);
     assert.match(runCard, /deepLinks\.run\(run\.id\)/);
     assert.match(runCard, /deepLinks\.workflow\(slug\)/);
     assert.match(runCard, /deepLinks\.runLogs\(run\.id\)/);
@@ -118,13 +136,26 @@ describe("Runs page: filter toolbar, history rows, and detail order", () => {
     assert.match(runCard, /rerunRun\(run\.id\)/);
     assert.match(runCard, /editRerunById\(run\.id\)/);
     assert.match(runCard, /ShareButton hash=\{deepLinks\.run\(run\.id\)\}/);
-    assert.match(home, /className="run-grid live in-flight"/);
-    assert.match(home, /variant=\{isActiveRun\(run\) \? "card" : "row"\}/);
+    // The dedicated in-flight card grid is gone — RunHistoryGroups drives the
+    // whole list with variant="row".
+    assert.ok(!/run-grid live in-flight/.test(home), "in-flight card grid should be removed");
+    assert.match(home, /variant="row"/);
     assert.match(home, /RunHistoryGroups/);
     assert.match(css, /\.run-history-list/);
     assert.match(css, /\.run-history-row\s*\{[^}]*grid-template-columns/s);
+    assert.match(css, /\.run-history-row\.active\s*\{/);
     assert.match(css, /@media \(max-width:\s*640px\)\s*\{[^}]*\.run-history-row\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s);
     assert.match(css, /\.run-history-actions \.share-link,[\s\S]*min-height:\s*44px/);
+  });
+
+  it("strips home-page clutter — stats strip, action bar, and approvals panel — from the runs view", () => {
+    // Stats strip, primary-action / incident hero, and pending-approvals list
+    // no longer compete with the runs table for vertical space on #runs.
+    assert.ok(!/HomeStatStrip/.test(home), "HomeStatStrip must not render on the runs page");
+    assert.ok(!/PrimaryActionBar/.test(home), "PrimaryActionBar must not render on the runs page");
+    assert.ok(!/IncidentCard/.test(home), "IncidentCard must not render on the runs page");
+    assert.ok(!/ApprovalList/.test(home), "ApprovalList must not render on the runs page");
+    assert.ok(!/Pending approvals/.test(home), "Pending approvals heading must not render on the runs page");
   });
 
   it("sorts run history by workflow ended date and renders chat-style date separators", () => {

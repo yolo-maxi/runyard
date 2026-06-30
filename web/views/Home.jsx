@@ -4,18 +4,24 @@ import { useQuery } from "@tanstack/react-query";
 import { runsCollection, runnersCollection, capabilitiesCollection } from "../lib/collections.js";
 import { api } from "../lib/api.js";
 import { useHashRoute, useNavigate, deepLinks } from "../lib/router.js";
-import { useNow } from "../lib/storage.js";
+import { useNow, useLocalStorage } from "../lib/storage.js";
 import {
-  isActiveRun, isUnresolvedFailure, topLevelRuns, supervisedChildRuns,
+  isActiveRun, topLevelRuns, supervisedChildRuns,
   timeRangeToSinceISO, truncate, RUN_STATUS_OPTIONS, TIME_RANGE_OPTIONS
 } from "../lib/runHelpers.js";
 import { peekRerunDraft, clearRerunDraft } from "../lib/runActions.js";
 import { RunCard } from "../components/RunCard.jsx";
-import { PrimaryActionBar, IncidentCard, HomeStatStrip } from "../components/HomeChrome.jsx";
-import { ApprovalList } from "../components/ApprovalList.jsx";
 import { relativeTime } from "../lib/format.js";
 
+// Workflow slugs that are operationally internal — support agents, reauth helpers,
+// etc. They're real runs but they bury the actual operator workload, so the #runs
+// view hides them by default and exposes a single chip to flip them back on.
 const DEFAULT_HIDDEN_WORKFLOWS = ["runyard-support-agent", "reauth-cli"];
+const SHOW_INTERNAL_STORAGE_KEY = "runs.showInternalWorkflows";
+
+function isInternalRun(run) {
+  return DEFAULT_HIDDEN_WORKFLOWS.includes(run?.capabilitySlug || "");
+}
 
 function parseWorkflowParam(value = "") {
   return [...new Set(String(value || "").split(",").map((slug) => slug.trim()).filter(Boolean))];
@@ -28,11 +34,11 @@ function workflowParamFromParams(params) {
   return null;
 }
 
-function defaultWorkflowSlugs(capabilities = []) {
+function defaultWorkflowSlugs(capabilities = [], { includeInternal = false } = {}) {
   return capabilities
     .map((cap) => cap.slug)
     .filter(Boolean)
-    .filter((slug) => !DEFAULT_HIDDEN_WORKFLOWS.includes(slug));
+    .filter((slug) => includeInternal || !DEFAULT_HIDDEN_WORKFLOWS.includes(slug));
 }
 
 function sortedWorkflowOptions(capabilities = []) {
@@ -137,6 +143,8 @@ function groupRunsByEndedDate(runs, nowMs, order = "desc") {
 }
 
 function RunHistoryGroups({ groups, artifactsByRun, now }) {
+  // Active and historical runs share the same row chrome; only the status badge
+  // and accent stripe distinguish them. This keeps the table dense and scannable.
   return (
     <section className="run-history-list">
       {groups.map((group) => (
@@ -151,7 +159,7 @@ function RunHistoryGroups({ groups, artifactsByRun, now }) {
                 run={run}
                 artifacts={artifactsByRun.get(run.id) || []}
                 now={now}
-                variant={isActiveRun(run) ? "card" : "row"}
+                variant="row"
               />
             ))}
           </div>
@@ -161,10 +169,10 @@ function RunHistoryGroups({ groups, artifactsByRun, now }) {
   );
 }
 
-function HomeFilterBar({ filters, capabilities = [], matchingCount = 0 }) {
+function HomeFilterBar({ filters, capabilities = [], matchingCount = 0, showInternal, onToggleInternal, internalHiddenCount = 0 }) {
   const navigate = useNavigate();
   const workflowOptions = sortedWorkflowOptions(capabilities);
-  const defaultWorkflows = defaultWorkflowSlugs(capabilities);
+  const defaultWorkflows = defaultWorkflowSlugs(capabilities, { includeInternal: showInternal });
   const selectedWorkflows = Array.isArray(filters.workflows) ? filters.workflows : defaultWorkflows;
   const workflowFilterKey = Array.isArray(filters.workflows) ? filters.workflows.join(",") : "";
   const [q, setQ] = useState(filters.q);
@@ -208,14 +216,10 @@ function HomeFilterBar({ filters, capabilities = [], matchingCount = 0 }) {
   if (Array.isArray(filters.workflows)) activeChips.push({ kind: "workflows", label: `${filters.workflows.length} workflow${filters.workflows.length === 1 ? "" : "s"}` });
   const active = Boolean(filters.q || filters.status || filters.range || filters.order === "asc" || filters.cursor || Array.isArray(filters.workflows));
 
+  // Compact panel: drop the standalone heading row and put the "show support runs"
+  // toggle inline next to the filter chips. Reclaims ~36px above the table.
   return (
     <section className="runs-filter-panel" aria-label="Runs search and filters">
-      <div className="runs-filter-heading">
-        <h2>Search runs</h2>
-        {active ? (
-          <span className="runs-filter-count" aria-live="polite">{matchingCount} matching</span>
-        ) : null}
-      </div>
       <form
         className="runs-filter-bar"
         id="runs-filter-bar"
@@ -261,16 +265,30 @@ function HomeFilterBar({ filters, capabilities = [], matchingCount = 0 }) {
         ) : null}
         <button type="submit" className="button">Apply</button>
         <button type="button" className="button" id="runs-filter-clear" disabled={!active} onClick={() => navigate("#runs")}>Clear</button>
-        {activeChips.length ? (
-          <div className="runs-filter-chips" aria-label="Active filters">
-            {activeChips.map((c) => (
-              <span className="runs-filter-chip" data-filter-chip={c.kind} key={c.kind}>
-                {c.label}{" "}
-                <button type="button" aria-label={`Clear ${c.kind} filter`} data-clear-filter={c.kind} onClick={() => apply(c.kind === "workflows" ? { workflows: defaultWorkflows } : { [c.kind]: c.kind === "order" ? "desc" : "" })}>×</button>
-              </span>
-            ))}
-          </div>
-        ) : null}
+        <div className="runs-filter-chips" aria-label="Active filters and view options">
+          {/* Persistent toggle so operators always see whether support-agent runs are
+              currently hidden and can flip the chip without opening a menu. */}
+          <button
+            type="button"
+            className={`runs-filter-chip runs-internal-toggle${showInternal ? " on" : ""}`}
+            data-internal-toggle={showInternal ? "on" : "off"}
+            aria-pressed={showInternal}
+            title={showInternal
+              ? "Support-agent and reauth runs are visible. Click to hide them."
+              : "Support-agent and reauth runs are hidden. Click to show them."}
+            onClick={() => onToggleInternal(!showInternal)}
+          >
+            {showInternal
+              ? "Showing support runs"
+              : `Support runs hidden${internalHiddenCount ? ` (${internalHiddenCount})` : ""}`}
+          </button>
+          {activeChips.map((c) => (
+            <span className="runs-filter-chip" data-filter-chip={c.kind} key={c.kind}>
+              {c.label}{" "}
+              <button type="button" aria-label={`Clear ${c.kind} filter`} data-clear-filter={c.kind} onClick={() => apply(c.kind === "workflows" ? { workflows: defaultWorkflows } : { [c.kind]: c.kind === "order" ? "desc" : "" })}>×</button>
+            </span>
+          ))}
+        </div>
       </form>
     </section>
   );
@@ -297,6 +315,9 @@ export function Home() {
   const filtersActive = Boolean(filters.q || filters.status || filters.range || filters.order === "asc" || filters.cursor || Array.isArray(filters.workflows));
   const now = useNow(1000, true);
   const [draftTick, setDraftTick] = useState(0);
+  // Per-origin via the browser's natural localStorage scoping. Default off so the
+  // operator never sees support-agent noise unless they ask for it.
+  const [showInternal, setShowInternal] = useLocalStorage(SHOW_INTERNAL_STORAGE_KEY, false);
 
   // Live, reactive collections — replace the legacy 30s/4s setInterval polls.
   const { data: liveRuns = [] } = useLiveQuery((q) => runsCollection);
@@ -353,22 +374,19 @@ export function Home() {
     navigate("#onboarding");
   }, [filtersActive, dashQ.isSuccess, dashQ.data, runners.length, runs.length, navigate]);
 
-  const visibleRuns = filtersActive ? runs : topLevelRuns(runs);
+  // Hide internal workflows by default. When filters are active the user has
+  // either explicitly picked workflows (`filters.workflows`) — in which case
+  // the API already honors that exact list — or filtered on other dimensions,
+  // and we still suppress internal runs unless the toggle says otherwise.
+  const baseRuns = filtersActive ? runs : topLevelRuns(runs);
+  const explicitWorkflowsIncludeInternal = Array.isArray(filters.workflows)
+    && filters.workflows.some((slug) => DEFAULT_HIDDEN_WORKFLOWS.includes(slug));
+  const shouldShowInternal = showInternal || explicitWorkflowsIncludeInternal;
+  const internalHiddenCount = shouldShowInternal ? 0 : baseRuns.filter(isInternalRun).length;
+  const visibleRuns = shouldShowInternal ? baseRuns : baseRuns.filter((r) => !isInternalRun(r));
   const hiddenSupervised = filtersActive ? [] : supervisedChildRuns(runs);
-  const active = visibleRuns.filter(isActiveRun).sort((a, b) => compareRunsChronologically(a, b, filters.order));
-  const completed = visibleRuns.filter((r) => !isActiveRun(r));
-  const completedGroups = groupRunsByEndedDate(completed, now, filters.order);
-  const matchingGroups = groupRunsByEndedDate(runs, now, filters.order);
-
-  const cutoff = now - 24 * 3600 * 1000;
-  const recentlyFailed = visibleRuns.filter((r) => {
-    if (!isUnresolvedFailure(r)) return false;
-    const t = Date.parse(r.completedAt || r.createdAt || "");
-    return Number.isNaN(t) ? true : t >= cutoff;
-  });
-  const failed24h = recentlyFailed.length;
-  const lastFailedRun = recentlyFailed[0] || visibleRuns.find(isUnresolvedFailure) || null;
-  const onlineRunners = runners.filter((r) => r.online).length;
+  // Single chronological list — active + historical share row chrome.
+  const allGroups = groupRunsByEndedDate(visibleRuns, now, filters.order);
 
   const artifactsByRun = new Map();
   for (const a of artifactsQ.data?.artifacts || []) {
@@ -376,56 +394,44 @@ export function Home() {
     artifactsByRun.get(a.runId).push(a);
   }
 
-  const stats = dashQ.data?.stats || {};
-  const pool = dashQ.data?.pool || null;
-  const pending = dashQ.data?.pendingApprovals || [];
-  const queued = stats.queuedRuns != null ? stats.queuedRuns : runs.filter((r) => r.status === "queued").length;
-  const capacityLabel = pool && pool.totalCapacity
-    ? `${pool.totalActive}/${pool.totalCapacity} slots`
-    : `${stats.runnerActiveSlots ?? 0}/${stats.runnerCapacity ?? 0} slots`;
-  const gettingStarted = !filtersActive && runs.length === 0 && !active.length;
+  const gettingStarted = !filtersActive && visibleRuns.length === 0;
 
   return (
     <>
-      {lastFailedRun ? (
-        <IncidentCard run={lastFailedRun} failed24h={failed24h} onlineRunners={onlineRunners} />
-      ) : (
-        <PrimaryActionBar runners={runners} capabilities={capabilities} />
-      )}
       <RerunDraftBanner draft={draft} onDiscard={() => setDraftTick((n) => n + 1)} />
-      <HomeFilterBar filters={filters} capabilities={capabilities} matchingCount={totalMatching} />
+      <HomeFilterBar
+        filters={filters}
+        capabilities={capabilities}
+        matchingCount={totalMatching}
+        showInternal={shouldShowInternal}
+        onToggleInternal={setShowInternal}
+        internalHiddenCount={internalHiddenCount}
+      />
       {gettingStarted ? (
         <div className="empty empty-runs" role="region" aria-label="No runs yet">
-          <p className="empty-runs-headline"><strong>No runs yet</strong></p>
-          <p className="muted">Workflows you trigger will appear here with logs, artifacts, and re-run controls. Start with the quickstart, or pick a workflow to launch.</p>
-          {/* The PrimaryActionBar above owns the one primary action on this
-              view, so these onboarding shortcuts stay secondary. */}
+          <p className="empty-runs-headline"><strong>No runs to show</strong></p>
+          <p className="muted">
+            Workflows you trigger will appear here with logs, artifacts, and re-run controls.
+            {internalHiddenCount ? " Support-agent runs are hidden — toggle the chip above to reveal them." : ""}
+          </p>
           <div className="empty-runs-actions">
             <a className="button" href="/docs#quickstart">Open quickstart</a>
             <button type="button" className="button" onClick={() => navigate("#workflows")}>Pick a workflow</button>
           </div>
         </div>
-      ) : null}
-      <HomeStatStrip active={active} queued={queued} capacityLabel={capacityLabel} stats={stats} runs={runs} pending={pending} pool={pool} />
-
-      {!filtersActive && active.length ? (
+      ) : (
         <>
-          <h2 className="section-heading in-flight-heading">In flight <span className="muted">{active.length} live</span></h2>
-          <section className="run-grid live in-flight">
-            {active.map((run) => <RunCard key={run.id} run={run} artifacts={artifactsByRun.get(run.id) || []} now={now} />)}
-          </section>
-        </>
-      ) : null}
-
-      {filtersActive ? (
-        <>
-          <h2 className="section-heading">Matching runs <span className="muted">{totalMatching} total</span></h2>
-          {runs.length ? (
-            <RunHistoryGroups groups={matchingGroups} artifactsByRun={artifactsByRun} now={now} />
-          ) : (
+          {hiddenSupervised.length ? (
+            <p className="supervised-child-summary muted">
+              {hiddenSupervised.length} supervised child attempt{hiddenSupervised.length === 1 ? "" : "s"} hidden from this top-level view. Open the parent run to inspect wrapper retries and repair lineage.
+            </p>
+          ) : null}
+          {filtersActive && !visibleRuns.length ? (
             <p className="muted">No runs match the current filters. <a href="#runs">Clear filters</a> to see everything.</p>
+          ) : (
+            <RunHistoryGroups groups={allGroups} artifactsByRun={artifactsByRun} now={now} />
           )}
-          {(filters.cursor || nextCursor) ? (
+          {filtersActive && (filters.cursor || nextCursor) ? (
             <nav className="runs-pagination" aria-label="Run history pagination">
               <p className="muted">{`Showing ${runs.length} of ${totalMatching} matching run${totalMatching === 1 ? "" : "s"}`}</p>
               <div className="toolbar-actions">
@@ -435,28 +441,7 @@ export function Home() {
             </nav>
           ) : null}
         </>
-      ) : (
-        <>
-          <h2 className="section-heading">Recent &amp; completed</h2>
-          {hiddenSupervised.length ? (
-            <p className="supervised-child-summary muted">
-              {hiddenSupervised.length} supervised child attempt{hiddenSupervised.length === 1 ? "" : "s"} hidden from this top-level view. Open the parent run to inspect wrapper retries and repair lineage.
-            </p>
-          ) : null}
-          {completed.length ? (
-            <RunHistoryGroups groups={completedGroups} artifactsByRun={artifactsByRun} now={now} />
-          ) : (
-            <p className="muted">Completed runs and their artifacts will appear here.</p>
-          )}
-        </>
       )}
-
-      {pending.length ? (
-        <>
-          <h2 className="section-heading">Pending approvals</h2>
-          <section className="panel"><ApprovalList approvals={pending} /></section>
-        </>
-      ) : null}
     </>
   );
 }

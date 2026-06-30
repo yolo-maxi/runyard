@@ -1845,6 +1845,29 @@ details.advanced[open] summary {
   border-left-color: var(--ok);
 }
 
+/* Active (in-flight) runs use the same row chrome but get an accent stripe and
+   a soft tinted background so the eye still anchors on what's running right now
+   without breaking the unified row layout. */
+.run-history-row.active {
+  border-left-color: var(--brand-2, var(--brand, #2563eb));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--brand-2, #2563eb) 7%, var(--panel)) 0%, var(--panel) 48%);
+}
+.run-history-row.active.running { border-left-color: var(--ok); }
+.run-history-row.active.waiting_approval { border-left-color: var(--warn); }
+.run-history-row.active.queued { border-left-color: var(--muted); }
+
+.run-history-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.run-pulse-row {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+}
+
 .run-history-status,
 .run-history-main,
 .run-history-chips,
@@ -4228,6 +4251,24 @@ button.run-id-mono:focus-visible,
   padding: 0 0 0 2px;
   font-size: var(--fs-sm);
   color: var(--muted);
+}
+
+/* Toggle chip for revealing internal/support-agent runs. It lives next to the
+   active-filter chips so its state is always visible above the runs table. */
+.runs-filter-chip.runs-internal-toggle {
+  cursor: pointer;
+  padding-right: 10px;
+  font-weight: var(--fw-semibold);
+  color: var(--muted);
+}
+.runs-filter-chip.runs-internal-toggle:hover {
+  border-color: var(--brand-2);
+  color: var(--ink);
+}
+.runs-filter-chip.runs-internal-toggle.on {
+  background: color-mix(in srgb, var(--brand-2) 12%, var(--soft));
+  border-color: var(--brand-2);
+  color: var(--brand-2);
 }
 
 .runs-pagination {

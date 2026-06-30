@@ -66,10 +66,20 @@ export function RunCard({ run, artifacts = [], now = Date.now(), variant = "card
   const showArtifacts = !active && artifacts.length > 0;
   const signal = runSignal(run, reasonHint, active);
 
-  if (variant === "row" && !active) {
+  if (variant === "row") {
+    // Active runs share the same grid layout as historical ones — only the
+    // status badge, a left accent stripe, and an inline pulse distinguish them.
+    // Artifacts/duration metadata is suppressed for in-flight rows because they
+    // don't have stable values yet; "elapsed" is shown in their place.
+    const showArtifactLink = !active;
     return (
-      <article className={`run-history-row ${run.status}`} id={`run-${run.id}`}>
+      <article
+        className={`run-history-row ${run.status}${active ? " active" : ""}`}
+        id={`run-${run.id}`}
+        data-active={active ? "true" : "false"}
+      >
         <div className="run-history-status">
+          {active ? <span className="run-pulse run-pulse-row" aria-hidden="true" /> : null}
           <StatusBadge value={run.status} />
         </div>
         <div className="run-history-main">
@@ -92,8 +102,10 @@ export function RunCard({ run, artifacts = [], now = Date.now(), variant = "card
         </div>
         <div className="run-history-meta">
           <span title={run.createdAt || ""}>{created}</span>
-          {durStr ? <span>{durStr}</span> : null}
-          <a href={deepLinks.runArtifacts(run.id)}>{artifacts.length} artifact{artifacts.length === 1 ? "" : "s"}</a>
+          {durStr ? <span>{active ? `${durStr} elapsed` : durStr}</span> : null}
+          {showArtifactLink ? (
+            <a href={deepLinks.runArtifacts(run.id)}>{artifacts.length} artifact{artifacts.length === 1 ? "" : "s"}</a>
+          ) : null}
         </div>
         <div className="run-history-actions">
           <ShareButton hash={deepLinks.run(run.id)} label="Copy share link to this run" />
