@@ -17,6 +17,7 @@ import { decideReconcile, buildEscalationApproval, HUB_DEFAULT_CAPS } from "./hu
 import { decrypt as decryptSecret, encrypt as encryptSecret, redactSecrets, secretsEnabled } from "./secretsStore.js";
 import { seedAgents, seedCapabilities, seedKnowledge, seedSkills } from "./seeds.js";
 import { nextRun as cronNextRun } from "./cron.js";
+import { RUN_FAILURE_TERMINAL_STATUSES } from "./runFailureClass.js";
 
 export const db = new DatabaseSync(env.dbPath);
 db.exec("PRAGMA journal_mode = WAL");
@@ -2057,15 +2058,22 @@ export function updateRun(runId, updates) {
   return getRun(runId);
 }
 
-export const RUN_TERMINAL = new Set(["succeeded", "failed", "cancelled"]);
+export const RUN_TERMINAL = new Set(["succeeded", "cancelled", ...RUN_FAILURE_TERMINAL_STATUSES]);
 
 const RUN_TRANSITIONS = {
   waiting_approval: ["queued", "cancelled"],
-  queued: ["assigned", "running", "cancelled", "failed"],
-  assigned: ["running", "succeeded", "failed", "cancelled"],
-  running: ["succeeded", "failed", "cancelled"],
+  queued: ["assigned", "running", "cancelled", ...RUN_FAILURE_TERMINAL_STATUSES],
+  assigned: ["running", "succeeded", "cancelled", ...RUN_FAILURE_TERMINAL_STATUSES],
+  running: ["succeeded", "cancelled", ...RUN_FAILURE_TERMINAL_STATUSES],
   succeeded: [],
   failed: [],
+  blocked_by_gate: [],
+  blocked_by_preflight: [],
+  provider_limited: [],
+  timed_out: [],
+  invalid_output: [],
+  infra_unavailable: [],
+  needs_human: [],
   cancelled: []
 };
 

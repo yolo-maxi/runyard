@@ -86,6 +86,7 @@ import { createUpdateChecker } from "./updateCheck.js";
 import { now, slugify } from "./ids.js";
 import { describeCron, isValidTimezone, nextRuns, validateCron } from "./cron.js";
 import { buildRunRetrospectiveArtifact, RUN_RETROSPECTIVE_ARTIFACT_NAME } from "./runRetrospective.js";
+import { classifyFailureStatus, failureEventType, normalizeFailureStatus } from "./runFailureClass.js";
 import {
   analyzeRunObstructions,
   obstructionAnalyzerConfigured,
@@ -3587,12 +3588,13 @@ app.post("/api/runs/:id/complete", requireAuth, requireScopes("runner"), require
 });
 app.post("/api/runs/:id/fail", requireAuth, requireScopes("runner"), requireRunOwnerOrAdmin, (req, res) => {
   const error = scrubStoredSecrets(req.body.error || "failed");
-  const result = transitionRun(req.params.id, "failed", { current_step: "failed", error, completed_at: now() });
+  const status = normalizeFailureStatus(req.body.status || classifyFailureStatus(error));
+  const result = transitionRun(req.params.id, status, { current_step: status, error, completed_at: now() });
   if (!result.ok) return res.status(result.code).json({ error: result.error });
   if (result.raced) {
-    addRunEvent(req.params.id, "run.transition_ignored", `Ignored late 'failed' report; run already terminal as '${result.run.status}'`, { attempted: "failed", terminal: result.run.status });
+    addRunEvent(req.params.id, "run.transition_ignored", `Ignored late '${status}' report; run already terminal as '${result.run.status}'`, { attempted: status, terminal: result.run.status });
   }
-  if (!result.idempotent) addRunEvent(req.params.id, "run.failed", error || "Run failed");
+  if (!result.idempotent) addRunEvent(req.params.id, failureEventType(status), error || `Run ended as ${status}`, { failureClass: status });
   if (!result.idempotent) recordRunTerminalArtifacts(result.run.id);
   res.json({ run: result.run });
 });

@@ -6,8 +6,8 @@
 // local Claude Code / Codex CLI as the worker), streams Smithers events back to the Hub as run
 // events, and uploads the workflow's outputs + event trace as artifacts. Nothing is faked: the
 // agent runs here, on this machine, and the Hub is the durable record.
-import { execFile } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { execFile, spawn } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -17,6 +17,7 @@ import { normalizeRunnerTags } from "./runExecution.js";
 import { extractSmithersFailure } from "./smithersFailure.js";
 import { supportWarmEnabled, warmSupportReply } from "./supportWarm.js";
 import { collectAuthHealth } from "./runnerAuthHealth.js";
+import { classifyFailureStatus, RUN_FAILURE_CLASSES } from "./runFailureClass.js";
 import { reauthEnabled, runReauth } from "./reauthCli.js";
 import { readClaudeOauthToken } from "./claudeOauthToken.js";
 import { isDraining, resolveDataDir } from "./drain.js";
@@ -174,6 +175,38 @@ let drainLogged = false;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const stripAnsi = (s) => String(s).replace(/\[[0-9;]*m/g, "");
+const MAX_INLINE_INPUT_BYTES = Number(process.env.RUNYARD_MAX_INLINE_INPUT_BYTES || 64 * 1024);
+
+async function failRun(runId, error, status = "") {
+  const failureStatus = status || classifyFailureStatus(error);
+  return client.post(`/api/runs/${runId}/fail`, { error, status: failureStatus });
+}
+
+function largeInputPayload(input) {
+  const payload = JSON.stringify(input || {});
+  if (Buffer.byteLength(payload, "utf8") <= MAX_INLINE_INPUT_BYTES) return { inline: payload, file: "" };
+  return { inline: "", stdin: payload };
+}
+
+function authOkFor(capability, health = currentAuthHealth()) {
+  const agents = Array.isArray(capability?.requiredAgents) ? capability.requiredAgents : [];
+  const text = `${capability?.slug || ""} ${agents.join(" ")} ${JSON.stringify(capability?.workflow || {})}`.toLowerCase();
+  const needsClaude = /claude|implementation-agent|researcher|product-manager|taste-agent|design-director|run-knowledge-analyst|smithers-watcher/.test(text);
+  const needsCodex = /codex/.test(text);
+  const missing = [];
+  if (needsClaude && health?.claude?.ok === false) missing.push(`claude: ${health.claude.error || "not authenticated"}`);
+  if (needsCodex && health?.codex?.ok === false) missing.push(`codex: ${health.codex.error || "not authenticated"}`);
+  return missing;
+}
+
+function preflightAssignment(_run, capability, entry) {
+  if (!entry) return [`capability ${capability?.slug || "unknown"} has no workflow.entry`];
+  const workflowPath = path.isAbsolute(entry) ? entry : path.join(workspace, entry);
+  const failures = [];
+  if (!existsSync(workflowPath)) failures.push(`workflow file not found: ${workflowPath}`);
+  failures.push(...authOkFor(capability));
+  return failures;
+}
 
 async function smithers(args, opts = {}) {
   // Prepend the deployer-configured exec wrapper, if any:
@@ -181,11 +214,51 @@ async function smithers(args, opts = {}) {
   //   wrapper unset -> `<smithersBin> <args>` (bare host default)
   const cmd = execWrapper.length ? execWrapper[0] : smithersBin;
   const fullArgs = execWrapper.length ? [...execWrapper.slice(1), smithersBin, ...args] : args;
-  return execFileAsync(cmd, fullArgs, {
-    cwd: workspace,
-    timeout: opts.timeout || 60_000,
-    maxBuffer: 1024 * 1024 * 32,
-    ...(opts.env ? { env: opts.env } : {})
+  if (!opts.stdin) {
+    return execFileAsync(cmd, fullArgs, {
+      cwd: workspace,
+      timeout: opts.timeout || 60_000,
+      maxBuffer: 1024 * 1024 * 32,
+      ...(opts.env ? { env: opts.env } : {})
+    });
+  }
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, fullArgs, {
+      cwd: workspace,
+      env: opts.env || process.env,
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+    const timeout = setTimeout(() => {
+      child.kill("SIGTERM");
+      const error = new Error(`smithers timed out after ${opts.timeout || 60_000}ms`);
+      error.stdout = stdout;
+      error.stderr = stderr;
+      reject(error);
+    }, opts.timeout || 60_000);
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", (error) => {
+      clearTimeout(timeout);
+      error.stdout = stdout;
+      error.stderr = stderr;
+      reject(error);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timeout);
+      if (code === 0) return resolve({ stdout, stderr });
+      const error = new Error(stderr || stdout || `smithers exited ${code}`);
+      error.code = code;
+      error.stdout = stdout;
+      error.stderr = stderr;
+      reject(error);
+    });
+    child.stdin.end(opts.stdin);
   });
 }
 
@@ -239,7 +312,11 @@ async function launch(entry, input, secretEnv = {}, resume = null) {
   // workflow input so it never reaches the workflow body.
   const cleanInput = { ...(input || {}) };
   delete cleanInput.__resume;
-  const args = ["up", workflowPath, "--input", JSON.stringify(cleanInput), "-d", "--format", "json"];
+  const inputPayload = largeInputPayload(cleanInput);
+  const args = ["up", workflowPath];
+  if (inputPayload.stdin) args.push("--input", "-");
+  else args.push("--input", inputPayload.inline);
+  args.push("-d", "--format", "json");
   if (resume?.smithersRunId) {
     args.push("--resume", String(resume.smithersRunId), "--force");
   }
@@ -255,7 +332,8 @@ async function launch(entry, input, secretEnv = {}, resume = null) {
   const claudeOauthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN || readClaudeOauthToken();
   if (claudeOauthToken && !secretEnv.CLAUDE_CODE_OAUTH_TOKEN) supervisorEnv.CLAUDE_CODE_OAUTH_TOKEN = claudeOauthToken;
   const { stdout } = await smithers(args, {
-    env: { ...process.env, ...supervisorEnv, ...secretEnv }
+    env: { ...process.env, ...supervisorEnv, ...secretEnv },
+    ...(inputPayload.stdin ? { stdin: inputPayload.stdin } : {})
   });
   try {
     const parsed = JSON.parse(stdout);
@@ -332,7 +410,7 @@ async function executeAssignment(assignment) {
         await client.post(`/api/runs/${run.id}/complete`, { output: { outputs: { reauth } } });
         console.log(`Completed ${run.id} via reauth (${reauth.provider})`);
       } else {
-        await client.post(`/api/runs/${run.id}/fail`, { error: reauth.error || `reauth ${reauth.status}` });
+        await failRun(run.id, reauth.error || `reauth ${reauth.status}`);
         console.log(`Run ${run.id} reauth ended '${reauth.status}'`);
       }
       return;
@@ -351,7 +429,17 @@ async function executeAssignment(assignment) {
       return;
     }
 
-    if (!entry) throw new Error(`capability ${capability.slug} has no workflow.entry`);
+    const preflightFailures = preflightAssignment(run, capability, entry);
+    if (preflightFailures.length) {
+      const error = `preflight failed: ${preflightFailures.join("; ")}`;
+      await event(run.id, "runner.preflight_failed", error, {
+        runnerId,
+        failureClass: RUN_FAILURE_CLASSES.BLOCKED_BY_PREFLIGHT
+      });
+      await failRun(run.id, error, RUN_FAILURE_CLASSES.BLOCKED_BY_PREFLIGHT);
+      console.log(`Run ${run.id} blocked by preflight: ${preflightFailures.join("; ")}`);
+      return;
+    }
     await event(run.id, "runner.started", `Executing Smithers workflow ${entry} on ${name}`, { runnerId, entry, location });
 
     // A hub-supervised resume carries the prior Smithers run id in __resume.
@@ -457,11 +545,11 @@ async function executeAssignment(assignment) {
           ? `smithers run ${sid} failed${failure.failedStep ? ` at node '${failure.failedStep}'` : ""}: ${failure.error}`.slice(0, 2000)
           : `smithers run ${sid} ended in state '${state}'`;
       }
-      await client.post(`/api/runs/${run.id}/fail`, { error });
+      await failRun(run.id, error, deadlineExceeded ? RUN_FAILURE_CLASSES.TIMED_OUT : "");
       console.log(`Run ${run.id} ended '${state}' (smithers ${sid})`);
     }
   } catch (error) {
-    await client.post(`/api/runs/${run.id}/fail`, { error: error.stack || error.message }).catch(() => {});
+    await failRun(run.id, error.stack || error.message).catch(() => {});
     console.error(`Run ${run.id} failed:`, error.message);
   } finally {
     activeRuns.delete(run.id);
