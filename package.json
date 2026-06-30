@@ -28,7 +28,8 @@
     "watch:web": "node bin/build-web.mjs --watch",
     "build": "node bin/build-vendor.mjs && node bin/build-web.mjs",
     "smoke:smart-contract-audit": "node scripts/smoke-smart-contract-audit.mjs",
-    "test": "node --experimental-sqlite --test tests/*.test.js"
+    "test": "node --experimental-sqlite --test tests/*.test.js",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "commander": "^14.0.2",
@@ -41,6 +42,7 @@
     "@tanstack/query-db-collection": "^1.0.42",
     "@tanstack/react-db": "^0.1.88",
     "@tanstack/react-query": "^5.101.1",
+    "@playwright/test": "^1.61.0",
     "@xyflow/react": "^12.11.0",
     "esbuild": "^0.28.1",
     "highlight.js": "^11.11.1",
