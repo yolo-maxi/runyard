@@ -1845,12 +1845,13 @@ details.advanced[open] summary {
   border-left-color: var(--ok);
 }
 
-/* Active (in-flight) runs use the same row chrome but get an accent stripe and
-   a soft tinted background so the eye still anchors on what's running right now
-   without breaking the unified row layout. */
+/* Active (in-flight) runs use the same row chrome as historical ones. A 2px
+   solid accent left border and a flat, subtle tint mark them — no gradient —
+   so the status badge stays the highest-contrast element in the row. */
 .run-history-row.active {
+  border-left-width: 2px;
   border-left-color: var(--brand-2, var(--brand, #2563eb));
-  background: linear-gradient(90deg, color-mix(in srgb, var(--brand-2, #2563eb) 7%, var(--panel)) 0%, var(--panel) 48%);
+  background: color-mix(in srgb, var(--brand-2, #2563eb) 4%, var(--panel));
 }
 .run-history-row.active.running { border-left-color: var(--ok); }
 .run-history-row.active.waiting_approval { border-left-color: var(--warn); }
@@ -4175,30 +4176,92 @@ button.run-id-mono:focus-visible,
   min-height: 44px;
 }
 
+/* Workflow filter now collapses to a single chip-style <details> button so the
+   toolbar fits one row at >=1280px even with dozens of workflows. The panel
+   floats above the rest of the filter bar when open. */
 .runs-workflow-filter {
-  flex: 1 1 360px;
-  min-width: 280px;
-  max-width: 100%;
+  position: relative;
+  flex: 0 0 auto;
+  margin: 0;
   padding: 0;
   border: 0;
-  margin: 0;
+  align-self: flex-end;
 }
 
-.runs-workflow-filter legend {
-  margin-bottom: 4px;
+.runs-workflow-filter-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  cursor: pointer;
+  list-style: none;
   font-size: var(--fs-sm);
+  color: var(--ink);
+}
+
+.runs-workflow-filter-summary::-webkit-details-marker { display: none; }
+.runs-workflow-filter-summary::marker { content: ""; }
+
+.runs-workflow-filter-summary::after {
+  content: "▾";
+  margin-left: 2px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+
+.runs-workflow-filter[open] > .runs-workflow-filter-summary {
+  border-color: var(--brand-2, var(--brand));
+}
+
+.runs-workflow-filter-summary:hover,
+.runs-workflow-filter-summary:focus-visible {
+  border-color: var(--brand-2, var(--brand));
+}
+
+.runs-workflow-filter-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--brand-2, #2563eb) 14%, var(--soft));
+  color: var(--brand-2, var(--brand));
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.runs-workflow-filter-badge[data-default="true"] {
+  background: var(--soft);
+  color: var(--muted);
 }
 
 .runs-workflow-filter-list {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 4px 8px;
-  max-height: 118px;
+  max-height: 240px;
   overflow: auto;
-  padding: 6px;
+  padding: 8px;
+  margin-top: 6px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--soft);
+  background: var(--panel);
+  box-shadow: 0 8px 24px rgba(15, 25, 35, 0.12);
+  /* Float above the rest of the toolbar so opening the panel doesn't push the
+     runs list down. Width is wide enough to show ~3 columns of workflows. */
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 5;
+  min-width: 320px;
+  max-width: min(640px, 92vw);
 }
 
 .runs-filter-bar .runs-workflow-filter-option {
@@ -4303,9 +4366,20 @@ button.run-id-mono:focus-visible,
     width: 100%;
   }
 
+  .runs-workflow-filter-summary {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  /* On narrow viewports the popover spans the toolbar width instead of floating
+     past the edge of the screen, and is taller to give the list room. */
   .runs-workflow-filter-list {
     grid-template-columns: 1fr;
-    max-height: 180px;
+    max-height: 240px;
+    position: static;
+    min-width: 0;
+    max-width: 100%;
+    box-shadow: none;
   }
 
   .runs-filter-chips {

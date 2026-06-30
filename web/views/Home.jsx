@@ -18,6 +18,7 @@ import { relativeTime } from "../lib/format.js";
 // view hides them by default and exposes a single chip to flip them back on.
 const DEFAULT_HIDDEN_WORKFLOWS = ["runyard-support-agent", "reauth-cli"];
 const SHOW_INTERNAL_STORAGE_KEY = "runs.showInternalWorkflows";
+const WORKFLOW_FILTER_OPEN_STORAGE_KEY = "runs.workflowFilterOpen";
 
 function isInternalRun(run) {
   return DEFAULT_HIDDEN_WORKFLOWS.includes(run?.capabilitySlug || "");
@@ -169,7 +170,7 @@ function RunHistoryGroups({ groups, artifactsByRun, now }) {
   );
 }
 
-function HomeFilterBar({ filters, capabilities = [], matchingCount = 0, showInternal, onToggleInternal, internalHiddenCount = 0 }) {
+function HomeFilterBar({ filters, capabilities = [], matchingCount = 0, showInternal, onToggleInternal, internalHiddenCount = 0, statusCounts = {} }) {
   const navigate = useNavigate();
   const workflowOptions = sortedWorkflowOptions(capabilities);
   const defaultWorkflows = defaultWorkflowSlugs(capabilities, { includeInternal: showInternal });
@@ -180,6 +181,9 @@ function HomeFilterBar({ filters, capabilities = [], matchingCount = 0, showInte
   const [range, setRange] = useState(filters.range);
   const [order, setOrder] = useState(filters.order);
   const [workflows, setWorkflows] = useState(selectedWorkflows);
+  // Persist open/closed for the workflow popover so heavy filter setups don't
+  // re-collapse on every navigation. Default closed to keep the toolbar tight.
+  const [workflowPanelOpen, setWorkflowPanelOpen] = useLocalStorage(WORKFLOW_FILTER_OPEN_STORAGE_KEY, false);
   useEffect(() => {
     setQ(filters.q);
     setStatus(filters.status);
@@ -232,7 +236,14 @@ function HomeFilterBar({ filters, capabilities = [], matchingCount = 0, showInte
         </label>
         <label><span className="muted">Status</span>
           <select id="runs-filter-status" name="status" value={status} onChange={(e) => setStatus(e.target.value)}>
-            {RUN_STATUS_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            {RUN_STATUS_OPTIONS.map((o) => {
+              // Inline per-status count taken from the already-loaded runs — no
+              // extra fetch. "All statuses" sums the per-status counts so the
+              // numbers stay consistent with the rest of the dropdown.
+              const allCount = Object.values(statusCounts).reduce((sum, n) => sum + n, 0);
+              const count = o.value === "" ? allCount : statusCounts[o.value] || 0;
+              return <option key={o.value} value={o.value}>{o.label} ({count})</option>;
+            })}
           </select>
         </label>
         <label><span className="muted">Time</span>
@@ -246,23 +257,42 @@ function HomeFilterBar({ filters, capabilities = [], matchingCount = 0, showInte
             <option value="asc">Ended oldest first</option>
           </select>
         </label>
-        {workflowOptions.length ? (
-          <fieldset className="runs-workflow-filter">
-            <legend className="muted">Workflows</legend>
-            <div className="runs-workflow-filter-list">
-              {workflowOptions.map((cap) => (
-                <label key={cap.slug} className="runs-workflow-filter-option">
-                  <input
-                    type="checkbox"
-                    checked={workflows.includes(cap.slug)}
-                    onChange={() => toggleWorkflow(cap.slug)}
-                  />
-                  <span>{cap.name || cap.slug}</span>
-                </label>
-              ))}
-            </div>
-          </fieldset>
-        ) : null}
+        {workflowOptions.length ? (() => {
+          // Collapse the per-workflow checkbox list into a native <details>
+          // popover so the toolbar stays one row at common desktop widths even
+          // on hubs with dozens of workflows. Native <details> preserves
+          // keyboard tab order (summary → checkboxes) and screen-reader
+          // announcement without any custom focus management.
+          const usingDefault = sameSet(workflows, defaultWorkflows);
+          const badge = usingDefault ? "All" : String(workflows.length);
+          const badgeTitle = usingDefault
+            ? "All non-internal workflows are selected"
+            : `${workflows.length} workflow${workflows.length === 1 ? "" : "s"} selected`;
+          return (
+            <details
+              className="runs-workflow-filter"
+              open={workflowPanelOpen}
+              onToggle={(e) => setWorkflowPanelOpen(e.currentTarget.open)}
+            >
+              <summary className="runs-workflow-filter-summary" aria-label={`Workflows filter — ${badgeTitle}`}>
+                <span>Workflows</span>
+                <span className="runs-workflow-filter-badge" data-default={usingDefault ? "true" : "false"} title={badgeTitle}>{badge}</span>
+              </summary>
+              <div className="runs-workflow-filter-list" role="group" aria-label="Filter by workflow">
+                {workflowOptions.map((cap) => (
+                  <label key={cap.slug} className="runs-workflow-filter-option">
+                    <input
+                      type="checkbox"
+                      checked={workflows.includes(cap.slug)}
+                      onChange={() => toggleWorkflow(cap.slug)}
+                    />
+                    <span>{cap.name || cap.slug}</span>
+                  </label>
+                ))}
+              </div>
+            </details>
+          );
+        })() : null}
         <button type="submit" className="button">Apply</button>
         <button type="button" className="button" id="runs-filter-clear" disabled={!active} onClick={() => navigate("#runs")}>Clear</button>
         <div className="runs-filter-chips" aria-label="Active filters and view options">
@@ -387,6 +417,14 @@ export function Home() {
   const hiddenSupervised = filtersActive ? [] : supervisedChildRuns(runs);
   // Single chronological list — active + historical share row chrome.
   const allGroups = groupRunsByEndedDate(visibleRuns, now, filters.order);
+  // Counts per status from the already-loaded runs — reactive to filter/refetch
+  // without a separate API call. Drives the inline counts in the Status filter.
+  const statusCounts = visibleRuns.reduce((acc, run) => {
+    const key = run?.status || "";
+    if (!key) return acc;
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
 
   const artifactsByRun = new Map();
   for (const a of artifactsQ.data?.artifacts || []) {
@@ -406,6 +444,7 @@ export function Home() {
         showInternal={shouldShowInternal}
         onToggleInternal={setShowInternal}
         internalHiddenCount={internalHiddenCount}
+        statusCounts={statusCounts}
       />
       {gettingStarted ? (
         <div className="empty empty-runs" role="region" aria-label="No runs yet">
@@ -415,8 +454,11 @@ export function Home() {
             {internalHiddenCount ? " Support-agent runs are hidden — toggle the chip above to reveal them." : ""}
           </p>
           <div className="empty-runs-actions">
+            {/* Primary CTA points at the workflow picker — the one click that
+                takes an empty hub to its first triggered run. Quickstart docs
+                stay as the secondary affordance. */}
+            <button type="button" className="button primary" onClick={() => navigate("#workflows")}>Pick a workflow</button>
             <a className="button" href="/docs#quickstart">Open quickstart</a>
-            <button type="button" className="button" onClick={() => navigate("#workflows")}>Pick a workflow</button>
           </div>
         </div>
       ) : (
