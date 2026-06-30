@@ -54,10 +54,12 @@ function sameSet(a = [], b = []) {
 
 function filtersFromParams(params) {
   const workflowParam = workflowParamFromParams(params);
+  const order = params.get("order") === "asc" ? "asc" : "desc";
   return {
     q: params.get("q") || "",
     status: params.get("status") || "",
     range: params.get("range") || "",
+    order,
     cursor: params.get("cursor") || "",
     workflows: workflowParam == null ? undefined : parseWorkflowParam(workflowParam)
   };
@@ -68,9 +70,95 @@ function filtersToQuery(filters) {
   if (filters.q) p.set("q", filters.q);
   if (filters.status) p.set("status", filters.status);
   if (filters.range) p.set("range", filters.range);
+  if (filters.order === "asc") p.set("order", "asc");
   if (Array.isArray(filters.workflows)) p.set("workflows", filters.workflows.join(","));
   if (filters.cursor) p.set("cursor", filters.cursor);
   return p.toString();
+}
+
+function runEndedAt(run) {
+  if (isActiveRun(run)) return run?.startedAt || run?.createdAt || run?.updatedAt || "";
+  return run?.completedAt || run?.updatedAt || run?.createdAt || "";
+}
+
+function runChronologyMs(run) {
+  const parsed = Date.parse(runEndedAt(run));
+  if (Number.isFinite(parsed)) return parsed;
+  const fallback = Date.parse(run?.createdAt || "");
+  return Number.isFinite(fallback) ? fallback : 0;
+}
+
+function compareRunsChronologically(a, b, order = "desc") {
+  const direction = order === "asc" ? 1 : -1;
+  const byEnded = (runChronologyMs(a) - runChronologyMs(b)) * direction;
+  if (byEnded) return byEnded;
+  const byCreated = (Date.parse(a?.createdAt || "") - Date.parse(b?.createdAt || "")) * direction;
+  if (byCreated) return byCreated;
+  return String(a?.id || "").localeCompare(String(b?.id || ""));
+}
+
+function dayKey(iso) {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "unknown";
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function dayLabel(key, nowMs) {
+  if (key === "active") return "In flight";
+  if (key === "unknown") return "Unknown date";
+  const today = dayKey(nowMs);
+  const yesterday = dayKey(nowMs - 24 * 3600 * 1000);
+  if (key === today) return "Today";
+  if (key === yesterday) return "Yesterday";
+  const date = new Date(`${key}T12:00:00`);
+  return date.toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: date.getUTCFullYear() === new Date(nowMs).getUTCFullYear() ? undefined : "numeric"
+  });
+}
+
+function groupRunsByEndedDate(runs, nowMs, order = "desc") {
+  const groups = [];
+  for (const run of [...runs].sort((a, b) => compareRunsChronologically(a, b, order))) {
+    const key = isActiveRun(run) ? "active" : dayKey(runEndedAt(run));
+    let group = groups[groups.length - 1];
+    if (!group || group.key !== key) {
+      group = { key, label: dayLabel(key, nowMs), runs: [] };
+      groups.push(group);
+    }
+    group.runs.push(run);
+  }
+  return groups;
+}
+
+function RunHistoryGroups({ groups, artifactsByRun, now }) {
+  return (
+    <section className="run-history-list">
+      {groups.map((group) => (
+        <div className="run-history-day" key={group.key}>
+          <div className="run-history-day-separator" role="heading" aria-level="3">
+            <span>{group.label}</span>
+          </div>
+          <div className="run-history-day-runs">
+            {group.runs.map((run) => (
+              <RunCard
+                key={run.id}
+                run={run}
+                artifacts={artifactsByRun.get(run.id) || []}
+                now={now}
+                variant={isActiveRun(run) ? "card" : "row"}
+              />
+            ))}
+          </div>
+        </div>
+      ))}
+    </section>
+  );
 }
 
 function HomeFilterBar({ filters, capabilities = [], matchingCount = 0 }) {
@@ -82,13 +170,15 @@ function HomeFilterBar({ filters, capabilities = [], matchingCount = 0 }) {
   const [q, setQ] = useState(filters.q);
   const [status, setStatus] = useState(filters.status);
   const [range, setRange] = useState(filters.range);
+  const [order, setOrder] = useState(filters.order);
   const [workflows, setWorkflows] = useState(selectedWorkflows);
   useEffect(() => {
     setQ(filters.q);
     setStatus(filters.status);
     setRange(filters.range);
+    setOrder(filters.order);
     setWorkflows(Array.isArray(filters.workflows) ? filters.workflows : defaultWorkflows);
-  }, [filters.q, filters.status, filters.range, workflowFilterKey, defaultWorkflows.join(",")]);
+  }, [filters.q, filters.status, filters.range, filters.order, workflowFilterKey, defaultWorkflows.join(",")]);
 
   function apply(next) {
     const nextWorkflows = next && Object.hasOwn(next, "workflows") ? next.workflows : workflows;
@@ -96,6 +186,7 @@ function HomeFilterBar({ filters, capabilities = [], matchingCount = 0 }) {
       q,
       status,
       range,
+      order,
       cursor: "",
       ...next,
       workflows: sameSet(nextWorkflows, defaultWorkflows) ? undefined : nextWorkflows
@@ -113,8 +204,9 @@ function HomeFilterBar({ filters, capabilities = [], matchingCount = 0 }) {
     const rl = (TIME_RANGE_OPTIONS.find((o) => o.value === filters.range) || {}).label || filters.range;
     activeChips.push({ kind: "range", label: rl });
   }
+  if (filters.order === "asc") activeChips.push({ kind: "order", label: "oldest first" });
   if (Array.isArray(filters.workflows)) activeChips.push({ kind: "workflows", label: `${filters.workflows.length} workflow${filters.workflows.length === 1 ? "" : "s"}` });
-  const active = Boolean(filters.q || filters.status || filters.range || filters.cursor || Array.isArray(filters.workflows));
+  const active = Boolean(filters.q || filters.status || filters.range || filters.order === "asc" || filters.cursor || Array.isArray(filters.workflows));
 
   return (
     <section className="runs-filter-panel" aria-label="Runs search and filters">
@@ -144,6 +236,12 @@ function HomeFilterBar({ filters, capabilities = [], matchingCount = 0 }) {
             {TIME_RANGE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </label>
+        <label><span className="muted">Order</span>
+          <select id="runs-filter-order" name="order" value={order} onChange={(e) => setOrder(e.target.value)}>
+            <option value="desc">Ended newest first</option>
+            <option value="asc">Ended oldest first</option>
+          </select>
+        </label>
         {workflowOptions.length ? (
           <fieldset className="runs-workflow-filter">
             <legend className="muted">Workflows</legend>
@@ -168,7 +266,7 @@ function HomeFilterBar({ filters, capabilities = [], matchingCount = 0 }) {
             {activeChips.map((c) => (
               <span className="runs-filter-chip" data-filter-chip={c.kind} key={c.kind}>
                 {c.label}{" "}
-                <button type="button" aria-label={`Clear ${c.kind} filter`} data-clear-filter={c.kind} onClick={() => apply(c.kind === "workflows" ? { workflows: defaultWorkflows } : { [c.kind]: "" })}>×</button>
+                <button type="button" aria-label={`Clear ${c.kind} filter`} data-clear-filter={c.kind} onClick={() => apply(c.kind === "workflows" ? { workflows: defaultWorkflows } : { [c.kind]: c.kind === "order" ? "desc" : "" })}>×</button>
               </span>
             ))}
           </div>
@@ -196,7 +294,7 @@ export function Home() {
   const route = useHashRoute();
   const navigate = useNavigate();
   const filters = filtersFromParams(route.params);
-  const filtersActive = Boolean(filters.q || filters.status || filters.range || filters.cursor || Array.isArray(filters.workflows));
+  const filtersActive = Boolean(filters.q || filters.status || filters.range || filters.order === "asc" || filters.cursor || Array.isArray(filters.workflows));
   const now = useNow(1000, true);
   const [draftTick, setDraftTick] = useState(0);
 
@@ -219,7 +317,7 @@ export function Home() {
     queryKey: ["runs", "filtered", filters],
     queryFn: () => {
       const p = new URLSearchParams();
-      p.set("limit", "30");
+      p.set("limit", "200");
       if (filters.q) p.set("q", filters.q);
       if (filters.status) p.set("status", filters.status);
       if (Array.isArray(filters.workflows)) p.set("workflows", filters.workflows.join(","));
@@ -257,8 +355,10 @@ export function Home() {
 
   const visibleRuns = filtersActive ? runs : topLevelRuns(runs);
   const hiddenSupervised = filtersActive ? [] : supervisedChildRuns(runs);
-  const active = visibleRuns.filter(isActiveRun);
+  const active = visibleRuns.filter(isActiveRun).sort((a, b) => compareRunsChronologically(a, b, filters.order));
   const completed = visibleRuns.filter((r) => !isActiveRun(r));
+  const completedGroups = groupRunsByEndedDate(completed, now, filters.order);
+  const matchingGroups = groupRunsByEndedDate(runs, now, filters.order);
 
   const cutoff = now - 24 * 3600 * 1000;
   const recentlyFailed = visibleRuns.filter((r) => {
@@ -321,17 +421,7 @@ export function Home() {
         <>
           <h2 className="section-heading">Matching runs <span className="muted">{totalMatching} total</span></h2>
           {runs.length ? (
-            <section className="run-history-list">
-              {runs.map((run) => (
-                <RunCard
-                  key={run.id}
-                  run={run}
-                  artifacts={artifactsByRun.get(run.id) || []}
-                  now={now}
-                  variant={isActiveRun(run) ? "card" : "row"}
-                />
-              ))}
-            </section>
+            <RunHistoryGroups groups={matchingGroups} artifactsByRun={artifactsByRun} now={now} />
           ) : (
             <p className="muted">No runs match the current filters. <a href="#runs">Clear filters</a> to see everything.</p>
           )}
@@ -354,9 +444,7 @@ export function Home() {
             </p>
           ) : null}
           {completed.length ? (
-            <section className="run-history-list">
-              {completed.slice(0, 30).map((run) => <RunCard key={run.id} run={run} artifacts={artifactsByRun.get(run.id) || []} now={now} variant="row" />)}
-            </section>
+            <RunHistoryGroups groups={completedGroups} artifactsByRun={artifactsByRun} now={now} />
           ) : (
             <p className="muted">Completed runs and their artifacts will appear here.</p>
           )}

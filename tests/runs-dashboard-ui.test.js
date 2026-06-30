@@ -89,6 +89,9 @@ describe("Runs page: filter toolbar, history rows, and detail order", () => {
     assert.match(home, /id="runs-filter-q"/);
     assert.match(home, /id="runs-filter-status"/);
     assert.match(home, /id="runs-filter-range"/);
+    assert.match(home, /id="runs-filter-order"/);
+    assert.match(home, /Ended newest first/);
+    assert.match(home, /Ended oldest first/);
     assert.match(home, /id="runs-filter-clear"/);
     assert.match(home, /DEFAULT_HIDDEN_WORKFLOWS = \["runyard-support-agent", "reauth-cli"\]/);
     assert.match(home, /className="runs-workflow-filter"/);
@@ -116,11 +119,25 @@ describe("Runs page: filter toolbar, history rows, and detail order", () => {
     assert.match(runCard, /ShareButton hash=\{deepLinks\.run\(run\.id\)\}/);
     assert.match(home, /className="run-grid live in-flight"/);
     assert.match(home, /variant=\{isActiveRun\(run\) \? "card" : "row"\}/);
-    assert.match(home, /variant="row"/);
+    assert.match(home, /RunHistoryGroups/);
     assert.match(css, /\.run-history-list/);
     assert.match(css, /\.run-history-row\s*\{[^}]*grid-template-columns/s);
     assert.match(css, /@media \(max-width:\s*640px\)\s*\{[^}]*\.run-history-row\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s);
     assert.match(css, /\.run-history-actions \.share-link,[\s\S]*min-height:\s*44px/);
+  });
+
+  it("sorts run history by workflow ended date and renders chat-style date separators", () => {
+    assert.match(home, /function runEndedAt\(run\)/);
+    assert.match(home, /return run\?\.completedAt \|\| run\?\.updatedAt \|\| run\?\.createdAt \|\| ""/);
+    assert.match(home, /function compareRunsChronologically\(a, b, order = "desc"\)/);
+    assert.match(home, /function groupRunsByEndedDate\(runs, nowMs, order = "desc"\)/);
+    assert.match(home, /dayLabel\(key, nowMs\)/);
+    assert.match(home, /Today/);
+    assert.match(home, /Yesterday/);
+    assert.match(home, /className="run-history-day-separator"/);
+    assert.match(css, /\.run-history-day-separator/);
+    assert.match(css, /\.run-history-day-separator::before,\s*\n\.run-history-day-separator::after/);
+    assert.match(css, /\.run-history-day-separator span/);
   });
 
   it("orders terminal run detail around outcome before console history", () => {

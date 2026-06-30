@@ -1772,8 +1772,50 @@ details.advanced[open] summary {
 
 .run-history-list {
   display: grid;
-  gap: 8px;
+  gap: 14px;
   margin-bottom: 8px;
+}
+
+.run-history-day {
+  display: grid;
+  gap: 8px;
+}
+
+.run-history-day-runs {
+  display: grid;
+  gap: 8px;
+}
+
+.run-history-day-separator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.run-history-day-separator::before,
+.run-history-day-separator::after {
+  content: "";
+  flex: 1 1 0;
+  height: 1px;
+  background: var(--line);
+}
+
+.run-history-day-separator span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 2px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--soft);
+  color: var(--muted);
+  white-space: nowrap;
 }
 
 .run-history-row {
