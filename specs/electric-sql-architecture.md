@@ -136,14 +136,15 @@ separate systemd unit. Production `runyard.repo.box` (127.0.0.1:43117) untouched
 
 ## What remains to fully replace the query layer
 
-- **Postgres-primary cutover.** Today SQLite is SoR + projector. Full replacement
-  = write directly to Postgres, retire the projector, and point RunYard's stores
-  at PG (a one-shot SQLite→PG data copy, not an ongoing projector). Electric then
-  reads the hub's Postgres directly; the auth proxy, shape allowlist and frontend
-  shape client are unchanged. Develop/test the SQL migration in-process against
-  **PGlite** (Docker-free), then run real Postgres in prod. See
-  `specs/pglite-migration-evaluation.md` for why Postgres-primary (not
-  PGlite-primary) is the target and what a credible next prototype looks like.
+- **Postgres-primary cutover (in progress).** Target: hub writes Postgres
+  directly, Electric reads it, projector deleted. The **one-shot migration tooling
+  is built and verified on real data** — `src/electric/migrate.js` +
+  `scripts/migrate-sqlite-to-postgres.mjs` (plan/apply/validate) move all
+  non-sensitive SQLite tables into Postgres with jsonb/PK/timestamp/lineage
+  fidelity and referential validation. What remains is the store-layer swap
+  (`node:sqlite`→`pg`, sync→async) and re-adding FK constraints; details +
+  runbook + cutover plan in **`specs/postgres-primary-migration.md`**. Why
+  Postgres-primary and not PGlite-primary: **`specs/pglite-migration-evaluation.md`**.
 - **Remaining REST reads not yet migrated**: the Home `/api/dashboard` aggregate,
   run detail's one-shot `/api/runs/:id` payload (events now live via shape), and
   artifact downloads (binary, stays REST). These are additive follow-ups.
