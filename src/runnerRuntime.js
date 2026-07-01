@@ -1,5 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { workflowBundleSha256 } from "./workflowBundleRecords.js";
+import { workflowBundleReference } from "./workflowSource.js";
 import { resolveImproveRepo } from "../workflow-templates/workflows/improve-repo.js";
 
 export function isSupervisorCapability(capability) {
@@ -59,6 +61,44 @@ export function preflightAssignment(run, capability, entry, { workspace, health,
   failures.push(...preflightImproveRepo(run, capability, { workspace, env, gitBin, gitEnv }));
   failures.push(...authOkFor(capability, health));
   return failures;
+}
+
+// A capability with workflow.bundleId executes DB-published source, not a
+// checked-in template. The Hub ships the bundle bytes inside the claim payload;
+// this writes them to an isolated per-run file (the stored capability record is
+// never mutated) and verifies the sha256 recorded at publish time before
+// Smithers ever sees the file. Any gap — bundle data absent from the payload,
+// bundle id mismatch, digest mismatch, write failure — throws so the caller
+// fails the run closed instead of falling back to a template file. Returns
+// null for file-backed capabilities so their behavior is untouched.
+export function materializeWorkflowBundle(run, capability, bundle, { workspace } = {}) {
+  const bundleId = workflowBundleReference(capability);
+  if (!bundleId) return null;
+  const slug = capability?.slug || "unknown";
+  if (!bundle || typeof bundle.code !== "string") {
+    throw new Error(
+      `capability ${slug} references workflow bundle ${bundleId}, but the claim payload carried no bundle code; refusing to fall back to a workflow template`
+    );
+  }
+  if (bundle.id && bundle.id !== bundleId) {
+    throw new Error(`claim payload carried workflow bundle ${bundle.id}, but capability ${slug} references ${bundleId}`);
+  }
+  const sha256 = workflowBundleSha256(bundle.code);
+  if (sha256 !== bundle.sha256) {
+    throw new Error(`workflow bundle ${bundleId} sha256 mismatch: stored ${bundle.sha256 || "(none)"}, materialized ${sha256}`);
+  }
+  const language = /^[a-z0-9]{1,10}$/.test(String(bundle.language || "")) ? bundle.language : "tsx";
+  const bundleDir = path.join(workspace, ".smithers", "workflow-bundles", String(run.id));
+  mkdirSync(bundleDir, { recursive: true });
+  const entry = path.join(bundleDir, `${bundleId}.v${bundle.version || 0}.${language}`);
+  writeFileSync(entry, bundle.code, { mode: 0o600 });
+  return {
+    entry,
+    bundleId,
+    version: bundle.version ?? null,
+    sha256,
+    sizeBytes: Buffer.byteLength(bundle.code, "utf8")
+  };
 }
 
 export function materializeAgentRuntimePack(run, pack, { workspace } = {}) {

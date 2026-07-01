@@ -40,3 +40,23 @@ describe("Smithers runner deadline containment", () => {
     assert.match(source, /Smithers runner exiting after/);
   });
 });
+
+describe("DB-backed workflow bundle materialization", () => {
+  it("materializes hub-shipped bundles before preflight and rewires the run entry", () => {
+    assert.match(source, /materializeWorkflowBundle\(run, capability, assignment\.workflowBundle, \{ workspace \}\)/);
+    assert.match(source, /if \(workflowBundle\) entry = workflowBundle\.entry/);
+    assert.match(source, /runner\.workflow_bundle_materialized/);
+  });
+
+  it("treats materialization gaps as preflight failures, never template fallback", () => {
+    assert.match(source, /workflow bundle materialization failed/);
+    assert.match(source, /const preflightFailures = bundleFailure\s*\?\s*\[bundleFailure\]/);
+  });
+
+  it("never posts bundle source code in the materialization event", () => {
+    const eventData = source.match(/runner\.workflow_bundle_materialized[\s\S]*?\{([\s\S]*?)\}\s*\);/)?.[1] || "";
+    assert.ok(eventData.includes("sha256"));
+    assert.ok(eventData.includes("bundleId"));
+    assert.equal(/code\s*:/.test(eventData), false);
+  });
+});

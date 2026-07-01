@@ -102,6 +102,7 @@ const runClaimStore = createRunClaimStore({
   getRun,
   getDecryptedSecretEnv,
   buildAgentRuntimePack,
+  getWorkflowBundle,
   supervisorCapabilitySlug: SUPERVISOR_CAPABILITY_SLUG
 });
 const runCreateStore = createRunCreateStore({

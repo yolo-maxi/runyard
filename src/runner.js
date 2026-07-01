@@ -40,6 +40,7 @@ import {
   hasClaimCapacity as computeHasClaimCapacity,
   isSupervisorCapability,
   materializeAgentRuntimePack as writeAgentRuntimePack,
+  materializeWorkflowBundle,
   preflightAssignment
 } from "./runnerRuntime.js";
 import { handleRunnerSpecialRun } from "./runnerSpecialRuns.js";
@@ -340,7 +341,7 @@ async function executeAssignment(assignment) {
   const { run, capability } = assignment;
   // Allowlisted, decrypted secrets the Hub injected for this run (never stored).
   const secretEnv = assignment.secretEnv && typeof assignment.secretEnv === "object" ? assignment.secretEnv : {};
-  const entry = capability.workflow?.entry || capability.workflow?.file;
+  let entry = capability.workflow?.entry || capability.workflow?.file;
   activeRuns.add(run.id);
   activeRunKinds.set(run.id, isSupervisorCapability(capability) ? "supervisor" : "work");
   try {
@@ -358,11 +359,26 @@ async function executeAssignment(assignment) {
     });
     if (handledSpecialRun) return;
 
-    const preflightFailures = preflightAssignment(run, capability, entry, {
-      workspace,
-      health: currentAuthHealth(),
-      env: process.env
-    });
+    // DB-backed workflow capabilities: write the Hub-shipped, hash-verified
+    // bundle to a per-run file and point THIS run's entry at it (the stored
+    // capability is untouched). Any materialization gap is a preflight failure
+    // — a configured bundle never falls back to a checked-in template.
+    let workflowBundle = null;
+    let bundleFailure = "";
+    try {
+      workflowBundle = materializeWorkflowBundle(run, capability, assignment.workflowBundle, { workspace });
+    } catch (error) {
+      bundleFailure = `workflow bundle materialization failed: ${error.message || error}`;
+    }
+    if (workflowBundle) entry = workflowBundle.entry;
+
+    const preflightFailures = bundleFailure
+      ? [bundleFailure]
+      : preflightAssignment(run, capability, entry, {
+          workspace,
+          health: currentAuthHealth(),
+          env: process.env
+        });
     if (preflightFailures.length) {
       const error = `preflight failed: ${preflightFailures.join("; ")}`;
       await event(run.id, "runner.preflight_failed", error, {
@@ -372,6 +388,21 @@ async function executeAssignment(assignment) {
       await failRun(run.id, error, RUN_FAILURE_CLASSES.BLOCKED_BY_PREFLIGHT);
       console.log(`Run ${run.id} blocked by preflight: ${preflightFailures.join("; ")}`);
       return;
+    }
+    if (workflowBundle) {
+      // Metadata only — bundle source code never enters the event stream.
+      await event(
+        run.id,
+        "runner.workflow_bundle_materialized",
+        `Materialized workflow bundle ${workflowBundle.bundleId} v${workflowBundle.version} for ${capability.slug}`,
+        {
+          bundleId: workflowBundle.bundleId,
+          version: workflowBundle.version,
+          sha256: workflowBundle.sha256,
+          sizeBytes: workflowBundle.sizeBytes,
+          path: workflowBundle.entry
+        }
+      );
     }
     await event(run.id, "runner.started", `Executing Smithers workflow ${entry} on ${name}`, { runnerId, entry, location });
 

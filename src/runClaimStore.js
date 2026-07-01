@@ -4,6 +4,7 @@ import {
   runnerMatchesAssignment,
   secretNamesForRun
 } from "./runnerAssignment.js";
+import { workflowBundleReference } from "./workflowSource.js";
 
 export function createRunClaimStore({
   run,
@@ -18,6 +19,7 @@ export function createRunClaimStore({
   getRun,
   getDecryptedSecretEnv,
   buildAgentRuntimePack,
+  getWorkflowBundle,
   supervisorCapabilitySlug = SUPERVISOR_CAPABILITY_SLUG
 }) {
   function claimNextRun(runnerId) {
@@ -60,6 +62,33 @@ export function createRunClaimStore({
       });
 
       const payload = { run: claimedRun, capability, agentRuntimePack };
+
+      // DB-backed workflow capabilities ship the bundle bytes with the claim so
+      // the runner can materialize the source before Smithers launch. When the
+      // configured bundle is gone the claim still proceeds WITHOUT bundle data —
+      // the runner fails the run closed at preflight rather than falling back to
+      // a checked-in template. Events carry metadata only, never bundle code.
+      const bundleId = workflowBundleReference(capability);
+      if (bundleId) {
+        const bundle = typeof getWorkflowBundle === "function" ? getWorkflowBundle(bundleId, { includeCode: true }) : null;
+        if (bundle && typeof bundle.code === "string") {
+          payload.workflowBundle = bundle;
+          addRunEvent(candidate.id, "run.workflow_bundle", `Attached workflow bundle ${bundle.id} v${bundle.version}`, {
+            bundleId: bundle.id,
+            version: bundle.version,
+            sha256: bundle.sha256,
+            sizeBytes: bundle.sizeBytes
+          });
+        } else {
+          addRunEvent(
+            candidate.id,
+            "run.workflow_bundle_missing",
+            `Workflow bundle ${bundleId} is configured for ${capability?.slug} but missing from the bundle store; runner will fail preflight`,
+            { bundleId }
+          );
+        }
+      }
+
       if (Object.keys(secretEnv).length) payload.secretEnv = secretEnv;
       return payload;
     }

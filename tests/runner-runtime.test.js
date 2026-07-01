@@ -9,10 +9,12 @@ import {
   hasClaimCapacity,
   isSupervisorCapability,
   materializeAgentRuntimePack,
+  materializeWorkflowBundle,
   preflightAssignment,
   preflightImproveRepo,
   supervisorConcurrencyLimit
 } from "../src/runnerRuntime.js";
+import { workflowBundleSha256 } from "../src/workflowBundleRecords.js";
 
 describe("runner runtime helpers", () => {
   it("classifies supervisor capability and capacity pools", () => {
@@ -82,5 +84,49 @@ describe("runner runtime helpers", () => {
       skills: [{ slug: "review", version: 3 }]
     });
     assert.deepEqual(materializeAgentRuntimePack({ id: "run_2" }, null, { workspace: temp }), {});
+  });
+
+  it("materializes DB workflow bundles to an isolated per-run file", () => {
+    const temp = mkdtempSync(path.join(os.tmpdir(), "runner-workflow-bundle-"));
+    const code = "export default function Workflow() {}\n";
+    const bundle = { id: "wfb_1", capabilitySlug: "deploy", version: 3, language: "tsx", sha256: workflowBundleSha256(code), code };
+    const capability = { slug: "deploy", workflow: { bundleId: "wfb_1" } };
+
+    const materialized = materializeWorkflowBundle({ id: "run_1" }, capability, bundle, { workspace: temp });
+
+    assert.equal(materialized.entry, path.join(temp, ".smithers", "workflow-bundles", "run_1", "wfb_1.v3.tsx"));
+    assert.equal(readFileSync(materialized.entry, "utf8"), code);
+    assert.equal(materialized.bundleId, "wfb_1");
+    assert.equal(materialized.version, 3);
+    assert.equal(materialized.sha256, bundle.sha256);
+    assert.equal(materialized.sizeBytes, Buffer.byteLength(code, "utf8"));
+  });
+
+  it("leaves file-backed workflows untouched and fails closed on bundle gaps", () => {
+    const temp = mkdtempSync(path.join(os.tmpdir(), "runner-workflow-bundle-"));
+    const code = "export default function Workflow() {}\n";
+    const bundle = { id: "wfb_1", version: 1, language: "tsx", sha256: workflowBundleSha256(code), code };
+    const capability = { slug: "deploy", workflow: { bundleId: "wfb_1" } };
+
+    // File-backed capability: no bundle reference → no materialization at all.
+    assert.equal(
+      materializeWorkflowBundle({ id: "run_1" }, { slug: "hello", workflow: { entry: "hello.tsx" } }, null, { workspace: temp }),
+      null
+    );
+    // Configured bundle with no payload data must never fall back to a template.
+    assert.throws(
+      () => materializeWorkflowBundle({ id: "run_1" }, capability, null, { workspace: temp }),
+      /carried no bundle code; refusing to fall back/
+    );
+    // Payload carrying a different bundle than the capability references.
+    assert.throws(
+      () => materializeWorkflowBundle({ id: "run_1" }, capability, { ...bundle, id: "wfb_other" }, { workspace: temp }),
+      /capability deploy references wfb_1/
+    );
+    // Stored hash disagreeing with the shipped bytes blocks execution.
+    assert.throws(
+      () => materializeWorkflowBundle({ id: "run_1" }, capability, { ...bundle, sha256: "deadbeef" }, { workspace: temp }),
+      /sha256 mismatch/
+    );
   });
 });

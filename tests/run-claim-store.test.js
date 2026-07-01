@@ -55,6 +55,7 @@ function createHarness(overrides = {}) {
       skills: [{ slug: "skill", version: 4 }],
       missing: []
     }),
+    getWorkflowBundle: overrides.getWorkflowBundle,
     supervisorCapabilitySlug: "run-smithers"
   });
   return { calls, events, releases, store };
@@ -70,6 +71,7 @@ describe("run claim store", () => {
     assert.equal(payload.capability.slug, "deploy");
     assert.deepEqual(payload.secretEnv, { API_KEY: "secret-value" });
     assert.equal(payload.agentRuntimePack.agents[0].slug, "agent");
+    assert.equal(payload.workflowBundle, undefined);
     assert.deepEqual(releases, [["runner_1", 1]]);
     assert.deepEqual(events.map((event) => event[1]), ["run.assigned", "run.agent_runtime_pack"]);
     assert.equal(calls[0].params[0], "runner_1");
@@ -89,6 +91,42 @@ describe("run claim store", () => {
 
     assert.equal(createHarness({ runs: [targetedAway, runnable] }).store.claimNextRun("runner_1").run.id, "run_2");
     assert.equal(createHarness({ capability: { ...capability, requiredRunnerTags: ["gpu"] } }).store.claimNextRun("runner_1"), null);
+  });
+
+  it("ships DB workflow bundle data with the claim for bundle-backed capabilities", () => {
+    const bundle = {
+      id: "wfb_1",
+      capabilitySlug: "deploy",
+      version: 2,
+      language: "tsx",
+      sizeBytes: 22,
+      sha256: "abc123",
+      code: "export default null;\n"
+    };
+    const { events, store } = createHarness({
+      capability: { ...capability, workflow: { ...capability.workflow, bundleId: "wfb_1" } },
+      getWorkflowBundle: (bundleId, options) => (bundleId === "wfb_1" && options?.includeCode ? bundle : null)
+    });
+
+    const payload = store.claimNextRun("runner_1");
+
+    assert.deepEqual(payload.workflowBundle, bundle);
+    const bundleEvent = events.find((event) => event[1] === "run.workflow_bundle");
+    assert.deepEqual(bundleEvent[3], { bundleId: "wfb_1", version: 2, sha256: "abc123", sizeBytes: 22 });
+    assert.equal(JSON.stringify(bundleEvent[3]).includes("export default"), false);
+  });
+
+  it("claims but flags a missing configured bundle so the runner fails closed", () => {
+    const { events, store } = createHarness({
+      capability: { ...capability, workflow: { ...capability.workflow, bundleId: "wfb_gone" } },
+      getWorkflowBundle: () => null
+    });
+
+    const payload = store.claimNextRun("runner_1");
+
+    assert.equal(payload.workflowBundle, undefined);
+    const missingEvent = events.find((event) => event[1] === "run.workflow_bundle_missing");
+    assert.deepEqual(missingEvent[3], { bundleId: "wfb_gone" });
   });
 
   it("uses the supervisor pool separately from work capacity", () => {
