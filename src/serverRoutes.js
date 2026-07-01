@@ -24,6 +24,7 @@ export function registerServerRoutes(app, {
   supportChatHandlers,
   tokenHandlers,
   updateHandlers,
+  workflowBundleHandlers,
   workflowEndpointHandlers
 }) {
   app.get("/healthz", publicHandlers.healthz);
@@ -68,6 +69,10 @@ export function registerServerRoutes(app, {
   app.post("/api/workflow-endpoints", requireAuth, requireScopes("admin"), workflowEndpointHandlers.upsertWorkflowEndpoint);
   app.get("/api/workflow-endpoints/:endpointSlug", requireAuth, requireScopes("admin"), workflowEndpointHandlers.getWorkflowEndpoint);
   app.post("/api/workflow-endpoints/:endpointSlug", asyncHandler(workflowEndpointHandlers.submitWorkflowEndpoint));
+
+  app.get("/api/workflow-bundles", requireAuth, workflowBundleHandlers.listWorkflowBundles);
+  app.post("/api/workflow-bundles", requireAuth, requireScopes("admin"), workflowBundleHandlers.publishWorkflowBundle);
+  app.get("/api/workflow-bundles/:id", requireAuth, workflowBundleHandlers.getWorkflowBundle);
 
   app.get("/api/dashboard", requireAuth, operatorReadHandlers.dashboard);
   app.get("/api/repo-options", requireAuth, operatorReadHandlers.repoOptions);

@@ -9,6 +9,7 @@ import {
   MAX_WORKFLOW_BUNDLE_BYTES,
   parseWorkflowMetadata,
   sliceWorkflowSections,
+  workflowBundleReference,
   workflowBundleSizeError,
   workflowSourceCandidates,
   workflowTemplatesDir
@@ -36,6 +37,56 @@ describe("workflow source helpers", () => {
     assert.equal(source.language, "tsx");
     assert.match(source.code, /smithers-display-name/);
     assert.equal(source.sizeBytes, Buffer.byteLength(source.code, "utf8"));
+  });
+
+  it("resolves DB-backed bundles through the injected bundle store", () => {
+    const capability = { slug: "db-flow", workflow: { bundleId: "wfb_1" } };
+    assert.equal(workflowBundleReference(capability), "wfb_1");
+    assert.equal(workflowBundleReference({ slug: "file-flow", workflow: {} }), null);
+
+    const source = loadWorkflowSource(capability, {
+      getWorkflowBundle: (bundleId) => ({
+        id: bundleId,
+        capabilitySlug: "db-flow",
+        version: 2,
+        language: "tsx",
+        sizeBytes: 12,
+        sha256: "deadbeef",
+        code: "export nil;\n"
+      })
+    });
+
+    assert.equal(source.bundleId, "wfb_1");
+    assert.equal(source.bundleVersion, 2);
+    assert.equal(source.sha256, "deadbeef");
+    assert.equal(source.relativePath, "db://workflow-bundles/wfb_1");
+    assert.equal(source.language, "tsx");
+    assert.equal(source.sizeBytes, 12);
+    assert.equal(source.code, "export nil;\n");
+  });
+
+  it("fails clearly when a configured DB bundle is missing instead of falling back to a file", () => {
+    // A matching template file exists — the bundle reference must still win
+    // and the missing bundle must be a hard error, never a silent fallback.
+    const root = mkdtempSync(path.join(os.tmpdir(), "runyard-db-bundle-"));
+    const workflows = path.join(root, "workflow-templates", "workflows");
+    mkdirSync(workflows, { recursive: true });
+    writeFileSync(path.join(workflows, "db-flow.tsx"), "export default null;\n");
+
+    const capability = { slug: "db-flow", workflow: { bundleId: "wfb_missing" } };
+    for (const options of [{ root }, { root, getWorkflowBundle: () => null }]) {
+      assert.throws(
+        () => loadWorkflowSource(capability, options),
+        (error) => {
+          assert.equal(error.code, "workflow_bundle_missing");
+          assert.equal(error.bundleId, "wfb_missing");
+          assert.match(error.message, /db-flow/);
+          assert.match(error.message, /wfb_missing/);
+          assert.match(error.message, /refusing to fall back/);
+          return true;
+        }
+      );
+    }
   });
 
   it("accepts bundles at the 500 KB cap and rejects bundles over it with a debuggable error", () => {

@@ -41,6 +41,7 @@ function harness(overrides = {}) {
       return { run, supervising: overrides.supervising };
     },
     getCapability: (slug) => capabilities.get(slug) || null,
+    getWorkflowBundle: (bundleId) => (overrides.bundles || {})[bundleId] || null,
     listApprovals: () => overrides.pendingApprovals || [],
     listCapabilities: (options) => [{ slug: "hello", options }],
     listCapabilityVersionsFromRuns: (slug) => [`${slug}:v1`],
@@ -140,6 +141,66 @@ describe("capability route helpers", () => {
     assert.equal(res.statusCode, 413);
     assert.equal(upserts.length, 0);
     assert.match(res.body.error, /500 KB/);
+  });
+
+  it("resolves DB-backed bundle source and validates bundle references at publish time", () => {
+    const code = "// smithers-display-name: DB Flow\nexport default null;\n";
+    const bundle = {
+      id: "wfb_1",
+      capabilitySlug: "db-flow",
+      version: 1,
+      language: "tsx",
+      sizeBytes: Buffer.byteLength(code, "utf8"),
+      sha256: "deadbeef",
+      code
+    };
+    const { handlers, upserts } = harness({
+      bundles: { wfb_1: bundle },
+      capabilities: [{ slug: "db-flow", name: "DB Flow", enabled: true, workflow: { bundleId: "wfb_1" } }]
+    });
+
+    const sourceRes = response();
+    handlers.getCapabilitySource(req({ params: { id: "db-flow" } }), sourceRes);
+    assert.equal(sourceRes.statusCode, 200);
+    assert.equal(sourceRes.body.available, true);
+    assert.equal(sourceRes.body.code, code);
+    assert.equal(sourceRes.body.sizeBytes, bundle.sizeBytes);
+    assert.equal(sourceRes.body.bundleId, "wfb_1");
+    assert.equal(sourceRes.body.bundleVersion, 1);
+    assert.equal(sourceRes.body.sha256, "deadbeef");
+    assert.equal(sourceRes.body.path, "db://workflow-bundles/wfb_1");
+    assert.equal(sourceRes.body.metadata.displayName, "DB Flow");
+
+    const createRes = response();
+    handlers.createCapability(req({
+      body: { slug: "db-flow-2", name: "DB Flow 2", workflow: { bundleId: "wfb_1" } },
+      scopes: ["admin"]
+    }), createRes);
+    assert.equal(createRes.statusCode, 200);
+    assert.equal(upserts.length, 1);
+
+    const badCreate = response();
+    handlers.createCapability(req({
+      body: { slug: "broken", name: "Broken", workflow: { bundleId: "wfb_ghost" } },
+      scopes: ["admin"]
+    }), badCreate);
+    assert.equal(badCreate.statusCode, 400);
+    assert.equal(badCreate.body.bundleId, "wfb_ghost");
+    assert.match(badCreate.body.error, /wfb_ghost not found/);
+    assert.equal(upserts.length, 1);
+  });
+
+  it("fails source resolution clearly when a configured DB bundle is missing", () => {
+    const { handlers } = harness({
+      capabilities: [{ slug: "db-flow", name: "DB Flow", enabled: true, workflow: { bundleId: "wfb_gone" } }]
+    });
+    const res = response();
+    handlers.getCapabilitySource(req({ params: { id: "db-flow" } }), res);
+
+    assert.equal(res.statusCode, 409);
+    assert.equal(res.body.available, false);
+    assert.equal(res.body.bundleId, "wfb_gone");
+    assert.match(res.body.error, /refusing to fall back/);
   });
 
   it("returns the shared not-found response for missing and disabled run capabilities", async () => {

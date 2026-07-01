@@ -203,6 +203,23 @@ export const DB_SCHEMA_SQL = `
     updated_at TEXT NOT NULL
   );
 
+  -- DB-backed workflow bundles (publishing MVP). Append-only: each publish
+  -- inserts a new (capability_slug, version) row; bytes are never edited in
+  -- place, so a bundle id permanently names the exact published source. The
+  -- 500 KB publish cap (MAX_WORKFLOW_BUNDLE_BYTES) is enforced before insert.
+  CREATE TABLE IF NOT EXISTS workflow_bundles (
+    id TEXT PRIMARY KEY,
+    capability_slug TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    language TEXT NOT NULL DEFAULT 'tsx',
+    code TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL,
+    sha256 TEXT NOT NULL,
+    created_by TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    UNIQUE (capability_slug, version)
+  );
+
   CREATE TABLE IF NOT EXISTS run_response_endpoints (
     id TEXT PRIMARY KEY,
     run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,

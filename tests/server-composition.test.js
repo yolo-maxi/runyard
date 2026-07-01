@@ -64,6 +64,7 @@ describe("server composition", () => {
       "supportChatHandlers",
       "tokenHandlers",
       "updateHandlers",
+      "workflowBundleHandlers",
       "workflowEndpointHandlers"
     ]);
   });

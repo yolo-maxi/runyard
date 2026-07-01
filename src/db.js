@@ -12,6 +12,7 @@ import {
 import { normalizeCapability } from "./capabilityRecords.js";
 import { createCapabilityStore } from "./capabilityStore.js";
 import { createWorkflowEndpointStore } from "./workflowEndpointStore.js";
+import { createWorkflowBundleStore } from "./workflowBundleStore.js";
 import { createRunResponseEndpointStore } from "./runResponseEndpointStore.js";
 import { createAccessTokenStore } from "./accessTokenStore.js";
 import { createCatalogStore } from "./catalogStore.js";
@@ -126,6 +127,7 @@ const runnerStore = createRunnerStore({
 const operatorStore = createOperatorStore({ all, one, run, id, now, addRunEvent, getRun, updateRun });
 const scheduleStore = createScheduleStore({ all, one, run, id, now });
 const workflowEndpointStore = createWorkflowEndpointStore({ all, one, run, id, now, hashToken });
+const workflowBundleStore = createWorkflowBundleStore({ all, one, run, id, now });
 const secretStore = createSecretStore({
   all,
   one,
@@ -342,6 +344,24 @@ export function allSecretValues() {
 // store is disabled or empty.
 export function scrubStoredSecrets(value) {
   return secretStore.scrubStoredSecrets(value);
+}
+
+// --- DB-backed workflow bundles ----------------------------------------------
+// Published workflow source stored in the app DB (not runner disk, not external
+// blob storage). Immutable per row: publish always creates the next version for
+// a capability slug; capabilities reference a specific row via
+// workflow.bundleId. The 500 KB cap is enforced inside the store before insert.
+
+export function publishWorkflowBundle(input) {
+  return workflowBundleStore.publishWorkflowBundle(input);
+}
+
+export function getWorkflowBundle(bundleId, options = {}) {
+  return workflowBundleStore.getWorkflowBundle(bundleId, options);
+}
+
+export function listWorkflowBundles(options = {}) {
+  return workflowBundleStore.listWorkflowBundles(options);
 }
 
 export function listWorkflowEndpoints({ includeDisabled = false } = {}) {

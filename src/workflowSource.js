@@ -22,9 +22,48 @@ export function workflowTemplatesDir(root) {
   return path.resolve(root, "workflow-templates", "workflows");
 }
 
-// Resolve a registered capability to a checked-in workflow template. We only
-// use sanitized basenames from workflow.entry/path, then fall back to <slug>.*.
-export function loadWorkflowSource(capability, { root = process.cwd() } = {}) {
+// A capability opts into a DB-backed bundle by setting workflow.bundleId to a
+// published workflow_bundles row id. Returns the trimmed id or null.
+export function workflowBundleReference(capability) {
+  const ref = capability?.workflow?.bundleId ?? capability?.workflow?.bundle_id ?? "";
+  const trimmed = typeof ref === "string" ? ref.trim() : "";
+  return trimmed || null;
+}
+
+export function workflowSourceFromBundle(bundle) {
+  return {
+    bundleId: bundle.id,
+    bundleVersion: bundle.version,
+    sha256: bundle.sha256,
+    relativePath: `db://workflow-bundles/${bundle.id}`,
+    language: bundle.language || "txt",
+    sizeBytes: bundle.sizeBytes,
+    code: bundle.code
+  };
+}
+
+export function missingWorkflowBundleError(capability, bundleId) {
+  const error = new Error(
+    `capability ${capability?.slug || "unknown"} references workflow bundle ${bundleId}, which does not exist in the workflow bundle store; refusing to fall back to a workflow template file`
+  );
+  error.code = "workflow_bundle_missing";
+  error.bundleId = bundleId;
+  return error;
+}
+
+// Resolve a registered capability to its workflow source. A workflow.bundleId
+// reference resolves ONLY from the DB bundle store (via the injected
+// getWorkflowBundle) and throws if the bundle is missing — a configured DB
+// bundle must never silently fall back to a checked-in file. Capabilities
+// without a bundle reference keep resolving checked-in templates: sanitized
+// basenames from workflow.entry/path, then <slug>.*.
+export function loadWorkflowSource(capability, { root = process.cwd(), getWorkflowBundle = null } = {}) {
+  const bundleId = workflowBundleReference(capability);
+  if (bundleId) {
+    const bundle = typeof getWorkflowBundle === "function" ? getWorkflowBundle(bundleId) : null;
+    if (!bundle || typeof bundle.code !== "string") throw missingWorkflowBundleError(capability, bundleId);
+    return workflowSourceFromBundle(bundle);
+  }
   const templatesDir = workflowTemplatesDir(root);
   for (const candidate of workflowSourceCandidates(capability)) {
     const absolute = path.resolve(templatesDir, candidate);

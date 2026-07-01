@@ -20,6 +20,7 @@ import { createSecretHandlers } from "./secretsRoutes.js";
 import { createTokenHandlers } from "./tokenRoutes.js";
 import { maybeRecordFailureClassAlert as maybeRecordFailureAlert } from "./failureAlerts.js";
 import { createWorkflowEndpointHandlers } from "./workflowEndpointRoutes.js";
+import { createWorkflowBundleHandlers } from "./workflowBundleRoutes.js";
 import { createRunLifecycleHandlers } from "./runLifecycleRoutes.js";
 import { createRunReadHandlers } from "./runReadRoutes.js";
 import { createRunPromotionHandlers } from "./runPromotionRoutes.js";
@@ -62,6 +63,7 @@ export function createServerComposition({
     getArtifact,
     getApproval,
     getCapability,
+    getWorkflowBundle,
     getWorkflowEndpoint,
     countRuns,
     createRunResponseEndpoint,
@@ -87,8 +89,10 @@ export function createServerComposition({
     listRunEvents,
     listRuns,
     listSkills,
+    listWorkflowBundles,
     listWorkflowEndpoints,
     pruneDeadRunners,
+    publishWorkflowBundle,
     reapStuckRunIds,
     reconcileFailedRecoverable,
     reconcileRepairChildTerminal,
@@ -200,6 +204,13 @@ export function createServerComposition({
     withRunLinks
   });
 
+  const workflowBundleHandlers = createWorkflowBundleHandlers({
+    getWorkflowBundle,
+    listWorkflowBundles,
+    publishWorkflowBundle,
+    recordAudit
+  });
+
   const runLifecycleHandlers = createRunLifecycleHandlers({
     addRunEvent,
     createRun,
@@ -256,6 +267,7 @@ export function createServerComposition({
     createRunResponseEndpoint,
     dispatchRun,
     getCapability,
+    getWorkflowBundle,
     listApprovals,
     listCapabilities,
     listCapabilityVersionsFromRuns,
@@ -436,6 +448,7 @@ export function createServerComposition({
       supportChatHandlers,
       tokenHandlers,
       updateHandlers,
+      workflowBundleHandlers,
       workflowEndpointHandlers
     },
     telegramApprovalTarget

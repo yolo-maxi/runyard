@@ -23,6 +23,8 @@ describe("server route registration", () => {
       deps.requireAuth,
       deps.scopes["api,mcp"]
     ]);
+    assertRoute(app, "post", "/api/workflow-bundles", [deps.requireAuth, deps.scopes.admin, deps.workflowBundleHandlers.publishWorkflowBundle]);
+    assertRoute(app, "get", "/api/workflow-bundles/:id", [deps.requireAuth, deps.workflowBundleHandlers.getWorkflowBundle]);
     assertRoute(app, "post", "/api/runners/register", [deps.requireAuth, deps.scopes.runner]);
     assertRoute(app, "post", "/api/chat", [deps.requireAuth, deps.rateLimits["support-chat"]]);
     assertRoute(app, "use", "/public");
@@ -71,6 +73,7 @@ function routeDeps() {
     supportChatHandlers: handlers(["status", "chat"]),
     tokenHandlers: handlers(["listTokens", "createToken", "revokeToken"]),
     updateHandlers: handlers(["status", "apply"]),
+    workflowBundleHandlers: handlers(["listWorkflowBundles", "publishWorkflowBundle", "getWorkflowBundle"]),
     workflowEndpointHandlers: handlers(["listWorkflowEndpoints", "upsertWorkflowEndpoint", "getWorkflowEndpoint", "submitWorkflowEndpoint"])
   };
 }
