@@ -114,4 +114,27 @@ describe("run promotion", () => {
     assert.throws(() => git(repo, ["rev-parse", "--verify", run.output.outputs.push.branch]));
     assert.throws(() => git(origin, ["rev-parse", "--verify", run.output.outputs.push.branch]));
   });
+
+  it("runs promotion gates without production secrets from the service env", () => {
+    const { repo, origin, worktrees } = initFixture();
+    writeFileSync(path.join(repo, "package.json"), JSON.stringify({
+      scripts: {
+        test: "node -e \"if (process.env.TELEGRAM_BOT_TOKEN) process.exit(7)\"",
+        build: "node -e \"if (process.env.PROD_API_KEY) process.exit(8)\""
+      }
+    }, null, 2));
+    git(repo, ["add", "package.json"]);
+    git(repo, ["commit", "-m", "add gate scripts"]);
+    git(repo, ["push", "origin", "main"]);
+    const run = isolatedRun({ repo, worktrees });
+
+    const promotion = promoteRunToMain(run, {
+      env: { RUNYARD_REPO_WORKTREE_DIR: worktrees },
+      gates: true,
+      gitEnv: { ...process.env, TELEGRAM_BOT_TOKEN: "prod-token", PROD_API_KEY: "prod-key" }
+    });
+
+    assert.equal(promotion.merged, true);
+    assert.equal(git(origin, ["rev-parse", "main"]), promotion.mergeCommit);
+  });
 });

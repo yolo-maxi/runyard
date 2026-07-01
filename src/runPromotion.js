@@ -73,6 +73,14 @@ function packageScripts(repoDir) {
   }
 }
 
+function promotionGateEnv(env = process.env) {
+  const next = { ...env, NODE_ENV: "test" };
+  for (const key of Object.keys(next)) {
+    if (/TOKEN|SECRET|API_KEY|PRIVATE_KEY|WEBHOOK/i.test(key)) delete next[key];
+  }
+  return next;
+}
+
 export function runPromotionCandidate(run, { env = process.env } = {}) {
   const baseline = outputNode(run, "baseline");
   const push = outputNode(run, "push");
@@ -153,8 +161,9 @@ export function promoteRunToMain(run, {
     merged = true;
 
     const scripts = gates ? packageScripts(repoDir) : {};
-    if (scripts.test) runTool(pnpmBin, ["test"], { cwd: repoDir, env: toolEnv });
-    if (scripts.build) runTool(pnpmBin, ["build"], { cwd: repoDir, env: toolEnv });
+    const gateEnv = promotionGateEnv(toolEnv);
+    if (scripts.test) runTool(pnpmBin, ["test"], { cwd: repoDir, env: gateEnv });
+    if (scripts.build) runTool(pnpmBin, ["build"], { cwd: repoDir, env: gateEnv });
     runGit(["diff", "--check"], { cwd: repoDir, env: toolEnv });
 
     mergeHead = runGit(["rev-parse", "HEAD"], { cwd: repoDir, env: toolEnv });
