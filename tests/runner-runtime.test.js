@@ -128,5 +128,15 @@ describe("runner runtime helpers", () => {
       () => materializeWorkflowBundle({ id: "run_1" }, capability, { ...bundle, sha256: "deadbeef" }, { workspace: temp }),
       /sha256 mismatch/
     );
+    // A bundle id outside the store's alphabet must never become a file path.
+    assert.throws(
+      () => materializeWorkflowBundle(
+        { id: "run_1" },
+        { slug: "deploy", workflow: { bundleId: "../../escape" } },
+        { ...bundle, id: "../../escape" },
+        { workspace: temp }
+      ),
+      /unsupported characters/
+    );
   });
 });

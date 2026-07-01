@@ -75,6 +75,11 @@ export function materializeWorkflowBundle(run, capability, bundle, { workspace }
   const bundleId = workflowBundleReference(capability);
   if (!bundleId) return null;
   const slug = capability?.slug || "unknown";
+  // The bundle id becomes part of the materialized file name — reject anything
+  // outside the store's id alphabet so it can never traverse out of bundleDir.
+  if (!/^[A-Za-z0-9_-]+$/.test(bundleId)) {
+    throw new Error(`capability ${slug} references workflow bundle id with unsupported characters; refusing to materialize`);
+  }
   if (!bundle || typeof bundle.code !== "string") {
     throw new Error(
       `capability ${slug} references workflow bundle ${bundleId}, but the claim payload carried no bundle code; refusing to fall back to a workflow template`

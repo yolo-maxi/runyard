@@ -13,7 +13,6 @@ import {
   MAX_WORKFLOW_BUNDLE_BYTES,
   parseWorkflowMetadata,
   sliceWorkflowSections,
-  workflowBundleReference,
   workflowBundleSizeError
 } from "./workflowSource.js";
 import { normalizeCapabilityDefinition } from "./capabilityRecords.js";
@@ -71,15 +70,17 @@ export function createCapabilityHandlers({
   // broken or oversized bundles never reach dispatch.
   const workflowBundlePublishBlocked = (res, definition) => {
     const normalized = normalizeCapabilityDefinition(definition);
-    const bundleId = workflowBundleReference(normalized);
-    if (bundleId && !(typeof getWorkflowBundle === "function" && getWorkflowBundle(bundleId))) {
+    let source;
+    try {
+      source = loadWorkflowSource(normalized, { root, getWorkflowBundle });
+    } catch (cause) {
+      if (cause.code !== "workflow_bundle_missing") throw cause;
       res.status(400).json({
-        error: `workflow bundle ${bundleId} not found; publish the bundle via POST /api/workflow-bundles before referencing it`,
-        bundleId
+        error: `workflow bundle ${cause.bundleId} not found; publish the bundle via POST /api/workflow-bundles before referencing it`,
+        bundleId: cause.bundleId
       });
       return true;
     }
-    const source = loadWorkflowSource(normalized, { root, getWorkflowBundle });
     const error = workflowBundleSizeError(source);
     if (!error) return false;
     res.status(413).json({
