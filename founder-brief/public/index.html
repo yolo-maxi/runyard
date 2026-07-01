@@ -1,0 +1,1115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RunYard Architecture Brief</title>
+  <meta name="description" content="RunYard architecture, roadmap, failure modes, and questions for Smithers review.">
+  <style>
+    :root {
+      --ink: #15191f;
+      --paper: #f6f5ef;
+      --card: #fffdf7;
+      --line: #d9d4c7;
+      --muted: #66645f;
+      --green: #1f6f4a;
+      --green-soft: #e6f2eb;
+      --amber: #b45309;
+      --amber-soft: #fff0d6;
+      --red: #b91c1c;
+      --red-soft: #f9dddd;
+      --blue: #2563eb;
+      --blue-soft: #e5edff;
+      --shadow: 0 18px 50px rgba(21, 25, 31, 0.08);
+      --radius: 8px;
+      color-scheme: light;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        linear-gradient(180deg, rgba(246, 245, 239, 0.96), rgba(246, 245, 239, 1)),
+        radial-gradient(circle at 20% 0%, rgba(31, 111, 74, 0.12), transparent 35%),
+        radial-gradient(circle at 92% 12%, rgba(37, 99, 235, 0.10), transparent 28%);
+      overflow-x: hidden;
+    }
+
+    a {
+      color: inherit;
+    }
+
+    .shell {
+      width: calc(100% - 32px);
+      max-width: 1180px;
+      margin: 0 auto;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      border-bottom: 1px solid rgba(217, 212, 199, 0.86);
+      background: rgba(246, 245, 239, 0.9);
+      backdrop-filter: blur(18px);
+    }
+
+    .nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      min-height: 64px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      font-weight: 800;
+      letter-spacing: 0;
+    }
+
+    .brand-mark {
+      display: grid;
+      width: 34px;
+      height: 34px;
+      place-items: center;
+      border: 1px solid var(--ink);
+      border-radius: 7px;
+      background: var(--green);
+      color: var(--paper);
+      font-weight: 900;
+      box-shadow: 3px 3px 0 var(--ink);
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 6px;
+      width: 100%;
+      max-width: 100%;
+      overflow-x: auto;
+      padding: 6px 0;
+      scrollbar-width: none;
+    }
+
+    .nav-links::-webkit-scrollbar {
+      display: none;
+    }
+
+    .nav-links a {
+      display: inline-flex;
+      align-items: center;
+      min-height: 36px;
+      padding: 0 12px;
+      border: 1px solid transparent;
+      border-radius: 7px;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 650;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+
+    .nav-links a:hover {
+      border-color: var(--line);
+      color: var(--ink);
+      background: rgba(255, 253, 247, 0.72);
+    }
+
+    header.hero {
+      padding: 66px 0 36px;
+    }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.95fr);
+      gap: 36px;
+      align-items: center;
+    }
+
+    .hero-grid > *,
+    .section-head > *,
+    .grid > *,
+    .node,
+    .system-card {
+      min-width: 0;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0 0 14px;
+      color: var(--green);
+      font-size: 13px;
+      font-weight: 850;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .eyebrow::before {
+      content: "";
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: var(--green);
+      box-shadow: 0 0 0 5px var(--green-soft);
+    }
+
+    h1 {
+      margin: 0;
+      max-width: 860px;
+      font-size: clamp(42px, 7vw, 82px);
+      line-height: 0.94;
+      letter-spacing: 0;
+      overflow-wrap: anywhere;
+    }
+
+    .lead {
+      max-width: 760px;
+      margin: 22px 0 0;
+      color: #3d403d;
+      font-size: clamp(18px, 2vw, 23px);
+      line-height: 1.42;
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 28px;
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 44px;
+      padding: 0 16px;
+      border: 1px solid var(--ink);
+      border-radius: 7px;
+      background: var(--ink);
+      color: var(--paper);
+      font-weight: 800;
+      text-decoration: none;
+      box-shadow: 3px 3px 0 rgba(21, 25, 31, 0.18);
+    }
+
+    .button.secondary {
+      background: var(--card);
+      color: var(--ink);
+    }
+
+    .system-card {
+      position: relative;
+      min-height: 460px;
+      padding: 22px;
+      border: 1px solid var(--ink);
+      border-radius: var(--radius);
+      background: var(--card);
+      box-shadow: var(--shadow), 5px 5px 0 var(--ink);
+      overflow: hidden;
+    }
+
+    .system-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 18px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 6px 9px;
+      border: 1px solid rgba(31, 111, 74, 0.35);
+      border-radius: 999px;
+      background: var(--green-soft);
+      color: var(--green);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0;
+      text-transform: none;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: currentColor;
+    }
+
+    .architecture-map {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }
+
+    .node-row {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .node {
+      min-height: 86px;
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #ffffff;
+    }
+
+    .node strong {
+      display: block;
+      margin-bottom: 7px;
+      font-size: 15px;
+    }
+
+    .node span {
+      display: block;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.35;
+    }
+
+    .node.primary {
+      border-color: rgba(31, 111, 74, 0.42);
+      background: var(--green-soft);
+    }
+
+    .node.warn {
+      border-color: rgba(180, 83, 9, 0.38);
+      background: var(--amber-soft);
+    }
+
+    .arrow {
+      display: grid;
+      height: 18px;
+      place-items: center;
+      color: var(--muted);
+      font-weight: 900;
+    }
+
+    main {
+      padding-bottom: 72px;
+    }
+
+    section {
+      padding: 42px 0;
+      border-top: 1px solid rgba(217, 212, 199, 0.76);
+    }
+
+    .section-head {
+      display: grid;
+      grid-template-columns: minmax(0, 0.9fr) minmax(260px, 0.55fr);
+      gap: 28px;
+      align-items: end;
+      margin-bottom: 22px;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: clamp(30px, 4vw, 48px);
+      line-height: 1.02;
+      letter-spacing: 0;
+    }
+
+    .section-copy {
+      margin: 0;
+      color: var(--muted);
+      font-size: 16px;
+      line-height: 1.55;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .grid.two {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .grid.four {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .panel {
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(255, 253, 247, 0.82);
+      box-shadow: 0 1px 0 rgba(21, 25, 31, 0.04);
+    }
+
+    .panel h3 {
+      margin: 0 0 10px;
+      font-size: 18px;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    .panel p,
+    .panel li {
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.5;
+    }
+
+    .panel p {
+      margin: 0;
+    }
+
+    ul {
+      margin: 0;
+      padding-left: 18px;
+    }
+
+    li + li {
+      margin-top: 7px;
+    }
+
+    .label {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      min-height: 28px;
+      margin-bottom: 12px;
+      padding: 0 9px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 850;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .label.green {
+      background: var(--green-soft);
+      color: var(--green);
+    }
+
+    .label.amber {
+      background: var(--amber-soft);
+      color: var(--amber);
+    }
+
+    .label.red {
+      background: var(--red-soft);
+      color: var(--red);
+    }
+
+    .label.blue {
+      background: var(--blue-soft);
+      color: var(--blue);
+    }
+
+    .flow {
+      display: grid;
+      gap: 10px;
+    }
+
+    .flow-step {
+      display: grid;
+      grid-template-columns: 38px minmax(0, 1fr);
+      gap: 12px;
+      align-items: start;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fffdf7;
+    }
+
+    .num {
+      display: grid;
+      width: 34px;
+      height: 34px;
+      place-items: center;
+      border-radius: 7px;
+      background: var(--ink);
+      color: var(--paper);
+      font-weight: 900;
+    }
+
+    .flow-step strong {
+      display: block;
+      margin-bottom: 4px;
+      font-size: 16px;
+    }
+
+    .flow-step span {
+      display: block;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    .timeline {
+      display: grid;
+      gap: 12px;
+    }
+
+    .milestone {
+      display: grid;
+      grid-template-columns: 88px minmax(0, 1fr);
+      gap: 16px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: rgba(255, 253, 247, 0.88);
+    }
+
+    .version {
+      color: var(--green);
+      font-size: 22px;
+      font-weight: 950;
+      letter-spacing: 0;
+    }
+
+    .milestone h3 {
+      margin: 0 0 6px;
+      font-size: 19px;
+    }
+
+    .milestone p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.5;
+    }
+
+    .question-list {
+      display: grid;
+      gap: 10px;
+      counter-reset: q;
+    }
+
+    .question {
+      position: relative;
+      padding: 16px 18px 16px 54px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #fffdf7;
+      color: #353832;
+      line-height: 1.45;
+    }
+
+    .question::before {
+      counter-increment: q;
+      content: counter(q);
+      position: absolute;
+      top: 14px;
+      left: 14px;
+      display: grid;
+      width: 28px;
+      height: 28px;
+      place-items: center;
+      border-radius: 6px;
+      background: var(--blue-soft);
+      color: var(--blue);
+      font-weight: 900;
+    }
+
+    .callout {
+      padding: 20px;
+      border: 1px solid var(--ink);
+      border-radius: var(--radius);
+      background: var(--ink);
+      color: var(--paper);
+      box-shadow: var(--shadow);
+    }
+
+    .callout h3 {
+      margin: 0 0 8px;
+      font-size: 24px;
+    }
+
+    .callout p {
+      margin: 0;
+      color: rgba(246, 245, 239, 0.78);
+      line-height: 1.55;
+    }
+
+    .print-note {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    footer {
+      padding: 28px 0 52px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    @media (max-width: 900px) {
+      .nav {
+        align-items: flex-start;
+        flex-direction: column;
+        padding: 12px 0;
+      }
+
+      .hero-grid,
+      .section-head,
+      .grid,
+      .grid.two,
+      .grid.four {
+        grid-template-columns: 1fr;
+      }
+
+      .system-card {
+        min-height: 0;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .shell {
+        width: calc(100% - 22px);
+        max-width: 1180px;
+      }
+
+      header.hero {
+        padding-top: 38px;
+      }
+
+      .node-row {
+        grid-template-columns: 1fr;
+      }
+
+      .system-card {
+        padding: 16px;
+        box-shadow: var(--shadow), 3px 3px 0 var(--ink);
+      }
+
+      .system-title {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      h1 {
+        font-size: clamp(34px, 10vw, 42px);
+        line-height: 1;
+        max-width: calc(100vw - 22px);
+        overflow-wrap: normal;
+      }
+
+      .hero-grid,
+      .hero-grid > div,
+      .lead,
+      .system-card {
+        width: 100%;
+        max-width: calc(100vw - 22px);
+      }
+
+      .milestone {
+        grid-template-columns: 1fr;
+      }
+
+      .brand span {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+    }
+
+    @media print {
+      .topbar,
+      .hero-actions {
+        display: none;
+      }
+
+      body {
+        background: #fff;
+      }
+
+      section {
+        break-inside: avoid;
+      }
+
+      .panel,
+      .milestone,
+      .question,
+      .system-card {
+        box-shadow: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <nav class="shell nav" aria-label="Primary">
+      <a class="brand" href="#top" aria-label="RunYard brief home">
+        <span class="brand-mark">RY</span>
+        <span>RunYard Founder Brief</span>
+      </a>
+      <div class="nav-links" aria-label="Sections">
+        <a href="#architecture">Architecture</a>
+        <a href="#features">Features</a>
+        <a href="#failures">Failure Points</a>
+        <a href="#roadmap">Roadmap</a>
+        <a href="#refactor">Refactor Gate</a>
+        <a href="#questions">Questions</a>
+      </div>
+    </nav>
+  </div>
+
+  <header class="hero" id="top">
+    <div class="shell hero-grid">
+      <div>
+        <p class="eyebrow">Private review brief</p>
+        <h1>RunYard should become the control plane for durable agentic software ops.</h1>
+        <p class="lead">This brief summarizes the current architecture, product direction, known failure modes, and the hardening plan toward an operator-grade v1.0.0.</p>
+        <div class="hero-actions">
+          <a class="button" href="#questions">Review Questions</a>
+          <a class="button secondary" href="#failures">Failure Map</a>
+        </div>
+      </div>
+
+      <aside class="system-card" aria-label="Architecture map preview">
+        <div class="system-title">
+          <span>Runtime shape</span>
+          <span class="status-pill"><span class="dot"></span> v0.3 planning</span>
+        </div>
+        <div class="architecture-map">
+          <div class="node-row">
+            <div class="node primary">
+              <strong>Agents</strong>
+              <span>Codex, Fable, Claude, local tools, CLI, MCP clients.</span>
+            </div>
+            <div class="node primary">
+              <strong>Humans</strong>
+              <span>Hub UI, Telegram approvals, future Slack/webhook surfaces.</span>
+            </div>
+            <div class="node primary">
+              <strong>Operators</strong>
+              <span>Install, configure, release, monitor, and recover deployments.</span>
+            </div>
+          </div>
+          <div class="arrow">↓</div>
+          <div class="node-row">
+            <div class="node">
+              <strong>Capability Catalog</strong>
+              <span>Public contract: what agents can ask RunYard to do.</span>
+            </div>
+            <div class="node">
+              <strong>Workflow Code</strong>
+              <span>Versioned Smithers workflows with schemas, checks, and gates.</span>
+            </div>
+            <div class="node">
+              <strong>Approval Broker</strong>
+              <span>Creates review checkpoints and routes decisions back safely.</span>
+            </div>
+          </div>
+          <div class="arrow">↓</div>
+          <div class="node-row">
+            <div class="node warn">
+              <strong>Runner Pool</strong>
+              <span>Claims work by tag/capability; future sandbox and Kubernetes path.</span>
+            </div>
+            <div class="node warn">
+              <strong>Side Effects</strong>
+              <span>Commit, push, deploy, notify, secret mutation, and external writes.</span>
+            </div>
+            <div class="node warn">
+              <strong>Durable Record</strong>
+              <span>Runs, events, artifacts, approvals, lineage, failures, lessons.</span>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </header>
+
+  <main>
+    <section id="north-star">
+      <div class="shell">
+        <div class="section-head">
+          <h2>North Star</h2>
+          <p class="section-copy">RunYard is not trying to be a pretty agent dashboard. It should be the installable control plane you trust when long-running AI work touches real repositories, deployments, budgets, approvals, and operators.</p>
+        </div>
+        <div class="grid four">
+          <article class="panel">
+            <span class="label green">Durable</span>
+            <h3>Runs survive reality</h3>
+            <p>Every run keeps lineage, inputs, events, artifacts, approvals, outcomes, and recovery context.</p>
+          </article>
+          <article class="panel">
+            <span class="label blue">Inspectable</span>
+            <h3>No hidden magic</h3>
+            <p>Operators can see workflow source, graph shape, runner state, failure class, and why approval is requested.</p>
+          </article>
+          <article class="panel">
+            <span class="label amber">Replay-aware</span>
+            <h3>Retries know side effects</h3>
+            <p>Checkpoint presence alone is not enough. Replay safety must be explicit and enforced.</p>
+          </article>
+          <article class="panel">
+            <span class="label red">Bounded</span>
+            <h3>Power comes with fences</h3>
+            <p>Approval, budget, provider, runner, sandbox, and learning boundaries become product contracts.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="architecture">
+      <div class="shell">
+        <div class="section-head">
+          <h2>Current Architecture</h2>
+          <p class="section-copy">The Hub is the source of truth. Runners execute work. Smithers provides workflow orchestration. RunYard adds product contracts, approval paths, durable traces, operator UX, and recovery policy.</p>
+        </div>
+        <div class="grid two">
+          <div class="flow">
+            <div class="flow-step">
+              <span class="num">1</span>
+              <div>
+                <strong>Agent or human starts a capability</strong>
+                <span>Via Web, CLI, MCP, API, or a supervising workflow such as run-smithers.</span>
+              </div>
+            </div>
+            <div class="flow-step">
+              <span class="num">2</span>
+              <div>
+                <strong>Hub records a durable run</strong>
+                <span>Inputs, capability, workflow source, status, runner requirements, and approvals are tracked centrally.</span>
+              </div>
+            </div>
+            <div class="flow-step">
+              <span class="num">3</span>
+              <div>
+                <strong>Runner claims matching work</strong>
+                <span>Runner tags and auth health determine what can run where. Future versions should add stronger sandbox policy.</span>
+              </div>
+            </div>
+            <div class="flow-step">
+              <span class="num">4</span>
+              <div>
+                <strong>Smithers executes workflow steps</strong>
+                <span>Agentic, scripted, deterministic, and approval-gated steps stream events and artifacts back to the Hub.</span>
+              </div>
+            </div>
+            <div class="flow-step">
+              <span class="num">5</span>
+              <div>
+                <strong>Finalization is explicit</strong>
+                <span>Commit, push, promote, deploy, notify, and mutate operations should happen behind prechecks and replay-safe fences.</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid">
+            <article class="panel">
+              <h3>Hub</h3>
+              <p>Express/Node service backed by SQLite today. Stores runs, events, artifacts, approvals, tokens, runners, capabilities, agents, skills, and knowledge.</p>
+            </article>
+            <article class="panel">
+              <h3>Runner</h3>
+              <p>Polls the Hub, claims matching queued runs, launches Smithers or local execution, streams logs/events, uploads artifacts, and reports outcome.</p>
+            </article>
+            <article class="panel">
+              <h3>Smithers</h3>
+              <p>Workflow substrate for durable multi-step execution, checkpoints, approvals, and resumable orchestration.</p>
+            </article>
+            <article class="panel">
+              <h3>run-smithers</h3>
+              <p>Supervising wrapper that records child lineage, classifies repeated failures, and asks for human recovery after repeated fingerprints.</p>
+            </article>
+            <article class="panel">
+              <h3>Approvals</h3>
+              <p>Human checkpoints are stored in Hub and resolved through Web, API, CLI, MCP, Telegram, and future Slack/webhook endpoints.</p>
+            </article>
+            <article class="panel">
+              <h3>Promotion</h3>
+              <p>Recent work isolates implementation in branches/worktrees and uses explicit merge-to-main promotion with gates and cleanup.</p>
+            </article>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="features">
+      <div class="shell">
+        <div class="section-head">
+          <h2>Feature Pillars</h2>
+          <p class="section-copy">The v1.0 product should be shaped around control-plane guarantees, not only workflow authoring.</p>
+        </div>
+        <div class="grid">
+          <article class="panel">
+            <span class="label green">Workflow-as-code</span>
+            <h3>Reviewable workflows</h3>
+            <ul>
+              <li>Versioned workflow source</li>
+              <li>Typed inputs and outputs where possible</li>
+              <li>Local test harness and fixtures</li>
+              <li>Migration notes for workflow changes</li>
+            </ul>
+          </article>
+          <article class="panel">
+            <span class="label blue">Prechecks</span>
+            <h3>Block bad runs early</h3>
+            <ul>
+              <li>Security and privacy checks</li>
+              <li>Secret exposure scans</li>
+              <li>Auth, repo, env, deploy, and budget readiness</li>
+              <li>Typed preflight failures</li>
+            </ul>
+          </article>
+          <article class="panel">
+            <span class="label amber">Runner isolation</span>
+            <h3>Scalable safe execution</h3>
+            <ul>
+              <li>Capability-tagged runner pools</li>
+              <li>Filesystem and network boundaries</li>
+              <li>Ephemeral runner direction</li>
+              <li>Kubernetes path for larger deployments</li>
+            </ul>
+          </article>
+          <article class="panel">
+            <span class="label green">Learning loop</span>
+            <h3>Self-improving workflows</h3>
+            <ul>
+              <li>Incident-to-regression-test pipeline</li>
+              <li>Workflow-doctor recommendations</li>
+              <li>Script extraction from repeated agent behavior</li>
+              <li>Auditable and opt-in learning</li>
+            </ul>
+          </article>
+          <article class="panel">
+            <span class="label blue">Provider control</span>
+            <h3>Model and token budgeting</h3>
+            <ul>
+              <li>Codex/Fable/Claude/provider routing</li>
+              <li>Hard and soft token budgets</li>
+              <li>Auth health before dispatch</li>
+              <li>Cost telemetry per run and workflow</li>
+            </ul>
+          </article>
+          <article class="panel">
+            <span class="label amber">Approvals</span>
+            <h3>Modular decision endpoints</h3>
+            <ul>
+              <li>Telegram today</li>
+              <li>Slack and webhooks next</li>
+              <li>Stable approval payload contracts</li>
+              <li>Audit trail for every decision</li>
+            </ul>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="failures">
+      <div class="shell">
+        <div class="section-head">
+          <h2>Known Failure Points</h2>
+          <p class="section-copy">Reliability has been the weak spot. These are the failure classes that need product-level treatment before RunYard can be trusted near serious deployments.</p>
+        </div>
+        <div class="grid two">
+          <article class="panel">
+            <span class="label red">Unsafe replay</span>
+            <h3>Failure after mutation</h3>
+            <p>A run can commit or push successfully, then fail during deploy or reporting. If retry logic only sees a checkpoint, it can replay work and duplicate side effects.</p>
+          </article>
+          <article class="panel">
+            <span class="label red">Terminal propagation</span>
+            <h3>Local failure hidden by stale Hub state</h3>
+            <p>If the runner fails to report terminal status, the Hub may later classify the run as stalled instead of preserving the real root cause.</p>
+          </article>
+          <article class="panel">
+            <span class="label amber">Stale workflow copies</span>
+            <h3>Runner workspace drift</h3>
+            <p>Workflow-template changes in source can be bypassed if live runner workspaces execute stale copied workflows.</p>
+          </article>
+          <article class="panel">
+            <span class="label amber">Approval stalls</span>
+            <h3>Waiting is not dead</h3>
+            <p>Approvals must be excluded from generic stall reaping and surfaced clearly across all approval endpoints.</p>
+          </article>
+          <article class="panel">
+            <span class="label red">Prompt transport</span>
+            <h3>Large input E2BIG failures</h3>
+            <p>Large prompts or structured inputs must move through stdin/files, not giant argv strings.</p>
+          </article>
+          <article class="panel">
+            <span class="label amber">Provider ambiguity</span>
+            <h3>Auth, quota, rate limit, timeout</h3>
+            <p>Provider failures need typed classification and policy, not a generic failed status that encourages blind retry.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="roadmap">
+      <div class="shell">
+        <div class="section-head">
+          <h2>Roadmap Toward v1.0</h2>
+          <p class="section-copy">The roadmap works backward from operator trust. Each milestone gets a feature theme and a matching refactor theme.</p>
+        </div>
+        <div class="timeline">
+          <article class="milestone">
+            <div class="version">0.3</div>
+            <div>
+              <h3>Workflow-as-code foundation</h3>
+              <p>Workflow code model, source viewer/editor, validation, test harness, precheck interface, and CVM-friendly authoring.</p>
+            </div>
+          </article>
+          <article class="milestone">
+            <div class="version">0.4</div>
+            <div>
+              <h3>CVM install and runner deployment</h3>
+              <p>Digest-pinned UpgradeApp path, compose/dstack docs, runner capability model, and first sandbox contract.</p>
+            </div>
+          </article>
+          <article class="milestone">
+            <div class="version">0.5</div>
+            <div>
+              <h3>Reliability and modular approvals</h3>
+              <p>Approval endpoint abstraction, Telegram hardening, Slack/webhook proof, side-effect replay fences, and better failure classes.</p>
+            </div>
+          </article>
+          <article class="milestone">
+            <div class="version">0.6</div>
+            <div>
+              <h3>Token, budget, and provider control</h3>
+              <p>Budget limits, provider routing, auth health, model telemetry, and support for additional providers without deep hardcoding.</p>
+            </div>
+          </article>
+          <article class="milestone">
+            <div class="version">0.7</div>
+            <div>
+              <h3>Scalable sandboxed runners</h3>
+              <p>Runner pools, leases, cleanup, isolation controls, safer secret injection, and a Kubernetes or ephemeral-runner path.</p>
+            </div>
+          </article>
+          <article class="milestone">
+            <div class="version">0.8</div>
+            <div>
+              <h3>Reliable self-improvement</h3>
+              <p>Incident-to-test pipeline, workflow-doctor maturity, reusable workflow modules, and audited learning from run history.</p>
+            </div>
+          </article>
+          <article class="milestone">
+            <div class="version">0.9</div>
+            <div>
+              <h3>Hardening and freeze</h3>
+              <p>Security/privacy review, backup/restore drills, CVM dogfood, docs/API/CLI freeze, and quarantine of unfinished experiments.</p>
+            </div>
+          </article>
+          <article class="milestone">
+            <div class="version">1.0</div>
+            <div>
+              <h3>Operator-grade release</h3>
+              <p>Stable workflow-code, runner/sandbox, approval endpoint, budget/provider, install, and upgrade contracts.</p>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="refactor">
+      <div class="shell">
+        <div class="section-head">
+          <h2>Release Refactor Gate</h2>
+          <p class="section-copy">Every major milestone should include a targeted cleanup pass before the tag. For v0.3.0, the cleanup theme is workflow execution contracts and side-effect boundaries.</p>
+        </div>
+        <div class="grid two">
+          <article class="panel">
+            <span class="label blue">Fable-led</span>
+            <h3>Architecture and smell map</h3>
+            <ul>
+              <li>Read the workflow-as-code branch deeply</li>
+              <li>Map duplicated runner, workflow, approval, and provider logic</li>
+              <li>Propose module boundaries and safe slices</li>
+              <li>Review the final diff for architecture quality</li>
+            </ul>
+          </article>
+          <article class="panel">
+            <span class="label green">Gate-driven</span>
+            <h3>Deterministic release bar</h3>
+            <ul>
+              <li>No release until focused tests pass</li>
+              <li>Full pnpm test and pnpm build</li>
+              <li>git diff --check</li>
+              <li>Live runner smoke/canary before tag</li>
+            </ul>
+          </article>
+          <article class="panel">
+            <span class="label amber">Contract cleanup</span>
+            <h3>What gets cleaned now</h3>
+            <ul>
+              <li>Run status and failure taxonomy</li>
+              <li>Replay-safe versus side-effecting steps</li>
+              <li>Runner capability, auth, and budget seams</li>
+              <li>Approval endpoints and stall exclusion</li>
+            </ul>
+          </article>
+          <article class="panel">
+            <span class="label red">No-go criteria</span>
+            <h3>What blocks v0.3.0</h3>
+            <ul>
+              <li>Ambiguous replay behavior after commit/push/deploy</li>
+              <li>Stale workflow copies bypassing source changes</li>
+              <li>Approval waits classified as failed or stalled</li>
+              <li>Provider failures hidden as generic failed runs</li>
+            </ul>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section id="questions">
+      <div class="shell">
+        <div class="section-head">
+          <h2>Questions for Smithers</h2>
+          <p class="section-copy">The goal of the review is to pressure-test the architecture before v0.3.0 hardens around the wrong abstractions.</p>
+        </div>
+        <div class="question-list">
+          <div class="question">What should RunYard treat as the stable workflow-as-code contract versus Smithers internals that should remain hidden?</div>
+          <div class="question">What is the right model for replay safety across checkpoints when a workflow has already committed, pushed, deployed, posted, or mutated shared state?</div>
+          <div class="question">Should side-effecting workflow steps be modeled as sagas with compensation, explicit finalization nodes, idempotency keys, or some Smithers-native primitive?</div>
+          <div class="question">How should RunYard pin workflow source/hash/version so resume, fork, and replay do not accidentally run against changed source?</div>
+          <div class="question">What is the cleanest abstraction for modular approval endpoints such as Telegram, Slack, webhooks, GitHub comments, and in-Hub approvals?</div>
+          <div class="question">Where should runner sandboxing live: RunYard policy layer, Smithers runtime layer, container/Kubernetes infrastructure, or a combination?</div>
+          <div class="question">What should provider routing and token budgeting look like if RunYard supports Codex, Fable, Claude, and future providers without a pile of special cases?</div>
+          <div class="question">How should workflow learning/self-improvement be represented so it is useful and auditable rather than mysterious automatic mutation?</div>
+          <div class="question">What failure/status taxonomy should exist between Smithers and RunYard so users see blocked, provider-limited, waiting, failed, and unsafe-to-retry correctly?</div>
+          <div class="question">What architecture would you avoid now because it will become painful once RunYard has many runners, providers, approvals, and workflows?</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="ask">
+      <div class="shell">
+        <div class="callout">
+          <h3>The ask</h3>
+          <p>Please review whether this direction matches Smithers' intended durability model, where RunYard should rely on Smithers primitives versus add its own control-plane policy, and which abstractions should be locked down before v0.3.0.</p>
+        </div>
+        <p class="print-note">Prepared July 1, 2026. This is a private draft brief, not public documentation.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="shell">
+      RunYard architecture brief. Self-hosted control plane for agent runs.
+    </div>
+  </footer>
+</body>
+</html>
