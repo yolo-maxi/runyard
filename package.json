@@ -32,7 +32,9 @@
   },
   "dependencies": {
     "commander": "^14.0.2",
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "smithers-orchestrator": "0.22.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@tanstack/db": "^0.6.10",
