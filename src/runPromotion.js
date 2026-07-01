@@ -13,6 +13,17 @@ function outputNode(run, nodeId) {
   return run?.output?.outputs?.[nodeId] || null;
 }
 
+function parseLease(value) {
+  if (value && typeof value === "object") return value;
+  if (typeof value !== "string" || !value.trim()) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 function defaultWorktreeRoot(env = process.env) {
   return path.resolve(env.RUNYARD_REPO_WORKTREE_DIR || path.join(os.tmpdir(), "runyard-worktrees"));
 }
@@ -51,11 +62,11 @@ function packageScripts(repoDir) {
 export function runPromotionCandidate(run, { env = process.env } = {}) {
   const baseline = outputNode(run, "baseline");
   const push = outputNode(run, "push");
-  const lease = baseline?.lease || {};
+  const lease = parseLease(baseline?.lease);
   const sourceBranch = cleanString(push?.branch || lease.pushBranch || lease.workBranch);
   const targetBranch = cleanString(run?.input?.targetBranch || lease.targetBranch || "main") || "main";
   const sourceRepoDir = cleanString(lease.sourceRepoDir);
-  const workRepoDir = cleanString(lease.workRepoDir || baseline?.repoDir || lease.repoDir);
+  const workRepoDir = cleanString(lease.workRepoDir || baseline?.repoDir || baseline?.repo_dir || lease.repoDir);
   const mode = cleanString(run?.input?.mutationMode || lease.mode);
   const alreadyPromoted = Boolean(run?.output?.promotion?.merged);
 

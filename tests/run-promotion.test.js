@@ -77,6 +77,25 @@ describe("run promotion", () => {
     assert.equal(candidate.targetBranch, "main");
   });
 
+  it("detects live Smithers output with a serialized lease as promotable", () => {
+    const { repo, worktrees } = initFixture();
+    const run = isolatedRun({ repo, worktrees });
+    const lease = run.output.outputs.baseline.lease;
+    run.output.outputs.baseline = {
+      start_head: git(repo, ["rev-parse", "HEAD"]),
+      repo_dir: lease.workRepoDir,
+      target_branch: lease.pushBranch,
+      lease: JSON.stringify(lease)
+    };
+
+    const candidate = runPromotionCandidate(run, { env: { RUNYARD_REPO_WORKTREE_DIR: worktrees } });
+
+    assert.equal(candidate.available, true);
+    assert.equal(candidate.sourceRepoDir, repo);
+    assert.equal(candidate.workRepoDir, lease.workRepoDir);
+    assert.equal(candidate.sourceBranch, "runyard/implement-change-gated/main/run_test123");
+  });
+
   it("merges the isolated branch, pushes main, and removes branch/worktree", () => {
     const { repo, origin, worktrees } = initFixture();
     const run = isolatedRun({ repo, worktrees });
