@@ -4152,12 +4152,15 @@ button.run-id-mono:focus-visible,
 .home-stat-strip .hstat.hot strong { color: var(--brand-2); }
 
 .runs-filter-bar input[type="search"] {
+  flex: 1 1 260px;
   min-width: 220px;
   min-height: 44px;
   padding: 8px 10px;
 }
 
 .runs-filter-bar select {
+  flex: 0 1 172px;
+  max-width: 220px;
   min-height: 44px;
   padding: 8px 10px;
 }
@@ -4280,6 +4283,7 @@ button.run-id-mono:focus-visible,
 .runs-filter-chips {
   display: flex;
   flex-wrap: wrap;
+  flex: 1 1 100%;
   gap: 6px;
   align-items: center;
 }
@@ -4307,24 +4311,6 @@ button.run-id-mono:focus-visible,
   color: var(--muted);
 }
 
-/* Toggle chip for revealing internal/support-agent runs. It lives next to the
-   active-filter chips so its state is always visible above the runs table. */
-.runs-filter-chip.runs-internal-toggle {
-  cursor: pointer;
-  padding-right: 10px;
-  font-weight: var(--fw-semibold);
-  color: var(--muted);
-}
-.runs-filter-chip.runs-internal-toggle:hover {
-  border-color: var(--brand-2);
-  color: var(--ink);
-}
-.runs-filter-chip.runs-internal-toggle.on {
-  background: color-mix(in srgb, var(--brand-2) 12%, var(--soft));
-  border-color: var(--brand-2);
-  color: var(--brand-2);
-}
-
 .runs-pagination {
   display: flex;
   justify-content: space-between;
@@ -4347,13 +4333,22 @@ button.run-id-mono:focus-visible,
     gap: 4px;
   }
 
-  .runs-filter-bar,
-  .runs-filter-bar input[type="search"],
+  .runs-filter-bar {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: stretch;
+  }
+
+  .runs-filter-bar input[type="search"] {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
   .runs-filter-bar select,
   .runs-workflow-filter,
-  .runs-filter-bar .button,
-  .runs-filter-bar button {
+  .runs-filter-bar > .button {
     width: 100%;
+    max-width: none;
   }
 
   .runs-workflow-filter-summary {
@@ -4373,6 +4368,7 @@ button.run-id-mono:focus-visible,
   }
 
   .runs-filter-chips {
+    grid-column: 1 / -1;
     width: 100%;
   }
 

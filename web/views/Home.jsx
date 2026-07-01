@@ -16,14 +16,10 @@ import { relativeTime } from "../lib/format.js";
 
 // Workflow slugs that are operationally internal — support agents, reauth helpers,
 // etc. They're real runs but they bury the actual operator workload, so the #runs
-// view hides them by default and exposes a single chip to flip them back on.
+// view hides them by default. Operators can still reveal them by explicitly
+// selecting the workflow in the Workflows filter.
 const DEFAULT_HIDDEN_WORKFLOWS = ["runyard-support-agent", "reauth-cli"];
-const SHOW_INTERNAL_STORAGE_KEY = "runs.showInternalWorkflows";
 const WORKFLOW_FILTER_OPEN_STORAGE_KEY = "runs.workflowFilterOpen";
-
-function isInternalRun(run) {
-  return DEFAULT_HIDDEN_WORKFLOWS.includes(run?.capabilitySlug || "");
-}
 
 function parseWorkflowParam(value = "") {
   return [...new Set(String(value || "").split(",").map((slug) => slug.trim()).filter(Boolean))];
@@ -111,10 +107,10 @@ function RunHistoryGroups({ groups, artifactsByRun, now }) {
   );
 }
 
-function HomeFilterBar({ filters, capabilities = [], matchingCount = 0, showInternal, onToggleInternal, internalHiddenCount = 0, statusCounts = {} }) {
+function HomeFilterBar({ filters, capabilities = [], matchingCount = 0, statusCounts = {} }) {
   const navigate = useNavigate();
   const workflowOptions = sortedWorkflowOptions(capabilities);
-  const defaultWorkflows = defaultWorkflowSlugs(capabilities, { includeInternal: showInternal });
+  const defaultWorkflows = defaultWorkflowSlugs(capabilities);
   const selectedWorkflows = Array.isArray(filters.workflows) ? filters.workflows : defaultWorkflows;
   const workflowFilterKey = Array.isArray(filters.workflows) ? filters.workflows.join(",") : "";
   const [q, setQ] = useState(filters.q);
@@ -233,22 +229,6 @@ function HomeFilterBar({ filters, capabilities = [], matchingCount = 0, showInte
             reset one at a time via the per-chip × below, which keeps the bar
             compact and matches how operators actually iterate on filters. */}
         <div className="runs-filter-chips" aria-label="Active filters and view options">
-          {/* Persistent toggle so operators always see whether support-agent runs are
-              currently hidden and can flip the chip without opening a menu. */}
-          <button
-            type="button"
-            className={`runs-filter-chip runs-internal-toggle${showInternal ? " on" : ""}`}
-            data-internal-toggle={showInternal ? "on" : "off"}
-            aria-pressed={showInternal}
-            title={showInternal
-              ? "Support-agent and reauth runs are visible. Click to hide them."
-              : "Support-agent and reauth runs are hidden. Click to show them."}
-            onClick={() => onToggleInternal(!showInternal)}
-          >
-            {showInternal
-              ? "Showing support runs"
-              : `Support runs hidden${internalHiddenCount ? ` (${internalHiddenCount})` : ""}`}
-          </button>
           {activeChips.map((c) => (
             <span className="runs-filter-chip" data-filter-chip={c.kind} key={c.kind}>
               {c.label}{" "}
@@ -282,9 +262,6 @@ export function Home() {
   const filtersActive = Boolean(filters.q || filters.status || filters.range || filters.order === "asc" || filters.cursor || Array.isArray(filters.workflows));
   const now = useNow(1000, true);
   const [draftTick, setDraftTick] = useState(0);
-  // Per-origin via the browser's natural localStorage scoping. Default off so the
-  // operator never sees support-agent noise unless they ask for it.
-  const [showInternal, setShowInternal] = useLocalStorage(SHOW_INTERNAL_STORAGE_KEY, false);
 
   // Live, reactive collections — replace the legacy 30s/4s setInterval polls.
   const { data: liveRuns = [] } = useLiveQuery((q) => runsCollection);
@@ -341,16 +318,8 @@ export function Home() {
     navigate("#onboarding");
   }, [filtersActive, dashQ.isSuccess, dashQ.data, runners.length, runs.length, navigate]);
 
-  // Hide internal workflows by default. When filters are active the user has
-  // either explicitly picked workflows (`filters.workflows`) — in which case
-  // the API already honors that exact list — or filtered on other dimensions,
-  // and we still suppress internal runs unless the toggle says otherwise.
   const baseRuns = filtersActive ? runs : topLevelRuns(runs);
-  const explicitWorkflowsIncludeInternal = Array.isArray(filters.workflows)
-    && filters.workflows.some((slug) => DEFAULT_HIDDEN_WORKFLOWS.includes(slug));
-  const shouldShowInternal = showInternal || explicitWorkflowsIncludeInternal;
-  const internalHiddenCount = shouldShowInternal ? 0 : baseRuns.filter(isInternalRun).length;
-  const visibleRuns = shouldShowInternal ? baseRuns : baseRuns.filter((r) => !isInternalRun(r));
+  const visibleRuns = baseRuns;
   const hiddenSupervised = filtersActive ? [] : supervisedChildRuns(runs);
   // Single chronological list — active + historical share row chrome.
   const allGroups = groupRunsByEndedDate(visibleRuns, now, filters.order);
@@ -378,9 +347,6 @@ export function Home() {
         filters={filters}
         capabilities={capabilities}
         matchingCount={totalMatching}
-        showInternal={shouldShowInternal}
-        onToggleInternal={setShowInternal}
-        internalHiddenCount={internalHiddenCount}
         statusCounts={statusCounts}
       />
       {gettingStarted ? (
@@ -388,7 +354,6 @@ export function Home() {
           <p className="empty-runs-headline"><strong>No runs to show</strong></p>
           <p className="muted">
             Workflows you trigger will appear here with logs, artifacts, and re-run controls.
-            {internalHiddenCount ? " Support-agent runs are hidden — toggle the chip above to reveal them." : ""}
           </p>
           <div className="empty-runs-actions">
             {/* Primary CTA points at the workflow picker — the one click that

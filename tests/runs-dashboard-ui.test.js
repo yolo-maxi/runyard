@@ -124,21 +124,23 @@ describe("Runs page: filter toolbar, history rows, and detail order", () => {
     assert.match(css, /\.runs-workflow-filter-list/);
     assert.match(css, /\.runs-filter-bar input\[type="search"\]\s*\{[^}]*min-height:\s*44px/s);
     assert.match(css, /@media \(max-width:\s*640px\)\s*\{[^}]*\.runs-filter-panel/s);
-    // Responsive full-width rule still covers every remaining control.
-    assert.match(css, /\.runs-filter-bar,\s*\n\s*\.runs-filter-bar input\[type="search"\]/);
+    // Mobile stretching is scoped: the whole form becomes a compact grid, while
+    // individual buttons do not all inherit width:100%.
+    assert.match(css, /\.runs-filter-bar\s*\{\s*display:\s*grid;/);
+    assert.match(css, /\.runs-filter-bar input\[type="search"\]\s*\{[^}]*grid-column:\s*1 \/ -1/s);
+    assert.ok(!/\.runs-filter-bar button\s*\{\s*width:\s*100%/s.test(css), "buttons should not globally stretch full-width");
   });
 
-  it("hides support-agent runs by default and surfaces a toggle chip to reveal them", () => {
-    // The runs view filters DEFAULT_HIDDEN_WORKFLOWS client-side unless the
-    // operator flips the persistent toggle (origin-scoped via localStorage).
-    assert.match(home, /SHOW_INTERNAL_STORAGE_KEY = "runs\.showInternalWorkflows"/);
-    assert.match(home, /useLocalStorage\(SHOW_INTERNAL_STORAGE_KEY, false\)/);
-    assert.match(home, /isInternalRun/);
-    assert.match(home, /baseRuns\.filter\(\(r\) => !isInternalRun\(r\)\)/);
-    assert.match(home, /runs-internal-toggle/);
-    assert.match(home, /Support runs hidden/);
-    assert.match(home, /Showing support runs/);
-    assert.match(css, /\.runs-filter-chip\.runs-internal-toggle/);
+  it("hides support-agent runs by default and reveals them only via workflow filters", () => {
+    assert.match(home, /DEFAULT_HIDDEN_WORKFLOWS = \["runyard-support-agent", "reauth-cli"\]/);
+    assert.match(home, /defaultWorkflowSlugs\(capabilities\)/);
+    assert.match(home, /workflowOptions\.map\(\(cap\)/);
+    assert.match(home, /filters\.workflows\.join\(","\)/);
+    assert.ok(!/SHOW_INTERNAL_STORAGE_KEY/.test(home), "persistent support-run toggle should be removed");
+    assert.ok(!/runs-internal-toggle/.test(home), "support-run toggle chip should be removed");
+    assert.ok(!/Support runs hidden/.test(home), "hidden support copy should be removed");
+    assert.ok(!/Showing support runs/.test(home), "showing support copy should be removed");
+    assert.ok(!/runs-filter-chip\.runs-internal-toggle/.test(css), "support-run toggle styles should be removed");
   });
 
   it("renders every run — active and historical — as a unified history row", () => {
