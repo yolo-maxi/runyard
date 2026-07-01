@@ -9,6 +9,7 @@ import {
   isActiveRun, topLevelRuns, supervisedChildRuns,
   timeRangeToSinceISO, truncate, RUN_STATUS_OPTIONS, TIME_RANGE_OPTIONS
 } from "../lib/runHelpers.js";
+import { groupRunsByEndedDate } from "../lib/runGrouping.js";
 import { peekRerunDraft, clearRerunDraft } from "../lib/runActions.js";
 import { RunCard } from "../components/RunCard.jsx";
 import { relativeTime } from "../lib/format.js";
@@ -218,7 +219,6 @@ function HomeFilterBar({ filters, capabilities = [], matchingCount = 0, showInte
   }
   if (filters.order === "asc") activeChips.push({ kind: "order", label: "oldest first" });
   if (Array.isArray(filters.workflows)) activeChips.push({ kind: "workflows", label: `${filters.workflows.length} workflow${filters.workflows.length === 1 ? "" : "s"}` });
-  const active = Boolean(filters.q || filters.status || filters.range || filters.order === "asc" || filters.cursor || Array.isArray(filters.workflows));
 
   // Compact panel: drop the standalone heading row and put the "show support runs"
   // toggle inline next to the filter chips. Reclaims ~36px above the table.
@@ -231,32 +231,27 @@ function HomeFilterBar({ filters, capabilities = [], matchingCount = 0, showInte
         aria-label="Filter runs"
         onSubmit={(e) => { e.preventDefault(); apply(); }}
       >
-        <label><span className="muted">Search</span>
-          <input type="search" id="runs-filter-q" name="q" value={q} onChange={(e) => setQ(e.target.value)} placeholder="workflow, step, error, run id" autoComplete="off" />
-        </label>
-        <label><span className="muted">Status</span>
-          <select id="runs-filter-status" name="status" value={status} onChange={(e) => setStatus(e.target.value)}>
-            {RUN_STATUS_OPTIONS.map((o) => {
-              // Inline per-status count taken from the already-loaded runs — no
-              // extra fetch. "All statuses" sums the per-status counts so the
-              // numbers stay consistent with the rest of the dropdown.
-              const allCount = Object.values(statusCounts).reduce((sum, n) => sum + n, 0);
-              const count = o.value === "" ? allCount : statusCounts[o.value] || 0;
-              return <option key={o.value} value={o.value}>{o.label} ({count})</option>;
-            })}
-          </select>
-        </label>
-        <label><span className="muted">Time</span>
-          <select id="runs-filter-range" name="range" value={range} onChange={(e) => setRange(e.target.value)}>
-            {TIME_RANGE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
-        </label>
-        <label><span className="muted">Order</span>
-          <select id="runs-filter-order" name="order" value={order} onChange={(e) => setOrder(e.target.value)}>
-            <option value="desc">Ended newest first</option>
-            <option value="asc">Ended oldest first</option>
-          </select>
-        </label>
+        {/* Visible field labels are dropped — the placeholder / selected
+            option carries the meaning, and each control keeps an aria-label
+            so screen readers still announce it. */}
+        <input type="search" id="runs-filter-q" name="q" value={q} onChange={(e) => setQ(e.target.value)} placeholder="workflow, step, error, run id" autoComplete="off" aria-label="Search runs" />
+        <select id="runs-filter-status" name="status" value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Filter by status">
+          {RUN_STATUS_OPTIONS.map((o) => {
+            // Inline per-status count taken from the already-loaded runs — no
+            // extra fetch. "All statuses" sums the per-status counts so the
+            // numbers stay consistent with the rest of the dropdown.
+            const allCount = Object.values(statusCounts).reduce((sum, n) => sum + n, 0);
+            const count = o.value === "" ? allCount : statusCounts[o.value] || 0;
+            return <option key={o.value} value={o.value}>{o.label} ({count})</option>;
+          })}
+        </select>
+        <select id="runs-filter-range" name="range" value={range} onChange={(e) => setRange(e.target.value)} aria-label="Filter by time range">
+          {TIME_RANGE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+        <select id="runs-filter-order" name="order" value={order} onChange={(e) => setOrder(e.target.value)} aria-label="Sort order">
+          <option value="desc">Ended newest first</option>
+          <option value="asc">Ended oldest first</option>
+        </select>
         {workflowOptions.length ? (() => {
           // Collapse the per-workflow checkbox list into a native <details>
           // popover so the toolbar stays one row at common desktop widths even
@@ -294,7 +289,9 @@ function HomeFilterBar({ filters, capabilities = [], matchingCount = 0, showInte
           );
         })() : null}
         <button type="submit" className="button">Apply</button>
-        <button type="button" className="button" id="runs-filter-clear" disabled={!active} onClick={() => navigate("#runs")}>Clear</button>
+        {/* The dedicated Clear button was removed — active filters can be
+            reset one at a time via the per-chip × below, which keeps the bar
+            compact and matches how operators actually iterate on filters. */}
         <div className="runs-filter-chips" aria-label="Active filters and view options">
           {/* Persistent toggle so operators always see whether support-agent runs are
               currently hidden and can flip the chip without opening a menu. */}

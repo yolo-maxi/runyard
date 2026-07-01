@@ -4151,15 +4151,6 @@ button.run-id-mono:focus-visible,
 }
 .home-stat-strip .hstat.hot strong { color: var(--brand-2); }
 
-.runs-filter-bar label {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-  font-size: var(--fs-sm);
-  color: var(--muted);
-}
-
 .runs-filter-bar input[type="search"] {
   min-width: 220px;
   min-height: 44px;
@@ -4357,7 +4348,6 @@ button.run-id-mono:focus-visible,
   }
 
   .runs-filter-bar,
-  .runs-filter-bar label,
   .runs-filter-bar input[type="search"],
   .runs-filter-bar select,
   .runs-workflow-filter,

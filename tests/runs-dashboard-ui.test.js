@@ -93,7 +93,20 @@ describe("Runs page: filter toolbar, history rows, and detail order", () => {
     assert.match(home, /id="runs-filter-order"/);
     assert.match(home, /Ended newest first/);
     assert.match(home, /Ended oldest first/);
-    assert.match(home, /id="runs-filter-clear"/);
+    // The rightmost Clear button was removed — active filters get cleared
+    // one at a time via the per-chip × buttons below the bar.
+    assert.ok(!/id="runs-filter-clear"/.test(home), "the dedicated Clear button should be gone");
+    // Visible field labels ("Search", "Status", "Time", "Order") were dropped —
+    // the placeholder / selected option carries the meaning, and each control
+    // exposes an aria-label so screen readers still announce it.
+    assert.ok(!/<span className="muted">Search<\/span>/.test(home), "Search label should be dropped");
+    assert.ok(!/<span className="muted">Status<\/span>/.test(home), "Status label should be dropped");
+    assert.ok(!/<span className="muted">Time<\/span>/.test(home), "Time label should be dropped");
+    assert.ok(!/<span className="muted">Order<\/span>/.test(home), "Order label should be dropped");
+    assert.match(home, /aria-label="Search runs"/);
+    assert.match(home, /aria-label="Filter by status"/);
+    assert.match(home, /aria-label="Filter by time range"/);
+    assert.match(home, /aria-label="Sort order"/);
     assert.match(home, /DEFAULT_HIDDEN_WORKFLOWS = \["runyard-support-agent", "reauth-cli"\]/);
     assert.match(home, /className="runs-workflow-filter"/);
     assert.match(home, /type="checkbox"/);
@@ -105,7 +118,8 @@ describe("Runs page: filter toolbar, history rows, and detail order", () => {
     assert.match(css, /\.runs-workflow-filter-list/);
     assert.match(css, /\.runs-filter-bar input\[type="search"\]\s*\{[^}]*min-height:\s*44px/s);
     assert.match(css, /@media \(max-width:\s*640px\)\s*\{[^}]*\.runs-filter-panel/s);
-    assert.match(css, /\.runs-filter-bar,\s*\n\s*\.runs-filter-bar label,\s*\n\s*\.runs-filter-bar input\[type="search"\]/);
+    // Responsive full-width rule still covers every remaining control.
+    assert.match(css, /\.runs-filter-bar,\s*\n\s*\.runs-filter-bar input\[type="search"\]/);
   });
 
   it("hides support-agent runs by default and surfaces a toggle chip to reveal them", () => {
