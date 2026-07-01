@@ -70,6 +70,8 @@ const MAX_ATTEMPTS_OPTIONS = [
   }
 ];
 
+const NON_RESUMABLE_CHILD_STEPS = new Set(["commit", "push", "deploy", "stalled", "timed out"]);
+
 function latestAttemptContext(state, classification) {
   const last = state.attempts[state.attempts.length - 1] || null;
   const fingerprint = last?.fingerprint || "";
@@ -79,6 +81,33 @@ function latestAttemptContext(state, classification) {
     count: fingerprint ? state.fingerprintCounts[fingerprint] : 0,
     failureClass: last?.failureClass || classification.failureClass || "failed"
   };
+}
+
+function nonResumableChildFailure({ last } = {}) {
+  const failedStep = String(last?.failedStep || "").trim().toLowerCase();
+  const error = String(last?.error || "");
+  if (NON_RESUMABLE_CHILD_STEPS.has(failedStep)) {
+    return {
+      escalation: failedStep === "stalled" || failedStep === "timed out" ? "possibly_live_child" : "non_resumable_child_step",
+      reason:
+        failedStep === "stalled" || failedStep === "timed out"
+          ? "Child run was marked stalled/timed out; it may still have live process or git side effects, so the wrapper must not auto-retry."
+          : `Child failed at '${failedStep}', after the workflow may have produced external side effects; operator review required before retry.`
+    };
+  }
+  if (/run emitted no events within the stall window|run exceeded execution deadline/i.test(error)) {
+    return {
+      escalation: "possibly_live_child",
+      reason: "Child run was marked stalled/timed out; it may still have live process or git side effects, so the wrapper must not auto-retry."
+    };
+  }
+  if (/failed at node ['"](?:commit|push|deploy)['"]/i.test(error)) {
+    return {
+      escalation: "non_resumable_child_step",
+      reason: "Child failed at a non-resumable git/deploy step; operator review required before retry."
+    };
+  }
+  return null;
 }
 
 function approval(state, payload) {
@@ -155,6 +184,19 @@ export function decideNextAction(state, childClassification = null) {
       count: context.count,
       failureClass: context.failureClass,
       options: NON_RETRYABLE_OPTIONS
+    });
+  }
+
+  const nonResumable = nonResumableChildFailure(context);
+  if (nonResumable) {
+    return approval(state, {
+      escalation: nonResumable.escalation,
+      reason: nonResumable.reason,
+      fingerprint: context.fingerprint,
+      count: context.count,
+      failureClass: context.failureClass,
+      failedStep: context.last?.failedStep || "",
+      options: FINGERPRINT_ESCALATION_OPTIONS
     });
   }
 

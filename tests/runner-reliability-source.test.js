@@ -33,4 +33,9 @@ describe("runner reliability source guards", () => {
     assert.match(smithersOutcomeSource, /productiveOutcomeFailure\(capability, outputs\)/);
     assert.match(smithersOutcomeSource, /from "\.\/runnerPolicy\.js"/);
   });
+
+  it("only skips local outcome reporting when the Hub is already terminal", () => {
+    assert.match(runnerSource, /if \(isHubTerminalStatus\(hubTerminalStatus\)\) \{/);
+    assert.doesNotMatch(runnerSource, /if \(hubTerminalStatus\) \{\s*console\.log\(`Run \$\{run\.id\} stopped locally because Hub is already/);
+  });
 });

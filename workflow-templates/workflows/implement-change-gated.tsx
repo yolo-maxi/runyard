@@ -4,6 +4,7 @@
 /** @jsxImportSource smithers-orchestrator */
 import { createSmithers, Sequence, CodexAgent, ClaudeCodeAgent } from "smithers-orchestrator";
 import { existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { z } from "zod/v4";
 import { resolveImproveRepo } from "./improve-repo.js";
 import { withAgentFallback } from "./agent-fallback.js";
@@ -163,6 +164,18 @@ function createBuilder(repoDir) {
     : withAgentFallback(codex, claude, { label: "implement-change-gated" });
 }
 
+function preflightDeployConfig(repoDir) {
+  if (!repoDir) return;
+  if (!process.env.GATED_PROD_HOST || !process.env.GATED_PROD_DIR || !process.env.GATED_DEPLOY_KEY) {
+    throw new Error("GATE FAILED: deploy=true requires GATED_PROD_HOST, GATED_PROD_DIR, and GATED_DEPLOY_KEY on the runner.");
+  }
+  try {
+    execFileSync(GIT, ["remote", "get-url", PROD_REMOTE], { cwd: repoDir, encoding: "utf8", env: TOOL_ENV });
+  } catch {
+    throw new Error(`GATE FAILED: deploy=true requires git remote '${PROD_REMOTE}' to exist before any implementation work starts.`);
+  }
+}
+
 export default smithers((ctx) => {
   // Collapse the friendly selector to a single field so resolveImproveRepo doesn't reject
   // callers that fill in both `repo` and `project` (e.g. an alias pair) with different values.
@@ -189,6 +202,7 @@ export default smithers((ctx) => {
             if ((ctx.input.mutationMode || "sequential") === "parallel" && ctx.input.deploy) {
               throw new Error("PARALLEL MODE BLOCKED: deploy=true is not allowed from an isolated worktree.");
             }
+            if (ctx.input.deploy) preflightDeployConfig(repoDir);
             const lease = prepareMutatingRepo({
               repoDir,
               targetBranch: ctx.input.targetBranch || "main",

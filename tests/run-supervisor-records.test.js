@@ -205,7 +205,21 @@ describe("run supervisor record helpers", () => {
       params: []
     });
     assert.deepEqual(failedRecoverableCandidatesQuery({ since: "2026-01-01T00:00:00.000Z", limit: "3" }), {
-      sql: `SELECT id, runner_id, status, capability_slug, input, attempt, repair_count, supervisor_meta, error
+      sql: `SELECT id,
+            runner_id,
+            status,
+            capability_slug,
+            input,
+            attempt,
+            repair_count,
+            supervisor_meta,
+            error,
+            (SELECT json_extract(data, '$.reason')
+               FROM run_events
+              WHERE run_events.run_id = runs.id
+                AND run_events.type = 'run.failed'
+              ORDER BY created_at DESC
+              LIMIT 1) AS failure_reason
        FROM runs
       WHERE status = 'failed' AND updated_at >= ?
       ORDER BY updated_at DESC LIMIT ?`,

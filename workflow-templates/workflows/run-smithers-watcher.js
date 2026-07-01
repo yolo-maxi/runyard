@@ -112,6 +112,7 @@ const VOLATILE_PATTERNS = [
 ];
 
 const RECOVERABLE_CHECKPOINT_KEYS = ["checkpoint", "lastCheckpoint", "resumeFrom", "resumeStep"];
+const NON_RESUMABLE_CHILD_STEPS = new Set(["commit", "push", "deploy", "stalled", "timed out"]);
 
 export function normalizeErrorFingerprint(message) {
   let text = String(message ?? "").trim().toLowerCase();
@@ -334,6 +335,44 @@ export function decideNextAction(state, childClassification = null) {
           id: "retry_anyway",
           label: "Retry once anyway",
           effect: "operator explicitly accepts a retry despite the non-retryable class"
+        },
+        {
+          id: "abandon",
+          label: "Abandon the wrapped goal",
+          effect: "stop autonomous attempts and mark the supervising run needs_recovery"
+        }
+      ]
+    };
+  }
+
+  const failedStep = String(last?.failedStep || "").trim().toLowerCase();
+  const childError = String(last?.error || "");
+  const nonResumableStep = NON_RESUMABLE_CHILD_STEPS.has(failedStep);
+  const stalledOrTimedOut =
+    (nonResumableStep && (failedStep === "stalled" || failedStep === "timed out")) ||
+    /run emitted no events within the stall window|run exceeded execution deadline/i.test(childError);
+  if (nonResumableStep || stalledOrTimedOut || /failed at node ['"](?:commit|push|deploy)['"]/i.test(childError)) {
+    state.approvalRequested = true;
+    return {
+      action: "approval",
+      escalation: stalledOrTimedOut ? "possibly_live_child" : "non_resumable_child_step",
+      reason: stalledOrTimedOut
+        ? "Child run was marked stalled/timed out; it may still have live process or git side effects, so the wrapper must not auto-retry."
+        : `Child failed at '${failedStep || "a non-resumable git/deploy step"}', after the workflow may have produced external side effects; operator review required before retry.`,
+      fingerprint,
+      count,
+      failureClass,
+      failedStep: last?.failedStep || "",
+      options: [
+        {
+          id: "retry_anyway",
+          label: "Retry once more with the same input",
+          effect: "spawn another child run with the same input and reset the fingerprint counter once"
+        },
+        {
+          id: "edit_and_retry",
+          label: "Approve a revised input or recovery plan",
+          effect: "operator supplies a new input or resume step; watcher spawns a fresh child run"
         },
         {
           id: "abandon",

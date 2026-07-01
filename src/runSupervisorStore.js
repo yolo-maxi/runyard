@@ -329,7 +329,12 @@ export function createRunSupervisorStore({
         continue;
       }
       if (!runResumeCheckpoint(row.id)) continue;
-      const outcome = adjudicateRun(row, { reason: "failed", error: row.error || "", observedStatus: "failed", dispatchRepair });
+      const outcome = adjudicateRun(row, {
+        reason: row.failure_reason || "failed",
+        error: row.error || "",
+        observedStatus: "failed",
+        dispatchRepair
+      });
       if (outcome.action === "resume" || outcome.action === "repair" || outcome.action === "escalate") acted.push(row.id);
     }
     return acted;

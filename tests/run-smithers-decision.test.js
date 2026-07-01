@@ -69,4 +69,30 @@ describe("run-smithers decision policy", () => {
     recordChildAttempt(maxState, { runId: "run_1", status: "failed", error: "boom" });
     assert.match(decideNextAction(maxState, classifyChildState({ status: "failed" })).reason, /maxAttempts/);
   });
+
+  it("parks failures after non-resumable child side-effect steps", () => {
+    const deployState = createWatcherState({ capabilitySlug: "implement-change-gated", maxAttempts: 5 });
+    recordChildAttempt(deployState, {
+      runId: "run_deploy",
+      status: "failed",
+      failedStep: "deploy",
+      error: "smithers run run-1 failed at node 'deploy': git push prod failed",
+      checkpoint: "run-1"
+    });
+    const deployDecision = decideNextAction(deployState, classifyChildState({ status: "failed", checkpoint: "run-1" }));
+    assert.equal(deployDecision.action, "approval");
+    assert.equal(deployDecision.escalation, "non_resumable_child_step");
+
+    const stalledState = createWatcherState({ capabilitySlug: "implement-change-gated", maxAttempts: 5 });
+    recordChildAttempt(stalledState, {
+      runId: "run_stalled",
+      status: "failed",
+      failedStep: "stalled",
+      error: "run emitted no events within stall window",
+      checkpoint: "run-2"
+    });
+    const stalledDecision = decideNextAction(stalledState, classifyChildState({ status: "failed", checkpoint: "run-2" }));
+    assert.equal(stalledDecision.action, "approval");
+    assert.equal(stalledDecision.escalation, "possibly_live_child");
+  });
 });

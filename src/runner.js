@@ -435,7 +435,7 @@ async function executeAssignment(assignment) {
       state = "cancelled";
     }
 
-    if (hubTerminalStatus) {
+    if (isHubTerminalStatus(hubTerminalStatus)) {
       console.log(`Run ${run.id} stopped locally because Hub is already '${hubTerminalStatus}' (smithers ${sid})`);
       return;
     }
