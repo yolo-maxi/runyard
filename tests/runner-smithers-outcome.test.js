@@ -15,8 +15,34 @@ describe("runner Smithers outcome helper", () => {
       ok: true,
       output: {
         smithersRunId: "run-1",
-        outputs: { answer: { text: "hi" } }
+        outputs: { answer: { text: "hi" } },
+        // Non-code workflows still get a change summary — the fields are just
+        // zeroed so downstream consumers (Runs UI, retrospective artifact) can
+        // read a single canonical shape instead of branching on presence.
+        changeSummary: { changedFileCount: 0, files: [], churn: null }
       }
+    });
+  });
+
+  it("stamps the real changed-file count onto the run output envelope", () => {
+    const outcome = smithersRunOutcome({
+      capability: { slug: "improve" },
+      state: "succeeded",
+      sid: "run-changes",
+      outputs: {
+        baseline: { repoDir: "/repo" },
+        commit: { files: ["a.js", "b.js"], stat: " 2 files changed, 6 insertions(+), 1 deletion(-)" },
+        review: { improvements: ["done"] }
+      }
+    });
+    assert.equal(outcome.ok, true);
+    // Runs stamped by this runner now carry the change summary alongside
+    // `outputs`, matching the `smithers-output.json` terminal artifact so both
+    // paths agree on what actually changed.
+    assert.deepEqual(outcome.output.changeSummary, {
+      changedFileCount: 2,
+      files: ["a.js", "b.js"],
+      churn: { additions: 6, deletions: 1 }
     });
   });
 

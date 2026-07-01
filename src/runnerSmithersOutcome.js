@@ -1,5 +1,6 @@
 import { RUN_FAILURE_CLASSES } from "./runFailureClass.js";
 import { productiveOutcomeFailure, runSmithersSupervisionFailure } from "./runnerPolicy.js";
+import { smithersChangeSummary } from "./runnerSmithersArtifacts.js";
 import { extractSmithersFailure } from "./smithersFailure.js";
 
 export function smithersRunOutcome({
@@ -16,9 +17,14 @@ export function smithersRunOutcome({
   const outcomeFailure = state === "succeeded" && !supervisionFailure ? productiveOutcomeFailure(capability, outputs) : null;
 
   if (state === "succeeded" && !supervisionFailure && !outcomeFailure) {
+    // Stamp the same `changeSummary` block we write to smithers-output.json onto
+    // the persisted run envelope so hub UI consumers and external readers of
+    // `run.output` see the real changed-file count directly, instead of having
+    // to re-derive it from per-node keys. Older runs without this field stay
+    // graceful — `runOutcomeSummary` still walks `outputs`.
     return {
       ok: true,
-      output: { smithersRunId: sid, outputs }
+      output: { smithersRunId: sid, outputs, changeSummary: smithersChangeSummary(outputs) }
     };
   }
 
