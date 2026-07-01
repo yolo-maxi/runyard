@@ -26,9 +26,19 @@ the *query layer* — without a risky migration of live data — is:
   console that used SSE now streams from an Electric `run_events` shape.
 
 This replaces the query layer wholesale on the client, while treating the
-SQLite→Postgres projection as the migration bridge. The end-state (Postgres as
-primary store, SQLite retired) is described under **Migration path**; the
-projector proves the sync path end-to-end without touching the live DB.
+SQLite→Postgres projection as a **reversible migration bridge — not the
+destination**. The end-state is **Postgres as the primary store with Electric
+reading it directly (no projector)**; the projector exists only to prove the sync
+path end-to-end without touching the live DB, and is meant to be deleted at
+cutover.
+
+> **Why not PGlite as the primary DB?** Fran asked whether PGlite should replace
+> this "projector" framing. It can't remove the projector's job: Electric syncs
+> *from* a real Postgres via a logical-replication stream, and PGlite is an
+> embedded single-connection library that cannot be an Electric source. PGlite's
+> real value here is as the in-process, Docker-free Postgres used to *migrate and
+> test* the schema/queries off SQLite (proven in `tests/pglite-schema.test.js`).
+> Full analysis + recommendation: **`specs/pglite-migration-evaluation.md`**.
 
 ## Entities → shapes
 
@@ -127,9 +137,13 @@ separate systemd unit. Production `runyard.repo.box` (127.0.0.1:43117) untouched
 ## What remains to fully replace the query layer
 
 - **Postgres-primary cutover.** Today SQLite is SoR + projector. Full replacement
-  = write directly to Postgres (or logical-replicate SQLite → PG once), retire the
-  projector, and point RunYard's stores at PG. This is the documented next step;
-  the projector de-risks it by proving the sync/shape path first.
+  = write directly to Postgres, retire the projector, and point RunYard's stores
+  at PG (a one-shot SQLite→PG data copy, not an ongoing projector). Electric then
+  reads the hub's Postgres directly; the auth proxy, shape allowlist and frontend
+  shape client are unchanged. Develop/test the SQL migration in-process against
+  **PGlite** (Docker-free), then run real Postgres in prod. See
+  `specs/pglite-migration-evaluation.md` for why Postgres-primary (not
+  PGlite-primary) is the target and what a credible next prototype looks like.
 - **Remaining REST reads not yet migrated**: the Home `/api/dashboard` aggregate,
   run detail's one-shot `/api/runs/:id` payload (events now live via shape), and
   artifact downloads (binary, stays REST). These are additive follow-ups.

@@ -36,6 +36,7 @@
     "pg": "^8.22.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.3",
     "@tanstack/db": "^0.6.10",
     "@tanstack/query-db-collection": "^1.0.42",
     "@tanstack/react-db": "^0.1.88",

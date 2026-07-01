@@ -18,6 +18,9 @@ importers:
         specifier: ^8.22.0
         version: 8.22.0
     devDependencies:
+      '@electric-sql/pglite':
+        specifier: ^0.5.3
+        version: 0.5.3
       '@tanstack/db':
         specifier: ^0.6.10
         version: 0.6.10(typescript@6.0.3)
@@ -47,6 +50,9 @@ importers:
         version: 19.2.7(react@19.2.7)
 
 packages:
+
+  '@electric-sql/pglite@0.5.3':
+    resolution: {integrity: sha512-iTTYbA5Uesrl+N7zss0J5LopT7KE4j9aymYo+EZZh+rZbARQCUQOs+n2pay64JRUpc3fCkpfrniTNJnvYzOE+g==}
 
   '@esbuild/aix-ppc64@0.28.1':
     resolution: {integrity: sha512-Svl7tq8k/08+p6CXPpRjQ1fKX+1odH/BQbb48fV6fj3CWHhsoIOoY87w1oHXm0qEpkIK3ZfVgp0hed3XBXzXMQ==}
@@ -695,6 +701,8 @@ packages:
         optional: true
 
 snapshots:
+
+  '@electric-sql/pglite@0.5.3': {}
 
   '@esbuild/aix-ppc64@0.28.1':
     optional: true
