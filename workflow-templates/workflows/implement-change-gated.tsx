@@ -3,8 +3,9 @@
 // smithers-description: Runs an implementation agent for a change request, then gates it (pnpm install --frozen-lockfile, pnpm test, staged diff, a sane commit, push to origin) before optionally deploying to a configured production target. deploy=false stops after push and reports what would deploy.
 /** @jsxImportSource smithers-orchestrator */
 import { createSmithers, Sequence, CodexAgent, ClaudeCodeAgent } from "smithers-orchestrator";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import path from "node:path";
 import { z } from "zod/v4";
 import { resolveImproveRepo } from "./improve-repo.js";
 import { withAgentFallback } from "./agent-fallback.js";
@@ -166,6 +167,16 @@ function createBuilder(repoDir) {
 
 function preflightDeployConfig(repoDir) {
   if (!repoDir) return;
+  try {
+    const pkg = JSON.parse(readFileSync(path.join(repoDir, "package.json"), "utf8"));
+    if (pkg?.name === "runyard") {
+      throw new Error("RUNYARD_SELF_DEPLOY_BLOCKED");
+    }
+  } catch (error) {
+    if (error?.message === "RUNYARD_SELF_DEPLOY_BLOCKED") {
+      throw new Error("GATE FAILED: deploy=true is disabled for RunYard self-mutation runs. Use deploy=false and restart/deploy explicitly after review.");
+    }
+  }
   if (!process.env.GATED_PROD_HOST || !process.env.GATED_PROD_DIR || !process.env.GATED_DEPLOY_KEY) {
     throw new Error("GATE FAILED: deploy=true requires GATED_PROD_HOST, GATED_PROD_DIR, and GATED_DEPLOY_KEY on the runner.");
   }

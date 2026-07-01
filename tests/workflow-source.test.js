@@ -57,6 +57,7 @@ describe("Workflow source + code viewer", () => {
     assert.equal(data.language, "tsx");
     assert.ok(data.code.includes("smithers-display-name"));
     assert.ok(data.code.includes("<Workflow"));
+    assert.ok(data.code.includes("deploy=true is disabled for RunYard self-mutation runs"));
     assert.equal(data.metadata.displayName, "Implement Change (gated)");
     assert.ok(typeof data.metadata.description === "string" && data.metadata.description.length > 5);
 
