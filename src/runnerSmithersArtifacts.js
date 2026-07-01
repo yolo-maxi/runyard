@@ -1,4 +1,5 @@
 import { markdownArtifactsFromOutputs } from "./runnerArtifacts.js";
+import { collectChangedFiles } from "./runOutcomePresentation.js";
 import { smithersEventsArtifactContent } from "./runnerSmithersEvents.js";
 
 export async function collectSmithersRunResult(sid, { getState, nodeOutput, fetchEvents }) {
@@ -15,12 +16,22 @@ export async function collectSmithersRunResult(sid, { getState, nodeOutput, fetc
   };
 }
 
+// Snapshot of the real changed-file evidence the workflow produced, stamped
+// into smithers-output.json so the Runs UI (and any external consumer of the
+// terminal artifact) can read the count directly without re-deriving it from
+// node-specific keys.
+export function smithersChangeSummary(outputs = {}) {
+  const files = collectChangedFiles({ outputs });
+  return { changedFileCount: files.length, files };
+}
+
 export function smithersArtifactPayloads({ sid, state, outputs = {}, eventLines = [] }) {
+  const changeSummary = smithersChangeSummary(outputs);
   return [
     {
       name: "smithers-output.json",
       mimeType: "application/json",
-      content: JSON.stringify({ smithersRunId: sid, state, outputs }, null, 2)
+      content: JSON.stringify({ smithersRunId: sid, state, outputs, changeSummary }, null, 2)
     },
     ...markdownArtifactsFromOutputs(outputs),
     {

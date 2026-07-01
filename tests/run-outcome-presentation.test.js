@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   cleanStringList,
+  collectChangedFiles,
   hasNoChangeReviewRationale,
   outputNode,
   runOutcomeSummary
@@ -47,5 +48,39 @@ describe("run outcome presentation helpers", () => {
     }).workProduct, "explicit no-change review");
     assert.equal(runOutcomeSummary({ output: { ok: true } }).workProduct, "output only");
     assert.equal(runOutcomeSummary({ project: "repo" }).workProduct, "none");
+  });
+
+  it("collects changed files from commit, implement, and workflow-doctor node keys", () => {
+    assert.deepEqual(collectChangedFiles(null), []);
+    assert.deepEqual(
+      collectChangedFiles({
+        outputs: {
+          commit: { files: ["a.js", "b.js"] },
+          implement: { changedFiles: ["b.js", "c.js"] },
+          "workflow-doctor": { changedFiles: ["d.js"] }
+        }
+      }),
+      ["a.js", "b.js", "c.js", "d.js"]
+    );
+    assert.deepEqual(
+      collectChangedFiles({ filesChanged: ["envelope.js"], outputs: { implement: { changedFiles: ["node.js"] } } }),
+      ["envelope.js", "node.js"]
+    );
+  });
+
+  it("reports the real changed-file count for workflows that use non-commit output keys", () => {
+    assert.deepEqual(
+      runOutcomeSummary({
+        status: "succeeded",
+        output: { outputs: { implement: { changedFiles: ["a.js", "b.js"] } } }
+      }),
+      {
+        repo: "unresolved",
+        changedFiles: 2,
+        files: ["a.js", "b.js"],
+        workProduct: "2 changed files",
+        classification: "succeeded"
+      }
+    );
   });
 });

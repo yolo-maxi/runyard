@@ -72,8 +72,47 @@ describe("run retrospective artifacts", () => {
       sourceNode: "report"
     });
     assert.deepEqual(content.evidence.outputShape.fields.nested, { type: "object", keys: ["secret"], fields: {} });
+    assert.equal(content.outcome.changedFileCount, 0);
+    assert.deepEqual(content.outcome.changedFiles, []);
+    assert.equal(content.outcome.workProduct, "output only");
     assert.equal(artifact.content.includes("shub_secret"), false);
     assert.equal(artifact.content.includes("do work"), false);
     assert.equal(artifact.content.includes('"value"'), false);
+  });
+
+  it("captures the real changed-file count for workflows that produced a commit diff", () => {
+    const artifact = buildRunRetrospectiveArtifact({
+      generatedAt: "2026-06-19T00:00:00.000Z",
+      run: {
+        id: "run_files",
+        status: "succeeded",
+        capabilitySlug: "improve",
+        capabilityName: "Improve",
+        output: { outputs: { commit: { files: ["a.js", "b.js"] } } }
+      },
+      artifacts: [],
+      logSummary: {}
+    });
+    const content = JSON.parse(artifact.content);
+    assert.equal(content.outcome.changedFileCount, 2);
+    assert.deepEqual(content.outcome.changedFiles, ["a.js", "b.js"]);
+    assert.equal(content.outcome.workProduct, "2 changed files");
+  });
+
+  it("prefers a pre-computed outcomeSummary from withRunLinks when the caller supplies one", () => {
+    const artifact = buildRunRetrospectiveArtifact({
+      run: {
+        id: "run_summary",
+        status: "succeeded",
+        capabilitySlug: "improve",
+        outcomeSummary: { changedFiles: 3, files: ["x", "y", "z"], workProduct: "3 changed files" }
+      },
+      artifacts: [],
+      logSummary: {}
+    });
+    const content = JSON.parse(artifact.content);
+    assert.equal(content.outcome.changedFileCount, 3);
+    assert.deepEqual(content.outcome.changedFiles, ["x", "y", "z"]);
+    assert.equal(content.outcome.workProduct, "3 changed files");
   });
 });

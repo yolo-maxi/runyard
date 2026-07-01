@@ -73,16 +73,25 @@ export function RunMetaStrip({ run }) {
 
 export function RunOutcomeSummary({ summary }) {
   if (!summary) return null;
+  const files = Array.isArray(summary.files) ? summary.files : [];
+  // Hover-tooltip the actual file list on the Changed-files chip when the
+  // workflow reported specifics — operators used to see only "0" here even
+  // when a commit touched real files, because the count came exclusively from
+  // `commit.files`. The count now unions every workflow's file-key variants
+  // (see collectChangedFiles); this exposes the underlying list for context.
+  const filesTitle = files.length
+    ? `${files.length} changed file${files.length === 1 ? "" : "s"}:\n${files.join("\n")}`
+    : "No changed files reported by this run.";
   const items = [
-    ["Repo", summary.repo || "unresolved"],
-    ["Changed files", String(summary.changedFiles ?? 0)],
-    ["Work product", summary.workProduct || "none"],
-    ["Classification", summary.classification || "unknown"]
+    ["Repo", summary.repo || "unresolved", null],
+    ["Changed files", String(summary.changedFiles ?? 0), filesTitle],
+    ["Work product", summary.workProduct || "none", null],
+    ["Classification", summary.classification || "unknown", null]
   ];
   return (
     <section className="run-outcome-summary" aria-label="Run outcome summary">
-      {items.map(([label, value]) => (
-        <p key={label}>
+      {items.map(([label, value, title]) => (
+        <p key={label} {...(title ? { title } : {})}>
           <span className="muted">{label}</span>
           <strong>{value}</strong>
         </p>

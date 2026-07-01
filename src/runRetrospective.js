@@ -1,4 +1,5 @@
 import { artifactInventory, highlightEvents, msBetween, timestamp, topEventTypes, valueShape } from "./runEvidence.js";
+import { runOutcomeSummary } from "./runOutcomePresentation.js";
 
 export const RUN_RETROSPECTIVE_ARTIFACT_NAME = "run-retrospective.json";
 export const RUN_RETROSPECTIVE_SCHEMA_VERSION = "smithers.hub.run-retrospective.v1";
@@ -34,6 +35,14 @@ export function buildRunRetrospectiveArtifact({
   generatedAt = timestamp()
 } = {}) {
   const inventory = artifactInventory(artifacts, { generatedNames: GENERATED_RUN_ARTIFACT_NAMES });
+  // Prefer the decorated summary that `withRunLinks` already computed; recompute
+  // from raw output if the caller passed a bare run so this survives direct-use
+  // paths too (tests, reap-stuck runs before decoration).
+  const outcomeSummary = run?.outcomeSummary && typeof run.outcomeSummary === "object" && !Array.isArray(run.outcomeSummary)
+    ? run.outcomeSummary
+    : runOutcomeSummary(run);
+  const changedFiles = Array.isArray(outcomeSummary.files) ? outcomeSummary.files : [];
+  const changedFileCount = Number.isFinite(outcomeSummary.changedFiles) ? outcomeSummary.changedFiles : changedFiles.length;
   const content = {
     schemaVersion: RUN_RETROSPECTIVE_SCHEMA_VERSION,
     generatedAt,
@@ -82,6 +91,9 @@ export function buildRunRetrospectiveArtifact({
     outcome: {
       status: run?.status || "",
       succeeded: run?.status === "succeeded",
+      changedFileCount,
+      changedFiles,
+      workProduct: outcomeSummary.workProduct || "",
       diagnostics: diagnosticSummary(diagnostics)
     },
     evidence: {
