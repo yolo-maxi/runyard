@@ -41,6 +41,8 @@ agentic -> constrained agentic -> script-backed -> deterministic code -> automat
 
 Nightly optimizer runs should replay workflows, diff outputs, measure variance/failure/cost, delete unnecessary steps, and propose hardened replacements. Creative and taste-heavy steps may remain agentic; engineering plumbing should become deterministic wherever possible.
 
+Before shipping or deploying a workflow, review its side effects and replayability. Steps that push, merge, deploy, publish, post externally, write production data, or otherwise mutate shared state must not be blindly replayed from checkpoints; isolate agent work, preflight dangerous config early, and make finalization/promotion a separately retryable operation when possible.
+
 See `specs/workflow-hardening-and-optimizer.md`.
 
 ## Get started

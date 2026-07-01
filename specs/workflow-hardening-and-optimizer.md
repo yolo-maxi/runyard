@@ -220,12 +220,55 @@ Hardening must support the Runyard reliability model:
 
 This avoids abandoned half-finished artifacts while preserving useful work.
 
+## Side Effects and Replayability
+
+Every new workflow, and every deploy/promotion step added to an existing
+workflow, must include an explicit side-effect and replayability review before
+it is shipped.
+
+Classify each step as one of:
+
+- `pure`: reads state and writes only normal workflow outputs.
+- `workspace-local`: mutates only an isolated run worktree, temp directory, or
+  artifact path that can be safely deleted.
+- `external-side-effect`: changes shared state outside the run, such as pushing
+  a branch, merging to `main`, publishing a package, deploying a service,
+  sending a webhook, writing production data, posting to chat, or charging an
+  account.
+
+Rules:
+
+- Do not put `external-side-effect` steps before cheap validation, baseline
+  checks, and config preflight. Fail before mutation whenever possible.
+- Do not make a checkpoint automatically replayable after an
+  `external-side-effect` step. Retrying from that checkpoint may repeat the
+  mutation.
+- Split dangerous side effects into their own promotion/finalization operation
+  when possible. The expensive agent work should be retryable; the merge,
+  push, publish, deploy, or cleanup should be a smaller retriable operation.
+- If a side-effect step may partially succeed, record the exact external
+  identity it touched: commit SHA, branch name, worktree path, artifact URL,
+  deployment id, remote ref, message id, payment id, or database migration id.
+- On failure after a side effect, park or request approval instead of
+  resuming blindly. The recovery plan should say whether to retry only the
+  finalization step, compensate/rollback, or abandon.
+- Successful finalization should clean up isolated branches/worktrees/artifacts
+  that are no longer needed. Failed finalization should leave enough state for
+  inspection and retry.
+
+Treat replay safety as a contract, not an implementation detail. A workflow can
+fail after useful work has already mutated the outside world, so "has a
+checkpoint" is not proof that replay is safe.
+
 ## Step Metadata
 
 Every workflow step should eventually expose:
 
 - `purpose`
 - `hardeningLevel`
+- `sideEffectClass`
+- `replayPolicy`
+- `compensationPolicy`
 - `requirementOwner`
 - `inputSchema`
 - `outputSchema`
