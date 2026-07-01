@@ -77,7 +77,7 @@ export function groupRunsByEndedDate(runs, nowMs, order = "desc") {
   for (const run of terminal) {
     const key = dayKey(runEndedAt(run));
     let group = groups[groups.length - 1];
-    if (!group || group.key === "active" || group.key !== key) {
+    if (!group || group.key !== key) {
       group = { key, label: dayLabel(key, nowMs), runs: [] };
       groups.push(group);
     }

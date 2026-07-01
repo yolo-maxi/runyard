@@ -6,7 +6,7 @@ import { api } from "../lib/api.js";
 import { useHashRoute, useNavigate, deepLinks } from "../lib/router.js";
 import { useNow, useLocalStorage } from "../lib/storage.js";
 import {
-  isActiveRun, topLevelRuns, supervisedChildRuns,
+  topLevelRuns, supervisedChildRuns,
   timeRangeToSinceISO, truncate, RUN_STATUS_OPTIONS, TIME_RANGE_OPTIONS
 } from "../lib/runHelpers.js";
 import { groupRunsByEndedDate } from "../lib/runGrouping.js";
@@ -82,66 +82,6 @@ function filtersToQuery(filters) {
   if (Array.isArray(filters.workflows)) p.set("workflows", filters.workflows.join(","));
   if (filters.cursor) p.set("cursor", filters.cursor);
   return p.toString();
-}
-
-function runEndedAt(run) {
-  if (isActiveRun(run)) return run?.startedAt || run?.createdAt || run?.updatedAt || "";
-  return run?.completedAt || run?.updatedAt || run?.createdAt || "";
-}
-
-function runChronologyMs(run) {
-  const parsed = Date.parse(runEndedAt(run));
-  if (Number.isFinite(parsed)) return parsed;
-  const fallback = Date.parse(run?.createdAt || "");
-  return Number.isFinite(fallback) ? fallback : 0;
-}
-
-function compareRunsChronologically(a, b, order = "desc") {
-  const direction = order === "asc" ? 1 : -1;
-  const byEnded = (runChronologyMs(a) - runChronologyMs(b)) * direction;
-  if (byEnded) return byEnded;
-  const byCreated = (Date.parse(a?.createdAt || "") - Date.parse(b?.createdAt || "")) * direction;
-  if (byCreated) return byCreated;
-  return String(a?.id || "").localeCompare(String(b?.id || ""));
-}
-
-function dayKey(iso) {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "unknown";
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}-${m}-${d}`;
-}
-
-function dayLabel(key, nowMs) {
-  if (key === "active") return "In flight";
-  if (key === "unknown") return "Unknown date";
-  const today = dayKey(nowMs);
-  const yesterday = dayKey(nowMs - 24 * 3600 * 1000);
-  if (key === today) return "Today";
-  if (key === yesterday) return "Yesterday";
-  const date = new Date(`${key}T12:00:00`);
-  return date.toLocaleDateString(undefined, {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    year: date.getUTCFullYear() === new Date(nowMs).getUTCFullYear() ? undefined : "numeric"
-  });
-}
-
-function groupRunsByEndedDate(runs, nowMs, order = "desc") {
-  const groups = [];
-  for (const run of [...runs].sort((a, b) => compareRunsChronologically(a, b, order))) {
-    const key = isActiveRun(run) ? "active" : dayKey(runEndedAt(run));
-    let group = groups[groups.length - 1];
-    if (!group || group.key !== key) {
-      group = { key, label: dayLabel(key, nowMs), runs: [] };
-      groups.push(group);
-    }
-    group.runs.push(run);
-  }
-  return groups;
 }
 
 function RunHistoryGroups({ groups, artifactsByRun, now }) {

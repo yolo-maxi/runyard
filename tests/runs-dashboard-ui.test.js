@@ -3,6 +3,11 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { cleanFailureText } from "../web/lib/runHelpers.js";
+import {
+  groupRunsByEndedDate,
+  compareRunsChronologically,
+  runEndedAt
+} from "../web/lib/runGrouping.js";
 
 // Pins the Runs-dashboard behaviour (incident card, plain-English failure
 // summary, single mobile nav, compact chrome, safe-area FAB) for the React +
@@ -11,6 +16,7 @@ import { cleanFailureText } from "../web/lib/runHelpers.js";
 // the (unchanged) styles.css.
 const root = process.cwd();
 const runHelpers = readFileSync(path.join(root, "web", "lib", "runHelpers.js"), "utf8");
+const runGrouping = readFileSync(path.join(root, "web", "lib", "runGrouping.js"), "utf8");
 const homeChrome = readFileSync(path.join(root, "web", "components", "HomeChrome.jsx"), "utf8");
 const home = readFileSync(path.join(root, "web", "views", "Home.jsx"), "utf8");
 const runCard = readFileSync(path.join(root, "web", "components", "RunCard.jsx"), "utf8");
@@ -173,17 +179,121 @@ describe("Runs page: filter toolbar, history rows, and detail order", () => {
   });
 
   it("sorts run history by workflow ended date and renders chat-style date separators", () => {
-    assert.match(home, /function runEndedAt\(run\)/);
-    assert.match(home, /return run\?\.completedAt \|\| run\?\.updatedAt \|\| run\?\.createdAt \|\| ""/);
-    assert.match(home, /function compareRunsChronologically\(a, b, order = "desc"\)/);
-    assert.match(home, /function groupRunsByEndedDate\(runs, nowMs, order = "desc"\)/);
-    assert.match(home, /dayLabel\(key, nowMs\)/);
-    assert.match(home, /Today/);
-    assert.match(home, /Yesterday/);
+    assert.match(runGrouping, /export function runEndedAt\(run\)/);
+    assert.match(runGrouping, /return run\?\.completedAt \|\| run\?\.updatedAt \|\| run\?\.createdAt \|\| ""/);
+    assert.match(runGrouping, /export function compareRunsChronologically\(a, b, order = "desc"\)/);
+    assert.match(runGrouping, /export function groupRunsByEndedDate\(runs, nowMs, order = "desc"\)/);
+    assert.match(runGrouping, /dayLabel\("active", nowMs\)/);
+    assert.match(home, /import \{ groupRunsByEndedDate \} from "\.\.\/lib\/runGrouping\.js"/);
+    assert.match(home, /groupRunsByEndedDate\(visibleRuns, now, filters\.order\)/);
+    assert.match(runGrouping, /Today|dayLabel/);
     assert.match(home, /className="run-history-day-separator"/);
     assert.match(css, /\.run-history-day-separator/);
     assert.match(css, /\.run-history-day-separator::before,\s*\n\.run-history-day-separator::after/);
     assert.match(css, /\.run-history-day-separator span/);
+  });
+
+  it("leads with active runs so a completed run from today never sits above a running one", () => {
+    // Fran's screenshot: a succeeded run at 15:04 appearing above a running run
+    // that started at 14:50. This is the bug — active work must always lead.
+    const NOW = Date.parse("2026-07-01T15:10:00Z");
+    const runs = [
+      // Completed today, 6 minutes ago — has the newest overall timestamp.
+      { id: "r-done-today", status: "succeeded", createdAt: "2026-07-01T14:30:00Z",
+        startedAt: "2026-07-01T14:31:00Z", completedAt: "2026-07-01T15:04:00Z" },
+      // Running, started 20 minutes ago — older timestamp than the completed run.
+      { id: "r-running", status: "running", createdAt: "2026-07-01T14:45:00Z",
+        startedAt: "2026-07-01T14:50:00Z" },
+      // Queued, just now — no startedAt yet.
+      { id: "r-queued", status: "queued", createdAt: "2026-07-01T15:09:30Z" },
+      // Waiting for approval — also active.
+      { id: "r-waiting", status: "waiting_approval", createdAt: "2026-07-01T14:00:00Z",
+        startedAt: "2026-07-01T14:05:00Z" },
+      // Failed yesterday.
+      { id: "r-failed-yday", status: "failed", createdAt: "2026-06-30T10:00:00Z",
+        startedAt: "2026-06-30T10:01:00Z", completedAt: "2026-06-30T10:20:00Z" }
+    ];
+    const groups = groupRunsByEndedDate(runs, NOW, "desc");
+    assert.equal(groups[0].key, "active", "the first group must be the In flight group");
+    assert.equal(groups[0].label, "In flight");
+    const activeIds = groups[0].runs.map((r) => r.id);
+    assert.deepEqual(new Set(activeIds), new Set(["r-running", "r-queued", "r-waiting"]));
+    // No active run may be grouped under a day heading — a completed run from
+    // today must not appear above an in-flight run.
+    for (let i = 1; i < groups.length; i += 1) {
+      for (const run of groups[i].runs) {
+        assert.ok(!["queued", "running", "waiting_approval", "assigned", "pending"].includes(run.status),
+          `active run ${run.id} leaked into non-active group ${groups[i].key}`);
+      }
+    }
+    // Today's completed run sits below "In flight", above yesterday's — assert
+    // on group index by run id, not on the "Today"/"Yesterday" label so the
+    // test survives non-UTC test runners.
+    const todayIndex = groups.findIndex((g) => g.runs.some((r) => r.id === "r-done-today"));
+    const yesterdayIndex = groups.findIndex((g) => g.runs.some((r) => r.id === "r-failed-yday"));
+    assert.ok(todayIndex > 0, "today's completed run must not sit above In flight");
+    assert.ok(yesterdayIndex > todayIndex, "yesterday's completed run must sit below today's");
+    assert.deepEqual(groups[todayIndex].runs.map((r) => r.id), ["r-done-today"]);
+    assert.deepEqual(groups[yesterdayIndex].runs.map((r) => r.id), ["r-failed-yday"]);
+  });
+
+  it("keeps active-first even when the operator asks for oldest-ended-first history", () => {
+    // The toolbar's ascending sort reorders history buckets only; live work
+    // must never migrate below terminal runs.
+    const NOW = Date.parse("2026-07-01T12:00:00Z");
+    const runs = [
+      { id: "old-done", status: "succeeded", createdAt: "2026-06-25T08:00:00Z",
+        startedAt: "2026-06-25T08:01:00Z", completedAt: "2026-06-25T08:30:00Z" },
+      { id: "recent-done", status: "succeeded", createdAt: "2026-06-30T08:00:00Z",
+        startedAt: "2026-06-30T08:01:00Z", completedAt: "2026-06-30T08:30:00Z" },
+      { id: "live", status: "running", createdAt: "2026-07-01T11:00:00Z",
+        startedAt: "2026-07-01T11:05:00Z" }
+    ];
+    const asc = groupRunsByEndedDate(runs, NOW, "asc");
+    assert.equal(asc[0].key, "active", "even in asc mode, In flight leads");
+    assert.deepEqual(asc[0].runs.map((r) => r.id), ["live"]);
+    // The two terminal days are ordered oldest→newest below active.
+    assert.equal(asc[1].runs[0].id, "old-done");
+    assert.equal(asc[2].runs[0].id, "recent-done");
+  });
+
+  it("orders multiple active runs by most recently started first", () => {
+    const NOW = Date.parse("2026-07-01T15:00:00Z");
+    const runs = [
+      { id: "started-earlier", status: "running", createdAt: "2026-07-01T13:00:00Z",
+        startedAt: "2026-07-01T13:10:00Z" },
+      { id: "started-latest", status: "running", createdAt: "2026-07-01T14:50:00Z",
+        startedAt: "2026-07-01T14:55:00Z" },
+      { id: "started-middle", status: "running", createdAt: "2026-07-01T14:00:00Z",
+        startedAt: "2026-07-01T14:10:00Z" }
+    ];
+    const groups = groupRunsByEndedDate(runs, NOW, "desc");
+    assert.equal(groups.length, 1, "only the In flight group when nothing terminal");
+    assert.deepEqual(
+      groups[0].runs.map((r) => r.id),
+      ["started-latest", "started-middle", "started-earlier"]
+    );
+  });
+
+  it("runEndedAt prefers completedAt for terminal runs and startedAt for active runs", () => {
+    assert.equal(
+      runEndedAt({ status: "succeeded", completedAt: "2026-07-01T10:00:00Z",
+        startedAt: "2026-07-01T09:00:00Z", createdAt: "2026-07-01T08:00:00Z" }),
+      "2026-07-01T10:00:00Z"
+    );
+    assert.equal(
+      runEndedAt({ status: "running", startedAt: "2026-07-01T09:00:00Z",
+        createdAt: "2026-07-01T08:00:00Z" }),
+      "2026-07-01T09:00:00Z"
+    );
+    // No status → treated as terminal; falls back to updatedAt then createdAt.
+    assert.equal(runEndedAt({ updatedAt: "2026-07-01T07:00:00Z" }), "2026-07-01T07:00:00Z");
+    assert.equal(runEndedAt({}), "");
+    // compareRunsChronologically stays a stable tiebreaker for identical timestamps.
+    const a = { id: "aaa", status: "succeeded", completedAt: "2026-07-01T10:00:00Z" };
+    const b = { id: "bbb", status: "succeeded", completedAt: "2026-07-01T10:00:00Z" };
+    assert.ok(compareRunsChronologically(a, b, "desc") < 0);
+    assert.ok(compareRunsChronologically(b, a, "desc") > 0);
   });
 
   it("orders terminal run detail around outcome before console history", () => {
