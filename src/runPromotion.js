@@ -46,8 +46,22 @@ function runGit(args, { cwd, env, maxBuffer = 1024 * 1024 * 16 }) {
   return execFileSync("git", args, { cwd, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer }).trim();
 }
 
+function commandErrorMessage(error, fallback = "command failed") {
+  const stderr = cleanString(error?.stderr);
+  const stdout = cleanString(error?.stdout);
+  const message = cleanString(error?.message || fallback);
+  const detail = [stderr, stdout].filter(Boolean).join("\n").trim();
+  if (!detail) return message;
+  const tail = detail.split("\n").slice(-80).join("\n");
+  return `${message}\n${tail}`;
+}
+
 function runTool(cmd, args, { cwd, env, maxBuffer = 1024 * 1024 * 64 }) {
-  return execFileSync(cmd, args, { cwd, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer }).trim();
+  try {
+    return execFileSync(cmd, args, { cwd, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer }).trim();
+  } catch (error) {
+    throw new Error(commandErrorMessage(error, `${cmd} ${args.join(" ")} failed`));
+  }
 }
 
 function packageScripts(repoDir) {
@@ -198,6 +212,6 @@ export function promoteRunToMain(run, {
         // Best-effort restoration only. The next attempt re-checks cleanliness.
       }
     }
-    throw new Error(String(error.stderr || error.message || error).slice(0, 2000));
+    throw new Error(commandErrorMessage(error).slice(0, 6000));
   }
 }
