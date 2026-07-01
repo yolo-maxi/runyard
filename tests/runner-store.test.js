@@ -111,14 +111,18 @@ describe("runner store", () => {
     const { calls, store } = createHarness({
       allRows: [
         { id: "runner_1", stored: 3, actual: 1 },
-        { id: "runner_2", stored: 2, actual: 2 }
+        { id: "runner_2", stored: 2, actual: 2 },
+        { id: "runner_3", stored: 0, actual: 0, current_run_id: "stale_run" }
       ]
     });
 
     store.adjustRunnerActiveRuns("runner_1", -1);
     store.adjustRunnerActiveRuns("", -1);
-    assert.deepEqual(store.reconcileRunnerActiveRuns(), [{ id: "runner_1", from: 3, to: 1 }]);
-    assert.equal(calls.filter((call) => call.fn === "run").length, 2);
+    assert.deepEqual(store.reconcileRunnerActiveRuns(), [
+      { id: "runner_1", from: 3, to: 1, clearedCurrentRunId: false },
+      { id: "runner_3", from: 0, to: 0, clearedCurrentRunId: true }
+    ]);
+    assert.equal(calls.filter((call) => call.fn === "run").length, 3);
   });
 
   it("computes load, liveness, pool size, and runner lists", () => {

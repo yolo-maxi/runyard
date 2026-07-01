@@ -180,6 +180,7 @@ describe("runner record helpers", () => {
     assert.deepEqual(runnerActiveRunsReconcileQuery(), {
       sql: `SELECT runners.id AS id,
             COALESCE(runners.active_runs, 0) AS stored,
+            runners.current_run_id AS current_run_id,
             (SELECT COUNT(*) FROM runs
               WHERE runs.runner_id = runners.id
                 AND runs.status IN ('assigned','running')) AS actual
@@ -187,8 +188,8 @@ describe("runner record helpers", () => {
       params: []
     });
     assert.deepEqual(runnerActiveRunsSetQuery({ runnerId: "runner_1", activeRuns: 3 }), {
-      sql: "UPDATE runners SET active_runs = ? WHERE id = ?",
-      params: [3, "runner_1"]
+      sql: "UPDATE runners SET active_runs = ?, current_run_id = CASE WHEN ? <= 0 THEN NULL ELSE current_run_id END WHERE id = ?",
+      params: [3, 3, "runner_1"]
     });
   });
 

@@ -166,6 +166,7 @@ export function runnerActiveRunsReconcileQuery() {
   return {
     sql: `SELECT runners.id AS id,
             COALESCE(runners.active_runs, 0) AS stored,
+            runners.current_run_id AS current_run_id,
             (SELECT COUNT(*) FROM runs
               WHERE runs.runner_id = runners.id
                 AND runs.status IN ('assigned','running')) AS actual
@@ -176,8 +177,8 @@ export function runnerActiveRunsReconcileQuery() {
 
 export function runnerActiveRunsSetQuery({ runnerId, activeRuns }) {
   return {
-    sql: "UPDATE runners SET active_runs = ? WHERE id = ?",
-    params: [activeRuns, runnerId]
+    sql: "UPDATE runners SET active_runs = ?, current_run_id = CASE WHEN ? <= 0 THEN NULL ELSE current_run_id END WHERE id = ?",
+    params: [activeRuns, activeRuns, runnerId]
   };
 }
 

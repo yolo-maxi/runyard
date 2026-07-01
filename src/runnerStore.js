@@ -118,10 +118,12 @@ export function createRunnerStore({
     const query = runnerActiveRunsReconcileQuery();
     const corrected = [];
     for (const row of all(query.sql, query.params)) {
-      if (Number(row.stored) === Number(row.actual)) continue;
+      const actual = Number(row.actual) || 0;
+      const hasStaleCurrentRun = actual <= 0 && row.current_run_id;
+      if (Number(row.stored) === actual && !hasStaleCurrentRun) continue;
       const update = runnerActiveRunsSetQuery({ runnerId: row.id, activeRuns: row.actual });
       run(update.sql, update.params);
-      corrected.push({ id: row.id, from: Number(row.stored), to: Number(row.actual) });
+      corrected.push({ id: row.id, from: Number(row.stored), to: actual, clearedCurrentRunId: Boolean(hasStaleCurrentRun) });
     }
     return corrected;
   }
