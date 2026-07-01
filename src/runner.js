@@ -21,6 +21,8 @@ import { readClaudeOauthToken } from "./claudeOauthToken.js";
 import { isDraining, resolveDataDir } from "./drain.js";
 import { resolveSmithersBin, resolveExecWrapper } from "./resolveSmithersBin.js";
 import {
+  createSmithersRunRegistry,
+  isHubTerminalStatus,
   launchSmithers,
   smithersCommand
 } from "./runnerSmithersRuntime.js";
@@ -91,6 +93,7 @@ if (!token) {
 }
 
 const client = new HubClient({ baseUrl, token });
+let shuttingDown = false;
 
 // Persist the Hub-assigned runner id across restarts so a normal service bounce
 // reuses one stable row instead of minting a ghost. Server-side stable-identity
@@ -244,6 +247,20 @@ async function cancelSmithersRun(sid, reason = "") {
   }
 }
 
+const smithersRegistry = createSmithersRunRegistry({
+  cancelSmithersRun,
+  event,
+  logError: console.error
+});
+
+async function observedHubRunStatus(runId) {
+  try {
+    return (await client.get(`/api/runs/${runId}`))?.run?.status || "";
+  } catch {
+    return "";
+  }
+}
+
 async function event(runId, type, message, data = {}) {
   try {
     await client.post(`/api/runs/${runId}/events`, { type, message: String(message).slice(0, 4000), data });
@@ -357,6 +374,7 @@ async function executeAssignment(assignment) {
     const resume = run.input && typeof run.input === "object" ? run.input.__resume : null;
     const runtimeEnv = materializeAgentRuntimePack(run, assignment.agentRuntimePack);
     const sid = await launch(entry, run.input, { ...runtimeEnv, ...secretEnv }, resume);
+    smithersRegistry.register(run.id, sid);
     if (resume?.smithersRunId) {
       await event(run.id, "runner.resumed", `Resuming Smithers run ${sid} from checkpoint (attempt ${resume.attempt || "?"})`, {
         smithersRunId: sid,
@@ -371,6 +389,7 @@ async function executeAssignment(assignment) {
     let state = "running";
     const deadline = Date.now() + maxRunMs;
     let deadlineExceeded = false;
+    let hubTerminalStatus = "";
     while (Date.now() < deadline) {
       const lines = await fetchEvents(sid);
       for (let i = posted; i < lines.length; i++) {
@@ -382,6 +401,18 @@ async function executeAssignment(assignment) {
         state = st.runState?.state || st.run?.status || "running";
       } catch {
         /* keep polling */
+      }
+      hubTerminalStatus = await observedHubRunStatus(run.id);
+      if (isHubTerminalStatus(hubTerminalStatus)) {
+        await event(
+          run.id,
+          "runner.hub_terminal_observed",
+          `Hub marked run terminal as '${hubTerminalStatus}'; cancelling owned Smithers run ${sid}.`,
+          { smithersRunId: sid, status: hubTerminalStatus }
+        );
+        await cancelSmithersRun(sid, `hub terminal status: ${hubTerminalStatus}`);
+        state = "cancelled";
+        break;
       }
       if (TERMINAL.has(state)) break;
       await sleep(pollMs);
@@ -397,6 +428,11 @@ async function executeAssignment(assignment) {
       );
       await cancelSmithersRun(sid, "runner deadline exceeded");
       state = "cancelled";
+    }
+
+    if (hubTerminalStatus) {
+      console.log(`Run ${run.id} stopped locally because Hub is already '${hubTerminalStatus}' (smithers ${sid})`);
+      return;
     }
 
     const {
@@ -429,6 +465,7 @@ async function executeAssignment(assignment) {
     await failRun(run.id, error.stack || error.message).catch(() => {});
     console.error(`Run ${run.id} failed:`, error.message);
   } finally {
+    smithersRegistry.unregister(run.id);
     activeRuns.delete(run.id);
     activeRunKinds.delete(run.id);
     completedRuns += 1;
@@ -469,7 +506,7 @@ function maybeExitAfterRuns() {
 }
 
 async function tick() {
-  if (!runnerId) return;
+  if (!runnerId || shuttingDown) return;
   // setInterval doesn't wait for the previous tick to finish — guard against
   // two overlapping pollers racing each other to claim the same slot.
   if (tickInFlight) return;
@@ -526,6 +563,27 @@ async function tick() {
     tickInFlight = false;
   }
 }
+
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  if (intervalHandle) clearInterval(intervalHandle);
+  console.log(`${signal} received; cancelling ${smithersRegistry.active.size} owned Smithers run(s) before exit.`);
+  try {
+    await smithersRegistry.cancelAll(`runner received ${signal}`);
+  } finally {
+    process.exit(0);
+  }
+}
+
+process.once("SIGTERM", () => shutdown("SIGTERM").catch((error) => {
+  console.error("shutdown failed:", error.message);
+  process.exit(1);
+}));
+process.once("SIGINT", () => shutdown("SIGINT").catch((error) => {
+  console.error("shutdown failed:", error.message);
+  process.exit(1);
+}));
 
 async function main() {
   try {

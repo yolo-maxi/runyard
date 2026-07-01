@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  createSmithersRunRegistry,
+  isHubTerminalStatus,
   launchSmithers,
   parseSmithersRunId,
   smithersCommand,
@@ -43,6 +45,49 @@ describe("runner Smithers runtime helpers", () => {
     ]);
     assert.match(request.stdin, /"prompt"/);
     assert.doesNotMatch(request.stdin, /__resume/);
+  });
+
+  it("treats every Hub terminal status as a stop signal", () => {
+    for (const status of [
+      "succeeded",
+      "failed",
+      "blocked_by_preflight",
+      "provider_limited",
+      "timed_out",
+      "invalid_output",
+      "infra_unavailable",
+      "needs_human",
+      "cancelled"
+    ]) {
+      assert.equal(isHubTerminalStatus(status), true, status);
+    }
+    assert.equal(isHubTerminalStatus("running"), false);
+    assert.equal(isHubTerminalStatus("assigned"), false);
+  });
+
+  it("tracks owned detached Smithers runs and cancels them deterministically", async () => {
+    const cancelled = [];
+    const events = [];
+    const registry = createSmithersRunRegistry({
+      cancelSmithersRun: async (...args) => {
+        cancelled.push(args);
+        return true;
+      },
+      event: async (...args) => events.push(args)
+    });
+
+    registry.register("run_1", "smithers_1");
+    registry.register("run_2", "smithers_2");
+    assert.equal(registry.active.size, 2);
+
+    assert.equal(await registry.cancelRun("run_1", "operator cancelled"), true);
+    assert.deepEqual(cancelled[0], ["smithers_1", "operator cancelled"]);
+    assert.equal(events[0][1], "runner.cancel_smithers");
+
+    registry.unregister("run_1");
+    assert.equal(registry.active.size, 1);
+    assert.equal(await registry.cancelAll("shutdown"), 1);
+    assert.deepEqual(cancelled[1], ["smithers_2", "shutdown"]);
   });
 
   it("builds supervisor child env with explicit hub URL/token and secret override precedence", () => {

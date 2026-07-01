@@ -127,6 +127,30 @@ export function supervisorRunLookupQuery(runId) {
   };
 }
 
+export function supervisedChildTerminalCandidatesQuery({ supervisorCapabilitySlug = "run-smithers", limit = 100 } = {}) {
+  return {
+    sql: `SELECT parent.*,
+            child.id AS child_id,
+            child.status AS child_status,
+            child.error AS child_error,
+            child.output AS child_output,
+            child.completed_at AS child_completed_at
+       FROM runs parent
+       JOIN runs child
+         ON json_extract(child.input, '$.__origin.parentRunId') = parent.id
+      WHERE parent.capability_slug = ?
+        AND parent.status IN ('queued','assigned','running')
+        AND child.status IN (
+          'succeeded','failed','blocked_by_gate','blocked_by_preflight',
+          'provider_limited','timed_out','invalid_output','infra_unavailable',
+          'needs_human','cancelled'
+        )
+      ORDER BY child.completed_at DESC, child.updated_at DESC
+      LIMIT ?`,
+    params: [supervisorCapabilitySlug, Math.max(1, Math.floor(Number(limit) || 100))]
+  };
+}
+
 export function supervisorMetaUpdateQuery({ runId, meta }) {
   return {
     sql: "UPDATE runs SET supervisor_meta=? WHERE id=?",

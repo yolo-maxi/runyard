@@ -20,6 +20,7 @@ export function startRunMaintenance({
   pruneDeadRunners,
   reapStuckRunsWithRetrospectives,
   reconcileFailedRecoverable,
+  reconcileSupervisedChildTerminals,
   reconcileRunnerActiveRuns,
   setIntervalFn = setInterval
 } = {}) {
@@ -28,6 +29,12 @@ export function startRunMaintenance({
       reapStuckRunsWithRetrospectives(env.runDeadlineMs);
     } catch (error) {
       logError("Run reaper failed:", error.message);
+    }
+    try {
+      const reconciledParents = reconcileSupervisedChildTerminals ? reconcileSupervisedChildTerminals() : [];
+      if (reconciledParents.length) logInfo(`Reconciled ${reconciledParents.length} supervised parent run(s): ${reconciledParents.join(", ")}`);
+    } catch (error) {
+      logError("Supervised parent reconcile failed:", error.message);
     }
     try {
       // Hub-as-supervisor backstop: resume runs a runner self-reported as
@@ -116,6 +123,7 @@ export function startServerRuntime({
   pruneDeadRunners,
   reapStuckRunsWithRetrospectives,
   reconcileFailedRecoverable,
+  reconcileSupervisedChildTerminals,
   reconcileRunnerActiveRuns,
   setIntervalFn = setInterval,
   setTimeoutFn = setTimeout,
@@ -133,6 +141,7 @@ export function startServerRuntime({
     pruneDeadRunners,
     reapStuckRunsWithRetrospectives,
     reconcileFailedRecoverable,
+    reconcileSupervisedChildTerminals,
     reconcileRunnerActiveRuns,
     setIntervalFn
   });

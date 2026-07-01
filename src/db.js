@@ -483,6 +483,10 @@ export function reconcileRepairChildTerminal(repairRunId) {
   return runSupervisorStore.reconcileRepairChildTerminal(repairRunId);
 }
 
+export function reconcileSupervisedChildTerminals(options = {}) {
+  return runSupervisorStore.reconcileSupervisedChildTerminals(options);
+}
+
 export function reapStuckRunIds(maxMs) {
   return runSupervisorStore.reapStuckRunIds(maxMs);
 }

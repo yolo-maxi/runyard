@@ -16,6 +16,7 @@ import {
   runProgressMarkerQuery,
   supervisingParentId,
   supervisingParentStatusQuery,
+  supervisedChildTerminalCandidatesQuery,
   supervisorMetaUpdateQuery,
   supervisorRunLookupQuery,
   supervisorRunStatusInputQuery,
@@ -132,6 +133,47 @@ export function createRunSupervisorStore({
     };
     finalizeSupervisorTerminal(parent, decision, "failed", { escalate: true });
     return { action: "escalate", parentId, repairRunId };
+  }
+
+  function reconcileSupervisedChildTerminals({ limit = 100 } = {}) {
+    const query = supervisedChildTerminalCandidatesQuery({ limit });
+    const rows = all(query.sql, query.params);
+    const acted = [];
+    for (const row of rows) {
+      const childId = row.child_id;
+      const childStatus = row.child_status;
+      const childError = row.child_error || "";
+      let result;
+      if (childStatus === "succeeded") {
+        result = transitionRun(row.id, "succeeded", {
+          current_step: "supervised child completed",
+          output: {
+            supervisedChildRunId: childId,
+            childStatus,
+            childOutput: parseMaybeJson(row.child_output, null)
+          },
+          completed_at: now()
+        });
+      } else if (childStatus === "cancelled") {
+        result = transitionRun(row.id, "cancelled", {
+          current_step: "supervised child cancelled",
+          completed_at: now()
+        });
+      } else {
+        result = transitionRun(row.id, childStatus, {
+          current_step: `supervised child ${childStatus}`,
+          error: childError || `supervised child ${childId} ended '${childStatus}'`,
+          completed_at: now()
+        });
+      }
+      if (!result.ok || result.idempotent) continue;
+      addRunEvent(row.id, "run.supervision.child_terminal_reconciled", `Supervised child ${childId} ended '${childStatus}'; parent reconciled`, {
+        childRunId: childId,
+        childStatus
+      });
+      acted.push(row.id);
+    }
+    return acted;
   }
 
   function finalizeSupervisorTerminal(row, decision, observedStatus, { escalate = false, failError = "", failStep = "" } = {}) {
@@ -297,6 +339,7 @@ export function createRunSupervisorStore({
     recordRunLineage,
     listRunLineage,
     reconcileRepairChildTerminal,
+    reconcileSupervisedChildTerminals,
     reapStuckRunIds,
     reapStuckRuns: (maxMs) => reapStuckRunIds(maxMs).length,
     reconcileFailedRecoverable

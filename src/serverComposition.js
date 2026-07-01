@@ -91,6 +91,7 @@ export function createServerComposition({
     reapStuckRunIds,
     reconcileFailedRecoverable,
     reconcileRepairChildTerminal,
+    reconcileSupervisedChildTerminals,
     reconcileRunnerActiveRuns,
     recordWorkflowEndpointInvocation,
     recordAudit,
@@ -403,6 +404,7 @@ export function createServerComposition({
     pruneDeadRunners,
     reapStuckRunsWithRetrospectives,
     reconcileFailedRecoverable,
+    reconcileSupervisedChildTerminals,
     reconcileRunnerActiveRuns,
     routes: {
       adminReadHandlers,

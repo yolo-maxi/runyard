@@ -16,6 +16,7 @@ import {
   runLineageListQuery,
   runProgressMarkerQuery,
   supervisorMetaUpdateQuery,
+  supervisedChildTerminalCandidatesQuery,
   supervisingParentStatusQuery,
   supervisingParentId,
   supervisorRunLookupQuery,
@@ -209,6 +210,27 @@ describe("run supervisor record helpers", () => {
       WHERE status = 'failed' AND updated_at >= ?
       ORDER BY updated_at DESC LIMIT ?`,
       params: ["2026-01-01T00:00:00.000Z", 3]
+    });
+    assert.deepEqual(supervisedChildTerminalCandidatesQuery({ limit: 7 }), {
+      sql: `SELECT parent.*,
+            child.id AS child_id,
+            child.status AS child_status,
+            child.error AS child_error,
+            child.output AS child_output,
+            child.completed_at AS child_completed_at
+       FROM runs parent
+       JOIN runs child
+         ON json_extract(child.input, '$.__origin.parentRunId') = parent.id
+      WHERE parent.capability_slug = ?
+        AND parent.status IN ('queued','assigned','running')
+        AND child.status IN (
+          'succeeded','failed','blocked_by_gate','blocked_by_preflight',
+          'provider_limited','timed_out','invalid_output','infra_unavailable',
+          'needs_human','cancelled'
+        )
+      ORDER BY child.completed_at DESC, child.updated_at DESC
+      LIMIT ?`,
+      params: ["run-smithers", 7]
     });
   });
 });

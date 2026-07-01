@@ -25,6 +25,7 @@ const {
   reapStuckRunIds,
   reconcileFailedRecoverable,
   reconcileRepairChildTerminal,
+  reconcileSupervisedChildTerminals,
   registerRunner,
   transitionRun
 } = await import("../src/db.js");
@@ -391,6 +392,27 @@ describe("Phase 2 hub-side repair: park child, re-run fresh / escalate", () => {
     const acted = reconcileFailedRecoverable({ dispatchRepair: () => "should-not-be-called" });
     assert.ok(acted.includes(parent.id));
     assert.equal(getRun(parent.id).status, "queued");
+  });
+
+  it("reconciles a run-smithers parent when its supervised child is already terminal", () => {
+    const parent = createRun(getCapability("run-smithers"), { goal: "wrap child" });
+    transitionRun(parent.id, "running", { current_step: "supervising" });
+    const child = createRun(getCapability("hello"), { topic: "child" }, {
+      origin: {
+        type: "run-smithers-child",
+        parentRunId: parent.id
+      }
+    });
+    transitionRun(child.id, "running", {});
+    transitionRun(child.id, "succeeded", { output: { ok: true }, completed_at: oldIso(0) });
+
+    const acted = reconcileSupervisedChildTerminals();
+    assert.ok(acted.includes(parent.id));
+    const reconciled = getRun(parent.id);
+    assert.equal(reconciled.status, "succeeded");
+    assert.equal(reconciled.output.supervisedChildRunId, child.id);
+
+    assert.deepEqual(reconcileSupervisedChildTerminals(), []);
   });
 });
 
