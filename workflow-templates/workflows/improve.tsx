@@ -8,6 +8,7 @@ import { z } from "zod/v4";
 import { resolveImproveRepo } from "./improve-repo.js";
 import { createAgentFallbackPair } from "./agent-fallback.js";
 import { runyardAgentSystemPrompt } from "./runyard-runtime.js";
+import { prepareMutatingRepo, releaseRepoLease, validateBeforeCommit, validateBeforePush } from "./repo-mutation-lease.js";
 
 // Repo + deploy target are deployment-specific; set env vars on your runner.
 const PROD_REMOTE = process.env.GATED_PROD_REMOTE || "prod";
@@ -36,7 +37,32 @@ const TOOL_PATH = [
 ].filter(Boolean).join(":");
 const TOOL_ENV = { ...process.env, PATH: TOOL_PATH };
 
-const baselineOut = z.object({ startHead: z.string(), repoDir: z.string().default("") });
+const repoLeaseOut = z.object({
+  schemaVersion: z.number().default(1),
+  mode: z.enum(["sequential", "parallel"]).default("sequential"),
+  leaseId: z.string().default(""),
+  runId: z.string().default(""),
+  pid: z.number().default(0),
+  workflow: z.string().default(""),
+  repoDir: z.string().default(""),
+  sourceRepoDir: z.string().default(""),
+  targetBranch: z.string().default("main"),
+  startBranch: z.string().default(""),
+  sourceBranch: z.string().default(""),
+  startHead: z.string().default(""),
+  key: z.string().default(""),
+  lockDir: z.string().default(""),
+  workRepoDir: z.string().default(""),
+  workBranch: z.string().default(""),
+  pushBranch: z.string().default(""),
+  acquiredAt: z.string().default("")
+});
+const baselineOut = z.object({
+  startHead: z.string(),
+  repoDir: z.string().default(""),
+  targetBranch: z.string().default("main"),
+  lease: repoLeaseOut
+});
 const reviewOut = z.object({
   summary: z.string().default(""),
   userPain: z.array(z.string()).default([]),
@@ -77,7 +103,11 @@ const inputSchema = z.object({
     .describe("Optional friendly project key resolved from IMPROVE_PROJECT_MAP or IMPROVE_REPO_MAP."),
   maxImprovements: z.number().int().min(1).max(6).default(3),
   deploy: z.boolean().default(false).describe("If true, deploy to prod after gates pass."),
-  targetBranch: z.string().default("main")
+  targetBranch: z.string().default("main"),
+  mutationMode: z
+    .enum(["sequential", "parallel"])
+    .default("sequential")
+    .describe("Mutating checkout mode. sequential takes a repo/branch lease; parallel explicitly creates a unique branch/worktree and never deploys directly.")
 });
 
 const { Workflow, Task, smithers, outputs } = createSmithers({
@@ -181,9 +211,10 @@ export default smithers((ctx) => {
     repoResolveError = err;
     repoDir = String(ctx.input?.repoDir || "").trim() || process.cwd();
   }
-  const productManager = createProductManager(repoDir);
-  const builder = createBuilder(repoDir);
   const baseline = ctx.outputMaybe("baseline", { nodeId: "baseline" });
+  const productManager = createProductManager(repoDir);
+  const workRepoDir = baseline?.repoDir || repoDir;
+  const builder = baseline ? createBuilder(workRepoDir) : null;
   const review = ctx.outputMaybe("review", { nodeId: "review" });
   const impl = ctx.outputMaybe("implement", { nodeId: "implement" });
   const test = ctx.outputMaybe("test", { nodeId: "test" });
@@ -193,13 +224,23 @@ export default smithers((ctx) => {
   return (
     <Workflow name="improve">
       <Sequence>
-        {/* 0. Record the starting HEAD so we can tell what the builder produced. */}
+        {/* 0. Acquire a mutating repo lease or create an explicit parallel worktree. */}
         <Task id="baseline" output={outputs.baseline} retries={0}>
           {async () => {
             if (repoResolveError) throw repoResolveError;
-            const { execFileSync } = await import("node:child_process");
-            const startHead = execFileSync(GIT, ["rev-parse", "HEAD"], { cwd: repoDir, encoding: "utf8", env: TOOL_ENV }).trim();
-            return { startHead, repoDir };
+            if ((ctx.input.mutationMode || "sequential") === "parallel" && ctx.input.deploy) {
+              throw new Error("PARALLEL MODE BLOCKED: deploy=true is not allowed from an isolated worktree.");
+            }
+            const lease = prepareMutatingRepo({
+              repoDir,
+              targetBranch: ctx.input.targetBranch || "main",
+              workflow: "improve",
+              mode: ctx.input.mutationMode || "sequential",
+              gitBin: GIT,
+              gitEnv: TOOL_ENV,
+              env: process.env
+            });
+            return { startHead: lease.startHead, repoDir: lease.workRepoDir || lease.repoDir, targetBranch: lease.pushBranch, lease };
           }}
         </Task>
 
@@ -223,7 +264,9 @@ export default smithers((ctx) => {
         {/* 2. Builder applies the PM's prioritized improvements (edits only). */}
         {review && (
           <Task id="implement" output={outputs.implement} agent={builder} timeoutMs={45 * 60 * 1000}>
-            {`Apply these prioritized improvements to the repository at ${repoDir}. Edit files only — do not commit, push, deploy, or run tests.\n\n` +
+            {`Apply these prioritized improvements to the repository at ${workRepoDir}. Edit files only — do not commit, push, deploy, or run tests.\n\n` +
+              `RUN LEASE: mode=${baseline.lease?.mode || "sequential"} runId=${baseline.lease?.runId || "unknown"} targetBranch=${baseline.targetBranch || ctx.input.targetBranch || "main"}. ` +
+              `If the checkout is dirty before you edit, HEAD changes unexpectedly, or another lease appears to own this repo, stop and report the operator action instead of working around it.\n\n` +
               `${improveScopeContract(ctx.input)}\n\n` +
               `=== PM SUMMARY ===\n${review.summary || "(no summary)"}\n\n` +
               `=== USER PAIN ===\n${(review.userPain || []).map((line, i) => `${i + 1}. ${line}`).join("\n") || "(none)"}\n\n` +
@@ -248,7 +291,7 @@ export default smithers((ctx) => {
               let out = "";
               let passed = false;
               try {
-                out = execFileSync(PNPM, ["test"], { cwd: repoDir, encoding: "utf8", env: TOOL_ENV, maxBuffer: 1024 * 1024 * 64 });
+                out = execFileSync(PNPM, ["test"], { cwd: workRepoDir, encoding: "utf8", env: TOOL_ENV, maxBuffer: 1024 * 1024 * 64 });
                 passed = true;
               } catch (e) {
                 out = `${e.stdout || ""}${e.stderr || ""}${e.message || ""}`;
@@ -266,7 +309,8 @@ export default smithers((ctx) => {
           <Task id="commit" output={outputs.commit} retries={0}>
             {async () => {
               const { execFileSync } = await import("node:child_process");
-              const run = (args) => execFileSync(GIT, args, { cwd: repoDir, encoding: "utf8", env: TOOL_ENV });
+              validateBeforeCommit(baseline.lease, { gitBin: GIT, gitEnv: TOOL_ENV });
+              const run = (args) => execFileSync(GIT, args, { cwd: workRepoDir, encoding: "utf8", env: TOOL_ENV });
               run(["add", "-A"]);
               const staged = run(["diff", "--cached", "--name-only"]).split("\n").map((s) => s.trim()).filter(Boolean);
               const stat = run(["diff", "--cached", "--stat"]).trim();
@@ -302,10 +346,14 @@ export default smithers((ctx) => {
           <Task id="push" output={outputs.push} retries={1}>
             {async () => {
               const { execFileSync } = await import("node:child_process");
-              const branch = ctx.input.targetBranch || "main";
+              const branch = baseline.targetBranch || ctx.input.targetBranch || "main";
+              if (baseline.lease?.mode === "parallel" && branch === (ctx.input.targetBranch || "main")) {
+                throw new Error("PARALLEL MODE BLOCKED: isolated workers may only push their unique work branch.");
+              }
+              validateBeforePush(baseline.lease, commit.commit, { gitBin: GIT, gitEnv: TOOL_ENV });
               let detail = "";
               try {
-                detail = execFileSync(GIT, ["push", "origin", `HEAD:${branch}`], { cwd: repoDir, encoding: "utf8", env: TOOL_ENV, stdio: ["ignore", "pipe", "pipe"] });
+                detail = execFileSync(GIT, ["push", "origin", `HEAD:${branch}`], { cwd: workRepoDir, encoding: "utf8", env: TOOL_ENV, stdio: ["ignore", "pipe", "pipe"] });
               } catch (e) {
                 detail = `${e.stdout || ""}${e.stderr || ""}`;
                 throw new Error(`GATE FAILED: git push origin failed.\n${detail.slice(0, 800)}`);
@@ -320,15 +368,19 @@ export default smithers((ctx) => {
           <Task id="deploy" output={outputs.deploy} retries={0}>
             {async () => {
               const { execFileSync } = await import("node:child_process");
+              if (baseline.lease?.mode === "parallel" && ctx.input.deploy) {
+                throw new Error("PARALLEL MODE BLOCKED: deploy=true is not allowed from an isolated worktree.");
+              }
               const target = PROD_HOST && PROD_DIR ? `${PROD_REMOTE} (${PROD_HOST}:${PROD_DIR})` : `${PROD_REMOTE} (not configured)`;
               if (!ctx.input.deploy) {
+                releaseRepoLease(baseline.lease, { env: process.env });
                 return { deployed: false, wouldDeploy: true, target, verify: `deploy=false — would push ${commit.commit} to ${target}, reset main, and restart the hub.` };
               }
               if (!PROD_HOST || !PROD_DIR || !DEPLOY_KEY) {
                 throw new Error("GATE FAILED: deploy=true requires GATED_PROD_HOST, GATED_PROD_DIR, and GATED_DEPLOY_KEY on the runner.");
               }
               const env = { ...TOOL_ENV, GIT_SSH_COMMAND: `${SSH} -i ${DEPLOY_KEY} -o BatchMode=yes -o StrictHostKeyChecking=accept-new` };
-              execFileSync(GIT, ["push", PROD_REMOTE, `${commit.commit}:refs/heads/sync-tmp`], { cwd: repoDir, encoding: "utf8", env });
+              execFileSync(GIT, ["push", PROD_REMOTE, `${commit.commit}:refs/heads/sync-tmp`], { cwd: workRepoDir, encoding: "utf8", env });
               const remoteCmd = `cd ${PROD_DIR} && git checkout -q main && git reset --hard sync-tmp && git branch -D sync-tmp; rm -f data/cli.tgz && systemctl --user restart smithers-hub.service && sleep 2 && git log --oneline -1`;
               const remoteOut = execFileSync(
                 SSH,
@@ -340,6 +392,7 @@ export default smithers((ctx) => {
                 const code = execFileSync(CURL, ["-s", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "15", `${HEALTH_BASE}${p}`], { encoding: "utf8", env: TOOL_ENV });
                 verify += `${p}:${code} `;
               }
+              releaseRepoLease(baseline.lease, { env: process.env });
               return { deployed: true, wouldDeploy: false, target, verify: `remote HEAD: ${remoteOut.trim().split("\n").pop()} | routes: ${verify.trim()}` };
             }}
           </Task>

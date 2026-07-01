@@ -290,8 +290,12 @@ async function register() {
 // the allowlisted, decrypted secrets the Hub injected with this run's claim;
 // they are merged into the child process env so the workflow's agent can use
 // them, and never written to disk/inputs/logs.
-async function launch(entry, input, secretEnv = {}, resume = null) {
+async function launch(entry, input, secretEnv = {}, resume = null, hubRunId = "") {
   const claudeOauthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN || readClaudeOauthToken();
+  const runEnv = {
+    RUNYARD_RUN_ID: String(hubRunId || ""),
+    SMITHERS_HUB_RUN_ID: String(hubRunId || "")
+  };
   return launchSmithers({
     runSmithers: smithers,
     entry,
@@ -302,7 +306,8 @@ async function launch(entry, input, secretEnv = {}, resume = null) {
     token,
     baseUrl,
     maxInlineInputBytes: MAX_INLINE_INPUT_BYTES,
-    claudeOauthToken
+    claudeOauthToken,
+    runEnv
   });
 }
 
@@ -373,7 +378,7 @@ async function executeAssignment(assignment) {
     // A hub-supervised resume carries the prior Smithers run id in __resume.
     const resume = run.input && typeof run.input === "object" ? run.input.__resume : null;
     const runtimeEnv = materializeAgentRuntimePack(run, assignment.agentRuntimePack);
-    const sid = await launch(entry, run.input, { ...runtimeEnv, ...secretEnv }, resume);
+    const sid = await launch(entry, run.input, { ...runtimeEnv, ...secretEnv }, resume, run.id);
     smithersRegistry.register(run.id, sid);
     if (resume?.smithersRunId) {
       await event(run.id, "runner.resumed", `Resuming Smithers run ${sid} from checkpoint (attempt ${resume.attempt || "?"})`, {

@@ -20,14 +20,14 @@ export function smithersCommand({ smithersBin, execWrapper = [] } = {}, args = [
   return { cmd, args: fullArgs };
 }
 
-export function supervisorChildEnv({ baseEnv = process.env, token = "", baseUrl = "", secretEnv = {}, claudeOauthToken = "" } = {}) {
+export function supervisorChildEnv({ baseEnv = process.env, token = "", baseUrl = "", secretEnv = {}, claudeOauthToken = "", runEnv = {} } = {}) {
   const supervisorEnv = {};
   if (token) supervisorEnv.RUN_SMITHERS_HUB_TOKEN = token;
   if (baseUrl) supervisorEnv.RUN_SMITHERS_HUB_URL = baseUrl;
   if (claudeOauthToken && !secretEnv.CLAUDE_CODE_OAUTH_TOKEN) {
     supervisorEnv.CLAUDE_CODE_OAUTH_TOKEN = claudeOauthToken;
   }
-  return { ...baseEnv, ...supervisorEnv, ...secretEnv };
+  return { ...baseEnv, ...supervisorEnv, ...secretEnv, ...runEnv };
 }
 
 export function smithersLaunchRequest({ entry, input, workspace, resume = null, maxInlineInputBytes }) {
@@ -120,11 +120,12 @@ export async function launchSmithers({
   token,
   baseUrl,
   maxInlineInputBytes,
-  claudeOauthToken = ""
+  claudeOauthToken = "",
+  runEnv = {}
 }) {
   const request = smithersLaunchRequest({ entry, input, workspace, resume, maxInlineInputBytes });
   const { stdout } = await runSmithers(request.args, {
-    env: supervisorChildEnv({ token, baseUrl, secretEnv, claudeOauthToken }),
+    env: supervisorChildEnv({ token, baseUrl, secretEnv, claudeOauthToken, runEnv }),
     ...(request.stdin ? { stdin: request.stdin } : {})
   });
   return parseSmithersRunId(stdout);

@@ -124,11 +124,13 @@ describe("runner Smithers runtime helpers", () => {
       workspace: "/tmp/ws",
       maxInlineInputBytes: 1000,
       token: "hub-token",
-      baseUrl: "http://hub"
+      baseUrl: "http://hub",
+      runEnv: { RUNYARD_RUN_ID: "run_hub_1" }
     });
 
     assert.equal(id, "run_launched");
     assert.deepEqual(calls[0].args.slice(0, 2), ["up", "/abs/workflow.tsx"]);
     assert.equal(calls[0].opts.env.RUN_SMITHERS_HUB_TOKEN, "hub-token");
+    assert.equal(calls[0].opts.env.RUNYARD_RUN_ID, "run_hub_1");
   });
 });
