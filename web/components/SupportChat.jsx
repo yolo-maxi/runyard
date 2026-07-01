@@ -236,6 +236,79 @@ function formatChatGroupTime(iso) {
 
 // ---- Sub-components ---------------------------------------------------------
 
+function renderInlineMarkdown(text, keyPrefix = "md") {
+  const nodes = [];
+  const source = String(text || "");
+  const pattern = /(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|\[[^\]]+\]\(https?:\/\/[^)\s]+\))/g;
+  let last = 0;
+  let index = 0;
+  for (const match of source.matchAll(pattern)) {
+    if (match.index > last) nodes.push(source.slice(last, match.index));
+    const token = match[0];
+    const key = `${keyPrefix}-${index++}`;
+    if (token.startsWith("`")) {
+      nodes.push(<code key={key}>{token.slice(1, -1)}</code>);
+    } else if (token.startsWith("**")) {
+      nodes.push(<strong key={key}>{token.slice(2, -2)}</strong>);
+    } else if (token.startsWith("*")) {
+      nodes.push(<em key={key}>{token.slice(1, -1)}</em>);
+    } else {
+      const link = token.match(/^\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)$/);
+      nodes.push(
+        <a key={key} href={link?.[2] || "#"} target="_blank" rel="noopener noreferrer">
+          {link?.[1] || token}
+        </a>
+      );
+    }
+    last = match.index + token.length;
+  }
+  if (last < source.length) nodes.push(source.slice(last));
+  return nodes;
+}
+
+function MarkdownMessage({ content }) {
+  const text = String(content || "");
+  const blocks = text.split(/```/);
+  let paragraphIndex = 0;
+  return (
+    <div className="support-chat-markdown">
+      {blocks.map((block, blockIndex) => {
+        if (blockIndex % 2 === 1) {
+          const code = block.replace(/^[a-z0-9_-]+\n/i, "");
+          return (
+            <pre key={`code-${blockIndex}`}>
+              <code>{code.trimEnd()}</code>
+            </pre>
+          );
+        }
+        return block
+          .split(/\n{2,}/)
+          .map((paragraph) => paragraph.trim())
+          .filter(Boolean)
+          .map((paragraph) => {
+            const key = `p-${blockIndex}-${paragraphIndex++}`;
+            const lines = paragraph.split("\n");
+            const unordered = lines.every((line) => /^[-*]\s+/.test(line.trim()));
+            const ordered = lines.every((line) => /^\d+\.\s+/.test(line.trim()));
+            if (unordered || ordered) {
+              const Tag = unordered ? "ul" : "ol";
+              return (
+                <Tag key={key}>
+                  {lines.map((line, lineIndex) => (
+                    <li key={lineIndex}>
+                      {renderInlineMarkdown(line.trim().replace(/^([-*]|\d+\.)\s+/, ""), `${key}-${lineIndex}`)}
+                    </li>
+                  ))}
+                </Tag>
+              );
+            }
+            return <p key={key}>{renderInlineMarkdown(paragraph, key)}</p>;
+          });
+      })}
+    </div>
+  );
+}
+
 function SupportButtons({ message, onActivate }) {
   const buttons = Array.isArray(message.buttons) ? message.buttons : [];
   const available = buttons
@@ -299,7 +372,9 @@ function MessageBubble({ message, showSeparator, senderChanged, onActivate }) {
         {separator}
         <div className={`support-chat-msg-wrap support-chat-msg-wrap--error${senderChange}`}>
           {senderLabel}
-          <div className="support-chat-msg error">{message.content}</div>
+          <div className="support-chat-msg error">
+            <MarkdownMessage content={message.content} />
+          </div>
           {meta}
           <SupportButtons message={message} onActivate={onActivate} />
         </div>
@@ -311,7 +386,9 @@ function MessageBubble({ message, showSeparator, senderChanged, onActivate }) {
       {separator}
       <div className={`support-chat-msg-wrap support-chat-msg-wrap--${role}${senderChange}`}>
         {senderLabel}
-        <div className={`support-chat-msg ${role}`}>{message.content}</div>
+        <div className={`support-chat-msg ${role}`}>
+          <MarkdownMessage content={message.content} />
+        </div>
         {meta}
         <SupportButtons message={message} onActivate={onActivate} />
       </div>
