@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { runsCollection, runnersCollection, capabilitiesCollection } from "../lib/collections.js";
 import { api } from "../lib/api.js";
 import { useHashRoute, useNavigate, deepLinks } from "../lib/router.js";
-import { useNow, useLocalStorage } from "../lib/storage.js";
+import { useNow } from "../lib/storage.js";
 import {
   topLevelRuns, supervisedChildRuns,
   timeRangeToSinceISO, truncate, RUN_STATUS_OPTIONS, TIME_RANGE_OPTIONS
@@ -19,7 +19,6 @@ import { relativeTime } from "../lib/format.js";
 // view hides them by default. Operators can still reveal them by explicitly
 // selecting the workflow in the Workflows filter.
 const DEFAULT_HIDDEN_WORKFLOWS = ["runyard-support-agent", "reauth-cli"];
-const WORKFLOW_FILTER_OPEN_STORAGE_KEY = "runs.workflowFilterOpen";
 
 function parseWorkflowParam(value = "") {
   return [...new Set(String(value || "").split(",").map((slug) => slug.trim()).filter(Boolean))];
@@ -118,9 +117,7 @@ function HomeFilterBar({ filters, capabilities = [], matchingCount = 0, statusCo
   const [range, setRange] = useState(filters.range);
   const [order, setOrder] = useState(filters.order);
   const [workflows, setWorkflows] = useState(selectedWorkflows);
-  // Persist open/closed for the workflow popover so heavy filter setups don't
-  // re-collapse on every navigation. Default closed to keep the toolbar tight.
-  const [workflowPanelOpen, setWorkflowPanelOpen] = useLocalStorage(WORKFLOW_FILTER_OPEN_STORAGE_KEY, false);
+  const [workflowPanelOpen, setWorkflowPanelOpen] = useState(false);
   useEffect(() => {
     setQ(filters.q);
     setStatus(filters.status);
@@ -190,8 +187,7 @@ function HomeFilterBar({ filters, capabilities = [], matchingCount = 0, statusCo
         </select>
         {workflowOptions.length ? (() => {
           // Collapse the per-workflow checkbox list into a native <details>
-          // popover so the toolbar stays one row at common desktop widths even
-          // on hubs with dozens of workflows. Native <details> preserves
+          // popover so the toolbar stays compact. Native <details> preserves
           // keyboard tab order (summary → checkboxes) and screen-reader
           // announcement without any custom focus management.
           const usingDefault = sameSet(workflows, defaultWorkflows);

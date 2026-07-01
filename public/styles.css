@@ -4238,7 +4238,7 @@ button.run-id-mono:focus-visible,
 
 .runs-workflow-filter-list {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 4px 8px;
   max-height: 240px;
   overflow: auto;
@@ -4249,13 +4249,15 @@ button.run-id-mono:focus-visible,
   background: var(--panel);
   box-shadow: 0 8px 24px rgba(15, 25, 35, 0.12);
   /* Float above the rest of the toolbar so opening the panel doesn't push the
-     runs list down. Width is wide enough to show ~3 columns of workflows. */
+     runs list down, but keep it narrow enough to stay visually attached to the
+     Workflows control. */
   position: absolute;
   top: 100%;
   left: 0;
   z-index: 5;
-  min-width: 320px;
-  max-width: min(640px, 92vw);
+  width: min(320px, calc(100vw - 32px));
+  min-width: 0;
+  max-width: min(320px, calc(100vw - 32px));
 }
 
 .runs-filter-bar .runs-workflow-filter-option {
