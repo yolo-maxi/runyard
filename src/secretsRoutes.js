@@ -1,3 +1,5 @@
+import { actorName } from "./routeActors.js";
+
 export const SECRET_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 export const SECRET_VALUE_MAX = 32 * 1024;
 
@@ -32,7 +34,51 @@ export function validateSecretUpsert({ key, value } = {}) {
   return { ok: true, key: normalizedKey, value };
 }
 
-export function actorName(token = {}) {
-  if (!token || typeof token !== "object") return "";
-  return token.name || token.id || "";
+export function createSecretHandlers({
+  deleteSecret,
+  listSecretMeta,
+  recordAudit,
+  secretExists,
+  secretsEnabled,
+  upsertSecret
+} = {}) {
+  function requireSecretsEnabled(_req, res, next) {
+    if (!secretsEnabled()) {
+      const response = secretsDisabledResponse();
+      return res.status(response.status).json(response.body);
+    }
+    next();
+  }
+
+  return {
+    requireSecretsEnabled,
+
+    listSecrets(_req, res) {
+      res.json({ secrets: listSecretMeta(), enabled: true });
+    },
+
+    upsertSecret(req, res) {
+      const validated = validateSecretUpsert({ key: req.params.key, value: req.body?.value });
+      if (!validated.ok) return res.status(validated.status).json(validated.body);
+      const { key, value } = validated;
+      const created = !secretExists(key);
+      const meta = upsertSecret({
+        key,
+        value,
+        description: String(req.body?.description || ""),
+        createdBy: actorName(req.token)
+      });
+      // Audit records the key + actor only; secret values never leave storage.
+      recordAudit(actorName(req.token), created ? "secret.created" : "secret.updated", key, { key });
+      res.status(created ? 201 : 200).json({ secret: meta });
+    },
+
+    deleteSecret(req, res) {
+      const key = String(req.params.key || "").trim();
+      if (!secretExists(key)) return res.status(404).json({ error: "secret not found" });
+      deleteSecret(key);
+      recordAudit(actorName(req.token), "secret.deleted", key, { key });
+      res.json({ ok: true, key });
+    }
+  };
 }

@@ -1,17 +1,21 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { randomBytes } from "node:crypto";
-import os from "node:os";
+import { mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { parseBool, parseRootList, parseTrustProxy } from "./configParsing.js";
+import {
+  defaultDbPath,
+  deriveEnvironmentLabel,
+  deriveHostnameLabel,
+  firstEnv as firstEnvValue,
+  resolveSessionSecret
+} from "./envConfig.js";
+
+export { defaultDbPath } from "./envConfig.js";
 
 // Read the first non-empty value among the given env var names. RunYard prefers
 // its RUNYARD_HUB_* variables but falls back to the legacy SMITHERS_HUB_* names
 // so existing deployments and tokens keep working without any re-config.
 export function firstEnv(...names) {
-  for (const name of names) {
-    const value = process.env[name];
-    if (value != null && value !== "") return value;
-  }
-  return undefined;
+  return firstEnvValue(process.env, ...names);
 }
 
 // Single source of truth for the app version: package.json. Bumping it there now
@@ -39,103 +43,9 @@ mkdirSync(path.join(dataDir, "artifacts", "runs"), { recursive: true });
 // must never shadow the populated database. This exact bug silently ran a live
 // hub on an empty 4 KB runyard.sqlite for days while its 387 MB real DB sat
 // orphaned beside it. Size comparison deterministically picks the real data.
-export function defaultDbPath(dir) {
-  const runyardDb = path.join(dir, "runyard.sqlite");
-  const legacyDb = path.join(dir, "smithers-hub.sqlite");
-  const runyardExists = existsSync(runyardDb);
-  const legacyExists = existsSync(legacyDb);
-  if (runyardExists && legacyExists) {
-    try {
-      // Larger main DB file = the one holding real data. Tie → canonical name.
-      return statSync(legacyDb).size > statSync(runyardDb).size ? legacyDb : runyardDb;
-    } catch {
-      return runyardDb;
-    }
-  }
-  if (legacyExists) return legacyDb;
-  return runyardDb;
-}
-
-const DEV_SECRET = "dev-runyard-session-secret";
 const baseUrl = process.env.BASE_URL || `http://127.0.0.1:${process.env.PORT || 43117}`;
 // Treat an explicit production flag or an https base URL as a production deployment.
 const isProduction = process.env.NODE_ENV === "production" || baseUrl.startsWith("https://");
-
-// Operator-visible environment label sourced from config, with a sensible
-// derivation from the base URL when nothing is set. Surfaced in the header so
-// operators bouncing between hubs (.248 vs Hetzner) know which one they're on.
-function deriveEnvironmentLabel() {
-  const explicit =
-    firstEnv("RUNYARD_HUB_ENVIRONMENT", "SMITHERS_HUB_ENVIRONMENT", "RUNYARD_HUB_ENV", "SMITHERS_HUB_ENV") || "";
-  if (explicit) return explicit.toLowerCase();
-  if (!isProduction) return "local";
-  try {
-    const host = new URL(baseUrl).hostname.toLowerCase();
-    if (/(^|[.-])(stage|staging|preprod)([.-]|$)/.test(host)) return "staging";
-    if (/(^|[.-])(dev|test)([.-]|$)/.test(host)) return "dev";
-    return "prod";
-  } catch {
-    return "prod";
-  }
-}
-
-function deriveHostnameLabel() {
-  const explicit = firstEnv("RUNYARD_HUB_HOSTNAME", "SMITHERS_HUB_HOSTNAME") || "";
-  if (explicit) return explicit;
-  try {
-    const host = new URL(baseUrl).hostname;
-    if (host && host !== "127.0.0.1" && host !== "localhost") return host;
-  } catch {
-    /* fall through */
-  }
-  try {
-    return os.hostname() || "local";
-  } catch {
-    return "local";
-  }
-}
-
-function resolveSessionSecret() {
-  const provided = firstEnv("RUNYARD_HUB_SESSION_SECRET", "SMITHERS_HUB_SESSION_SECRET");
-  if (provided && provided !== DEV_SECRET) return provided;
-  if (isProduction) {
-    if (provided === DEV_SECRET) {
-      throw new Error(
-        "Refusing to start: RUNYARD_HUB_SESSION_SECRET is set to the insecure development default in a production deployment. Set a long random secret."
-      );
-    }
-    // No secret provided in production: persist a generated one so sessions survive restarts.
-  }
-  const secretFile = path.join(dataDir, "session-secret.txt");
-  if (existsSync(secretFile)) {
-    const persisted = readFileSync(secretFile, "utf8").trim();
-    if (persisted) return persisted;
-  }
-  if (provided === DEV_SECRET || !isProduction) {
-    // Local development with no real secret: fall back to a generated-and-persisted one.
-  }
-  const generated = randomBytes(32).toString("base64url");
-  writeFileSync(secretFile, `${generated}\n`, { mode: 0o600 });
-  try {
-    chmodSync(secretFile, 0o600);
-  } catch {
-    /* best effort on platforms without chmod */
-  }
-  return generated;
-}
-
-function parseRoots(value) {
-  return String(value || "")
-    .split(/[:,]/)
-    .map((entry) => entry.trim())
-    .filter(Boolean)
-    .map((entry) => path.resolve(entry));
-}
-
-function parseBool(value, fallback = true) {
-  if (value == null || value === "") return fallback;
-  return !/^(0|false|off|no)$/i.test(String(value).trim());
-}
 
 export const env = {
   root,
@@ -149,9 +59,9 @@ export const env = {
   // Public product name. Every user-visible surface defaults to "Runyard"; the
   // legacy SMITHERS_HUB_INSTANCE_NAME is still honored for back-compat.
   instanceName: firstEnv("RUNYARD_HUB_INSTANCE_NAME", "SMITHERS_HUB_INSTANCE_NAME") || "Runyard",
-  environment: deriveEnvironmentLabel(),
-  hostname: deriveHostnameLabel(),
-  sessionSecret: resolveSessionSecret(),
+  environment: deriveEnvironmentLabel({ env: process.env, baseUrl, isProduction }),
+  hostname: deriveHostnameLabel({ env: process.env, baseUrl }),
+  sessionSecret: resolveSessionSecret({ env: process.env, dataDir, isProduction }),
   bootstrapToken: firstEnv("RUNYARD_HUB_BOOTSTRAP_TOKEN", "SMITHERS_HUB_BOOTSTRAP_TOKEN") || "",
   runyardMobileFeedbackEndpointSecret:
     firstEnv(
@@ -196,17 +106,10 @@ export const env = {
     return Number.isFinite(raw) && raw > 0 ? raw : 1.0;
   })(),
   // Optional allow-list of filesystem roots the runner may operate in. Empty = unrestricted (with a warning).
-  runnerAllowedRoots: parseRoots(process.env.SMITHERS_RUNNER_ALLOWED_ROOTS),
+  runnerAllowedRoots: parseRootList(process.env.SMITHERS_RUNNER_ALLOWED_ROOTS),
   // Express trust-proxy setting. Default 'loopback' so X-Forwarded-For can't be spoofed by clients.
   // Set to a proxy IP/subnet, a hop count, or 'true' only behind a trusted reverse proxy.
-  trustProxy: (() => {
-    const raw = process.env.SMITHERS_TRUST_PROXY;
-    if (raw == null || raw === "") return "loopback";
-    if (raw === "true") return true;
-    if (raw === "false") return false;
-    if (/^\d+$/.test(raw)) return Number(raw);
-    return raw;
-  })(),
+  trustProxy: parseTrustProxy(process.env.SMITHERS_TRUST_PROXY),
   // Optional max-runtime backstop for the reaper. Heartbeat/stall liveness is primary; 0 disables.
   runDeadlineMs: Number(process.env.SMITHERS_RUN_DEADLINE_MS || 0),
   // Phase 2 hub-as-supervisor code repair. When ON, a deterministic workflow-code

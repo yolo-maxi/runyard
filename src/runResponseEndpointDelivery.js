@@ -24,206 +24,24 @@ import {
 } from "./db.js";
 import { env } from "./env.js";
 import { now } from "./ids.js";
+import { buildRunResponseEndpointPayload } from "./runResponseEndpointPayload.js";
 import {
   presentRunResponseEndpoint,
   safeResponseEndpointAuditDetail
 } from "./runResponseEndpoint.js";
+import {
+  deliverResponseEndpointTransport,
+  safeResponseEndpointError
+} from "./runResponseEndpointTransports.js";
 
 const TERMINAL_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
-const DEFAULT_TIMEOUT_MS = 10_000;
-const ERROR_MAX_BYTES = 500;
-const PAYLOAD_OUTPUT_KEY_LIMIT = 32;
-const PAYLOAD_ARTIFACT_LIMIT = 50;
-
-// Same set the validator masks in audit summaries; reused here so any error
-// message we record never accidentally surfaces a header value.
-const TOKEN_PATTERNS = [
-  { re: /\b[Bb]earer\s+[A-Za-z0-9._-]{8,}\b/g, replace: "Bearer [redacted]" },
-  { re: /\bshub_[A-Za-z0-9_-]{8,}\b/g, replace: "shub_[redacted]" },
-  { re: /\bghp_[A-Za-z0-9]{20,}\b/g, replace: "ghp_[redacted]" },
-  { re: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_.-]+\b/g, replace: "[redacted-jwt]" }
-];
-
-function redact(value, max = ERROR_MAX_BYTES) {
-  let text = String(value ?? "");
-  for (const { re, replace } of TOKEN_PATTERNS) text = text.replace(re, replace);
-  if (text.length > max) text = text.slice(0, max - 1) + "…";
-  return text;
-}
 
 function safeError(message) {
-  return redact(message, ERROR_MAX_BYTES);
-}
-
-// Build a sanitized, secret-free summary of the run's output: top-level key
-// names + size only, never the raw values. Matches the contract from
-// specs/run-response-endpoints.md ("safe summary / output metadata (size,
-// top-level keys; not a full input echo and not secret-shaped values)").
-function summarizeOutput(output) {
-  if (output == null) return null;
-  if (typeof output !== "object" || Array.isArray(output)) {
-    let text = "";
-    try { text = JSON.stringify(output); } catch { text = String(output); }
-    return {
-      kind: Array.isArray(output) ? "array" : typeof output,
-      sizeBytes: Buffer.byteLength(text || "", "utf8"),
-      ...(Array.isArray(output) ? { length: output.length } : {})
-    };
-  }
-  const allKeys = Object.keys(output);
-  let text = "";
-  try { text = JSON.stringify(output); } catch { text = ""; }
-  return {
-    kind: "object",
-    keyCount: allKeys.length,
-    keys: allKeys.slice(0, PAYLOAD_OUTPUT_KEY_LIMIT),
-    sizeBytes: Buffer.byteLength(text, "utf8")
-  };
-}
-
-function describeArtifact(artifact, baseUrl) {
-  return {
-    id: artifact.id,
-    name: artifact.name,
-    mimeType: artifact.mimeType,
-    sizeBytes: artifact.sizeBytes,
-    deepLink: `/app#runs/${artifact.runId}/artifacts/${artifact.id}`,
-    downloadUrl: `${baseUrl || ""}/api/artifacts/${artifact.id}/download`
-  };
-}
-
-// Build the terminal-state delivery payload for a single run. This is shaped
-// so a caller can act on the result without polling /api/runs/:id and
-// without ever needing to see secret-shaped values from the run's input.
-export function buildRunResponseEndpointPayload(run, options = {}) {
-  const artifacts = (options.artifacts || []).slice(0, PAYLOAD_ARTIFACT_LIMIT);
-  const baseUrl = options.baseUrl || "";
-  const completedAt = run.completedAt || null;
-  const startedAt = run.startedAt || null;
-  const durationMs = completedAt && startedAt
-    ? Math.max(0, Date.parse(completedAt) - Date.parse(startedAt))
-    : null;
-  return {
-    schemaVersion: "runyard.run.response.v1",
-    runId: run.id,
-    status: run.status,
-    currentStep: run.currentStep || "",
-    capability: {
-      id: run.capabilityId || "",
-      slug: run.capabilitySlug || "",
-      name: run.capabilityName || "",
-      workflowVersion: run.workflowVersion || null
-    },
-    timestamps: {
-      createdAt: run.createdAt,
-      startedAt,
-      completedAt,
-      durationMs
-    },
-    error: run.status === "failed" ? safeError(run.error) : null,
-    output: summarizeOutput(run.output),
-    artifacts: artifacts.map((artifact) => describeArtifact(artifact, baseUrl)),
-    links: {
-      run: `/app#runs/${run.id}`,
-      runDetail: `${baseUrl}/api/runs/${run.id}`,
-      logs: `${baseUrl}/api/runs/${run.id}/logs`,
-      events: `${baseUrl}/api/runs/${run.id}/events`,
-      artifacts: `${baseUrl}/api/runs/${run.id}/artifacts`
-    },
-    deliveredAt: now()
-  };
-}
-
-async function postJson(url, body, options, { fetchImpl, timeoutMs, headers = {} }) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetchImpl(url, {
-      method: options?.method || "POST",
-      headers: { "content-type": "application/json", ...headers },
-      body: JSON.stringify(body),
-      signal: controller.signal
-    });
-    return { ok: response.ok, status: response.status };
-  } catch (error) {
-    return { ok: false, status: 0, error: error?.message || String(error) };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function deliverHttp(endpoint, payload, { fetchImpl, timeoutMs }) {
-  const config = endpoint.config || {};
-  const method = String(config.method || "POST").toUpperCase();
-  // Slice 1 already validated method ∈ {POST, PUT}; reject anything else
-  // defensively so a malformed row can't issue a GET we never planned for.
-  if (method !== "POST" && method !== "PUT") {
-    return { ok: false, error: `unsupported http method: ${method}` };
-  }
-  const result = await postJson(
-    config.url,
-    payload,
-    { method },
-    { fetchImpl, timeoutMs, headers: config.headers || {} }
-  );
-  if (result.ok) return { ok: true, status: result.status };
-  if (result.status) {
-    return { ok: false, status: result.status, error: `http delivery returned status ${result.status}` };
-  }
-  return { ok: false, error: `http delivery failed: ${safeError(result.error || "unknown error")}` };
-}
-
-function telegramTerminalMessage(run, payload, baseUrl) {
-  const title = run.capabilityName || run.capabilitySlug || "Runyard run";
-  const status = String(run.status || "terminal").toUpperCase();
-  const link = `${baseUrl || ""}/app#runs/${run.id}`;
-  const errorLine = payload.error ? `\nError: ${payload.error}` : "";
-  const artifactLine = payload.artifacts.length
-    ? `\nArtifacts: ${payload.artifacts.length}`
-    : "";
-  return `Runyard: ${title}\nRun ${run.id} → ${status}${errorLine}${artifactLine}\n${link}`;
-}
-
-async function deliverTelegram(endpoint, run, payload, { fetchImpl, timeoutMs, telegramBotToken, baseUrl }) {
-  if (!telegramBotToken) {
-    return {
-      ok: false,
-      error:
-        "telegram delivery skipped: TELEGRAM_BOT_TOKEN (or SMITHERS_TELEGRAM_BOT_TOKEN) is not configured"
-    };
-  }
-  const config = endpoint.config || {};
-  const body = {
-    chat_id: config.chatId,
-    text: telegramTerminalMessage(run, payload, baseUrl),
-    ...(config.threadId != null ? { message_thread_id: config.threadId } : {}),
-    ...(config.parseMode ? { parse_mode: config.parseMode } : {})
-  };
-  const result = await postJson(
-    `https://api.telegram.org/bot${telegramBotToken}/sendMessage`,
-    body,
-    { method: "POST" },
-    { fetchImpl, timeoutMs }
-  );
-  if (result.ok) return { ok: true, status: result.status };
-  if (result.status) {
-    return { ok: false, status: result.status, error: `telegram delivery returned status ${result.status}` };
-  }
-  return { ok: false, error: `telegram delivery failed: ${safeError(result.error || "unknown error")}` };
+  return safeResponseEndpointError(message);
 }
 
 export async function deliverRunResponseEndpoint(endpoint, run, payload, options = {}) {
-  const fetchImpl = options.fetchImpl || globalThis.fetch;
-  const timeoutMs = options.timeoutMs || DEFAULT_TIMEOUT_MS;
-  const telegramBotToken = options.telegramBotToken ?? env.telegramBotToken;
-  const baseUrl = options.baseUrl ?? env.baseUrl;
-  if (endpoint.type === "http") {
-    return deliverHttp(endpoint, payload, { fetchImpl, timeoutMs });
-  }
-  if (endpoint.type === "telegram") {
-    return deliverTelegram(endpoint, run, payload, { fetchImpl, timeoutMs, telegramBotToken, baseUrl });
-  }
-  return { ok: false, error: `unknown response endpoint type: ${endpoint.type}` };
+  return deliverResponseEndpointTransport(endpoint, run, payload, options);
 }
 
 // Deliver every still-pending response endpoint attached to `runId`.

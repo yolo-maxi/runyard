@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
@@ -8,7 +8,14 @@ import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { HubClient } from "./apiClient.js";
 import { readConfig, writeConfig, setRemote, resolveRemote } from "./config.js";
+import { parseJsonOption } from "./cliJson.js";
+import { renderData, renderMenu, renderRunCreated } from "./cliPresentation.js";
 import { normalizeRunnerTags } from "./runExecution.js";
+import {
+  installMcpClients,
+  mcpConfigSnippet
+} from "./cliMcpInstall.js";
+import { setupRunnerWorkspace } from "./cliRunnerSetup.js";
 
 process.stdout.on("error", (error) => {
   if (error.code === "EPIPE") process.exit(0);
@@ -32,47 +39,16 @@ function client(options = {}) {
 }
 
 function print(data, json) {
-  if (json) {
-    console.log(JSON.stringify(data, null, 2));
-    return;
-  }
-  if (Array.isArray(data)) {
-    for (const item of data) console.log(`${item.id || item.slug}\t${item.name || item.title || item.status || ""}\t${item.description || item.currentStep || ""}`);
-  } else {
-    console.log(JSON.stringify(data, null, 2));
-  }
+  for (const line of renderData(data, { json })) console.log(line);
 }
 
 function printMenu(data, json, { all = false } = {}) {
-  if (json) return print(data, true);
-  console.log("Try: runyard run hello");
-  const caps = data.capabilities || [];
-  const shown = all ? caps : caps.slice(0, 5);
-  if (shown.length) {
-    console.log("");
-    console.log("Capabilities:");
-    shown.forEach((cap, index) => console.log(`  ${index + 1}. ${cap.slug}\t${cap.name}`));
-    if (!all && caps.length > shown.length) {
-      console.log(`  …${caps.length - shown.length} more — run \`runyard menu --all\` for the full catalog`);
-    }
-  }
-  console.log("");
-  console.log("After a run: runyard run-status|logs|artifacts <run-id>");
+  for (const line of renderMenu(data, { json, all })) console.log(line);
 }
 
 function printRunCreated(data, json) {
   if (json) return print(data, true);
-  const run = data.run || data;
-  const execution = run.execution || {};
-  console.log(`Run ${run.id} queued for ${run.capabilityName || run.capabilitySlug}.`);
-  console.log(`Execution: ${execution.mode || "auto"}${execution.runnerLocation ? ` (${execution.runnerLocation})` : ""}`);
-  console.log(`Hub status: runyard run-status ${run.id}`);
-  console.log(`Hub logs: runyard logs ${run.id}`);
-  console.log(`Hub artifacts and outputs: runyard artifacts ${run.id}`);
-  const improveRepoSelector = run.input?.repoDir || run.input?.repo || run.input?.project || "";
-  if (run.capabilitySlug === "improve" && improveRepoSelector) {
-    console.log(`Edited repo requested on runner: ${improveRepoSelector}`);
-  }
+  for (const line of renderRunCreated(data)) console.log(line);
 }
 
 function ask(query, { hidden = false } = {}) {
@@ -226,7 +202,7 @@ capabilityCommand
   .option("--execution-mode <mode>", "execution mode alias: local | remote")
   .option("--runner-location <location>", "specific runner location tag")
   .action(async (capability, sha, opts) => {
-    const input = JSON.parse(opts.input);
+    const input = parseJsonOption(opts.input, "--input");
     const remote = resolveRemote(program.opts().remote);
     const body = {
       input,
@@ -256,7 +232,7 @@ program
   .option("--runner-location <location>", "specific runner location tag")
   .option("--pin <sha>", "pin this run to a specific capability git SHA (RUNYARD_CAPABILITY_VERSIONING)")
   .action(async (capability, opts) => {
-    const input = JSON.parse(opts.input);
+    const input = parseJsonOption(opts.input, "--input");
     const remote = resolveRemote(program.opts().remote);
     const body = {
       input,
@@ -267,7 +243,7 @@ program
         command: "runyard run"
       }
     };
-    if (opts.chain) body.chain = JSON.parse(opts.chain);
+    if (opts.chain) body.chain = parseJsonOption(opts.chain, "--chain");
     if (opts.where || opts.executionMode) body.executionMode = opts.where || opts.executionMode;
     if (opts.runnerLocation) body.runnerLocation = opts.runnerLocation;
     if (opts.pin) {
@@ -426,43 +402,13 @@ runnerCommand
     print(data, program.opts().json);
   });
 
-function commandExists(cmd) {
-  return spawnSync("/usr/bin/env", ["sh", "-c", `command -v ${cmd} >/dev/null 2>&1`]).status === 0;
-}
-
 runnerCommand
   .command("setup")
   .description("Scaffold a Smithers workspace so this machine can execute workflows")
   .option("--workspace <dir>", "workspace directory", process.cwd())
   .option("--location <loc>", "intended runner location label: vps | local", "local")
   .action((opts) => {
-    const ws = path.resolve(opts.workspace);
-    const checks = ["node", "bun", "smithers", "claude", "codex"];
-    console.log("Prerequisites:", checks.map((c) => `${c}:${commandExists(c) ? "ok" : "—"}`).join("  "));
-    if (!commandExists("bun") || !commandExists("smithers")) {
-      console.error("\nInstall the Smithers engine first, then re-run:");
-      console.error("  curl -fsSL https://bun.sh/install | bash   # if bun is missing");
-      console.error("  bun add -g smithers-orchestrator");
-      process.exit(1);
-    }
-    if (!commandExists("claude") && !commandExists("codex")) {
-      console.warn("\nWarning: no 'claude' or 'codex' CLI on PATH. Workflows need at least one authed agent CLI.");
-    }
-    mkdirSync(ws, { recursive: true });
-    console.log(`\nScaffolding Smithers workspace in ${ws} ...`);
-    const init = spawnSync("smithers", ["init"], { cwd: ws, stdio: "inherit" });
-    if (init.status !== 0) {
-      console.error("`smithers init` failed.");
-      process.exit(1);
-    }
-    // Overlay the Hub's bundled workflow templates (hello + imported examples) into the workspace.
-    const tpl = fileURLToPath(new URL("../workflow-templates", import.meta.url));
-    if (existsSync(tpl)) {
-      cpSync(path.join(tpl, "workflows"), path.join(ws, ".smithers", "workflows"), { recursive: true });
-      cpSync(path.join(tpl, "examples"), path.join(ws, ".smithers", "examples"), { recursive: true });
-      console.log("Added Hub workflow templates (hello, fan-out-fan-in).");
-    }
-    console.log(`\n✓ Workspace ready. Start the runner:\n  runyard runner start --workspace ${ws} --location ${opts.location}`);
+    setupRunnerWorkspace(opts);
   });
 
 runnerCommand
@@ -496,134 +442,25 @@ mcpCommand
   .action((opts) => installMcp(opts));
 mcpCommand.command("config").description("Print the MCP server config snippet").action(() => printMcpConfig());
 
-// MCP server spec — references this CLI's sibling mcp.js by absolute path and a remote name.
-// No token is written here: mcp.js reads it from ~/.runyard for the named remote.
-function mcpServerSpec(remoteName) {
-  const remote = resolveRemote(remoteName).name;
-  const mcpJs = fileURLToPath(new URL("./mcp.js", import.meta.url));
-  return { command: process.execPath, args: [mcpJs, "--remote", remote] };
-}
-
-function mergeJson(file, mutate) {
-  let data = {};
-  if (existsSync(file)) {
-    try {
-      data = JSON.parse(readFileSync(file, "utf8"));
-    } catch {
-      data = {};
-    }
-  }
-  mutate(data);
-  mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`);
-}
-
-function upsertToml(file, name, server) {
-  const content = existsSync(file) ? readFileSync(file, "utf8") : "";
-  const block = `[mcp_servers.${name}]\ncommand = ${JSON.stringify(server.command)}\nargs = ${JSON.stringify(server.args)}\n`;
-  const esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const re = new RegExp(`(^|\\n)\\[mcp_servers\\.${esc}\\][\\s\\S]*?(?=\\n\\[|$)`);
-  let next;
-  if (re.test(content)) next = content.replace(re, (m, p1) => `${p1 || ""}${block.trimEnd()}`);
-  else next = `${content.replace(/\s*$/, "")}${content.trim() ? "\n\n" : ""}${block}`;
-  mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(file, next.endsWith("\n") ? next : `${next}\n`);
-}
-
-function claudeDesktopConfigPath() {
-  const home = os.homedir();
-  if (process.platform === "darwin") return path.join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json");
-  if (process.platform === "win32") return path.join(process.env.APPDATA || home, "Claude", "claude_desktop_config.json");
-  return path.join(home, ".config", "Claude", "claude_desktop_config.json");
-}
-
-const HOME = os.homedir();
-function jsonWriter(getFile, key = "mcpServers", entry = (s) => ({ command: s.command, args: s.args })) {
-  return (name, server, opts) => {
-    const file = getFile(opts);
-    mergeJson(file, (d) => {
-      d[key] = d[key] || {};
-      d[key][name] = entry(server);
-    });
-    return file;
-  };
-}
-
-// Registry of supported AI clients: detection, where/how to write config, and how to activate it.
-const CLIENTS = {
-  "claude-code": {
-    detect: () => existsSync(path.join(HOME, ".claude.json")) || existsSync(path.join(HOME, ".claude")),
-    apply: jsonWriter((opts) => (opts.global ? path.join(HOME, ".claude.json") : path.join(process.cwd(), ".mcp.json"))),
-    activate: "type /mcp in a Claude Code session (or reopen Claude Code in this folder) and approve it"
-  },
-  "claude-desktop": {
-    detect: () => existsSync(path.dirname(claudeDesktopConfigPath())),
-    apply: jsonWriter(() => claudeDesktopConfigPath()),
-    activate: "fully quit Claude Desktop (Cmd/Ctrl+Q — not just close the window) and reopen it"
-  },
-  cursor: {
-    detect: () => existsSync(path.join(HOME, ".cursor")),
-    apply: jsonWriter(() => path.join(HOME, ".cursor", "mcp.json")),
-    activate: "Cursor → Settings → MCP → enable 'runyard' (or reload the window)"
-  },
-  windsurf: {
-    detect: () => existsSync(path.join(HOME, ".codeium")),
-    apply: jsonWriter(() => path.join(HOME, ".codeium", "windsurf", "mcp_config.json")),
-    activate: "Windsurf → open Cascade → MCP settings → Refresh (or restart Windsurf)"
-  },
-  gemini: {
-    detect: () => existsSync(path.join(HOME, ".gemini")),
-    apply: jsonWriter(() => path.join(HOME, ".gemini", "settings.json")),
-    activate: "start a new Gemini CLI session (run `gemini` again)"
-  },
-  vscode: {
-    detect: () => existsSync(path.join(process.cwd(), ".vscode")) || existsSync(path.join(HOME, ".vscode")),
-    apply: jsonWriter(() => path.join(process.cwd(), ".vscode", "mcp.json"), "servers", (s) => ({ type: "stdio", command: s.command, args: s.args })),
-    activate: "VS Code → Command Palette → 'MCP: List Servers' → Start (or reload the window)"
-  },
-  codex: {
-    detect: () => existsSync(path.join(HOME, ".codex")),
-    apply: (name, server) => {
-      const file = path.join(HOME, ".codex", "config.toml");
-      upsertToml(file, name, server);
-      return file;
-    },
-    activate: "start a new Codex session (it loads MCP servers on launch)"
-  }
-};
-
 function installMcp(opts) {
-  const remote = resolveRemote(opts.remote || program.opts().remote).name;
-  const serverName = remote === "default" ? "runyard" : `runyard-${remote}`;
-  const server = mcpServerSpec(remote);
-  let ids;
-  if (opts.all) {
-    ids = Object.keys(CLIENTS).filter((id) => CLIENTS[id].detect());
-    if (!ids.length) {
-      console.log("No known AI clients detected on this machine. Use --client <name>.");
-      return;
-    }
-  } else {
-    ids = [opts.client || "claude-code"];
-  }
-  for (const id of ids) {
-    const c = CLIENTS[id];
-    if (!c) {
-      console.error(`Unknown client "${id}". Known: ${Object.keys(CLIENTS).join(", ")}`);
+  installMcpClients(opts, {
+    currentRemote: program.opts().remote,
+    resolveRemote,
+    mcpJs: fileURLToPath(new URL("./mcp.js", import.meta.url)),
+    fail: (message) => {
+      console.error(message);
       process.exitCode = 1;
-      continue;
     }
-    const file = c.apply(serverName, server, opts);
-    console.log(`✓ ${id}: wrote "${serverName}" -> ${file}`);
-    console.log(`    to load it: ${c.activate}`);
-  }
-  console.log(`\nToken is read from ~/.runyard (remote "${remote}") — none is stored in the configs above.`);
+  });
 }
 
 function printMcpConfig() {
   const remote = resolveRemote(program.opts().remote).name;
-  const name = remote === "default" ? "runyard" : `runyard-${remote}`;
-  console.log(JSON.stringify({ mcpServers: { [name]: mcpServerSpec(remote) } }, null, 2));
+  console.log(JSON.stringify(mcpConfigSnippet({
+    remoteName: remote,
+    resolveRemote,
+    mcpJs: fileURLToPath(new URL("./mcp.js", import.meta.url))
+  }), null, 2));
 }
 
 // `runyard update [tag]` — operator-initiated, self-healing apply ON THIS HOST.

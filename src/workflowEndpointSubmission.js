@@ -1,21 +1,7 @@
 import { createHash } from "node:crypto";
 import { truncate } from "./presentation.js";
-
-export function stableJsonValue(value) {
-  if (Array.isArray(value)) return value.map(stableJsonValue);
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.keys(value)
-        .sort()
-        .map((key) => [key, stableJsonValue(value[key])])
-    );
-  }
-  return value;
-}
-
-export function stableJsonString(value) {
-  return JSON.stringify(stableJsonValue(value ?? null));
-}
+import { stableJsonString } from "./stableJson.js";
+export { stableJsonString, stableJsonValue } from "./stableJson.js";
 
 export function workflowEndpointPayloadHash(body) {
   return `sha256:${createHash("sha256").update(stableJsonString(body)).digest("hex")}`;

@@ -7,6 +7,17 @@ import {
   redactSnippet,
   reverseFind
 } from "./runEventSummary.js";
+import { diagnosticArtifacts } from "./runDiagnosticArtifacts.js";
+import { quickFailedStep, quickReasonHint } from "./runDiagnosticHints.js";
+
+export {
+  diagnosticArtifactScore,
+  diagnosticArtifacts
+} from "./runDiagnosticArtifacts.js";
+export {
+  quickFailedStep,
+  quickReasonHint
+} from "./runDiagnosticHints.js";
 
 export function findFailureEvent(events) {
   return reverseFind(events, (event) => {
@@ -56,29 +67,6 @@ export function logExcerpts(events, failureEvent) {
     createdAt: event.createdAt,
     message: redactSnippet(event.message, 600)
   }));
-}
-
-export function diagnosticArtifactScore(artifact) {
-  const name = String(artifact?.name || "").toLowerCase();
-  const mime = String(artifact?.mimeType || "").toLowerCase();
-  let score = 0;
-  if (/error|failure|stderr|stdout|trace|diagnostic|panic|crash|core\b/.test(name)) score += 3;
-  if (/\.(?:log|txt)$/.test(name)) score += 1;
-  if (mime === "text/x-log") score += 2;
-  if (mime.startsWith("text/")) score += 1;
-  return score;
-}
-
-export function diagnosticArtifacts(artifacts, { withArtifactLinks = (artifact) => artifact } = {}) {
-  return (artifacts || [])
-    .map((artifact) => ({ artifact, score: diagnosticArtifactScore(artifact) }))
-    .filter((entry) => entry.score > 0)
-    .sort((a, b) =>
-      b.score - a.score
-      || String(b.artifact.createdAt || "").localeCompare(String(a.artifact.createdAt || ""))
-    )
-    .slice(0, 6)
-    .map((entry) => withArtifactLinks(entry.artifact));
 }
 
 export function relevantApproval(runId, { listApprovals = () => [] } = {}) {
@@ -161,25 +149,4 @@ export function runDiagnostics(run, events = [], artifacts = [], deps = {}) {
     createdAt: run.createdAt,
     completedAt: run.completedAt
   };
-}
-
-// Cheap short hint for run cards. It uses only run-row fields; detail responses
-// can afford the richer event/artifact-backed diagnostics object above.
-export function quickReasonHint(run) {
-  if (!run || !DIAGNOSTIC_STATUSES.has(run.status)) return "";
-  if (run.status === "failed" || run.status === "error") {
-    return truncate(run.error || run.currentStep || "Run failed", 140);
-  }
-  if (run.status === "cancelled" || run.status === "rejected") {
-    return truncate(run.error || run.currentStep || "Run cancelled", 140);
-  }
-  if (run.status === "waiting_approval") {
-    return truncate(run.currentStep || "Waiting for approval", 140);
-  }
-  return "";
-}
-
-export function quickFailedStep(run) {
-  if (!run || !DIAGNOSTIC_STATUSES.has(run.status)) return "";
-  return String(run.currentStep || "").slice(0, 80);
 }

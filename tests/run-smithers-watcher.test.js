@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createJsonApiClient } from "./http-client.js";
 
 const temp = mkdtempSync(path.join(os.tmpdir(), "smithers-run-smithers-"));
 process.env.SMITHERS_HUB_ROOT = process.cwd();
@@ -33,23 +34,7 @@ const {
 let server;
 let baseUrl;
 const token = "shub_test_run_smithers";
-
-function api(pathname, options = {}) {
-  return fetch(`${baseUrl}${pathname}`, {
-    ...options,
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${token}`,
-      ...(options.headers || {})
-    },
-    body: options.body && typeof options.body !== "string" ? JSON.stringify(options.body) : options.body
-  }).then(async (response) => {
-    const text = await response.text();
-    const data = text ? JSON.parse(text) : null;
-    if (!response.ok) throw new Error(data?.error || `HTTP ${response.status}`);
-    return data;
-  });
-}
+const api = createJsonApiClient({ baseUrl: () => baseUrl, token });
 
 before(async () => {
   await new Promise((resolve) => {
@@ -388,7 +373,7 @@ describe("run-smithers workflow-code self-correction", () => {
       path.join(process.cwd(), "workflow-templates", "workflows", "run-smithers-watcher.js"),
       "utf8"
     );
-    assert.match(src, /export function assertSupervisionSucceeded/);
+    assert.match(src, /export \{ assertSupervisionSucceeded \} from "\.\/runSmithersGate\.js"/);
     assert.match(tpl, /export function assertSupervisionSucceeded/);
   });
 

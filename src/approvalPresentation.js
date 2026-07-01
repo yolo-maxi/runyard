@@ -20,6 +20,10 @@ function hasOwn(object, key) {
   return Object.prototype.hasOwnProperty.call(object || {}, key);
 }
 
+export function sanitizePayloadField(key, value, depth = 0) {
+  return SECRET_FIELD_RE.test(key) ? "[redacted]" : sanitizeForDisplay(value, depth);
+}
+
 export function sanitizeForDisplay(value, depth = 0) {
   if (value == null || typeof value === "boolean" || typeof value === "number") return value;
   if (typeof value === "string") return truncate(value, 500);
@@ -32,7 +36,7 @@ export function sanitizeForDisplay(value, depth = 0) {
     const entries = Object.entries(value).slice(0, 24);
     const output = {};
     for (const [key, item] of entries) {
-      output[key] = SECRET_FIELD_RE.test(key) ? "[redacted]" : sanitizeForDisplay(item, depth + 1);
+      output[key] = sanitizePayloadField(key, item, depth + 1);
     }
     if (Object.keys(value).length > entries.length) output._truncated = `${Object.keys(value).length - entries.length} more fields`;
     return output;
@@ -53,7 +57,7 @@ export function approvalPayloadSummary(approval) {
   if (payload.input) summary.input = sanitizeForDisplay(payload.input);
   for (const [key, value] of Object.entries(payload)) {
     if (key === "capability" || key === "input") continue;
-    summary[key] = SECRET_FIELD_RE.test(key) ? "[redacted]" : sanitizeForDisplay(value);
+    summary[key] = sanitizePayloadField(key, value);
   }
   return summary;
 }

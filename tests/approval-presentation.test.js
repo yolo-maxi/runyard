@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   approvalContext,
   approvalPayloadSummary,
+  sanitizePayloadField,
   sanitizeForDisplay,
   withApprovalLinks
 } from "../src/approvalPresentation.js";
@@ -41,6 +42,11 @@ describe("approval presentation helpers", () => {
     assert.equal(value.nested.deeper.value, "[nested value]");
     assert.equal(value.items.length, 13);
     assert.equal(value.items.at(-1), "... 2 more");
+  });
+
+  it("applies the same redaction rule to standalone payload fields", () => {
+    assert.equal(sanitizePayloadField("authorization", "Bearer abc"), "[redacted]");
+    assert.deepEqual(sanitizePayloadField("details", { ok: true }), { ok: true });
   });
 
   it("summarizes approval payloads without leaking secrets", () => {

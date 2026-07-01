@@ -1,3 +1,23 @@
+import { redactText } from "./redaction.js";
+import {
+  DEFAULT_COLLAPSED_CATEGORIES,
+  eventCategory,
+  eventNode,
+  eventSeverity,
+  eventTypeLabel,
+  isFocusEvent,
+  isLogEvent,
+  sortCategoryEntries
+} from "./runEventClassification.js";
+
+export {
+  eventCategory,
+  eventNode,
+  eventSeverity,
+  isFocusEvent,
+  isLogEvent
+} from "./runEventClassification.js";
+
 export const DIAGNOSTIC_STATUSES = new Set([
   "failed",
   "error",
@@ -13,114 +33,16 @@ export const DIAGNOSTIC_STATUSES = new Set([
   "needs_human"
 ]);
 
-const FOCUS_EVENT_PATTERNS = [
-  /^run\.(?:failed|cancelled|errored|started|succeeded|created)$/i,
-  /^(?:node|task|step|workflow)\.(?:started|finished|completed|failed|errored|cancelled)$/i,
-  /^approval\.(?:requested|resolved|approved|rejected|changes_requested|auto_queued)$/i,
-  /^Node(?:Started|Finished|Failed|Cancelled)$/,
-  /^Run(?:Started|Cancelled|Failed|Succeeded)$/,
-  /^Approval(?:Requested|Resolved|Approved|Rejected|ChangesRequested)$/
-];
-
-const LOG_EVENT_TYPES = new Set(["log", "stdout", "stderr", "workflow.log", "runner.log", "workflow.step"]);
-const LOG_REDACTION_RULES = [
-  { re: /(authorization\s*[:=]\s*)(?:Bearer\s+)?[^\s,"'`]+/gi, replace: "$1[redacted]" },
-  { re: /(x-api-key\s*[:=]\s*)[^\s,"'`]+/gi, replace: "$1[redacted]" },
-  { re: /(api[_-]?key\s*[:=]\s*)[^\s,"'`]+/gi, replace: "$1[redacted]" },
-  { re: /(password\s*[:=]\s*)[^\s,"'`]+/gi, replace: "$1[redacted]" },
-  { re: /(secret\s*[:=]\s*)[^\s,"'`]+/gi, replace: "$1[redacted]" },
-  { re: /(token\s*[:=]\s*)[^\s,"'`]+/gi, replace: "$1[redacted]" },
-  { re: /\bshub_[A-Za-z0-9]+\b/g, replace: "shub_[redacted]" },
-  { re: /\bsk-[A-Za-z0-9_-]{12,}\b/g, replace: "sk-[redacted]" },
-  { re: /\bghp_[A-Za-z0-9]{20,}\b/g, replace: "ghp_[redacted]" },
-  { re: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_.-]+\b/g, replace: "[redacted-jwt]" }
-];
-
-const NOISY_EVENT_TYPES = new Set([
-  "heartbeat",
-  "runner.heartbeat",
-  "workflow.heartbeat",
-  "trace",
-  "trace.span",
-  "trace.event",
-  "tracer",
-  "claude.tool_use",
-  "claude.tool_result",
-  "claude.message_delta",
-  "claude.content_block_delta",
-  "claude.thinking",
-  "agent.token",
-  "agent.delta"
-]);
-
-const APPROVAL_EVENT_RE = /^approval\./i;
-const NODE_EVENT_RE = /^(?:node|task|step)\.(?:started|finished|completed|failed|errored|cancelled|skipped)$/i;
-const RUN_EVENT_RE = /^run\.(?:created|started|succeeded|failed|cancelled|errored|chain\..*|rerun_.*)$/i;
-const STEP_MARKER_RE = /^workflow\.step$/i;
-const AGENT_SUMMARY_RE = /^(?:agent|claude|codex)\.(?:summary|result|completed|final)$/i;
 const GATE_RE = /(test|build|deploy|commit|push|gate|verify)/i;
-const ERROR_HINT_RE = /(?:^|\s|:)(error|failed|panic|fatal|exception|timeout)\b/i;
-const WARN_HINT_RE = /(?:^|\s|:)(warn(?:ing)?|deprecat|retrying|skipped)\b/i;
 const HIGHLIGHT_CATEGORIES = new Set(["run", "node", "approval", "agent", "step"]);
-const DEFAULT_COLLAPSED_CATEGORIES = ["noise", "trace"];
-const CATEGORY_ORDER = ["run", "node", "approval", "agent", "step", "log", "other", "trace", "noise"];
-
-export function isFocusEvent(event) {
-  const type = String(event?.type || "");
-  return FOCUS_EVENT_PATTERNS.some((re) => re.test(type));
-}
-
-export function isLogEvent(event) {
-  const type = String(event?.type || "");
-  if (LOG_EVENT_TYPES.has(type)) return true;
-  return /\.(?:log|stderr|stdout)$/i.test(type);
-}
 
 export function redactSnippet(value, max = 600) {
-  let text = String(value ?? "");
-  for (const { re, replace } of LOG_REDACTION_RULES) text = text.replace(re, replace);
-  return truncate(text, max);
+  return redactText(value, { max, wordBoundary: true });
 }
 
 export function reverseFind(list, predicate) {
   for (let i = list.length - 1; i >= 0; i -= 1) if (predicate(list[i])) return list[i];
   return null;
-}
-
-export function eventCategory(event) {
-  const type = String(event?.type || "");
-  if (NOISY_EVENT_TYPES.has(type) || /\.(?:heartbeat|tick|ping)$/i.test(type)) return "noise";
-  if (/\.(?:trace|span|delta|chunk|tool_use|tool_result|thinking)$/i.test(type)) return "trace";
-  if (APPROVAL_EVENT_RE.test(type)) return "approval";
-  if (RUN_EVENT_RE.test(type)) return "run";
-  if (NODE_EVENT_RE.test(type)) return "node";
-  if (STEP_MARKER_RE.test(type)) return "step";
-  if (AGENT_SUMMARY_RE.test(type)) return "agent";
-  if (isLogEvent(event)) return "log";
-  return "other";
-}
-
-export function eventSeverity(event) {
-  const type = String(event?.type || "");
-  if (/(?:^|\.)(?:failed|errored|fatal|panic)$/i.test(type)) return "error";
-  if (type === "stderr") return "error";
-  if (/(?:^|\.)(?:cancelled|skipped|warn|warning|deprecated)$/i.test(type)) return "warn";
-  const text = String(event?.message || "");
-  if (ERROR_HINT_RE.test(text)) return "error";
-  if (WARN_HINT_RE.test(text)) return "warn";
-  return "info";
-}
-
-export function eventNode(event) {
-  const data = event?.data;
-  if (data && typeof data === "object" && !Array.isArray(data)) {
-    const field = data.node || data.nodeId || data.taskId || data.task || data.step;
-    if (field) return String(field).slice(0, 80);
-  }
-  const type = String(event?.type || "");
-  const dotted = type.match(/^(?:node|task|step)\.[a-z]+$/i);
-  if (dotted && data?.id) return String(data.id).slice(0, 80);
-  return "";
 }
 
 export function summarizeRunEvents(events = [], { highlightCap = 40, perNodeCap = 6 } = {}) {
@@ -222,22 +144,4 @@ function underPerNodeCap(nodeWindow, node, cap) {
   if (seen >= cap) return false;
   nodeWindow.set(node, seen + 1);
   return true;
-}
-
-function eventTypeLabel(type) {
-  return String(type || "").trim() || "log";
-}
-
-function sortCategoryEntries(entries) {
-  return entries.sort((a, b) => {
-    const ai = CATEGORY_ORDER.indexOf(a.key);
-    const bi = CATEGORY_ORDER.indexOf(b.key);
-    return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi);
-  });
-}
-
-function truncate(text, max) {
-  const value = String(text || "").trim();
-  if (value.length <= max) return value;
-  return value.slice(0, max - 1).replace(/\s+\S*$/, "") + "…";
 }

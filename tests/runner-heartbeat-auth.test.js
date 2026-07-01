@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createJsonApiClient } from "./http-client.js";
 
 const temp = mkdtempSync(path.join(os.tmpdir(), "smithers-hub-hb-auth-"));
 process.env.SMITHERS_HUB_ROOT = process.cwd();
@@ -18,13 +19,7 @@ const { registerRunner, heartbeatRunner, getRunner } = await import("../src/db.j
 let server;
 let baseUrl;
 const token = "shub_hb_admin";
-
-function api(pathname) {
-  return fetch(`${baseUrl}${pathname}`, { headers: { authorization: `Bearer ${token}` } }).then(async (r) => {
-    const text = await r.text();
-    return text ? JSON.parse(text) : null;
-  });
-}
+const api = createJsonApiClient({ baseUrl: () => baseUrl, token });
 
 before(async () => {
   await new Promise((resolve) => {

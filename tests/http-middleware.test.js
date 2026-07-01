@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { createRateLimiter, securityHeaders } from "../src/httpMiddleware.js";
+import {
+  createRateLimiter,
+  expressErrorHandler,
+  jsonBodyMiddleware,
+  securityHeaders
+} from "../src/httpMiddleware.js";
+import { mockResponse } from "./response.js";
 
 describe("HTTP middleware helpers", () => {
   it("sets app-aware security headers", () => {
@@ -39,26 +45,50 @@ describe("HTTP middleware helpers", () => {
     limiter.sweepExpired();
     assert.equal(limiter.buckets.size, 1);
   });
-});
 
-function mockResponse() {
-  return {
-    headers: {},
-    statusCode: 200,
-    body: null,
-    setHeader(key, value) {
-      this.headers[key.toLowerCase()] = value;
-    },
-    status(code) {
-      this.statusCode = code;
-      return this;
-    },
-    json(body) {
-      this.body = body;
-      return this;
-    }
-  };
-}
+  it("uses a larger JSON body limit only for run artifact uploads", () => {
+    const calls = [];
+    const middleware = jsonBodyMiddleware({
+      json: ({ limit }) => (req, _res, next) => {
+        calls.push({ limit, method: req.method, path: req.path });
+        next();
+      }
+    });
+
+    assert.equal(runMiddleware(middleware, { method: "POST", path: "/api/runs/run_1/artifacts" }).nextCalled, true);
+    assert.equal(runMiddleware(middleware, { method: "POST", path: "/api/runs/run_1/artifacts/" }).nextCalled, true);
+    assert.equal(runMiddleware(middleware, { method: "GET", path: "/api/runs/run_1/artifacts" }).nextCalled, true);
+    assert.equal(runMiddleware(middleware, { method: "POST", path: "/api/runs/run_1/events" }).nextCalled, true);
+
+    assert.deepEqual(calls.map((call) => call.limit), ["25mb", "25mb", "1mb", "1mb"]);
+  });
+
+  it("normalizes known parser errors without leaking internals", () => {
+    const seen = [];
+    const handler = expressErrorHandler({ log: (error) => seen.push(error.message) });
+
+    const tooLarge = mockResponse();
+    handler(Object.assign(new Error("entity too large"), { status: 413 }), {}, tooLarge, () => {});
+    assert.equal(tooLarge.statusCode, 413);
+    assert.deepEqual(tooLarge.body, { error: "payload too large" });
+
+    const invalidJson = mockResponse();
+    handler(Object.assign(new Error("Unexpected token x"), { status: 400, type: "entity.parse.failed" }), {}, invalidJson, () => {});
+    assert.equal(invalidJson.statusCode, 400);
+    assert.deepEqual(invalidJson.body, { error: "invalid request body" });
+    assert.deepEqual(seen, ["entity too large", "Unexpected token x"]);
+  });
+
+  it("hides unexpected errors behind a generic 500", () => {
+    const handler = expressErrorHandler({ log: () => {} });
+    const res = mockResponse();
+
+    handler(new Error("database password leaked in stack"), {}, res, () => {});
+
+    assert.equal(res.statusCode, 500);
+    assert.deepEqual(res.body, { error: "internal server error" });
+  });
+});
 
 function runMiddleware(middleware, req) {
   const res = mockResponse();

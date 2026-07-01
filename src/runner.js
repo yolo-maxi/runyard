@@ -7,22 +7,40 @@
 // events, and uploads the workflow's outputs + event trace as artifacts. Nothing is faked: the
 // agent runs here, on this machine, and the Hub is the durable record.
 import { execFile, spawn } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { HubClient } from "./apiClient.js";
-import { markdownArtifactsFromOutputs } from "./runnerArtifacts.js";
 import { normalizeRunnerTags } from "./runExecution.js";
-import { extractSmithersFailure } from "./smithersFailure.js";
-import { supportWarmEnabled, warmSupportReply } from "./supportWarm.js";
 import { collectAuthHealth } from "./runnerAuthHealth.js";
 import { classifyFailureStatus, RUN_FAILURE_CLASSES } from "./runFailureClass.js";
-import { reauthEnabled, runReauth } from "./reauthCli.js";
+import { DEFAULT_MAX_INLINE_INPUT_BYTES } from "./runnerPolicy.js";
+import { smithersEventMessage } from "./runnerSmithersEvents.js";
 import { readClaudeOauthToken } from "./claudeOauthToken.js";
 import { isDraining, resolveDataDir } from "./drain.js";
 import { resolveSmithersBin, resolveExecWrapper } from "./resolveSmithersBin.js";
-import { resolveImproveRepo } from "../workflow-templates/workflows/improve-repo.js";
+import {
+  launchSmithers,
+  smithersCommand
+} from "./runnerSmithersRuntime.js";
+import {
+  collectSmithersRunResult,
+  smithersArtifactPayloads
+} from "./runnerSmithersArtifacts.js";
+import { smithersRunOutcome } from "./runnerSmithersOutcome.js";
+import {
+  createClaimAuthTracker,
+  isAuthError
+} from "./runnerClaimAuth.js";
+import {
+  activeRunnerLoad as computeActiveRunnerLoad,
+  hasClaimCapacity as computeHasClaimCapacity,
+  isSupervisorCapability,
+  materializeAgentRuntimePack as writeAgentRuntimePack,
+  preflightAssignment
+} from "./runnerRuntime.js";
+import { handleRunnerSpecialRun } from "./runnerSpecialRuns.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -107,62 +125,14 @@ const activeRuns = new Set();
 const activeRunKinds = new Map();
 let completedRuns = 0;
 let intervalHandle = null;
-// Hub claim-auth health. A runner can register + heartbeat fine yet have every
-// claim rejected (dead token / wrong hub URL), looking "online" while doing
-// nothing. We track the last claim's auth result and surface it both in the logs
-// (loudly) and on the heartbeat (auth.hub) so the dashboard shows the fault.
-let hubAuthOk = true;
-let hubAuthError = "";
-let consecutiveAuthFaults = 0;
-
-function isAuthError(error) {
-  return error && (error.status === 401 || error.status === 403);
-}
-
-// Record the auth outcome of a claim/probe. On a fresh fault, log loudly once;
-// keep the count so repeated faults are visible without spamming every tick.
-function recordClaimAuth(ok, error) {
-  if (ok) {
-    if (!hubAuthOk) console.log(`Hub auth recovered against ${baseUrl}.`);
-    hubAuthOk = true;
-    hubAuthError = "";
-    consecutiveAuthFaults = 0;
-    return;
-  }
-  consecutiveAuthFaults += 1;
-  hubAuthOk = false;
-  hubAuthError = error ? `HTTP ${error.status}: ${error.message}` : "unauthorized";
-  if (consecutiveAuthFaults === 1 || consecutiveAuthFaults % 20 === 0) {
-    console.error(
-      `\n*** RUNNER HUB AUTH FAILURE (x${consecutiveAuthFaults}) ***\n` +
-        `Hub ${baseUrl} rejected this runner's token (${hubAuthError}).\n` +
-        `The runner is registered/online but CANNOT claim work. ` +
-        `Check RUNYARD_HUB_TOKEN / SMITHERS_HUB_URL in runner.env, then restart.\n`
-    );
-  }
-}
-
-function isSupervisorCapability(capability) {
-  return capability?.slug === "run-smithers";
-}
+const claimAuth = createClaimAuthTracker({ baseUrl });
 
 function activeRunnerLoad() {
-  let work = 0;
-  let supervisors = 0;
-  for (const kind of activeRunKinds.values()) {
-    if (kind === "supervisor") supervisors += 1;
-    else work += 1;
-  }
-  return { work, supervisors };
-}
-
-function supervisorConcurrencyLimit() {
-  return Math.max(1, Math.ceil(concurrency * Number(process.env.SMITHERS_SUPERVISOR_SLOT_RATIO || 1)));
+  return computeActiveRunnerLoad(activeRunKinds);
 }
 
 function hasClaimCapacity() {
-  const load = activeRunnerLoad();
-  return load.work < concurrency || load.supervisors < supervisorConcurrencyLimit();
+  return computeHasClaimCapacity(activeRunKinds, concurrency, process.env.SMITHERS_SUPERVISOR_SLOT_RATIO || 1);
 }
 
 // Startup self-check: prove the configured token actually authenticates AND can
@@ -173,7 +143,7 @@ async function verifyHubAuth() {
   if (!runnerId) return false;
   try {
     const assignment = await client.get(`/api/runners/${runnerId}/next-run`);
-    recordClaimAuth(true);
+    claimAuth.record(true);
     console.log(`Hub auth self-check OK against ${baseUrl} (token + claim path verified).`);
     // The probe uses the REAL claim path (a 401/403 fires in auth middleware
     // before any claim). If work happened to be queued it actually claimed a
@@ -185,7 +155,7 @@ async function verifyHubAuth() {
     return true;
   } catch (error) {
     if (isAuthError(error)) {
-      recordClaimAuth(false, error);
+      claimAuth.record(false, error);
       return false;
     }
     // Network/transient: warn but don't hard-fail; the poll loop will retry.
@@ -199,123 +169,24 @@ const drainDataDir = resolveDataDir();
 let drainLogged = false;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const stripAnsi = (s) => String(s).replace(/\[[0-9;]*m/g, "");
-const MAX_INLINE_INPUT_BYTES = Number(process.env.RUNYARD_MAX_INLINE_INPUT_BYTES || 64 * 1024);
+const MAX_INLINE_INPUT_BYTES = Number(process.env.RUNYARD_MAX_INLINE_INPUT_BYTES || DEFAULT_MAX_INLINE_INPUT_BYTES);
 
 async function failRun(runId, error, status = "") {
   const failureStatus = status || classifyFailureStatus(error);
   return client.post(`/api/runs/${runId}/fail`, { error, status: failureStatus });
 }
 
-function largeInputPayload(input) {
-  const payload = JSON.stringify(input || {});
-  if (Buffer.byteLength(payload, "utf8") <= MAX_INLINE_INPUT_BYTES) return { inline: payload, file: "" };
-  return { inline: "", stdin: payload };
-}
-
-function authOkFor(capability, health = currentAuthHealth()) {
-  const agents = Array.isArray(capability?.requiredAgents) ? capability.requiredAgents : [];
-  const text = `${capability?.slug || ""} ${agents.join(" ")} ${JSON.stringify(capability?.workflow || {})}`.toLowerCase();
-  const needsClaude = /claude|implementation-agent|researcher|product-manager|taste-agent|design-director|run-knowledge-analyst|smithers-watcher/.test(text);
-  const needsCodex = /codex/.test(text);
-  const missing = [];
-  if (needsClaude && health?.claude?.ok === false) missing.push(`claude: ${health.claude.error || "not authenticated"}`);
-  if (needsCodex && health?.codex?.ok === false) missing.push(`codex: ${health.codex.error || "not authenticated"}`);
-  return missing;
-}
-
-function preflightImproveRepo(run, capability) {
-  if (capability?.slug !== "improve") return [];
-  try {
-    resolveImproveRepo(run?.input || {}, {
-      env: process.env,
-      cwd: workspace,
-      gitBin: "git",
-      gitEnv: process.env
-    });
-    return [];
-  } catch (error) {
-    return [`improve repo preflight failed: ${error.message || error}`];
-  }
-}
-
-function preflightAssignment(run, capability, entry) {
-  if (!entry) return [`capability ${capability?.slug || "unknown"} has no workflow.entry`];
-  const workflowPath = path.isAbsolute(entry) ? entry : path.join(workspace, entry);
-  const failures = [];
-  if (!existsSync(workflowPath)) failures.push(`workflow file not found: ${workflowPath}`);
-  failures.push(...preflightImproveRepo(run, capability));
-  failures.push(...authOkFor(capability));
-  return failures;
-}
-
-function isObject(value) {
-  return value && typeof value === "object" && !Array.isArray(value);
-}
-
-function hasExplicitNoChangeRationale(review) {
-  if (!isObject(review)) return false;
-  const improvements = Array.isArray(review.improvements) ? review.improvements : [];
-  if (improvements.length) return false;
-  return Boolean(
-    String(review.summary || "").trim()
-    || (Array.isArray(review.risks) && review.risks.some((risk) => String(risk || "").trim()))
-    || (Array.isArray(review.userPain) && review.userPain.some((line) => String(line || "").trim()))
-  );
-}
-
-function productiveOutcomeFailure(capability, outputs) {
-  if (!isObject(outputs) || !Object.keys(outputs).length) {
-    return {
-      status: RUN_FAILURE_CLASSES.INVALID_OUTPUT,
-      error: "invalid output: succeeded workflow produced no node outputs"
-    };
-  }
-  if (capability?.slug !== "improve") return null;
-  const baseline = outputs.baseline;
-  const baselineRepoDir = baseline?.repoDir || baseline?.repo_dir;
-  if (!isObject(baseline) || !String(baselineRepoDir || "").trim()) {
-    return {
-      status: RUN_FAILURE_CLASSES.BLOCKED_BY_PREFLIGHT,
-      error: "preflight failed: improve completed without a resolved target repo"
-    };
-  }
-  const commit = outputs.commit;
-  const files = Array.isArray(commit?.files) ? commit.files.filter((file) => String(file || "").trim()) : [];
-  if (files.length) return null;
-  if (hasExplicitNoChangeRationale(outputs.review)) return null;
-  return {
-    status: RUN_FAILURE_CLASSES.INVALID_OUTPUT,
-    error: "invalid output: improve succeeded without changed files or an explicit no-change rationale"
-  };
-}
-
 function materializeAgentRuntimePack(run, pack) {
-  if (!pack || typeof pack !== "object") return {};
-  const runtimeDir = path.join(workspace, ".smithers", "runtime-packs");
-  mkdirSync(runtimeDir, { recursive: true });
-  const file = path.join(runtimeDir, `${run.id}.agent-runtime.json`);
-  writeFileSync(file, JSON.stringify(pack, null, 2), { mode: 0o600 });
-  return {
-    RUNYARD_AGENT_RUNTIME_PACK_FILE: file,
-    RUNYARD_AGENT_RUNTIME_PACK: JSON.stringify({
-      schemaVersion: pack.schemaVersion,
-      capturedAt: pack.capturedAt,
-      capability: pack.capability,
-      agents: (pack.agents || []).map((agent) => ({ slug: agent.slug, version: agent.version })),
-      skills: (pack.skills || []).map((skill) => ({ slug: skill.slug, version: skill.version }))
-    })
-  };
+  return writeAgentRuntimePack(run, pack, { workspace });
 }
 
 async function smithers(args, opts = {}) {
   // Prepend the deployer-configured exec wrapper, if any:
   //   wrapper set  -> `<wrapper[0]> <wrapper[1..]> <smithersBin> <args>`
   //   wrapper unset -> `<smithersBin> <args>` (bare host default)
-  const cmd = execWrapper.length ? execWrapper[0] : smithersBin;
-  const fullArgs = execWrapper.length ? [...execWrapper.slice(1), smithersBin, ...args] : args;
+  const command = smithersCommand({ smithersBin, execWrapper }, args);
   if (!opts.stdin) {
-    return execFileAsync(cmd, fullArgs, {
+    return execFileAsync(command.cmd, command.args, {
       cwd: workspace,
       timeout: opts.timeout || 60_000,
       maxBuffer: 1024 * 1024 * 32,
@@ -323,7 +194,7 @@ async function smithers(args, opts = {}) {
     });
   }
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, fullArgs, {
+    const child = spawn(command.cmd, command.args, {
       cwd: workspace,
       env: opts.env || process.env,
       stdio: ["pipe", "pipe", "pipe"]
@@ -403,47 +274,19 @@ async function register() {
 // they are merged into the child process env so the workflow's agent can use
 // them, and never written to disk/inputs/logs.
 async function launch(entry, input, secretEnv = {}, resume = null) {
-  const workflowPath = path.isAbsolute(entry) ? entry : path.join(workspace, entry);
-  // Hub-as-supervisor resume: when the hub re-dispatched this run to recover it
-  // (its prior runner died or it failed recoverably), `resume` carries the prior
-  // Smithers run id. `--resume <sid> --force` reattaches to that durable run on
-  // the shared workspace and continues from the last checkpoint instead of
-  // starting from scratch. The internal `__resume` marker is stripped from the
-  // workflow input so it never reaches the workflow body.
-  const cleanInput = { ...(input || {}) };
-  delete cleanInput.__resume;
-  const inputPayload = largeInputPayload(cleanInput);
-  const args = ["up", workflowPath];
-  if (inputPayload.stdin) args.push("--input", "-");
-  else args.push("--input", inputPayload.inline);
-  args.push("-d", "--format", "json");
-  if (resume?.smithersRunId) {
-    args.push("--resume", String(resume.smithersRunId), "--force");
-  }
-  // The run-smithers supervisor workflow calls back into the hub to spawn child
-  // runs; it needs a hub token + URL in its env. The runner already authenticated
-  // with one (resolved from RUNYARD_HUB_TOKEN / legacy names), so hand it down
-  // explicitly under the names the workflow reads — otherwise a runner set up with
-  // only RUNYARD_HUB_TOKEN leaves the supervisor with no token ("run-smithers
-  // needs SMITHERS_HUB_TOKEN…"). secretEnv still wins if it provides an override.
-  const supervisorEnv = {};
-  if (token) supervisorEnv.RUN_SMITHERS_HUB_TOKEN = token;
-  if (baseUrl) supervisorEnv.RUN_SMITHERS_HUB_URL = baseUrl;
   const claudeOauthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN || readClaudeOauthToken();
-  if (claudeOauthToken && !secretEnv.CLAUDE_CODE_OAUTH_TOKEN) supervisorEnv.CLAUDE_CODE_OAUTH_TOKEN = claudeOauthToken;
-  const { stdout } = await smithers(args, {
-    env: { ...process.env, ...supervisorEnv, ...secretEnv },
-    ...(inputPayload.stdin ? { stdin: inputPayload.stdin } : {})
+  return launchSmithers({
+    runSmithers: smithers,
+    entry,
+    input,
+    secretEnv,
+    resume,
+    workspace,
+    token,
+    baseUrl,
+    maxInlineInputBytes: MAX_INLINE_INPUT_BYTES,
+    claudeOauthToken
   });
-  try {
-    const parsed = JSON.parse(stdout);
-    if (parsed.runId) return parsed.runId;
-  } catch {
-    /* fall through to regex */
-  }
-  const m = stdout.match(/run-\d+/);
-  if (!m) throw new Error(`could not determine smithers runId from: ${stdout.slice(0, 200)}`);
-  return m[0];
 }
 
 async function fetchEvents(sid) {
@@ -471,14 +314,6 @@ async function nodeOutput(sid, nodeId) {
 
 const TERMINAL = new Set(["succeeded", "failed", "cancelled", "errored"]);
 
-function runSmithersSupervisionFailure(capability, outputs) {
-  if (capability?.slug !== "run-smithers") return "";
-  const outcome = outputs?.supervise?.outcome;
-  if (!outcome || outcome === "succeeded") return "";
-  const summary = outputs?.supervise?.summary || "";
-  return `run-smithers ended with outcome '${outcome}'${summary ? `: ${summary}` : ""}`;
-}
-
 async function executeAssignment(assignment) {
   const { run, capability } = assignment;
   // Allowlisted, decrypted secrets the Hub injected for this run (never stored).
@@ -489,48 +324,23 @@ async function executeAssignment(assignment) {
   try {
     await client.post(`/api/runs/${run.id}/start`, {});
 
-    // Re-auth special path (dedicated runner host only, gated by REAUTH_ENABLED).
-    // Drives `codex login --device-auth` / `claude setup-token` on THIS host and
-    // streams the verification URL + user code back as run output so the Hub UI
-    // can show them. Mirrors the supportWarm special-path pattern; the general
-    // runner pool never sets REAUTH_ENABLED, so this branch is inert there.
-    if (reauthEnabled() && capability.slug === "reauth-cli") {
-      await event(run.id, "runner.reauth", `Starting CLI re-auth on ${name}`, { runnerId, provider: run.input?.provider });
-      const reauth = await runReauth(run.input || {}, {
-        secretEnv,
-        onVerification: (info) =>
-          client
-            .post(`/api/runs/${run.id}/events`, {
-              type: "reauth.verification",
-              message: `Open ${info.verificationUrl} and enter code ${info.userCode}`,
-              data: { reauth: info }
-            })
-            .catch(() => {})
-      });
-      if (reauth.status === "ok") {
-        await client.post(`/api/runs/${run.id}/complete`, { output: { outputs: { reauth } } });
-        console.log(`Completed ${run.id} via reauth (${reauth.provider})`);
-      } else {
-        await failRun(run.id, reauth.error || `reauth ${reauth.status}`);
-        console.log(`Run ${run.id} reauth ended '${reauth.status}'`);
-      }
-      return;
-    }
+    const handledSpecialRun = await handleRunnerSpecialRun({
+      capability,
+      run,
+      secretEnv,
+      runnerName: name,
+      runnerId,
+      client,
+      event,
+      failRun
+    });
+    if (handledSpecialRun) return;
 
-    // Warm support path (dedicated support-runner only, gated by SUPPORT_WARM).
-    // Answer the support-chat capability directly via the local `claude` CLI
-    // instead of a full `smithers up`, completing the run with the same
-    // { outputs.support.reply } shape the Hub already reads. The general runner
-    // pool never sets SUPPORT_WARM, so this branch is inert there.
-    if (supportWarmEnabled() && capability.slug === "runyard-support-agent") {
-      await event(run.id, "runner.warm_support", `Answering support chat via warm claude on ${name}`, { runnerId });
-      const reply = await warmSupportReply(run.input || {});
-      await client.post(`/api/runs/${run.id}/complete`, { output: { outputs: { support: { reply } } } });
-      console.log(`Completed ${run.id} via warm support`);
-      return;
-    }
-
-    const preflightFailures = preflightAssignment(run, capability, entry);
+    const preflightFailures = preflightAssignment(run, capability, entry, {
+      workspace,
+      health: currentAuthHealth(),
+      env: process.env
+    });
     if (preflightFailures.length) {
       const error = `preflight failed: ${preflightFailures.join("; ")}`;
       await event(run.id, "runner.preflight_failed", error, {
@@ -564,14 +374,7 @@ async function executeAssignment(assignment) {
     while (Date.now() < deadline) {
       const lines = await fetchEvents(sid);
       for (let i = posted; i < lines.length; i++) {
-        let msg = lines[i];
-        try {
-          const obj = JSON.parse(lines[i]);
-          msg = obj.data ?? obj.message ?? lines[i];
-        } catch {
-          /* keep raw */
-        }
-        await event(run.id, "smithers.event", stripAnsi(msg));
+        await event(run.id, "smithers.event", smithersEventMessage(lines[i]));
       }
       posted = lines.length;
       try {
@@ -596,61 +399,30 @@ async function executeAssignment(assignment) {
       state = "cancelled";
     }
 
-    // Collect outputs per node + the full event trace, upload as artifacts.
-    const st = await getState(sid);
-    const steps = st.steps || [];
-    const outputs = {};
-    for (const step of steps) {
-      const out = await nodeOutput(sid, step.id);
-      if (out !== null) outputs[step.id] = out;
-    }
-    const eventLines = await fetchEvents(sid);
-    await client.post(`/api/runs/${run.id}/artifacts`, {
-      name: "smithers-output.json",
-      mimeType: "application/json",
-      content: JSON.stringify({ smithersRunId: sid, state, outputs }, null, 2)
-    });
-    for (const artifact of markdownArtifactsFromOutputs(outputs)) {
+    const {
+      inspect: st,
+      outputs,
+      eventLines
+    } = await collectSmithersRunResult(sid, { getState, nodeOutput, fetchEvents });
+    for (const artifact of smithersArtifactPayloads({ sid, state, outputs, eventLines })) {
       await client.post(`/api/runs/${run.id}/artifacts`, artifact);
     }
-    await client.post(`/api/runs/${run.id}/artifacts`, {
-      name: "smithers-events.ndjson",
-      mimeType: "application/x-ndjson",
-      content: eventLines
-        .map((l) => {
-          try {
-            return stripAnsi(JSON.parse(l).data ?? l);
-          } catch {
-            return l;
-          }
-        })
-        .join("\n")
-    });
 
-    const supervisionFailure = state === "succeeded" ? runSmithersSupervisionFailure(capability, outputs) : "";
-    const outcomeFailure = state === "succeeded" && !supervisionFailure ? productiveOutcomeFailure(capability, outputs) : null;
-    if (state === "succeeded" && !supervisionFailure && !outcomeFailure) {
-      await client.post(`/api/runs/${run.id}/complete`, { output: { smithersRunId: sid, outputs } });
+    const outcome = smithersRunOutcome({
+      capability,
+      state,
+      sid,
+      outputs,
+      inspect: st,
+      eventLines,
+      deadlineExceeded,
+      maxRunMs
+    });
+    if (outcome.ok) {
+      await client.post(`/api/runs/${run.id}/complete`, { output: outcome.output });
       console.log(`Completed ${run.id} via smithers ${sid}`);
     } else {
-      let error;
-      if (supervisionFailure) {
-        error = supervisionFailure;
-      } else if (outcomeFailure) {
-        error = outcomeFailure.error;
-      } else if (deadlineExceeded) {
-        error = `smithers run ${sid} exceeded runner deadline (${maxRunMs}ms) and was cancelled`;
-      } else {
-        // Surface the real failing-node error/stack (e.g. a TypeError in a
-        // workflow template) instead of the opaque state message, so the
-        // supervising watcher can recognise a deterministic workflow-code
-        // failure and decide whether a one-shot repair is warranted.
-        const failure = extractSmithersFailure(st, eventLines);
-        error = failure.error
-          ? `smithers run ${sid} failed${failure.failedStep ? ` at node '${failure.failedStep}'` : ""}: ${failure.error}`.slice(0, 2000)
-          : `smithers run ${sid} ended in state '${state}'`;
-      }
-      await failRun(run.id, error, outcomeFailure?.status || (deadlineExceeded ? RUN_FAILURE_CLASSES.TIMED_OUT : ""));
+      await failRun(run.id, outcome.error, outcome.status);
       console.log(`Run ${run.id} ended '${state}' (smithers ${sid})`);
     }
   } catch (error) {
@@ -684,7 +456,7 @@ function currentAuthHealth() {
   // Ride the hub claim-auth status along on every heartbeat so the dashboard can
   // surface "online but can't claim" instead of a healthy-looking dead runner.
   const base = authHealthCache && typeof authHealthCache === "object" ? { ...authHealthCache } : {};
-  base.hub = hubAuthOk ? { ok: true } : { ok: false, error: hubAuthError || "unauthorized" };
+  base.hub = claimAuth.health();
   return base;
 }
 
@@ -736,11 +508,11 @@ async function tick() {
         let assignment;
         try {
           assignment = await client.get(`/api/runners/${runnerId}/next-run`);
-          recordClaimAuth(true);
+          claimAuth.record(true);
         } catch (error) {
           // A 401/403 is a config fault, not "no work" — surface it loudly via
           // recordClaimAuth (logs + heartbeat) instead of silently swallowing.
-          if (isAuthError(error)) recordClaimAuth(false, error);
+          if (isAuthError(error)) claimAuth.record(false, error);
           break;
         }
         if (!assignment?.run) break;
@@ -763,7 +535,7 @@ async function main() {
     // through the loud auth banner and exit non-zero so systemd surfaces (and
     // restarts) a misconfigured runner instead of leaving a silent ghost.
     if (isAuthError(error)) {
-      recordClaimAuth(false, error);
+      claimAuth.record(false, error);
       process.exit(1);
     }
     throw error;

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, existsSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createJsonApiClient } from "./http-client.js";
 
 const temp = mkdtempSync(path.join(os.tmpdir(), "smithers-hub-product-workflow-"));
 process.env.SMITHERS_HUB_ROOT = process.cwd();
@@ -17,23 +18,7 @@ const { app } = await import("../src/server.js");
 let server;
 let baseUrl;
 const token = "shub_product_workflow_token";
-
-function api(pathname, options = {}) {
-  return fetch(`${baseUrl}${pathname}`, {
-    ...options,
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${token}`,
-      ...(options.headers || {})
-    },
-    body: options.body && typeof options.body !== "string" ? JSON.stringify(options.body) : options.body
-  }).then(async (response) => {
-    const text = await response.text();
-    const data = text ? JSON.parse(text) : null;
-    if (!response.ok) throw new Error(data?.error || `HTTP ${response.status}`);
-    return data;
-  });
-}
+const api = createJsonApiClient({ baseUrl: () => baseUrl, token });
 
 before(async () => {
   await new Promise((resolve) => {

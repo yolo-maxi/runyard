@@ -1,97 +1,9 @@
+import { artifactInventory, highlightEvents, msBetween, timestamp, topEventTypes, valueShape } from "./runEvidence.js";
+
 export const RUN_RETROSPECTIVE_ARTIFACT_NAME = "run-retrospective.json";
 export const RUN_RETROSPECTIVE_SCHEMA_VERSION = "smithers.hub.run-retrospective.v1";
-const GENERATED_RUN_ARTIFACT_NAMES = new Set([RUN_RETROSPECTIVE_ARTIFACT_NAME, "run-obstruction-analysis.json"]);
 
-const SAFE_ARTIFACT_METADATA_KEYS = new Set([
-  "generatedBy",
-  "sourceNode",
-  "sourceField",
-  "kind",
-  "schemaVersion",
-  "smithersRunId"
-]);
-
-function timestamp() {
-  return new Date().toISOString();
-}
-
-function msBetween(start, end) {
-  const a = Date.parse(start || "");
-  const b = Date.parse(end || "");
-  if (Number.isNaN(a) || Number.isNaN(b) || b < a) return null;
-  return b - a;
-}
-
-function keysOf(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
-  return Object.keys(value).slice(0, 80);
-}
-
-function valueShape(value, depth = 0) {
-  if (value == null) return { type: "null" };
-  if (Array.isArray(value)) {
-    return {
-      type: "array",
-      length: value.length,
-      sample: depth < 1 && value.length ? valueShape(value[0], depth + 1) : null
-    };
-  }
-  if (typeof value === "object") {
-    const keys = keysOf(value);
-    return {
-      type: "object",
-      keys,
-      fields:
-        depth < 1
-          ? Object.fromEntries(keys.slice(0, 24).map((key) => [key, valueShape(value[key], depth + 1)]))
-          : {}
-    };
-  }
-  return { type: typeof value };
-}
-
-function safeArtifactMetadata(metadata) {
-  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return {};
-  return Object.fromEntries(
-    Object.entries(metadata)
-      .filter(([key]) => SAFE_ARTIFACT_METADATA_KEYS.has(key))
-      .slice(0, 20)
-  );
-}
-
-function artifactInventory(artifacts = []) {
-  return (artifacts || [])
-    .filter((artifact) => !GENERATED_RUN_ARTIFACT_NAMES.has(artifact?.name))
-    .map((artifact) => ({
-      id: artifact.id || "",
-      name: artifact.name || "",
-      mimeType: artifact.mimeType || "",
-      sizeBytes: Number(artifact.sizeBytes || 0),
-      createdAt: artifact.createdAt || "",
-      deepLink: artifact.deepLink || "",
-      metadata: safeArtifactMetadata(artifact.metadata)
-    }));
-}
-
-function topEventTypes(logSummary = {}) {
-  return (logSummary.types || []).slice(0, 20).map((entry) => ({
-    key: entry.key,
-    count: entry.count,
-    category: entry.category
-  }));
-}
-
-function highlightEvents(logSummary = {}) {
-  return (logSummary.highlights || []).slice(-20).map((event) => ({
-    id: event.id || "",
-    type: event.type || "",
-    category: event.category || "",
-    severity: event.severity || "",
-    node: event.node || "",
-    message: event.message || "",
-    createdAt: event.createdAt || ""
-  }));
-}
+const GENERATED_RUN_ARTIFACT_NAMES = [RUN_RETROSPECTIVE_ARTIFACT_NAME, "run-obstruction-analysis.json"];
 
 function diagnosticSummary(diagnostics) {
   if (!diagnostics) return null;
@@ -121,7 +33,7 @@ export function buildRunRetrospectiveArtifact({
   diagnostics = null,
   generatedAt = timestamp()
 } = {}) {
-  const inventory = artifactInventory(artifacts);
+  const inventory = artifactInventory(artifacts, { generatedNames: GENERATED_RUN_ARTIFACT_NAMES });
   const content = {
     schemaVersion: RUN_RETROSPECTIVE_SCHEMA_VERSION,
     generatedAt,

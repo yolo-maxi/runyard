@@ -1,23 +1,53 @@
-import { existsSync, writeFileSync, chmodSync, mkdirSync, readFileSync } from "node:fs";
-import path from "node:path";
-import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { env } from "./env.js";
 import { id, now } from "./ids.js";
 import { emitRunEvent } from "./runEventBus.js";
-import {
-  executionIntentFromInput,
-  executionIntentMatchesRunnerTags,
-  normalizeExecutionIntent,
-  storeExecutionIntent
-} from "./runExecution.js";
 import { hashToken, randomToken } from "./security.js";
 import { SUPERVISOR_CAPABILITY_SLUG } from "./supervision.js";
-import { decideReconcile, buildEscalationApproval, HUB_DEFAULT_CAPS } from "./hubSupervisor.js";
 import { decrypt as decryptSecret, encrypt as encryptSecret, redactSecrets, secretsEnabled } from "./secretsStore.js";
-import { seedAgents, seedCapabilities, seedKnowledge, seedSkills } from "./seeds.js";
-import { nextRun as cronNextRun } from "./cron.js";
-import { RUN_FAILURE_TERMINAL_STATUSES } from "./runFailureClass.js";
+import {
+  canTransitionRun,
+  RUN_TERMINAL
+} from "./runLifecyclePolicy.js";
+import { normalizeCapability } from "./capabilityRecords.js";
+import { createCapabilityStore } from "./capabilityStore.js";
+import { createWorkflowEndpointStore } from "./workflowEndpointStore.js";
+import { createRunResponseEndpointStore } from "./runResponseEndpointStore.js";
+import { createAccessTokenStore } from "./accessTokenStore.js";
+import { createCatalogStore } from "./catalogStore.js";
+import { createDbBootstrap } from "./dbBootstrap.js";
+import { DB_SCHEMA_SQL } from "./dbSchema.js";
+import {
+  missingColumnAlterQueries,
+  tableColumnsQuery
+} from "./schemaMigrationRecords.js";
+import { createSecretStore } from "./secretStore.js";
+import { normalizeRun } from "./runRecords.js";
+import {
+  runnerPoolStatusQueries,
+  runnerPoolSummary
+} from "./runnerPoolRecords.js";
+import { createOperatorStore } from "./operatorStore.js";
+import { createRunSupervisorStore } from "./runSupervisorStore.js";
+import {
+  buildRuntimePack
+} from "./runtimePackRecords.js";
+import { supportRunnerAvailabilityResult } from "./runnerAssignment.js";
+import {
+  applyDashboardPoolStats,
+  dashboardCountQuery,
+  DASHBOARD_COUNT_TABLES,
+  pendingApprovalsCountQuery,
+  runningRunsCountQuery
+} from "./dashboardStats.js";
+import { createScheduleStore } from "./scheduleStore.js";
+import { createRunStore } from "./runStore.js";
+import { createRunnerStore } from "./runnerStore.js";
+import { createRunCreateStore } from "./runCreateStore.js";
+import { createRunMutationStore } from "./runMutationStore.js";
+import { createRunClaimStore } from "./runClaimStore.js";
+
+export { normalizeSchedule } from "./scheduleRecords.js";
 
 export const db = new DatabaseSync(env.dbPath);
 db.exec("PRAGMA journal_mode = WAL");
@@ -32,11 +62,6 @@ const DEFAULT_HIDDEN_RUN_WHERE = [
   `capability_slug IN (${DEFAULT_HIDDEN_RUN_SLUGS.map((slug) => `'${slug}'`).join(", ")})`
 ].join(" OR ");
 const VISIBLE_RUN_WHERE = `NOT (${DEFAULT_HIDDEN_RUN_WHERE})`;
-
-function json(value, fallback = null) {
-  if (value === undefined) return JSON.stringify(fallback);
-  return JSON.stringify(value);
-}
 
 export function parseJson(value, fallback = null) {
   if (value == null || value === "") return fallback;
@@ -59,299 +84,88 @@ function run(sql, params = {}) {
   return Array.isArray(params) ? db.prepare(sql).run(...params) : db.prepare(sql).run(params);
 }
 
+const catalogStore = createCatalogStore({ all, one, run, id, now });
+const capabilityStore = createCapabilityStore({ all, one, run, id, now });
+const runStore = createRunStore({ all, one, run, id, now, visibleRunWhere: VISIBLE_RUN_WHERE });
+const runMutationStore = createRunMutationStore({ one, run, now, getRun, adjustRunnerActiveRuns });
+const runClaimStore = createRunClaimStore({
+  run,
+  now,
+  getRunner,
+  supervisorPoolSize,
+  runnerLoad,
+  listRuns,
+  getCapability,
+  adjustRunnerActiveRuns,
+  addRunEvent,
+  getRun,
+  getDecryptedSecretEnv,
+  buildAgentRuntimePack,
+  supervisorCapabilitySlug: SUPERVISOR_CAPABILITY_SLUG
+});
+const runCreateStore = createRunCreateStore({
+  run,
+  id,
+  now,
+  scrubStoredSecrets,
+  addRunEvent,
+  createApproval,
+  getRun
+});
+const runnerStore = createRunnerStore({
+  all,
+  one,
+  run,
+  id,
+  now,
+  runnerOfflineMs: env.runnerOfflineMs,
+  runnerPruneMs: env.runnerPruneMs,
+  supervisorCapabilitySlug: SUPERVISOR_CAPABILITY_SLUG,
+  supervisorSlotRatio: env.supervisorSlotRatio
+});
+const operatorStore = createOperatorStore({ all, one, run, id, now, addRunEvent, getRun, updateRun });
+const scheduleStore = createScheduleStore({ all, one, run, id, now });
+const workflowEndpointStore = createWorkflowEndpointStore({ all, one, run, id, now, hashToken });
+const secretStore = createSecretStore({
+  all,
+  one,
+  run,
+  now,
+  encrypt: encryptSecret,
+  decrypt: decryptSecret,
+  redactSecrets,
+  secretsEnabled
+});
+const runResponseEndpointStore = createRunResponseEndpointStore({ all, one, run, id, now });
+const accessTokenStore = createAccessTokenStore({ all, one, run, id, now, randomToken });
+const runSupervisorStore = createRunSupervisorStore({
+  all,
+  one,
+  run,
+  id,
+  now,
+  env,
+  transitionRun,
+  addRunEvent,
+  adjustRunnerActiveRuns,
+  createApproval
+});
+const dbBootstrap = createDbBootstrap({
+  one,
+  run,
+  now,
+  env,
+  randomToken,
+  createAccessToken,
+  upsertSkill,
+  upsertAgent,
+  upsertKnowledge,
+  upsertCapability,
+  upsertWorkflowEndpoint
+});
+
 export function initDb() {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS settings (
-      key TEXT PRIMARY KEY,
-      value TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS access_tokens (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      token_hash TEXT NOT NULL UNIQUE,
-      scopes TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      last_used_at TEXT,
-      revoked_at TEXT,
-      expires_at TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS agents (
-      id TEXT PRIMARY KEY,
-      slug TEXT NOT NULL UNIQUE,
-      name TEXT NOT NULL,
-      description TEXT NOT NULL DEFAULT '',
-      instructions TEXT NOT NULL DEFAULT '',
-      tools TEXT NOT NULL DEFAULT '[]',
-      skill_slugs TEXT NOT NULL DEFAULT '[]',
-      tags TEXT NOT NULL DEFAULT '[]',
-      version INTEGER NOT NULL DEFAULT 1,
-      enabled INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS skills (
-      id TEXT PRIMARY KEY,
-      slug TEXT NOT NULL UNIQUE,
-      name TEXT NOT NULL,
-      description TEXT NOT NULL DEFAULT '',
-      body TEXT NOT NULL DEFAULT '',
-      tags TEXT NOT NULL DEFAULT '[]',
-      version INTEGER NOT NULL DEFAULT 1,
-      enabled INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS knowledge_resources (
-      id TEXT PRIMARY KEY,
-      slug TEXT NOT NULL UNIQUE,
-      title TEXT NOT NULL,
-      type TEXT NOT NULL DEFAULT 'doc',
-      body TEXT NOT NULL DEFAULT '',
-      url TEXT NOT NULL DEFAULT '',
-      tags TEXT NOT NULL DEFAULT '[]',
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS capabilities (
-      id TEXT PRIMARY KEY,
-      slug TEXT NOT NULL UNIQUE,
-      name TEXT NOT NULL,
-      description TEXT NOT NULL DEFAULT '',
-      category TEXT NOT NULL DEFAULT 'General',
-      keywords TEXT NOT NULL DEFAULT '[]',
-      input_schema TEXT NOT NULL DEFAULT '{}',
-      output_schema TEXT NOT NULL DEFAULT '{}',
-      required_runner_tags TEXT NOT NULL DEFAULT '[]',
-      required_skills TEXT NOT NULL DEFAULT '[]',
-      required_agents TEXT NOT NULL DEFAULT '[]',
-      approval_policy TEXT NOT NULL DEFAULT '{}',
-      supervision TEXT NOT NULL DEFAULT '{}',
-      workflow TEXT NOT NULL DEFAULT '{}',
-      max_run_minutes INTEGER,
-      definition_hash TEXT NOT NULL DEFAULT '',
-      version INTEGER NOT NULL DEFAULT 1,
-      enabled INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS capability_versions (
-      id TEXT PRIMARY KEY,
-      capability_id TEXT NOT NULL REFERENCES capabilities(id) ON DELETE CASCADE,
-      version INTEGER NOT NULL,
-      snapshot TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS runners (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      hostname TEXT NOT NULL DEFAULT '',
-      platform TEXT NOT NULL DEFAULT '',
-      version TEXT NOT NULL DEFAULT '',
-      tags TEXT NOT NULL DEFAULT '[]',
-      status TEXT NOT NULL DEFAULT 'offline',
-      current_run_id TEXT,
-      token_id TEXT,
-      capacity INTEGER NOT NULL DEFAULT 1,
-      active_runs INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL,
-      last_heartbeat_at TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS runs (
-      id TEXT PRIMARY KEY,
-      capability_id TEXT NOT NULL REFERENCES capabilities(id),
-      capability_slug TEXT NOT NULL,
-      capability_name TEXT NOT NULL,
-      workflow_version INTEGER NOT NULL,
-      runner_id TEXT,
-      status TEXT NOT NULL,
-      current_step TEXT NOT NULL DEFAULT '',
-      input TEXT NOT NULL DEFAULT '{}',
-      output TEXT,
-      error TEXT,
-      created_at TEXT NOT NULL,
-      assigned_at TEXT,
-      started_at TEXT,
-      completed_at TEXT,
-      updated_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS run_events (
-      id TEXT PRIMARY KEY,
-      run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
-      type TEXT NOT NULL,
-      message TEXT NOT NULL DEFAULT '',
-      data TEXT NOT NULL DEFAULT '{}',
-      created_at TEXT NOT NULL
-    );
-
-    -- Self-heal lineage: one row per hub-supervisor decision (resume / repair /
-    -- escalate / give_up) on a run. Lets the dashboard show *why* a run was
-    -- re-dispatched and guarantees we can audit (and never silently loop) the
-    -- reconcile loop's actions. Append-only.
-    CREATE TABLE IF NOT EXISTS run_lineage (
-      id TEXT PRIMARY KEY,
-      run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
-      attempt INTEGER NOT NULL DEFAULT 0,
-      action TEXT NOT NULL,
-      reason TEXT NOT NULL DEFAULT '',
-      fingerprint TEXT NOT NULL DEFAULT '',
-      prev_runner_id TEXT,
-      checkpoint TEXT,
-      created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS artifacts (
-      id TEXT PRIMARY KEY,
-      run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
-      name TEXT NOT NULL,
-      kind TEXT NOT NULL DEFAULT 'file',
-      mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',
-      size_bytes INTEGER NOT NULL DEFAULT 0,
-      path TEXT NOT NULL,
-      metadata TEXT NOT NULL DEFAULT '{}',
-      created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS approvals (
-      id TEXT PRIMARY KEY,
-      run_id TEXT REFERENCES runs(id) ON DELETE CASCADE,
-      status TEXT NOT NULL DEFAULT 'pending',
-      title TEXT NOT NULL,
-      description TEXT NOT NULL DEFAULT '',
-      requested_by TEXT NOT NULL DEFAULT 'workflow',
-      payload TEXT NOT NULL DEFAULT '{}',
-      created_at TEXT NOT NULL,
-      resolved_at TEXT,
-      resolved_by TEXT,
-      decision TEXT,
-      comment TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS audit_log (
-      id TEXT PRIMARY KEY,
-      actor TEXT NOT NULL DEFAULT '',
-      action TEXT NOT NULL,
-      target TEXT,
-      detail TEXT NOT NULL DEFAULT '{}',
-      created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS workflow_endpoints (
-      id TEXT PRIMARY KEY,
-      slug TEXT NOT NULL UNIQUE,
-      name TEXT NOT NULL,
-      description TEXT NOT NULL DEFAULT '',
-      secret_hash TEXT NOT NULL,
-      capability_slug TEXT NOT NULL,
-      project TEXT NOT NULL DEFAULT '',
-      repo TEXT NOT NULL DEFAULT '',
-      repo_dir TEXT NOT NULL DEFAULT '',
-      max_payload_bytes INTEGER NOT NULL DEFAULT 32768,
-      rate_limit_count INTEGER NOT NULL DEFAULT 30,
-      rate_limit_window_ms INTEGER NOT NULL DEFAULT 60000,
-      dedupe_window_ms INTEGER NOT NULL DEFAULT 600000,
-      config TEXT NOT NULL DEFAULT '{}',
-      enabled INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS run_response_endpoints (
-      id TEXT PRIMARY KEY,
-      run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
-      type TEXT NOT NULL,
-      config TEXT NOT NULL DEFAULT '{}',
-      created_by TEXT NOT NULL DEFAULT '',
-      created_at TEXT NOT NULL,
-      delivery_status TEXT NOT NULL DEFAULT 'pending',
-      delivery_attempts INTEGER NOT NULL DEFAULT 0,
-      last_attempt_at TEXT,
-      delivered_at TEXT,
-      last_error TEXT,
-      updated_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS workflow_endpoint_invocations (
-      id TEXT PRIMARY KEY,
-      endpoint_id TEXT NOT NULL REFERENCES workflow_endpoints(id) ON DELETE CASCADE,
-      endpoint_slug TEXT NOT NULL,
-      payload_hash TEXT NOT NULL,
-      source_app TEXT NOT NULL DEFAULT '',
-      source_user TEXT NOT NULL DEFAULT '',
-      source_session TEXT NOT NULL DEFAULT '',
-      run_id TEXT REFERENCES runs(id) ON DELETE SET NULL,
-      status TEXT NOT NULL DEFAULT 'queued',
-      created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS schedules (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      description TEXT NOT NULL DEFAULT '',
-      capability_slug TEXT NOT NULL,
-      cron TEXT NOT NULL DEFAULT '',
-      timezone TEXT NOT NULL DEFAULT 'UTC',
-      input TEXT NOT NULL DEFAULT '{}',
-      enabled INTEGER NOT NULL DEFAULT 1,
-      run_at TEXT,
-      next_run_at TEXT,
-      last_run_at TEXT,
-      last_run_id TEXT,
-      last_status TEXT NOT NULL DEFAULT '',
-      created_by TEXT NOT NULL DEFAULT '',
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS secrets (
-      key TEXT PRIMARY KEY,
-      value_encrypted BLOB NOT NULL,
-      description TEXT NOT NULL DEFAULT '',
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      created_by TEXT NOT NULL DEFAULT ''
-    );
-
-    -- Operator-facing alerts surfaced in the Hub UI (e.g. self-update outcomes:
-    -- "update succeeded -> vX", "update failed, rolled back to vY"). Additive and
-    -- self-contained: older code that predates this table simply never reads it,
-    -- so a rollback to an earlier release boots cleanly against a migrated DB.
-    CREATE TABLE IF NOT EXISTS _smithers_alerts (
-      id TEXT PRIMARY KEY,
-      kind TEXT NOT NULL,
-      level TEXT NOT NULL DEFAULT 'info',
-      title TEXT NOT NULL DEFAULT '',
-      message TEXT NOT NULL DEFAULT '',
-      data TEXT NOT NULL DEFAULT '{}',
-      created_at TEXT NOT NULL
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_alerts_kind_created ON _smithers_alerts(kind, created_at);
-    CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
-    CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
-    CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at);
-    CREATE INDEX IF NOT EXISTS idx_events_run ON run_events(run_id, created_at);
-    CREATE INDEX IF NOT EXISTS idx_artifacts_run ON artifacts(run_id);
-    CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status);
-    CREATE INDEX IF NOT EXISTS idx_workflow_endpoint_invocations_payload ON workflow_endpoint_invocations(endpoint_id, payload_hash, created_at);
-    CREATE INDEX IF NOT EXISTS idx_workflow_endpoint_invocations_endpoint ON workflow_endpoint_invocations(endpoint_id, created_at);
-    CREATE INDEX IF NOT EXISTS idx_run_response_endpoints_run ON run_response_endpoints(run_id);
-    CREATE INDEX IF NOT EXISTS idx_run_response_endpoints_status ON run_response_endpoints(delivery_status);
-    CREATE INDEX IF NOT EXISTS idx_schedules_due ON schedules(enabled, next_run_at);
-    CREATE INDEX IF NOT EXISTS idx_run_lineage_run ON run_lineage(run_id, created_at);
-    -- The hub-supervisor failed-recoverable scan filters on status + recency; an
-    -- index keeps the reconcile tick cheap as the runs table grows.
-    CREATE INDEX IF NOT EXISTS idx_runs_status_updated ON runs(status, updated_at);
-  `);
+  db.exec(DB_SCHEMA_SQL);
 
   migrateRunnersPoolColumns();
   migrateCapabilitySupervisionColumn();
@@ -360,64 +174,63 @@ export function initDb() {
   migrateRunsCapabilityVersioningColumns();
   migrateRunnerAuthHealthColumn();
   migrateRunsSupervisorColumns();
-  setSettingDefault("instance_name", env.instanceName);
-  seedAll();
-  seedWorkflowEndpoints();
+  dbBootstrap.setSettingDefault("instance_name", env.instanceName);
+  dbBootstrap.seedCatalog();
+  dbBootstrap.seedWorkflowEndpoints();
   autoQueueLegacyRunStartApprovals();
-  ensureBootstrapToken();
+  dbBootstrap.ensureBootstrapToken();
 }
 
 // Capacity / active_runs were added after the initial schema shipped. Existing
 // installs may already have a runners table without these columns — the CREATE
 // TABLE IF NOT EXISTS above is a no-op there, so we add the columns manually.
+function migrateMissingColumns(table, columns) {
+  const query = tableColumnsQuery(table);
+  const existingColumns = all(query.sql, query.params).map((row) => row.name);
+  for (const alter of missingColumnAlterQueries({ table, existingColumns, columns })) {
+    db.exec(alter.sql);
+  }
+}
+
 function migrateRunnersPoolColumns() {
-  const columns = all("PRAGMA table_info(runners)").map((row) => row.name);
-  if (!columns.includes("capacity")) {
-    db.exec("ALTER TABLE runners ADD COLUMN capacity INTEGER NOT NULL DEFAULT 1");
-  }
-  if (!columns.includes("active_runs")) {
-    db.exec("ALTER TABLE runners ADD COLUMN active_runs INTEGER NOT NULL DEFAULT 0");
-  }
+  migrateMissingColumns("runners", [
+    { name: "capacity", definition: "capacity INTEGER NOT NULL DEFAULT 1" },
+    { name: "active_runs", definition: "active_runs INTEGER NOT NULL DEFAULT 0" }
+  ]);
 }
 
 // `supervision` (the default-supervision-envelope flag) shipped after the
 // initial capabilities schema. Add the column on existing installs so seeding
 // can populate it; the CREATE TABLE above is a no-op when the table exists.
 function migrateCapabilitySupervisionColumn() {
-  const columns = all("PRAGMA table_info(capabilities)").map((row) => row.name);
-  if (!columns.includes("supervision")) {
-    db.exec("ALTER TABLE capabilities ADD COLUMN supervision TEXT NOT NULL DEFAULT '{}'");
-  }
+  migrateMissingColumns("capabilities", [
+    { name: "supervision", definition: "supervision TEXT NOT NULL DEFAULT '{}'" }
+  ]);
 }
 
 // Per-capability execution deadline (minutes). NULL means "use the global
 // SMITHERS_RUN_DEADLINE_MS default" — long-running workflows (e.g. audits)
 // declare a larger value so the stuck-run reaper doesn't kill them at 30m.
 function migrateCapabilityDeadlineColumn() {
-  const columns = all("PRAGMA table_info(capabilities)").map((row) => row.name);
-  if (!columns.includes("max_run_minutes")) {
-    db.exec("ALTER TABLE capabilities ADD COLUMN max_run_minutes INTEGER");
-  }
+  migrateMissingColumns("capabilities", [
+    { name: "max_run_minutes", definition: "max_run_minutes INTEGER" }
+  ]);
 }
 
 function migrateCapabilityDefinitionHashColumn() {
-  const columns = all("PRAGMA table_info(capabilities)").map((row) => row.name);
-  if (!columns.includes("definition_hash")) {
-    db.exec("ALTER TABLE capabilities ADD COLUMN definition_hash TEXT NOT NULL DEFAULT ''");
-  }
+  migrateMissingColumns("capabilities", [
+    { name: "definition_hash", definition: "definition_hash TEXT NOT NULL DEFAULT ''" }
+  ]);
 }
 
 // Capability version pinning + rollback (behind RUNYARD_CAPABILITY_VERSIONING).
 // Both columns are nullable — the flag-off path stores NULL and the existing
 // run flow is unchanged. ALTER TABLE is idempotent via PRAGMA table_info.
 function migrateRunsCapabilityVersioningColumns() {
-  const columns = all("PRAGMA table_info(runs)").map((row) => row.name);
-  if (!columns.includes("capability_sha")) {
-    db.exec("ALTER TABLE runs ADD COLUMN capability_sha TEXT");
-  }
-  if (!columns.includes("parent_run_id")) {
-    db.exec("ALTER TABLE runs ADD COLUMN parent_run_id TEXT");
-  }
+  migrateMissingColumns("runs", [
+    { name: "capability_sha", definition: "capability_sha TEXT" },
+    { name: "parent_run_id", definition: "parent_run_id TEXT" }
+  ]);
 }
 
 // Per-runner CLI auth health (Codex/Claude subscription auth) rides along on
@@ -425,10 +238,9 @@ function migrateRunsCapabilityVersioningColumns() {
 // CREATE TABLE no-op on existing installs is backfilled here. Never holds token
 // material — only {ok, expiresAt?, accountId?} booleans/strings.
 function migrateRunnerAuthHealthColumn() {
-  const columns = all("PRAGMA table_info(runners)").map((row) => row.name);
-  if (!columns.includes("auth_health")) {
-    db.exec("ALTER TABLE runners ADD COLUMN auth_health TEXT");
-  }
+  migrateMissingColumns("runners", [
+    { name: "auth_health", definition: "auth_health TEXT" }
+  ]);
 }
 
 // Hub-as-supervisor accounting. These counters must survive a hub restart so
@@ -438,301 +250,45 @@ function migrateRunnerAuthHealthColumn() {
 // the hot fields the reconcile query reads. All nullable/defaulted so the
 // CREATE TABLE no-op on existing installs is backfilled here.
 function migrateRunsSupervisorColumns() {
-  const columns = all("PRAGMA table_info(runs)").map((row) => row.name);
-  if (!columns.includes("attempt")) {
-    db.exec("ALTER TABLE runs ADD COLUMN attempt INTEGER NOT NULL DEFAULT 0");
-  }
-  if (!columns.includes("repair_count")) {
-    db.exec("ALTER TABLE runs ADD COLUMN repair_count INTEGER NOT NULL DEFAULT 0");
-  }
-  if (!columns.includes("supervisor_meta")) {
-    db.exec("ALTER TABLE runs ADD COLUMN supervisor_meta TEXT");
-  }
-}
-
-function setSettingDefault(key, value) {
-  const existing = one("SELECT key FROM settings WHERE key = ?", [key]);
-  if (!existing) {
-    run("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)", [key, String(value), now()]);
-  }
-}
-
-function ensureBootstrapToken() {
-  const count = one("SELECT COUNT(*) AS count FROM access_tokens").count;
-  if (count > 0) return;
-  const token = env.bootstrapToken || randomToken();
-  createAccessToken("bootstrap-admin", token, ["admin", "api", "runner", "mcp"]);
-  const tokenFile = path.join(env.dataDir, "bootstrap-token.txt");
-  if (!existsSync(tokenFile)) {
-    writeFileSync(tokenFile, `${token}\n`, { mode: 0o600 });
-    chmodSync(tokenFile, 0o600);
-  }
-  console.log(`RunYard bootstrap token written to ${tokenFile}`);
+  migrateMissingColumns("runs", [
+    { name: "attempt", definition: "attempt INTEGER NOT NULL DEFAULT 0" },
+    { name: "repair_count", definition: "repair_count INTEGER NOT NULL DEFAULT 0" },
+    { name: "supervisor_meta", definition: "supervisor_meta TEXT" }
+  ]);
 }
 
 export function createAccessToken(name, token = randomToken(), scopes = ["api"], options = {}) {
-  const record = {
-    id: id("tok"),
-    name,
-    token_hash: hashToken(token),
-    scopes: json(scopes, []),
-    created_at: now(),
-    expires_at: options.expiresAt || null
-  };
-  run(
-    "INSERT INTO access_tokens (id, name, token_hash, scopes, created_at, expires_at) VALUES ($id, $name, $token_hash, $scopes, $created_at, $expires_at)",
-    record
-  );
-  return { id: record.id, name, token, scopes, createdAt: record.created_at, expiresAt: record.expires_at };
-}
-
-function normalizeToken(row) {
-  if (!row) return null;
-  const expired = Boolean(row.expires_at && row.expires_at <= now());
-  return {
-    id: row.id,
-    name: row.name,
-    scopes: parseJson(row.scopes, []),
-    createdAt: row.created_at,
-    lastUsedAt: row.last_used_at,
-    revokedAt: row.revoked_at,
-    expiresAt: row.expires_at,
-    active: !row.revoked_at && !expired
-  };
+  return accessTokenStore.createAccessToken(name, token, scopes, options);
 }
 
 export function listAccessTokens() {
-  return all(
-    "SELECT id, name, scopes, created_at, last_used_at, revoked_at, expires_at FROM access_tokens ORDER BY created_at DESC"
-  ).map(normalizeToken);
+  return accessTokenStore.listAccessTokens();
 }
 
 export function getAccessToken(tokenId) {
-  return normalizeToken(one("SELECT * FROM access_tokens WHERE id = ?", [tokenId]));
+  return accessTokenStore.getAccessToken(tokenId);
 }
 
 export function revokeAccessToken(tokenId) {
-  const existing = one("SELECT id, revoked_at FROM access_tokens WHERE id = ?", [tokenId]);
-  if (!existing) return null;
-  if (!existing.revoked_at) run("UPDATE access_tokens SET revoked_at = ? WHERE id = ?", [now(), tokenId]);
-  return getAccessToken(tokenId);
+  return accessTokenStore.revokeAccessToken(tokenId);
 }
 
 export function authenticateToken(token) {
-  if (!token) return null;
-  const record = one(
-    "SELECT * FROM access_tokens WHERE token_hash = ? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)",
-    [hashToken(token), now()]
-  );
-  if (!record) return null;
-  run("UPDATE access_tokens SET last_used_at = ? WHERE id = ?", [now(), record.id]);
-  return { ...record, scopes: parseJson(record.scopes, []) };
+  return accessTokenStore.authenticateToken(token);
 }
 
-function seedAll() {
-  for (const skill of seedSkills) upsertSkill(skill);
-  for (const agent of seedAgents) upsertAgent(agent);
-  for (const item of seedKnowledge) upsertKnowledge(item);
-  for (const capability of seedCapabilities) upsertCapability(capability);
-}
-
-const seededWorkflowEndpoints = [
-  {
-    slug: "runyard-mobile-feedback",
-    name: "Runyard mobile/app feedback",
-    description: "Accepts trusted app-server feedback submissions and queues a constrained improve-no-deploy run for Runyard.",
-    capabilitySlug: "improve-no-deploy",
-    project: "runyard",
-    repo: "runyard",
-    maxPayloadBytes: 32 * 1024,
-    rateLimitCount: 30,
-    rateLimitWindowMs: 60_000,
-    dedupeWindowMs: 10 * 60_000,
-    config: {
-      target: "Runyard mobile/app feedback",
-      maxImprovements: 3,
-      untrustedInput: true
-    }
-  }
-];
-
-function endpointSecretPath(slug) {
-  return path.join(env.dataDir, "workflow-endpoints", `${slug}-secret.txt`);
-}
-
-function readOrCreateSeededEndpointSecret(slug) {
-  const file = endpointSecretPath(slug);
-  if (existsSync(file)) {
-    const value = readFileSync(file, "utf8").trim();
-    if (value) return value;
-  }
-  const token = randomToken();
-  mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(file, `${token}\n`, { mode: 0o600 });
-  try {
-    chmodSync(file, 0o600);
-  } catch {
-    /* best effort on platforms without chmod */
-  }
-  console.log(`Runyard workflow endpoint secret written to ${file}`);
-  return token;
-}
-
-function seedWorkflowEndpoints() {
-  for (const endpoint of seededWorkflowEndpoints) {
-    const existing = one("SELECT id FROM workflow_endpoints WHERE slug = ?", [endpoint.slug]);
-    const secret = env.runyardMobileFeedbackEndpointSecret || (existing ? "" : readOrCreateSeededEndpointSecret(endpoint.slug));
-    upsertWorkflowEndpoint(endpoint, secret ? { secret } : {});
-  }
-}
-
-export function normalizeCapability(row) {
-  if (!row) return null;
-  return {
-    id: row.id,
-    slug: row.slug,
-    name: row.name,
-    description: row.description,
-    category: row.category,
-    keywords: parseJson(row.keywords, []),
-    inputSchema: parseJson(row.input_schema, {}),
-    outputSchema: parseJson(row.output_schema, {}),
-    requiredRunnerTags: parseJson(row.required_runner_tags, []),
-    requiredSkills: parseJson(row.required_skills, []),
-    requiredAgents: parseJson(row.required_agents, []),
-    approvalPolicy: parseJson(row.approval_policy, {}),
-    supervision: parseJson(row.supervision, {}),
-    workflow: parseJson(row.workflow, {}),
-    maxRunMinutes: row.max_run_minutes ?? null,
-    definitionHash: row.definition_hash || "",
-    version: row.version,
-    enabled: Boolean(row.enabled),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at
-  };
-}
+export { normalizeCapability };
 
 export function listCapabilities({ q = "", includeDisabled = false } = {}) {
-  const like = `%${q}%`;
-  const enabledClause = includeDisabled ? "" : "enabled = 1";
-  const searchClause = q ? "(name LIKE ? OR slug LIKE ? OR description LIKE ? OR keywords LIKE ?)" : "";
-  const where = [enabledClause, searchClause].filter(Boolean).join(" AND ");
-  const sql = `SELECT * FROM capabilities ${where ? `WHERE ${where}` : ""} ORDER BY category, name`;
-  const rows = q ? all(sql, [like, like, like, like]) : all(sql);
-  return rows.map(normalizeCapability);
+  return capabilityStore.listCapabilities({ q, includeDisabled });
 }
 
 export function getCapability(slugOrId) {
-  return normalizeCapability(one("SELECT * FROM capabilities WHERE slug = ? OR id = ?", [slugOrId, slugOrId]));
-}
-
-// A positive integer number of minutes, or null (use the global default).
-function normalizeMaxRunMinutes(value) {
-  if (value === null || value === undefined || value === "") return null;
-  const n = Math.floor(Number(value));
-  return Number.isFinite(n) && n > 0 ? n : null;
-}
-
-function stableValue(value) {
-  if (Array.isArray(value)) return value.map(stableValue);
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.keys(value)
-        .sort()
-        .map((key) => [key, stableValue(value[key])])
-    );
-  }
-  return value;
-}
-
-function stableJson(value) {
-  return JSON.stringify(stableValue(value));
-}
-
-function parseMaybeJson(value, fallback) {
-  if (typeof value !== "string") return value ?? fallback;
-  return parseJson(value, fallback);
-}
-
-function normalizeCapabilityDefinition(input) {
-  return {
-    slug: input.slug,
-    name: input.name,
-    description: input.description || "",
-    category: input.category || "General",
-    keywords: parseMaybeJson(input.keywords, []),
-    inputSchema: parseMaybeJson(input.inputSchema ?? input.input_schema, {}),
-    outputSchema: parseMaybeJson(input.outputSchema ?? input.output_schema, {}),
-    requiredRunnerTags: parseMaybeJson(input.requiredRunnerTags ?? input.required_runner_tags, []),
-    requiredSkills: parseMaybeJson(input.requiredSkills ?? input.required_skills, []),
-    requiredAgents: parseMaybeJson(input.requiredAgents ?? input.required_agents, []),
-    approvalPolicy: parseMaybeJson(input.approvalPolicy ?? input.approval_policy, {}),
-    supervision: parseMaybeJson(input.supervision ?? input.supervision_policy, {}),
-    workflow: parseMaybeJson(input.workflow, {}),
-    maxRunMinutes: normalizeMaxRunMinutes(input.maxRunMinutes ?? input.max_run_minutes),
-    enabled: input.enabled === false || input.enabled === 0 ? false : true
-  };
-}
-
-function capabilityDefinitionHash(definition) {
-  return createHash("sha256").update(stableJson(definition)).digest("hex");
+  return capabilityStore.getCapability(slugOrId);
 }
 
 export function upsertCapability(input) {
-  const existing = one("SELECT * FROM capabilities WHERE slug = ?", [input.slug]);
-  const timestamp = now();
-  const definition = normalizeCapabilityDefinition(input);
-  const definitionHash = capabilityDefinitionHash(definition);
-  const payload = {
-    slug: definition.slug,
-    name: definition.name,
-    description: definition.description,
-    category: definition.category,
-    keywords: json(definition.keywords, []),
-    input_schema: json(definition.inputSchema, {}),
-    output_schema: json(definition.outputSchema, {}),
-    required_runner_tags: json(definition.requiredRunnerTags, []),
-    required_skills: json(definition.requiredSkills, []),
-    required_agents: json(definition.requiredAgents, []),
-    approval_policy: json(definition.approvalPolicy, {}),
-    supervision: json(definition.supervision, {}),
-    workflow: json(definition.workflow, {}),
-    max_run_minutes: definition.maxRunMinutes ?? null,
-    definition_hash: definitionHash,
-    enabled: definition.enabled ? 1 : 0,
-    updated_at: timestamp
-  };
-  if (existing) {
-    const existingHash = existing.definition_hash || capabilityDefinitionHash(normalizeCapabilityDefinition(normalizeCapability(existing)));
-    if (existingHash === definitionHash) {
-      if (existing.definition_hash !== definitionHash) {
-        run("UPDATE capabilities SET definition_hash = ? WHERE slug = ?", [definitionHash, input.slug]);
-      }
-      return getCapability(input.slug);
-    }
-    const version = existing.version + 1;
-    run(
-      `UPDATE capabilities SET name=$name, description=$description, category=$category, keywords=$keywords,
-       input_schema=$input_schema, output_schema=$output_schema, required_runner_tags=$required_runner_tags,
-       required_skills=$required_skills, required_agents=$required_agents, approval_policy=$approval_policy,
-       supervision=$supervision, workflow=$workflow, max_run_minutes=$max_run_minutes, definition_hash=$definition_hash, enabled=$enabled, version=$version, updated_at=$updated_at WHERE slug=$slug`,
-      { ...payload, version }
-    );
-    snapshotCapability(existing.id);
-    return getCapability(input.slug);
-  }
-  const created = { id: id("cap"), version: 1, created_at: timestamp, ...payload };
-  run(
-    `INSERT INTO capabilities
-     (id, slug, name, description, category, keywords, input_schema, output_schema, required_runner_tags,
-      required_skills, required_agents, approval_policy, supervision, workflow, max_run_minutes, definition_hash, version, enabled, created_at, updated_at)
-     VALUES ($id, $slug, $name, $description, $category, $keywords, $input_schema, $output_schema,
-      $required_runner_tags, $required_skills, $required_agents, $approval_policy, $supervision, $workflow, $max_run_minutes, $definition_hash, $version,
-      $enabled, $created_at, $updated_at)`,
-    created
-  );
-  snapshotCapability(created.id);
-  return getCapability(input.slug);
+  return capabilityStore.upsertCapability(input);
 }
 
 // --- Encrypted reusable secrets ---------------------------------------------
@@ -746,90 +302,38 @@ export { secretsEnabled };
 
 // List names + metadata only. NEVER returns or decrypts values.
 export function listSecretMeta() {
-  return all("SELECT key, description, created_at, updated_at, created_by FROM secrets ORDER BY key").map((row) => ({
-    key: row.key,
-    description: row.description || "",
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    createdBy: row.created_by || ""
-  }));
+  return secretStore.listSecretMeta();
 }
 
 export function secretExists(key) {
-  return Boolean(one("SELECT key FROM secrets WHERE key = ?", [String(key)]));
+  return secretStore.secretExists(key);
 }
 
 // Upsert an encrypted secret. `value` is plaintext; it is encrypted here and
 // the plaintext is never persisted or logged. Throws if the store is disabled.
 export function upsertSecret({ key, value, description = "", createdBy = "" }) {
-  const cleanKey = String(key || "").trim();
-  if (!cleanKey) throw new Error("secret key is required");
-  const blob = encryptSecret(String(value ?? ""));
-  const timestamp = now();
-  const existing = one("SELECT key, created_at, created_by FROM secrets WHERE key = ?", [cleanKey]);
-  if (existing) {
-    run(
-      "UPDATE secrets SET value_encrypted = ?, description = ?, updated_at = ? WHERE key = ?",
-      [blob, String(description || ""), timestamp, cleanKey]
-    );
-  } else {
-    run(
-      "INSERT INTO secrets (key, value_encrypted, description, created_at, updated_at, created_by) VALUES (?, ?, ?, ?, ?, ?)",
-      [cleanKey, blob, String(description || ""), timestamp, timestamp, String(createdBy || "")]
-    );
-  }
-  return getSecretMeta(cleanKey);
+  return secretStore.upsertSecret({ key, value, description, createdBy });
 }
 
 export function getSecretMeta(key) {
-  const row = one("SELECT key, description, created_at, updated_at, created_by FROM secrets WHERE key = ?", [String(key)]);
-  if (!row) return null;
-  return {
-    key: row.key,
-    description: row.description || "",
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    createdBy: row.created_by || ""
-  };
+  return secretStore.getSecretMeta(key);
 }
 
 export function deleteSecret(key) {
-  const result = run("DELETE FROM secrets WHERE key = ?", [String(key)]);
-  return result.changes > 0;
+  return secretStore.deleteSecret(key);
 }
 
 // Decrypt the secrets named in `names` into a { NAME: value } env map. Used at
 // run claim time to inject only the allowlisted secrets into one run. Unknown
 // names are silently skipped. Returns {} when the store is disabled.
 export function getDecryptedSecretEnv(names = []) {
-  if (!secretsEnabled()) return {};
-  const wanted = [...new Set((Array.isArray(names) ? names : []).map((n) => String(n || "").trim()).filter(Boolean))];
-  const env = {};
-  for (const key of wanted) {
-    const row = one("SELECT value_encrypted FROM secrets WHERE key = ?", [key]);
-    if (!row) continue;
-    try {
-      env[key] = decryptSecret(row.value_encrypted);
-    } catch {
-      // A decrypt failure (rotated/garbage key) must never crash a claim; skip.
-    }
-  }
-  return env;
+  return secretStore.getDecryptedSecretEnv(names);
 }
 
 // Every stored plaintext secret value, used only to scrub run output/artifacts/
 // logs before persistence. Returns [] when disabled. Never exposed via API.
 export function allSecretValues() {
-  if (!secretsEnabled()) return [];
-  const values = [];
-  for (const row of all("SELECT value_encrypted FROM secrets")) {
-    try {
-      values.push(decryptSecret(row.value_encrypted));
-    } catch {
-      /* skip undecryptable rows */
-    }
-  }
-  return values;
+  return secretStore.allSecretValues();
 }
 
 // Scrub any stored secret value out of an arbitrary JSON-ish value (run output,
@@ -837,174 +341,31 @@ export function allSecretValues() {
 // runner posts is persisted or echoed back through the API. No-op when the
 // store is disabled or empty.
 export function scrubStoredSecrets(value) {
-  const values = allSecretValues();
-  if (!values.length) return value;
-  return redactSecrets(value, values);
-}
-
-function normalizeWorkflowEndpoint(row, { includeSecretHash = false } = {}) {
-  if (!row) return null;
-  return {
-    id: row.id,
-    slug: row.slug,
-    name: row.name,
-    description: row.description,
-    capabilitySlug: row.capability_slug,
-    project: row.project,
-    repo: row.repo,
-    repoDir: row.repo_dir,
-    maxPayloadBytes: row.max_payload_bytes,
-    rateLimitCount: row.rate_limit_count,
-    rateLimitWindowMs: row.rate_limit_window_ms,
-    dedupeWindowMs: row.dedupe_window_ms,
-    config: parseJson(row.config, {}),
-    enabled: Boolean(row.enabled),
-    secretConfigured: Boolean(row.secret_hash),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    ...(includeSecretHash ? { secretHash: row.secret_hash } : {})
-  };
-}
-
-function positiveInteger(value, fallback, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.min(Math.max(Math.floor(parsed), min), max);
+  return secretStore.scrubStoredSecrets(value);
 }
 
 export function listWorkflowEndpoints({ includeDisabled = false } = {}) {
-  const rows = includeDisabled
-    ? all("SELECT * FROM workflow_endpoints ORDER BY slug")
-    : all("SELECT * FROM workflow_endpoints WHERE enabled = 1 ORDER BY slug");
-  return rows.map((row) => normalizeWorkflowEndpoint(row));
+  return workflowEndpointStore.listWorkflowEndpoints({ includeDisabled });
 }
 
 export function getWorkflowEndpoint(slugOrId, { includeSecretHash = false, includeDisabled = false } = {}) {
-  const row = includeDisabled
-    ? one("SELECT * FROM workflow_endpoints WHERE slug = ? OR id = ?", [slugOrId, slugOrId])
-    : one("SELECT * FROM workflow_endpoints WHERE (slug = ? OR id = ?) AND enabled = 1", [slugOrId, slugOrId]);
-  return normalizeWorkflowEndpoint(row, { includeSecretHash });
+  return workflowEndpointStore.getWorkflowEndpoint(slugOrId, { includeSecretHash, includeDisabled });
 }
 
 export function upsertWorkflowEndpoint(input, options = {}) {
-  const slug = input.slug;
-  if (!slug) throw new Error("workflow endpoint slug is required");
-  const existing = one("SELECT * FROM workflow_endpoints WHERE slug = ?", [slug]);
-  if (!existing && !options.secret) throw new Error("workflow endpoint secret is required for new endpoints");
-  const timestamp = now();
-  const payload = {
-    slug,
-    name: input.name || slug,
-    description: input.description || "",
-    secret_hash: options.secret ? hashToken(options.secret) : existing.secret_hash,
-    capability_slug: input.capabilitySlug || input.capability_slug || existing?.capability_slug || "",
-    project: input.project || existing?.project || "",
-    repo: input.repo || existing?.repo || "",
-    repo_dir: input.repoDir || input.repo_dir || existing?.repo_dir || "",
-    max_payload_bytes: positiveInteger(input.maxPayloadBytes || input.max_payload_bytes, existing?.max_payload_bytes || 32 * 1024, {
-      min: 1024,
-      max: 1024 * 1024
-    }),
-    rate_limit_count: positiveInteger(input.rateLimitCount || input.rate_limit_count, existing?.rate_limit_count || 30, {
-      min: 1,
-      max: 10_000
-    }),
-    rate_limit_window_ms: positiveInteger(input.rateLimitWindowMs || input.rate_limit_window_ms, existing?.rate_limit_window_ms || 60_000, {
-      min: 1000,
-      max: 86_400_000
-    }),
-    dedupe_window_ms: positiveInteger(input.dedupeWindowMs ?? input.dedupe_window_ms, existing?.dedupe_window_ms || 10 * 60_000, {
-      min: 0,
-      max: 86_400_000
-    }),
-    config: json(input.config || parseJson(existing?.config, {}), {}),
-    enabled: input.enabled == null ? (existing?.enabled ?? 1) : input.enabled === false ? 0 : 1,
-    updated_at: timestamp
-  };
-  if (existing) {
-    run(
-      `UPDATE workflow_endpoints SET name=$name, description=$description, secret_hash=$secret_hash,
-       capability_slug=$capability_slug, project=$project, repo=$repo, repo_dir=$repo_dir,
-       max_payload_bytes=$max_payload_bytes, rate_limit_count=$rate_limit_count,
-       rate_limit_window_ms=$rate_limit_window_ms, dedupe_window_ms=$dedupe_window_ms,
-       config=$config, enabled=$enabled, updated_at=$updated_at WHERE slug=$slug`,
-      payload
-    );
-  } else {
-    run(
-      `INSERT INTO workflow_endpoints
-       (id, slug, name, description, secret_hash, capability_slug, project, repo, repo_dir,
-        max_payload_bytes, rate_limit_count, rate_limit_window_ms, dedupe_window_ms, config,
-        enabled, created_at, updated_at)
-       VALUES ($id, $slug, $name, $description, $secret_hash, $capability_slug, $project, $repo, $repo_dir,
-        $max_payload_bytes, $rate_limit_count, $rate_limit_window_ms, $dedupe_window_ms, $config,
-        $enabled, $created_at, $updated_at)`,
-      { id: id("wend"), created_at: timestamp, ...payload }
-    );
-  }
-  return getWorkflowEndpoint(slug, { includeDisabled: true });
+  return workflowEndpointStore.upsertWorkflowEndpoint(input, options);
 }
 
 export function countWorkflowEndpointInvocations(endpointId, sinceIso) {
-  return one(
-    "SELECT COUNT(*) AS count FROM workflow_endpoint_invocations WHERE endpoint_id = ? AND created_at >= ?",
-    [endpointId, sinceIso]
-  ).count;
+  return workflowEndpointStore.countWorkflowEndpointInvocations(endpointId, sinceIso);
 }
 
 export function findRecentWorkflowEndpointInvocation(endpointId, payloadHash, sinceIso) {
-  const row = one(
-    `SELECT * FROM workflow_endpoint_invocations
-      WHERE endpoint_id = ? AND payload_hash = ? AND created_at >= ? AND run_id IS NOT NULL
-      ORDER BY created_at DESC LIMIT 1`,
-    [endpointId, payloadHash, sinceIso]
-  );
-  if (!row) return null;
-  return {
-    id: row.id,
-    endpointId: row.endpoint_id,
-    endpointSlug: row.endpoint_slug,
-    payloadHash: row.payload_hash,
-    sourceApp: row.source_app,
-    sourceUser: row.source_user,
-    sourceSession: row.source_session,
-    runId: row.run_id,
-    status: row.status,
-    createdAt: row.created_at
-  };
+  return workflowEndpointStore.findRecentWorkflowEndpointInvocation(endpointId, payloadHash, sinceIso);
 }
 
 export function recordWorkflowEndpointInvocation({ endpoint, payloadHash, source = {}, runId = null, status = "queued" }) {
-  const record = {
-    id: id("weni"),
-    endpoint_id: endpoint.id,
-    endpoint_slug: endpoint.slug,
-    payload_hash: payloadHash,
-    source_app: source.app || "",
-    source_user: source.user || "",
-    source_session: source.session || "",
-    run_id: runId,
-    status,
-    created_at: now()
-  };
-  run(
-    `INSERT INTO workflow_endpoint_invocations
-     (id, endpoint_id, endpoint_slug, payload_hash, source_app, source_user, source_session, run_id, status, created_at)
-     VALUES ($id, $endpoint_id, $endpoint_slug, $payload_hash, $source_app, $source_user, $source_session, $run_id, $status, $created_at)`,
-    record
-  );
-  return {
-    id: record.id,
-    endpointId: record.endpoint_id,
-    endpointSlug: record.endpoint_slug,
-    payloadHash,
-    sourceApp: record.source_app,
-    sourceUser: record.source_user,
-    sourceSession: record.source_session,
-    runId,
-    status,
-    createdAt: record.created_at
-  };
+  return workflowEndpointStore.recordWorkflowEndpointInvocation({ endpoint, payloadHash, source, runId, status });
 }
 
 // --- Per-run response endpoints --------------------------------------------
@@ -1014,389 +375,69 @@ export function recordWorkflowEndpointInvocation({ endpoint, payloadHash, source
 // having to scrape the run's `input` field — keeping the raw config out of
 // workflow context, logs, and audit detail.
 
-const VALID_RESPONSE_ENDPOINT_DELIVERY_STATUSES = new Set([
-  "pending",
-  "in_flight",
-  "delivered",
-  "failed",
-  "abandoned"
-]);
-
-function normalizeRunResponseEndpoint(row) {
-  if (!row) return null;
-  return {
-    id: row.id,
-    runId: row.run_id,
-    type: row.type,
-    config: parseJson(row.config, {}),
-    createdBy: row.created_by || "",
-    createdAt: row.created_at,
-    deliveryStatus: row.delivery_status || "pending",
-    deliveryAttempts: row.delivery_attempts || 0,
-    lastAttemptAt: row.last_attempt_at,
-    deliveredAt: row.delivered_at,
-    lastError: row.last_error,
-    updatedAt: row.updated_at
-  };
-}
-
 // Insert a new endpoint row attached to `runId`. The caller (HTTP route) is
 // responsible for validating type/config first via parseResponseEndpoint;
 // this function trusts both fields.
 export function createRunResponseEndpoint({ runId, type, config, createdBy = "" }) {
-  if (!runId) throw new Error("createRunResponseEndpoint: runId is required");
-  if (!type) throw new Error("createRunResponseEndpoint: type is required");
-  const timestamp = now();
-  const record = {
-    id: id("rres"),
-    run_id: runId,
-    type,
-    config: json(config || {}, {}),
-    created_by: createdBy || "",
-    created_at: timestamp,
-    delivery_status: "pending",
-    delivery_attempts: 0,
-    last_attempt_at: null,
-    delivered_at: null,
-    last_error: null,
-    updated_at: timestamp
-  };
-  run(
-    `INSERT INTO run_response_endpoints
-     (id, run_id, type, config, created_by, created_at, delivery_status,
-      delivery_attempts, last_attempt_at, delivered_at, last_error, updated_at)
-     VALUES ($id, $run_id, $type, $config, $created_by, $created_at, $delivery_status,
-      $delivery_attempts, $last_attempt_at, $delivered_at, $last_error, $updated_at)`,
-    record
-  );
-  return normalizeRunResponseEndpoint(one("SELECT * FROM run_response_endpoints WHERE id = ?", [record.id]));
+  return runResponseEndpointStore.createRunResponseEndpoint({ runId, type, config, createdBy });
 }
 
 export function listRunResponseEndpointsForRun(runId) {
-  if (!runId) return [];
-  return all(
-    "SELECT * FROM run_response_endpoints WHERE run_id = ? ORDER BY created_at ASC",
-    [runId]
-  ).map(normalizeRunResponseEndpoint);
+  return runResponseEndpointStore.listRunResponseEndpointsForRun(runId);
 }
 
-// Slice 2 will use this for the delivery loop. Left here so the schema and
-// helper surface are complete in slice 1.
 export function listPendingRunResponseEndpoints(limit = 100) {
-  const capped = Math.min(Math.max(Number(limit) || 100, 1), 1000);
-  return all(
-    "SELECT * FROM run_response_endpoints WHERE delivery_status = 'pending' ORDER BY created_at ASC LIMIT ?",
-    [capped]
-  ).map(normalizeRunResponseEndpoint);
+  return runResponseEndpointStore.listPendingRunResponseEndpoints(limit);
 }
 
 export function updateRunResponseEndpointDelivery(id, updates = {}) {
-  if (!id) throw new Error("updateRunResponseEndpointDelivery: id is required");
-  if (updates.status && !VALID_RESPONSE_ENDPOINT_DELIVERY_STATUSES.has(updates.status)) {
-    throw new Error(`updateRunResponseEndpointDelivery: unknown status '${updates.status}'`);
-  }
-  const sets = ["updated_at = $updated_at"];
-  const params = { id, updated_at: now() };
-  if (updates.status != null) {
-    sets.push("delivery_status = $delivery_status");
-    params.delivery_status = updates.status;
-  }
-  if (updates.attempts != null) {
-    sets.push("delivery_attempts = $delivery_attempts");
-    params.delivery_attempts = Math.max(0, Math.floor(Number(updates.attempts) || 0));
-  }
-  if (updates.lastAttemptAt !== undefined) {
-    sets.push("last_attempt_at = $last_attempt_at");
-    params.last_attempt_at = updates.lastAttemptAt || null;
-  }
-  if (updates.deliveredAt !== undefined) {
-    sets.push("delivered_at = $delivered_at");
-    params.delivered_at = updates.deliveredAt || null;
-  }
-  if (updates.lastError !== undefined) {
-    sets.push("last_error = $last_error");
-    params.last_error = updates.lastError ? String(updates.lastError).slice(0, 2000) : null;
-  }
-  run(`UPDATE run_response_endpoints SET ${sets.join(", ")} WHERE id = $id`, params);
-  return normalizeRunResponseEndpoint(one("SELECT * FROM run_response_endpoints WHERE id = ?", [id]));
-}
-
-function snapshotCapability(capabilityId) {
-  const cap = one("SELECT * FROM capabilities WHERE id = ?", [capabilityId]);
-  if (!cap) return;
-  run(
-    "INSERT INTO capability_versions (id, capability_id, version, snapshot, created_at) VALUES (?, ?, ?, ?, ?)",
-    [id("capv"), capabilityId, cap.version, JSON.stringify(normalizeCapability(cap)), now()]
-  );
-}
-
-function normalizeEditable(row, fields) {
-  if (!row) return null;
-  const base = {};
-  for (const field of fields) base[field] = row[field];
-  return {
-    ...base,
-    tools: parseJson(row.tools, undefined),
-    skillSlugs: parseJson(row.skill_slugs, undefined),
-    tags: parseJson(row.tags, []),
-    enabled: row.enabled == null ? undefined : Boolean(row.enabled),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    version: row.version
-  };
+  return runResponseEndpointStore.updateRunResponseEndpointDelivery(id, updates);
 }
 
 export function listAgents(q = "") {
-  const like = `%${q}%`;
-  return (q
-    ? all("SELECT * FROM agents WHERE name LIKE ? OR slug LIKE ? OR description LIKE ? ORDER BY name", [like, like, like])
-    : all("SELECT * FROM agents ORDER BY name")
-  ).map((row) => normalizeEditable(row, ["id", "slug", "name", "description", "instructions"]));
+  return catalogStore.listAgents(q);
 }
 
 export function getAgent(slug) {
-  const row = one("SELECT * FROM agents WHERE slug = ?", [slug]);
-  return normalizeEditable(row, ["id", "slug", "name", "description", "instructions"]);
+  return catalogStore.getAgent(slug);
 }
 
 export function upsertAgent(input) {
-  const existing = one("SELECT * FROM agents WHERE slug = ?", [input.slug]);
-  const timestamp = now();
-  const payload = {
-    slug: input.slug,
-    name: input.name,
-    description: input.description || "",
-    instructions: input.instructions || "",
-    tools: json(input.tools, []),
-    skill_slugs: json(input.skillSlugs || input.skill_slugs || [], []),
-    tags: json(input.tags, []),
-    enabled: input.enabled === false ? 0 : 1,
-    updated_at: timestamp
-  };
-  if (existing) {
-    run(
-      `UPDATE agents SET name=$name, description=$description, instructions=$instructions, tools=$tools,
-       skill_slugs=$skill_slugs, tags=$tags, enabled=$enabled, version=version+1, updated_at=$updated_at WHERE slug=$slug`,
-      payload
-    );
-  } else {
-    run(
-      `INSERT INTO agents (id, slug, name, description, instructions, tools, skill_slugs, tags, enabled, created_at, updated_at)
-       VALUES ($id, $slug, $name, $description, $instructions, $tools, $skill_slugs, $tags, $enabled, $created_at, $updated_at)`,
-      { id: id("agent"), created_at: timestamp, ...payload }
-    );
-  }
-  return listAgents(input.slug)[0];
+  return catalogStore.upsertAgent(input);
 }
 
 export function listSkills(q = "") {
-  const like = `%${q}%`;
-  return (q
-    ? all("SELECT * FROM skills WHERE name LIKE ? OR slug LIKE ? OR description LIKE ? OR body LIKE ? ORDER BY name", [like, like, like, like])
-    : all("SELECT * FROM skills ORDER BY name")
-  ).map((row) => normalizeEditable(row, ["id", "slug", "name", "description", "body"]));
+  return catalogStore.listSkills(q);
 }
 
 export function getSkill(slug) {
-  const row = one("SELECT * FROM skills WHERE slug = ?", [slug]);
-  return normalizeEditable(row, ["id", "slug", "name", "description", "body"]);
+  return catalogStore.getSkill(slug);
 }
 
 export function upsertSkill(input) {
-  const existing = one("SELECT * FROM skills WHERE slug = ?", [input.slug]);
-  const timestamp = now();
-  const payload = {
-    slug: input.slug,
-    name: input.name,
-    description: input.description || "",
-    body: input.body || "",
-    tags: json(input.tags, []),
-    enabled: input.enabled === false ? 0 : 1,
-    updated_at: timestamp
-  };
-  if (existing) {
-    run(
-      "UPDATE skills SET name=$name, description=$description, body=$body, tags=$tags, enabled=$enabled, version=version+1, updated_at=$updated_at WHERE slug=$slug",
-      payload
-    );
-  } else {
-    run(
-      "INSERT INTO skills (id, slug, name, description, body, tags, enabled, created_at, updated_at) VALUES ($id, $slug, $name, $description, $body, $tags, $enabled, $created_at, $updated_at)",
-      { id: id("skill"), created_at: timestamp, ...payload }
-    );
-  }
-  return listSkills(input.slug)[0];
+  return catalogStore.upsertSkill(input);
 }
 
 export function listKnowledge(q = "") {
-  const like = `%${q}%`;
-  return (q
-    ? all("SELECT * FROM knowledge_resources WHERE title LIKE ? OR slug LIKE ? OR body LIKE ? OR tags LIKE ? ORDER BY title", [like, like, like, like])
-    : all("SELECT * FROM knowledge_resources ORDER BY title")
-  ).map((row) => ({
-    id: row.id,
-    slug: row.slug,
-    title: row.title,
-    type: row.type,
-    body: row.body,
-    url: row.url,
-    tags: parseJson(row.tags, []),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at
-  }));
+  return catalogStore.listKnowledge(q);
 }
 
 export function upsertKnowledge(input) {
-  const existing = one("SELECT * FROM knowledge_resources WHERE slug = ?", [input.slug]);
-  const timestamp = now();
-  const payload = {
-    slug: input.slug,
-    title: input.title,
-    type: input.type || "doc",
-    body: input.body || "",
-    url: input.url || "",
-    tags: json(input.tags, []),
-    updated_at: timestamp
-  };
-  if (existing) {
-    run("UPDATE knowledge_resources SET title=$title, type=$type, body=$body, url=$url, tags=$tags, updated_at=$updated_at WHERE slug=$slug", payload);
-  } else {
-    run(
-      "INSERT INTO knowledge_resources (id, slug, title, type, body, url, tags, created_at, updated_at) VALUES ($id, $slug, $title, $type, $body, $url, $tags, $created_at, $updated_at)",
-      { id: id("know"), created_at: timestamp, ...payload }
-    );
-  }
-  return listKnowledge(input.slug)[0];
+  return catalogStore.upsertKnowledge(input);
 }
 
-export function approvalPolicyNotifiesTelegram(policy = {}) {
-  if (!policy || typeof policy !== "object") return false;
-  if (policy.notifyTelegram === true || policy.telegramNotify === true) return true;
-  if (policy.notifications?.telegram === true || policy.notify?.telegram === true) return true;
-
-  const channel = String(policy.notificationChannel || policy.notifyChannel || "").toLowerCase();
-  if (channel === "telegram") return true;
-
-  const channels = policy.notificationChannels || policy.notifyChannels || [];
-  return Array.isArray(channels) && channels.some((item) => String(item).toLowerCase() === "telegram");
-}
-
-function approvalPolicyRequiresRunStartApproval(policy = {}) {
-  if (!policy || typeof policy !== "object") return false;
-  return policy.runStartApproval === true || policy.requireRunStartApproval === true || policy.workflowStartApproval === true;
-}
+export { approvalPolicyNotifiesTelegram } from "./operatorRecords.js";
 
 export function autoQueueLegacyRunStartApprovals() {
-  const approvals = all(
-    `SELECT approvals.*, runs.status AS run_status
-       FROM approvals
-       JOIN runs ON runs.id = approvals.run_id
-      WHERE approvals.status = 'pending'
-        AND runs.status = 'waiting_approval'`
-  );
-  let queued = 0;
-  for (const approval of approvals) {
-    const payload = parseJson(approval.payload, {});
-    const kind = String(payload.approvalKind || payload.kind || "").toLowerCase();
-    const scope = String(payload.approvalScope || payload.scope || "").toLowerCase();
-    if (kind !== "run_start" && scope !== "workflow_start") continue;
-
-    const timestamp = now();
-    run(
-      "UPDATE approvals SET status='approved', decision='approved', resolved_by='system:auto-queue', comment=?, resolved_at=? WHERE id=? AND status='pending'",
-      ["Workflow-start approvals no longer block runs by default.", timestamp, approval.id]
-    );
-    run(
-      "UPDATE runs SET status='queued', current_step='queued', updated_at=? WHERE id=? AND status='waiting_approval'",
-      [timestamp, approval.run_id]
-    );
-    addRunEvent(approval.run_id, "approval.auto_queued", "Workflow start approval auto-queued", { approvalId: approval.id });
-    queued += 1;
-  }
-  return queued;
+  return operatorStore.autoQueueLegacyRunStartApprovals();
 }
 
 export function createRun(capability, input, options = {}) {
-  const timestamp = now();
-  const approvalRequired = approvalPolicyRequiresRunStartApproval(capability.approvalPolicy);
-  const status = approvalRequired ? "waiting_approval" : "queued";
-  const runId = id("run");
-  let storedInput = input && typeof input === "object" && !Array.isArray(input) ? { ...input } : {};
-  // Defense in depth: a caller could paste a known secret value straight into a
-  // run input. Scrub stored secret values so they never persist in run.input
-  // (the allowlist names in `secretNames` are not values, so they survive).
-  storedInput = scrubStoredSecrets(storedInput);
-  const execution = normalizeExecutionIntent(storedInput, options.execution || {});
-  storedInput = storeExecutionIntent(storedInput, execution);
-  if (options.origin) {
-    storedInput.__origin = {
-      ...(storedInput.__origin && typeof storedInput.__origin === "object" ? storedInput.__origin : {}),
-      ...options.origin
-    };
-  }
-  // Optional capability version pinning + rollback parentage. Both columns are
-  // nullable; the legacy path (flag off in src/runExecution.js) passes neither.
-  const capabilitySha = options.capabilitySha ? String(options.capabilitySha).trim() || null : null;
-  const parentRunId = options.parentRunId ? String(options.parentRunId).trim() || null : null;
-  run(
-    `INSERT INTO runs (id, capability_id, capability_slug, capability_name, workflow_version, runner_id, status,
-      current_step, input, capability_sha, parent_run_id, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      runId,
-      capability.id,
-      capability.slug,
-      capability.name,
-      capability.version,
-      options.runnerId || null,
-      status,
-      approvalRequired ? "waiting for approval" : "queued",
-      json(storedInput, {}),
-      capabilitySha,
-      parentRunId,
-      timestamp,
-      timestamp
-    ]
-  );
-  addRunEvent(runId, "run.created", `Run created for ${capability.name}`, {
-    capability: capability.slug,
-    ...(execution.requested ? { execution } : {})
-  });
-  if (approvalRequired) {
-    const requestedBy = options.requestedBy || "workflow";
-    const payload = {
-      kind: "run_start",
-      approvalKind: "run_start",
-      approvalScope: "workflow_start",
-      capability: capability.slug,
-      capabilityName: capability.name,
-      workflow: {
-        slug: capability.slug,
-        name: capability.name,
-        version: capability.version,
-        engine: capability.workflow?.engine || "",
-        entry: capability.workflow?.entry || ""
-      },
-      requestedBy,
-      notifyTelegram: approvalPolicyNotifiesTelegram(capability.approvalPolicy),
-      input: storedInput
-    };
-    if (options.origin) payload.origin = options.origin;
-    if (execution.requested) payload.execution = execution;
-    createApproval({
-      runId,
-      title: `Approve ${capability.name}`,
-      description: capability.approvalPolicy?.reason || "This capability requires approval before execution.",
-      requestedBy,
-      payload
-    });
-  }
-  return getRun(runId);
+  return runCreateStore.createRun(capability, input, options);
 }
 
 export function getRun(runId) {
-  const row = one("SELECT * FROM runs WHERE id = ?", [runId]);
-  return normalizeRun(row);
+  return runStore.getRun(runId);
 }
 
 // Find a still-active supervising run-smithers run by its internal supervision
@@ -1406,78 +447,15 @@ export function getRun(runId) {
 // echoing the token it received) can present a matching one. Returns the
 // supervising run or null.
 export function findActiveSupervisorByToken(token, wrappedCapability = "") {
-  const clean = String(token || "").trim();
-  if (!clean) return null;
-  const rows = all(
-    `SELECT * FROM runs
-      WHERE capability_slug = 'run-smithers'
-        AND status NOT IN ('succeeded', 'failed', 'cancelled')
-      ORDER BY created_at DESC LIMIT 200`
-  );
-  for (const row of rows) {
-    const input = parseJson(row.input, {});
-    if (input?.__supervisionToken !== clean) continue;
-    if (wrappedCapability && input?.wrappedCapability !== wrappedCapability) continue;
-    return normalizeRun(row);
-  }
-  return null;
-}
-
-// Build the WHERE clause shared by listRuns / countRuns so search/time/cursor
-// filters stay aligned. Returns SQL fragment + bound positional params. Cursor
-// is the createdAt of the last row from the previous page (exclusive bound).
-function buildRunFilterClause({ status = "", q = "", since = "", until = "", cursor = "", capabilitySlugs = [], includeInternal = false } = {}) {
-  const where = [];
-  const params = [];
-  if (!includeInternal) {
-    where.push(VISIBLE_RUN_WHERE);
-  }
-  const slugs = Array.isArray(capabilitySlugs)
-    ? [...new Set(capabilitySlugs.map((slug) => String(slug || "").trim()).filter(Boolean))]
-    : [];
-  if (slugs.length) {
-    where.push(`capability_slug IN (${slugs.map(() => "?").join(", ")})`);
-    params.push(...slugs);
-  }
-  if (status) {
-    where.push("status = ?");
-    params.push(status);
-  }
-  if (since) {
-    where.push("created_at >= ?");
-    params.push(since);
-  }
-  if (until) {
-    where.push("created_at <= ?");
-    params.push(until);
-  }
-  if (cursor) {
-    where.push("created_at < ?");
-    params.push(cursor);
-  }
-  if (q) {
-    // Plain substring match across the columns operators search by. We strip
-    // `%`/`_` to avoid accidental wildcard injection — typing `%` should not
-    // change the meaning of the search.
-    where.push("(capability_name LIKE ? OR capability_slug LIKE ? OR id LIKE ? OR current_step LIKE ? OR COALESCE(error,'') LIKE ?)");
-    const like = `%${q.replace(/[%_]/g, "")}%`;
-    params.push(like, like, like, like, like);
-  }
-  const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
-  return { clause, params };
+  return runStore.findActiveSupervisorByToken(token, wrappedCapability);
 }
 
 export function listRuns({ status = "", limit = 100, q = "", since = "", until = "", cursor = "", capabilitySlugs = [], includeInternal = false } = {}) {
-  const { clause, params } = buildRunFilterClause({ status, q, since, until, cursor, capabilitySlugs, includeInternal });
-  const sql = `SELECT * FROM runs ${clause} ORDER BY created_at DESC LIMIT ?`;
-  const rows = all(sql, [...params, limit]);
-  return rows.map(normalizeRun);
+  return runStore.listRuns({ status, limit, q, since, until, cursor, capabilitySlugs, includeInternal });
 }
 
 export function countRuns({ status = "", q = "", since = "", until = "", capabilitySlugs = [], includeInternal = false } = {}) {
-  const { clause, params } = buildRunFilterClause({ status, q, since, until, capabilitySlugs, includeInternal });
-  const sql = `SELECT COUNT(*) AS count FROM runs ${clause}`;
-  return one(sql, params).count;
+  return runStore.countRuns({ status, q, since, until, capabilitySlugs, includeInternal });
 }
 
 // Distinct `capability_sha` values seen across this capability's runs, with
@@ -1485,655 +463,53 @@ export function countRuns({ status = "", q = "", since = "", until = "", capabil
 // to surface the rollback target list. Returns an empty array when capability
 // versioning has never been enabled (no run ever stored a non-null sha).
 export function listCapabilityVersionsFromRuns(slug) {
-  if (!slug) return [];
-  return all(
-    `SELECT capability_sha AS sha,
-            COUNT(*) AS runCount,
-            MIN(created_at) AS firstSeenAt,
-            MAX(created_at) AS lastSeenAt
-       FROM runs
-      WHERE capability_slug = ?
-        AND capability_sha IS NOT NULL
-        AND capability_sha <> ''
-      GROUP BY capability_sha
-      ORDER BY lastSeenAt DESC`,
-    [slug]
-  ).map((row) => ({
-    sha: row.sha,
-    runCount: row.runCount,
-    firstSeenAt: row.firstSeenAt,
-    lastSeenAt: row.lastSeenAt
-  }));
+  return runStore.listCapabilityVersionsFromRuns(slug);
 }
 
 // Token id that owns a run, via the runner it was assigned to. Null if unassigned.
 export function runOwnerTokenId(runId) {
-  const r = one("SELECT runner_id FROM runs WHERE id = ?", [runId]);
-  if (!r?.runner_id) return null;
-  const runner = one("SELECT token_id FROM runners WHERE id = ?", [r.runner_id]);
-  return runner?.token_id || null;
-}
-
-function ageMs(timestamp, nowMs = Date.now()) {
-  if (!timestamp) return Number.POSITIVE_INFINITY;
-  const parsed = Date.parse(timestamp);
-  if (Number.isNaN(parsed)) return Number.POSITIVE_INFINITY;
-  return nowMs - parsed;
-}
-
-function runBackstopExceeded(row, maxMs, nowMs) {
-  if (!maxMs || maxMs <= 0) return false;
-  const started = row.started_at || row.assigned_at || row.created_at;
-  return ageMs(started, nowMs) > maxMs;
-}
-
-function hasWaitingApprovalSupervisedChild(parentRunId) {
-  if (!parentRunId) return false;
-  const rows = all("SELECT input FROM runs WHERE status = 'waiting_approval' ORDER BY created_at DESC LIMIT 500");
-  for (const row of rows) {
-    const input = parseJson(row.input, {});
-    if (input?.__origin?.parentRunId === parentRunId) return true;
-  }
-  return false;
-}
-
-function runReapReason(row, { maxMs = 0, stallMs = env.runStallMs, runnerOfflineMs = env.runnerOfflineMs, nowMs = Date.now() } = {}) {
-  if (row.status === "waiting_approval") return null;
-  if (row.runner_id && ageMs(row.last_heartbeat_at, nowMs) > runnerOfflineMs) {
-    return {
-      currentStep: "runner offline",
-      error: "runner heartbeat expired",
-      message: "Runner stopped heartbeating while the run was active",
-      reason: "runner_offline"
-    };
-  }
-  if (stallMs > 0) {
-    if (row.capability_slug === "run-smithers" && hasWaitingApprovalSupervisedChild(row.id)) return null;
-    const lastEventAt = row.last_event_at || row.started_at || row.assigned_at || row.created_at;
-    if (ageMs(lastEventAt, nowMs) > stallMs) {
-      return {
-        currentStep: "stalled",
-        error: "run emitted no events within stall window",
-        message: "Run emitted no events within the stall window",
-        reason: "run_stalled"
-      };
-    }
-  }
-  if (runBackstopExceeded(row, maxMs, nowMs)) {
-    return {
-      currentStep: "timed out",
-      error: "run exceeded execution deadline",
-      message: "Run exceeded execution deadline",
-      reason: "max_runtime"
-    };
-  }
-  return null;
-}
-
-// --- Hub-as-supervisor: resume / repair / escalate instead of just failing ---
-//
-// The reaper used to be a pure janitor: a stuck run was transitioned to
-// `failed` and its slot released. That makes the supervisor share the failure
-// domain of the thing it protects — when a runner process dies, the in-band
-// run-smithers supervisor riding on it dies too, and nobody resumes the work.
-// These helpers promote the reaper to a supervisor: for an orphaned (runner
-// confirmed dead) or self-reported-failed run that still has a resumable
-// checkpoint and budget, it re-queues the run so any free runner *process* on
-// the same box resumes it from the last checkpoint on the shared workspace —
-// instead of failing it. Caps/loop-breaker survive a hub restart via the
-// persisted attempt/repair counters + supervisor_meta blob.
-
-// The resumable substrate handle: the prior Smithers run id, recorded by the
-// runner as `smithers.dispatched`. Re-dispatching the hub run with this id lets
-// the next runner `smithers up --resume <sid>` and pick up from the last
-// durable checkpoint on the shared workspace, rather than starting from scratch.
-function runResumeCheckpoint(runId) {
-  const row = one(
-    `SELECT data FROM run_events
-      WHERE run_id = ? AND type = 'smithers.dispatched'
-      ORDER BY created_at DESC LIMIT 1`,
-    [runId]
-  );
-  if (!row) return null;
-  const sid = parseJson(row.data, {})?.smithersRunId;
-  return sid ? String(sid) : null;
-}
-
-// A monotonic forward-progress proxy: the run's event count. If a run is
-// resumed and re-dies without this advancing, the loop-breaker treats it as no
-// progress and escalates rather than resuming forever.
-function runProgressMarker(runId) {
-  return one("SELECT COUNT(*) AS n FROM run_events WHERE run_id = ?", [runId]).n;
-}
-
-function readSupervisorMeta(row) {
-  const meta = parseJson(row?.supervisor_meta, {}) || {};
-  return {
-    repairedFingerprints: meta.repairedFingerprints && typeof meta.repairedFingerprints === "object" ? meta.repairedFingerprints : {},
-    fingerprintResumes: meta.fingerprintResumes && typeof meta.fingerprintResumes === "object" ? meta.fingerprintResumes : {},
-    lastProgressMarker: Number(meta.lastProgressMarker) || 0,
-    lastFingerprint: meta.lastFingerprint || "",
-    lastCheckpoint: meta.lastCheckpoint || "",
-    adjudicated: Boolean(meta.adjudicated),
-    lastDecision: meta.lastDecision || "",
-    // Phase 2 sequencing: a run parked while its one-shot code-repair child runs.
-    // It is NOT re-adjudicated while parked; its repair child's terminal drives it
-    // (reconcileRepairChildTerminal) — re-run fresh on success, escalate on failure.
-    awaitingRepair: Boolean(meta.awaitingRepair),
-    repairChildRunId: meta.repairChildRunId || ""
-  };
-}
-
-// True when this run is a supervised child whose run-smithers parent is still
-// alive. In that case the in-band supervisor still owns recovery, so the hub
-// must NOT also resume it — that would double-dispatch. The hub only adjudicates
-// top-level/un-parented runs and the supervisors themselves (whose parent, if
-// any, is gone). Returns false for everything else.
-function hasLiveSupervisingParent(input) {
-  const origin = input?.__origin;
-  const parentRunId = origin?.parentRunId || input?.__supervisedChild?.parentRunId || "";
-  if (!parentRunId) return false;
-  const parent = one("SELECT status FROM runs WHERE id = ?", [String(parentRunId)]);
-  if (!parent) return false;
-  return !RUN_TERMINAL.has(parent.status);
+  return runStore.runOwnerTokenId(runId);
 }
 
 export function recordRunLineage(runId, entry = {}) {
-  const row = {
-    id: id("lin"),
-    run_id: runId,
-    attempt: Number(entry.attempt) || 0,
-    action: String(entry.action || ""),
-    reason: String(entry.reason || "").slice(0, 600),
-    fingerprint: String(entry.fingerprint || "").slice(0, 200),
-    prev_runner_id: entry.prevRunnerId || null,
-    checkpoint: entry.checkpoint || null,
-    created_at: now()
-  };
-  run(
-    `INSERT INTO run_lineage (id, run_id, attempt, action, reason, fingerprint, prev_runner_id, checkpoint, created_at)
-     VALUES ($id, $run_id, $attempt, $action, $reason, $fingerprint, $prev_runner_id, $checkpoint, $created_at)`,
-    row
-  );
-  return row;
+  return runSupervisorStore.recordRunLineage(runId, entry);
 }
 
 export function listRunLineage(runId) {
-  return all("SELECT * FROM run_lineage WHERE run_id = ? ORDER BY created_at ASC", [runId]).map((r) => ({
-    id: r.id,
-    runId: r.run_id,
-    attempt: r.attempt,
-    action: r.action,
-    reason: r.reason,
-    fingerprint: r.fingerprint,
-    prevRunnerId: r.prev_runner_id,
-    checkpoint: r.checkpoint,
-    createdAt: r.created_at
-  }));
+  return runSupervisorStore.listRunLineage(runId);
 }
 
-// Re-queue an orphaned/failed run so a free runner process resumes it from the
-// recorded checkpoint. Idempotent and CAS-protected: the UPDATE only fires when
-// the run is still in the status we observed, so two reconcile ticks (or a
-// runner finishing the run just as we adjudicate) can never both requeue it.
-// Returns true when this call actually re-dispatched the run.
-function requeueRunForResume(row, decision, checkpoint, observedStatus) {
-  const meta = readSupervisorMeta(row);
-  const fingerprint = decision.fingerprint || "";
-  const nextAttempt = (Number(row.attempt) || 0) + 1;
-  const progressMarker = runProgressMarker(row.id);
-
-  // Persist caps/loop-breaker state BEFORE flipping status so it survives even
-  // if the hub crashes right after the requeue.
-  if (fingerprint) meta.fingerprintResumes[fingerprint] = (meta.fingerprintResumes[fingerprint] || 0) + 1;
-  meta.lastFingerprint = fingerprint;
-  meta.lastCheckpoint = checkpoint || "";
-  meta.lastProgressMarker = progressMarker;
-  meta.adjudicated = false;
-  meta.lastDecision = "resume";
-
-  // Stamp a resume marker into the run input so the claiming runner knows to
-  // `smithers up --resume <sid>` instead of starting a fresh run. Strip any
-  // prior marker first so it never accumulates.
-  const input = parseJson(row.input, {});
-  input.__resume = { smithersRunId: checkpoint, attempt: nextAttempt, at: now() };
-  const timestamp = now();
-
-  const result = run(
-    `UPDATE runs
-        SET status='queued', runner_id=NULL, current_step='queued (resume from checkpoint)',
-            error=NULL, attempt=$attempt, supervisor_meta=$meta, input=$input,
-            completed_at=NULL, updated_at=$ts
-      WHERE id=$id AND status=$observed`,
-    { id: row.id, attempt: nextAttempt, meta: json(meta, {}), input: json(input, {}), ts: timestamp, observed: observedStatus }
-  );
-  if (!result.changes) return false;
-
-  // The run left the active set on whatever runner held it — release that slot
-  // exactly once (orphaned runs were assigned/running; a self-reported failure
-  // already released its slot at fail time, so only release when it was active).
-  if (row.runner_id && (observedStatus === "assigned" || observedStatus === "running")) {
-    adjustRunnerActiveRuns(row.runner_id, -1);
-  }
-  recordRunLineage(row.id, {
-    attempt: nextAttempt,
-    action: "resume",
-    reason: decision.reason,
-    fingerprint,
-    prevRunnerId: row.runner_id,
-    checkpoint
-  });
-  addRunEvent(row.id, "run.supervisor.resumed", `Hub resumed run from checkpoint (attempt ${nextAttempt})`, {
-    attempt: nextAttempt,
-    checkpoint,
-    fingerprint,
-    reason: decision.reason
-  });
-  return true;
-}
-
-// Re-queue a failed run for a FRESH re-run (a brand new smithers run), clearing
-// any prior resume marker. Used after a code repair: the workflow source changed,
-// so the run must start clean rather than resume the old (now source-mismatched)
-// smithers checkpoint. CAS-guarded on the observed `failed` status so a late
-// duplicate completion can never double-dispatch.
-function requeueRunFresh(row, { fingerprint = "", reason = "" } = {}) {
-  const meta = readSupervisorMeta(row);
-  const nextAttempt = (Number(row.attempt) || 0) + 1;
-  meta.adjudicated = false;
-  meta.awaitingRepair = false;
-  meta.lastDecision = "repair_rerun";
-  // Drop the resume marker so the claiming runner starts a fresh `smithers up`
-  // (no --resume) against the repaired source.
-  const input = parseJson(row.input, {});
-  delete input.__resume;
-  const timestamp = now();
-  const result = run(
-    `UPDATE runs
-        SET status='queued', runner_id=NULL, current_step='queued (re-run after code repair)',
-            error=NULL, attempt=$attempt, supervisor_meta=$meta, input=$input,
-            completed_at=NULL, updated_at=$ts
-      WHERE id=$id AND status='failed'`,
-    { id: row.id, attempt: nextAttempt, meta: json(meta, {}), input: json(input, {}), ts: timestamp }
-  );
-  if (!result.changes) return false;
-  recordRunLineage(row.id, { attempt: nextAttempt, action: "rerun", reason, fingerprint, prevRunnerId: row.runner_id, checkpoint: null });
-  addRunEvent(row.id, "run.supervisor.rerun", `Hub re-ran run from a clean state after code repair (attempt ${nextAttempt})`, { attempt: nextAttempt, fingerprint, reason });
-  return true;
-}
-
-// Phase 2 completion hook: drive a PARKED parent run when its one-shot
-// hub-dispatched code-repair child reaches a terminal state. On repair success
-// the parent re-runs FRESH against the fix (smithers cannot resume across a
-// source change); on repair failure/cancel the parent escalates to an operator
-// card. Idempotent and safe to call more than once (e.g. on the runner's
-// completion report AND as a restart backstop from reconcileFailedRecoverable):
-// only the parent that is parked on THIS child is ever touched.
 export function reconcileRepairChildTerminal(repairRunId) {
-  if (!repairRunId) return null;
-  const repair = one("SELECT id, status, input FROM runs WHERE id = ?", [String(repairRunId)]);
-  if (!repair || !RUN_TERMINAL.has(repair.status)) return null;
-  const origin = parseJson(repair.input, {})?.__origin || {};
-  if (origin.type !== "hub-supervisor-repair") return null;
-  const parentId = origin.repairsRunId || "";
-  if (!parentId) return null;
-  const parent = one("SELECT * FROM runs WHERE id = ?", [String(parentId)]);
-  if (!parent) return null;
-  const meta = readSupervisorMeta(parent);
-  // Only act if the parent is parked specifically on this child (idempotency).
-  if (!meta.awaitingRepair) return null;
-  if (meta.repairChildRunId && meta.repairChildRunId !== String(repairRunId)) return null;
-  const fingerprint = meta.lastFingerprint || "";
-
-  if (repair.status === "succeeded") {
-    addRunEvent(parent.id, "run.supervisor.repair_succeeded", `Code repair ${repairRunId} succeeded; re-running from a clean state`, { repairRunId, fingerprint });
-    const requeued = requeueRunFresh(parent, { fingerprint, reason: "workflow-code repair applied; re-running fresh against the fix" });
-    return { action: requeued ? "rerun" : "noop", parentId, repairRunId };
-  }
-
-  // Repair failed/cancelled — clear the park flag and escalate the parent.
-  meta.awaitingRepair = false;
-  run("UPDATE runs SET supervisor_meta=? WHERE id=?", [json(meta, {}), parent.id]);
-  const decision = {
-    action: "escalate",
-    escalation: "code_repair_failed",
-    fingerprint,
-    attempt: Number(parent.attempt) || 0,
-    reason: `automated code repair run ${repairRunId} ended '${repair.status}'; operator review required`
-  };
-  finalizeSupervisorTerminal(parent, decision, "failed", { escalate: true });
-  return { action: "escalate", parentId, repairRunId };
+  return runSupervisorStore.reconcileRepairChildTerminal(repairRunId);
 }
 
-// Mark a run terminally failed under supervisor control (give_up / escalate).
-// Sets the adjudicated flag so the failed-recoverable scan never re-picks it.
-function finalizeSupervisorTerminal(row, decision, observedStatus, { escalate = false, failError = "", failStep = "" } = {}) {
-  const meta = readSupervisorMeta(row);
-  meta.adjudicated = true;
-  meta.lastDecision = decision.action;
-  meta.lastFingerprint = decision.fingerprint || meta.lastFingerprint;
-  run("UPDATE runs SET supervisor_meta=? WHERE id=?", [json(meta, {}), row.id]);
-
-  recordRunLineage(row.id, {
-    attempt: Number(row.attempt) || 0,
-    action: decision.action,
-    reason: decision.reason,
-    fingerprint: decision.fingerprint || "",
-    prevRunnerId: row.runner_id,
-    checkpoint: null
-  });
-
-  // For an active (orphaned) run, transition it to failed now. A run that was
-  // already `failed` stays failed — we only attach the escalation card + meta.
-  let endedTerminal = false;
-  if (observedStatus === "assigned" || observedStatus === "running") {
-    // Preserve the original reap reason's error/step for a plain give_up so the
-    // janitor contract ("runner heartbeat expired" / "runner offline") is
-    // unchanged; an escalation overrides with the operator-facing decision.
-    const t = transitionRun(row.id, "failed", {
-      current_step: escalate ? "escalated to operator" : failStep || "failed",
-      error: escalate ? decision.reason : failError || decision.reason,
-      completed_at: now()
-    });
-    endedTerminal = Boolean(t.ok && !t.idempotent);
-    if (endedTerminal && !escalate) {
-      addRunEvent(row.id, "run.failed", failError || decision.reason, { reason: "runner_offline" });
-    }
-  }
-
-  if (escalate) {
-    const card = buildEscalationApproval(row, decision);
-    createApproval({ runId: row.id, title: card.title, description: card.description, requestedBy: "system:hub-supervisor", payload: card.payload });
-    addRunEvent(row.id, "run.supervisor.escalated", card.description, { escalation: decision.escalation, fingerprint: decision.fingerprint });
-  }
-  return endedTerminal;
-}
-
-// Adjudicate a single run that the reconcile loop flagged. `observedStatus` is
-// the status we read it in (the CAS guard). Returns
-// { action, endedTerminal } so the caller can drive retrospectives only for
-// runs that actually reached a terminal state this tick.
-function adjudicateRun(row, { reason, error, observedStatus, currentStep = "", dispatchRepair = null } = {}) {
-  const input = parseJson(row.input, {});
-
-  // Let a live in-band supervisor own its own children — failing the child here
-  // (today's behavior) lets the parent see the failure and retry. The hub never
-  // double-dispatches a run a live parent is already supervising.
-  if (hasLiveSupervisingParent(input)) {
-    if (observedStatus === "assigned" || observedStatus === "running") {
-      const t = transitionRun(row.id, "failed", { current_step: currentStep || "runner offline", error, completed_at: now() });
-      if (t.ok && !t.idempotent) addRunEvent(row.id, "run.failed", error, { reason });
-      return { action: "give_up", endedTerminal: Boolean(t.ok && !t.idempotent) };
-    }
-    return { action: "give_up", endedTerminal: false };
-  }
-
-  const checkpoint = runResumeCheckpoint(row.id);
-  const meta = readSupervisorMeta(row);
-  const cancelledIntent = observedStatus === "cancelled" || row.status === "cancelled";
-
-  const decision = decideReconcile({
-    reason,
-    error,
-    checkpoint,
-    cancelledIntent,
-    attempt: Number(row.attempt) || 0,
-    repairCount: Number(row.repair_count) || 0,
-    repairedFingerprints: meta.repairedFingerprints,
-    fingerprintResumes: meta.fingerprintResumes,
-    progressMarker: runProgressMarker(row.id),
-    lastProgressMarker: meta.lastProgressMarker,
-    enableRepair: Boolean(dispatchRepair),
-    caps: HUB_DEFAULT_CAPS
-  });
-
-  if (decision.action === "repair" && dispatchRepair) {
-    // Phase 2: dispatch a one-shot code repair, then PARK this run until the
-    // repair child terminates (reconcileRepairChildTerminal drives it from there).
-    // We do NOT resume here: a code repair changes the workflow source, and
-    // smithers refuses to resume a run whose source changed ("durable metadata
-    // changed"). Parking-until-the-child-finishes also removes the fire-and-forget
-    // race where the parent could re-run before the fix landed. The dispatcher
-    // (server.js) owns child-run creation and returns the child's run id.
-    let repairChildId = "";
-    try {
-      const out = dispatchRepair(normalizeRun(row), decision, checkpoint);
-      repairChildId = typeof out === "string" ? out : out && out.id ? String(out.id) : out ? "pending" : "";
-    } catch (err) {
-      repairChildId = "";
-    }
-    if (repairChildId) {
-      const fp = decision.fingerprint || "";
-      // Bump the per-fingerprint repair counter now so the same fingerprint is
-      // never repaired twice even if the parent fails again before the child ends.
-      if (fp) meta.repairedFingerprints[fp] = (meta.repairedFingerprints[fp] || 0) + 1;
-      meta.lastDecision = "repair";
-      meta.lastFingerprint = fp || meta.lastFingerprint;
-      meta.awaitingRepair = true;
-      meta.repairChildRunId = repairChildId === "pending" ? "" : repairChildId;
-      run("UPDATE runs SET repair_count=?, supervisor_meta=? WHERE id=?", [(Number(row.repair_count) || 0) + 1, json(meta, {}), row.id]);
-      recordRunLineage(row.id, { attempt: Number(row.attempt) || 0, action: "repair", reason: decision.reason, fingerprint: fp, prevRunnerId: row.runner_id, checkpoint });
-      addRunEvent(row.id, "run.supervisor.repair_dispatched", decision.reason, { fingerprint: fp, repairChildRunId: meta.repairChildRunId });
-      // Parked: stays `failed` but not re-adjudicated; the child's terminal re-runs
-      // it fresh (success) or escalates (failure). No requeue, no resume here.
-      return { action: "repair", endedTerminal: false, resumed: false };
-    }
-    // Repair could not be dispatched — fall back to escalate rather than loop.
-    return { action: "escalate", endedTerminal: finalizeSupervisorTerminal(row, { ...decision, action: "escalate", escalation: "code_repair_undispatched" }, observedStatus, { escalate: true }) };
-  }
-
-  if (decision.action === "resume") {
-    const resumed = requeueRunForResume(row, decision, checkpoint, observedStatus);
-    return { action: resumed ? "resume" : "noop", endedTerminal: false };
-  }
-
-  if (decision.action === "escalate") {
-    return { action: "escalate", endedTerminal: finalizeSupervisorTerminal(row, decision, observedStatus, { escalate: true }) };
-  }
-
-  // give_up
-  return {
-    action: "give_up",
-    endedTerminal: finalizeSupervisorTerminal(row, decision, observedStatus, { escalate: false, failError: error, failStep: currentStep })
-  };
-}
-
-// Auto-fail active runs whose runner died, whose event stream stalled, or whose optional max-runtime backstop fired.
 export function reapStuckRunIds(maxMs) {
-  const nowMs = Date.now();
-  const active = all(
-    `SELECT runs.id,
-            runs.runner_id,
-            runs.status,
-            runs.capability_slug,
-            runs.input,
-            runs.attempt,
-            runs.repair_count,
-            runs.supervisor_meta,
-            runs.created_at,
-            runs.assigned_at,
-            runs.started_at,
-            runners.last_heartbeat_at,
-            (SELECT MAX(created_at) FROM run_events WHERE run_id = runs.id) AS last_event_at
-       FROM runs
-       LEFT JOIN runners ON runners.id = runs.runner_id
-      WHERE runs.status IN ('assigned','running','waiting_approval')`
-  );
-  const reaped = [];
-  for (const row of active) {
-    const reason = runReapReason(row, { maxMs, nowMs });
-    if (!reason) continue;
-    // ORPHANED (runner confirmed dead) is the case the in-band supervisor can
-    // never recover — it died with the runner. Hand it to the hub supervisor:
-    // resume from checkpoint / escalate / give up, instead of a blind fail.
-    if (reason.reason === "runner_offline") {
-      const outcome = adjudicateRun(row, { reason: "runner_offline", error: reason.error, currentStep: reason.currentStep, observedStatus: row.status });
-      if (outcome.endedTerminal) reaped.push(row.id);
-      continue;
-    }
-    // STALLED / max-runtime: the runner may still be alive and executing, so a
-    // blind resume could double-run committed side effects. Keep the existing
-    // terminal-fail behavior (decideReconcile also classifies these give_up).
-    const result = transitionRun(row.id, "failed", { current_step: reason.currentStep, error: reason.error, completed_at: now() });
-    if (result.ok && !result.idempotent) {
-      addRunEvent(row.id, "run.failed", reason.message, { reason: reason.reason });
-      reaped.push(row.id);
-    }
-  }
-  return reaped;
+  return runSupervisorStore.reapStuckRunIds(maxMs);
 }
 
-// Hub-supervisor scan for FAILED-RECOVERABLE runs: runs a runner self-reported
-// as `failed` (via /api/runs/:id/fail) that still carry a resumable checkpoint
-// and have budget left. The orphaned path above handles runner death; this
-// handles a clean failure the in-band supervisor isn't (or is no longer)
-// covering. Bounded per tick (indexed status+recency query) so the loop stays
-// cheap. `dispatchRepair`, when provided, enables Phase 2 code repair.
-// Returns the ids it acted on.
-export function reconcileFailedRecoverable({ dispatchRepair = null, limit = 25, lookbackMs = 6 * 60 * 60_000 } = {}) {
-  const since = new Date(Date.now() - lookbackMs).toISOString();
-  const candidates = all(
-    `SELECT id, runner_id, status, capability_slug, input, attempt, repair_count, supervisor_meta, error
-       FROM runs
-      WHERE status = 'failed' AND updated_at >= ?
-      ORDER BY updated_at DESC LIMIT ?`,
-    [since, Math.max(1, Math.floor(limit))]
-  );
-  const acted = [];
-  for (const row of candidates) {
-    const meta = readSupervisorMeta(row);
-    if (meta.adjudicated) continue; // already given up / escalated — never re-pick
-    if (meta.awaitingRepair) {
-      // Parked while its code-repair child runs. Normally the child's terminal
-      // report drives the parent; this is the restart backstop — if the child
-      // already finished (e.g. the hub restarted before the completion hook
-      // fired), reconcile it now so a parked run can never get stuck.
-      if (meta.repairChildRunId) {
-        const child = one("SELECT status FROM runs WHERE id = ?", [meta.repairChildRunId]);
-        if (child && RUN_TERMINAL.has(child.status)) {
-          const out = reconcileRepairChildTerminal(meta.repairChildRunId);
-          if (out && out.action && out.action !== "noop") acted.push(row.id);
-        }
-      }
-      continue;
-    }
-    if (!runResumeCheckpoint(row.id)) continue; // no resumable substrate
-    const outcome = adjudicateRun(row, { reason: "failed", error: row.error || "", observedStatus: "failed", dispatchRepair });
-    if (outcome.action === "resume" || outcome.action === "repair" || outcome.action === "escalate") acted.push(row.id);
-  }
-  return acted;
+export function reconcileFailedRecoverable(options = {}) {
+  return runSupervisorStore.reconcileFailedRecoverable(options);
 }
 
 export function reapStuckRuns(maxMs) {
-  return reapStuckRunIds(maxMs).length;
+  return runSupervisorStore.reapStuckRuns(maxMs);
 }
 
-export function normalizeRun(row) {
-  if (!row) return null;
-  return {
-    id: row.id,
-    capabilityId: row.capability_id,
-    capabilitySlug: row.capability_slug,
-    capabilityName: row.capability_name,
-    workflowVersion: row.workflow_version,
-    runnerId: row.runner_id,
-    status: row.status,
-    currentStep: row.current_step,
-    input: parseJson(row.input, {}),
-    output: parseJson(row.output, null),
-    error: row.error,
-    // Capability version pinning + rollback parentage. Both stay null on the
-    // existing path (RUNYARD_CAPABILITY_VERSIONING unset); see src/runExecution.js.
-    capabilitySha: row.capability_sha || null,
-    parentRunId: row.parent_run_id || null,
-    createdAt: row.created_at,
-    assignedAt: row.assigned_at,
-    startedAt: row.started_at,
-    completedAt: row.completed_at,
-    updatedAt: row.updated_at
-  };
-}
+export { normalizeRun };
 
 export function updateRun(runId, updates) {
-  const allowed = ["runner_id", "status", "current_step", "output", "error", "assigned_at", "started_at", "completed_at"];
-  const sets = [];
-  const params = { id: runId, updated_at: now() };
-  for (const [key, value] of Object.entries(updates)) {
-    if (!allowed.includes(key)) continue;
-    sets.push(`${key}=$${key}`);
-    params[key] = typeof value === "object" && value !== null ? json(value) : value;
-  }
-  if (!sets.length) return getRun(runId);
-  run(`UPDATE runs SET ${sets.join(", ")}, updated_at=$updated_at WHERE id=$id`, params);
-  return getRun(runId);
+  return runMutationStore.updateRun(runId, updates);
 }
 
-export const RUN_TERMINAL = new Set(["succeeded", "cancelled", ...RUN_FAILURE_TERMINAL_STATUSES]);
-
-const RUN_TRANSITIONS = {
-  waiting_approval: ["queued", "cancelled"],
-  queued: ["assigned", "running", "cancelled", ...RUN_FAILURE_TERMINAL_STATUSES],
-  assigned: ["running", "succeeded", "cancelled", ...RUN_FAILURE_TERMINAL_STATUSES],
-  running: ["succeeded", "cancelled", ...RUN_FAILURE_TERMINAL_STATUSES],
-  succeeded: [],
-  failed: [],
-  blocked_by_gate: [],
-  blocked_by_preflight: [],
-  provider_limited: [],
-  timed_out: [],
-  invalid_output: [],
-  infra_unavailable: [],
-  needs_human: [],
-  cancelled: []
-};
-
-export function canTransitionRun(from, to) {
-  if (from === to) return true;
-  return (RUN_TRANSITIONS[from] || []).includes(to);
-}
+export { canTransitionRun, RUN_TERMINAL };
 
 // Guarded status change. Returns {ok, run, error, code, idempotent, raced}. Re-applying a terminal status is a no-op.
 export function transitionRun(runId, toStatus, updates = {}) {
-  const current = getRun(runId);
-  if (!current) return { ok: false, code: 404, error: "run not found" };
-  if (current.status === toStatus && RUN_TERMINAL.has(toStatus)) {
-    return { ok: true, idempotent: true, run: current };
-  }
-  // Terminal-vs-terminal race: a run already reached a terminal state (most
-  // commonly an operator/deadline `cancelled`) and a slower writer — usually a
-  // supervised child runner that finished just after cancellation — now reports
-  // a *different* terminal status. The first terminal state is authoritative
-  // (operator intent wins), so treat the late writer as a benign no-op instead
-  // of a scary 409. This keeps `cannot transition cancelled to failed/succeeded`
-  // noise out of the runner logs without masking real success/failure.
-  if (RUN_TERMINAL.has(current.status) && RUN_TERMINAL.has(toStatus)) {
-    return { ok: true, idempotent: true, raced: true, run: current };
-  }
-  if (!canTransitionRun(current.status, toStatus)) {
-    return { ok: false, code: 409, error: `cannot transition run from '${current.status}' to '${toStatus}'`, run: current };
-  }
-  const updated = updateRun(runId, { status: toStatus, ...updates });
-  // Release the runner slot exactly once per run when it leaves the active
-  // set. We use the pre-transition state to know whether the slot was
-  // actually reserved (waiting_approval / queued never reserve, but an
-  // assigned/running run did).
-  if (
-    RUN_TERMINAL.has(toStatus)
-    && current.runnerId
-    && (current.status === "assigned" || current.status === "running")
-  ) {
-    adjustRunnerActiveRuns(current.runnerId, -1);
-  }
-  return { ok: true, run: updated };
+  return runMutationStore.transitionRun(runId, toStatus, updates);
 }
 
 export function addRunEvent(runId, type, message = "", data = {}) {
-  const event = { id: id("evt"), run_id: runId, type, message, data: json(data, {}), created_at: now() };
-  run(
-    "INSERT INTO run_events (id, run_id, type, message, data, created_at) VALUES ($id, $run_id, $type, $message, $data, $created_at)",
-    event
-  );
-  const result = { id: event.id, runId, type, message, data, createdAt: event.created_at };
+  const result = runStore.addRunEvent(runId, type, message, data);
   // Publish to any live SSE tails (no-op when nobody is subscribed). Additive:
   // does not alter persistence or the return shape.
   emitRunEvent(result);
@@ -2141,201 +517,27 @@ export function addRunEvent(runId, type, message = "", data = {}) {
 }
 
 export function listRunEvents(runId) {
-  return all("SELECT * FROM run_events WHERE run_id = ? ORDER BY created_at ASC", [runId]).map((row) => ({
-    id: row.id,
-    runId: row.run_id,
-    type: row.type,
-    message: row.message,
-    data: parseJson(row.data, {}),
-    createdAt: row.created_at
-  }));
-}
-
-// Capacity clamp keeps a misconfigured runner from advertising thousands of
-// slots and starving the queue logic. The cap is intentionally generous; a
-// single VPS host is expected to be in the 1–8 range.
-const MAX_RUNNER_CAPACITY = 32;
-
-function normalizeCapacity(value, fallback = 1) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 1) return fallback;
-  return Math.min(Math.floor(parsed), MAX_RUNNER_CAPACITY);
+  return runStore.listRunEvents(runId);
 }
 
 export function registerRunner(input, tokenId = null) {
-  // Only allow updating an existing runner record if the caller's token owns it; otherwise mint a fresh id.
-  // This prevents one runner token from hijacking another runner's record by guessing its id.
-  const candidate = input.id ? one("SELECT * FROM runners WHERE id = ?", [input.id]) : null;
-  let existing = candidate && candidate.token_id && candidate.token_id === tokenId ? candidate : null;
-  // Stable-identity fallback: the client (runner.js) caches the id, but
-  // a wiped workspace / corrupt id-file / first boot sends no id, which used to
-  // mint a fresh ghost row on every restart (the 95-row pileup). When no owned
-  // row was found by id, reuse the row that matches this caller's stable
-  // identity = (token_id + name + hostname). The token_id match preserves the
-  // security property — one runner token can never adopt another token's row.
-  if (!existing && tokenId) {
-    const name = input.name || input.hostname || "runner";
-    const hostname = input.hostname || "";
-    existing = one(
-      "SELECT * FROM runners WHERE token_id = ? AND name = ? AND hostname = ? ORDER BY last_heartbeat_at DESC LIMIT 1",
-      [tokenId, name, hostname]
-    );
-  }
-  const timestamp = now();
-  // A runner that doesn't advertise capacity stays at 1 — preserves the
-  // pre-pool behavior where a single host ran a single concurrent job.
-  const capacity = normalizeCapacity(input.capacity, existing?.capacity || 1);
-  const payload = {
-    id: existing ? existing.id : id("runner"),
-    name: input.name || input.hostname || "runner",
-    hostname: input.hostname || "",
-    platform: input.platform || "",
-    version: input.version || "",
-    tags: json(input.tags, []),
-    status: "online",
-    token_id: tokenId,
-    capacity,
-    created_at: timestamp,
-    last_heartbeat_at: timestamp
-  };
-  if (existing) {
-    // Bind only the columns this statement names — node:sqlite rejects an
-    // object carrying named params (status/token_id/created_at) the SQL doesn't
-    // reference. Identity stays pinned to the existing row's id + token.
-    run(
-      `UPDATE runners SET name=$name, hostname=$hostname, platform=$platform, version=$version,
-       tags=$tags, status='online', capacity=$capacity, last_heartbeat_at=$last_heartbeat_at WHERE id=$id`,
-      {
-        id: payload.id,
-        name: payload.name,
-        hostname: payload.hostname,
-        platform: payload.platform,
-        version: payload.version,
-        tags: payload.tags,
-        capacity: payload.capacity,
-        last_heartbeat_at: payload.last_heartbeat_at
-      }
-    );
-  } else {
-    run(
-      `INSERT INTO runners (id, name, hostname, platform, version, tags, status, token_id, capacity, active_runs, created_at, last_heartbeat_at)
-       VALUES ($id, $name, $hostname, $platform, $version, $tags, $status, $token_id, $capacity, 0, $created_at, $last_heartbeat_at)`,
-      payload
-    );
-  }
-  return getRunner(payload.id);
+  return runnerStore.registerRunner(input, tokenId);
 }
 
 export function runnerIsLive(lastHeartbeatAt) {
-  if (!lastHeartbeatAt) return false;
-  const last = Date.parse(lastHeartbeatAt);
-  if (Number.isNaN(last)) return false;
-  return Date.now() - last <= env.runnerOfflineMs;
-}
-
-function runnerHealthSummary({ live, capacity, load, authHealth }) {
-  const issues = [];
-  let score = 100;
-  if (!live) {
-    issues.push("offline");
-    score -= 60;
-  }
-  if (capacity <= 0) {
-    issues.push("no capacity");
-    score -= 30;
-  } else if ((load?.work || 0) >= capacity) {
-    issues.push("work pool full");
-    score -= 15;
-  }
-  for (const [provider, health] of Object.entries(authHealth || {})) {
-    if (!health || typeof health !== "object" || health.ok !== false) continue;
-    issues.push(`${provider} auth: ${health.error || "not ready"}`);
-    score -= provider === "hub" ? 45 : 20;
-  }
-  score = Math.max(0, Math.min(100, score));
-  const state = score >= 85 ? "healthy" : score >= 60 ? "degraded" : score > 0 ? "unhealthy" : "offline";
-  return { score, state, issues };
+  return runnerStore.runnerIsLive(lastHeartbeatAt);
 }
 
 export function getRunner(runnerId) {
-  const row = one("SELECT * FROM runners WHERE id = ?", [runnerId]);
-  if (!row) return null;
-  // Heartbeat-derived liveness: a runner that stopped reporting is offline regardless of its stored status.
-  const live = runnerIsLive(row.last_heartbeat_at);
-  const capacity = normalizeCapacity(row.capacity, 1);
-  // active_runs is clamped to [0, capacity] for display so a stale counter
-  // (e.g. a runner that crashed without releasing a slot) never reads as
-  // "negative free slots" in the UI.
-  const activeRuns = Math.min(Math.max(Number(row.active_runs) || 0, 0), capacity);
-  // Free WORK slots are derived from real run state, not the cached counter, so a
-  // stale/leaked counter can never falsely starve the queue. Supervisors live in
-  // their own pool and never consume a work slot (see runnerLoad/claimNextRun).
-  const load = runnerLoad(row.id);
-  const authHealth = parseJson(row.auth_health, null);
-  const health = runnerHealthSummary({ live, capacity, load, authHealth });
-  return {
-    id: row.id,
-    name: row.name,
-    hostname: row.hostname,
-    platform: row.platform,
-    version: row.version,
-    tags: parseJson(row.tags, []),
-    status: live ? row.status === "offline" ? "online" : row.status : "offline",
-    online: live,
-    currentRunId: row.current_run_id,
-    capacity,
-    activeRuns,
-    workRuns: load.work,
-    supervisorRuns: load.supervisors,
-    availableSlots: Math.max(0, capacity - load.work),
-    health,
-    // Per-runner CLI auth health (Codex/Claude). Booleans + expiry + account id
-    // only — never token material. Null until the runner reports it.
-    authHealth,
-    createdAt: row.created_at,
-    lastHeartbeatAt: row.last_heartbeat_at
-  };
+  return runnerStore.getRunner(runnerId);
 }
 
 export function listRunners() {
-  return all("SELECT * FROM runners ORDER BY last_heartbeat_at DESC").map((row) => getRunner(row.id));
+  return runnerStore.listRunners();
 }
 
 export function heartbeatRunner(runnerId, input = {}) {
-  const timestamp = now();
-  // Capacity / activeRuns ride along on each heartbeat so the Hub UI sees a
-  // running pool size update even when the runner restarts with a different
-  // SMITHERS_RUNNER_CONCURRENCY. Both are optional — a legacy runner that
-  // doesn't send them keeps its stored values, which preserves the
-  // single-slot behavior for unchanged deployments.
-  const capacityProvided = input.capacity != null;
-  const activeProvided = input.activeRuns != null;
-  const capacity = capacityProvided ? normalizeCapacity(input.capacity, 1) : null;
-  const active = activeProvided ? Math.max(0, Math.floor(Number(input.activeRuns) || 0)) : null;
-  // Auth health is optional and sanitized to a strict shape so a runner can
-  // never push token material into the Hub via the heartbeat. Only present when
-  // the runner reports it; COALESCE keeps the last known reading otherwise.
-  const authHealth = input.auth != null ? json(sanitizeRunnerAuthHealth(input.auth)) : null;
-  run(
-    `UPDATE runners SET status='online',
-       last_heartbeat_at=?,
-       tags=COALESCE(?, tags),
-       current_run_id=?,
-       capacity=COALESCE(?, capacity),
-       active_runs=COALESCE(?, active_runs),
-       auth_health=COALESCE(?, auth_health)
-     WHERE id=?`,
-    [
-      timestamp,
-      input.tags ? json(input.tags, []) : null,
-      input.currentRunId || null,
-      capacity,
-      active,
-      authHealth,
-      runnerId
-    ]
-  );
-  return getRunner(runnerId);
+  return runnerStore.heartbeatRunner(runnerId, input);
 }
 
 // Delete runner rows that have been dead longer than `maxMs`. This prunes the
@@ -2349,47 +551,7 @@ export function heartbeatRunner(runnerId, input = {}) {
 // datetime('now') (space-separated, no `Z`) miscompares — that exact bug forced
 // the manual 95→2 cleanup. datetime() normalizes both to the same form.
 export function pruneDeadRunners(maxMs = env.runnerPruneMs) {
-  if (!maxMs || maxMs <= 0) return [];
-  const seconds = Math.floor(maxMs / 1000);
-  const stale = all(
-    `SELECT id FROM runners
-      WHERE last_heartbeat_at IS NOT NULL
-        AND datetime(last_heartbeat_at) < datetime('now', ?)
-        AND COALESCE(active_runs, 0) <= 0
-        AND current_run_id IS NULL`,
-    [`-${seconds} seconds`]
-  );
-  const ids = stale.map((row) => row.id);
-  for (const runnerId of ids) {
-    run("DELETE FROM runners WHERE id = ?", [runnerId]);
-  }
-  return ids;
-}
-
-// Whitelist the auth-health shape the Hub will persist. Defense in depth: even
-// if a runner (or a compromised runner token) posts token material under
-// `auth`, only these scalar fields survive — never an access/refresh token.
-function sanitizeRunnerAuthHealth(auth) {
-  if (!auth || typeof auth !== "object") return {};
-  const pickProvider = (p) => {
-    if (!p || typeof p !== "object") return undefined;
-    const out = { ok: Boolean(p.ok) };
-    if (p.expiresAt != null) out.expiresAt = String(p.expiresAt).slice(0, 64);
-    if (p.accountId != null) out.accountId = String(p.accountId).slice(0, 128);
-    if (p.error != null) out.error = String(p.error).slice(0, 200);
-    return out;
-  };
-  const result = {};
-  const codex = pickProvider(auth.codex);
-  const claude = pickProvider(auth.claude);
-  const hub = pickProvider(auth.hub);
-  if (codex) result.codex = codex;
-  if (claude) result.claude = claude;
-  // Hub claim-auth status: surfaces "registered/online but every claim is
-  // rejected" (dead token / wrong hub URL) so it can't masquerade as healthy.
-  if (hub) result.hub = hub;
-  if (auth.checkedAt != null) result.checkedAt = String(auth.checkedAt).slice(0, 64);
-  return result;
+  return runnerStore.pruneDeadRunners(maxMs);
 }
 
 // Internal helper — adjust a runner's active-run counter atomically. Used by
@@ -2397,11 +559,7 @@ function sanitizeRunnerAuthHealth(auth) {
 // slot is released). Clamped to >= 0 so a double-release never produces a
 // negative counter.
 function adjustRunnerActiveRuns(runnerId, delta) {
-  if (!runnerId) return;
-  run(
-    `UPDATE runners SET active_runs = MAX(0, COALESCE(active_runs, 0) + ?) WHERE id = ?`,
-    [delta, runnerId]
-  );
+  return runnerStore.adjustRunnerActiveRuns(runnerId, delta);
 }
 
 // Ground-truth in-flight load for a runner, split into the two scheduling pools,
@@ -2413,24 +571,14 @@ function adjustRunnerActiveRuns(runnerId, delta) {
 // Reading from real state means a crashed/reaped run can never leak a slot —
 // the moment its row leaves assigned/running, the slot is free again.
 export function runnerLoad(runnerId) {
-  if (!runnerId) return { work: 0, supervisors: 0 };
-  const row = one(
-    `SELECT
-        COALESCE(SUM(CASE WHEN capability_slug = ? THEN 1 ELSE 0 END), 0) AS supervisors,
-        COALESCE(SUM(CASE WHEN capability_slug = ? THEN 0 ELSE 1 END), 0) AS work
-       FROM runs
-      WHERE runner_id = ? AND status IN ('assigned','running')`,
-    [SUPERVISOR_CAPABILITY_SLUG, SUPERVISOR_CAPABILITY_SLUG, runnerId]
-  );
-  return { work: Number(row?.work) || 0, supervisors: Number(row?.supervisors) || 0 };
+  return runnerStore.runnerLoad(runnerId);
 }
 
 // Size of the separate supervisor pool for a runner of the given work capacity.
 // Default ratio 1.0 → up to `capacity` concurrent supervisors, so every work
 // slot can host its supervising parent without either starving the other.
 export function supervisorPoolSize(capacity) {
-  const cap = normalizeCapacity(capacity, 1);
-  return Math.max(1, Math.ceil(cap * (env.supervisorSlotRatio || 1)));
+  return runnerStore.supervisorPoolSize(capacity);
 }
 
 // Recompute every runner's active_runs counter from the durable runs table.
@@ -2441,176 +589,40 @@ export function supervisorPoolSize(capacity) {
 // reaper reconciles it to ground truth each cycle and self-corrects without a
 // restart. Returns the runners whose counter was actually corrected.
 export function reconcileRunnerActiveRuns() {
-  const rows = all(
-    `SELECT runners.id AS id,
-            COALESCE(runners.active_runs, 0) AS stored,
-            (SELECT COUNT(*) FROM runs
-              WHERE runs.runner_id = runners.id
-                AND runs.status IN ('assigned','running')) AS actual
-       FROM runners`
-  );
-  const corrected = [];
-  for (const row of rows) {
-    if (Number(row.stored) === Number(row.actual)) continue;
-    run("UPDATE runners SET active_runs = ? WHERE id = ?", [row.actual, row.id]);
-    corrected.push({ id: row.id, from: Number(row.stored), to: Number(row.actual) });
-  }
-  return corrected;
-}
-
-function runnerMatches(capability, runner, run) {
-  if (!runner) return false;
-  const tags = new Set(runner.tags || []);
-  if (!(capability.requiredRunnerTags || []).every((tag) => tags.has(tag))) return false;
-  return executionIntentMatchesRunnerTags(executionIntentFromInput(run?.input || {}), runner.tags || []);
+  return runnerStore.reconcileRunnerActiveRuns();
 }
 
 export function supportRunnerAvailability() {
   const capability = getCapability(SUPPORT_AGENT_CAPABILITY_SLUG);
-  if (!capability || !capability.enabled) {
-    return { available: false, reason: "support capability is not installed", runners: [] };
-  }
-  const runners = listRunners().filter((runner) => runner.online && runnerMatches(capability, runner, { input: {} }));
-  if (!runners.length) {
-    return {
-      available: false,
-      reason: `no online runner advertises required tags: ${(capability.requiredRunnerTags || []).join(", ") || "(none)"}`,
-      runners: []
-    };
-  }
-  return {
-    available: true,
-    reason: "",
-    runners: runners.map((runner) => ({
-      id: runner.id,
-      name: runner.name,
-      tags: runner.tags,
-      capacity: runner.capacity,
-      workRuns: runner.workRuns,
-      availableSlots: runner.availableSlots
-    }))
-  };
+  return supportRunnerAvailabilityResult({ capability, runners: listRunners() });
 }
 
 export function buildAgentRuntimePack(capability) {
-  const requiredAgentSlugs = [...new Set((capability?.requiredAgents || []).map((slug) => String(slug || "").trim()).filter(Boolean))];
-  const requiredSkillSlugs = new Set((capability?.requiredSkills || []).map((slug) => String(slug || "").trim()).filter(Boolean));
-  const agents = [];
-  const missingAgents = [];
-  for (const slug of requiredAgentSlugs) {
-    const agent = getAgent(slug);
-    if (!agent) {
-      missingAgents.push(slug);
-      continue;
-    }
-    agents.push(agent);
-    for (const skillSlug of agent.skillSlugs || []) {
-      if (skillSlug) requiredSkillSlugs.add(skillSlug);
-    }
-  }
-  const skills = [];
-  const missingSkills = [];
-  for (const slug of [...requiredSkillSlugs]) {
-    const skill = getSkill(slug);
-    if (!skill) {
-      missingSkills.push(slug);
-      continue;
-    }
-    skills.push(skill);
-  }
-  return {
-    schemaVersion: 1,
-    capturedAt: now(),
-    capability: capability
-      ? { slug: capability.slug, name: capability.name, version: capability.version, requiredAgents: requiredAgentSlugs, requiredSkills: [...requiredSkillSlugs] }
-      : null,
-    agents,
-    skills,
-    missing: { agents: missingAgents, skills: missingSkills }
-  };
+  return buildRuntimePack({
+    capability,
+    getAgent,
+    getSkill,
+    capturedAt: now()
+  });
 }
 
 export function claimNextRun(runnerId) {
-  const runner = getRunner(runnerId);
-  if (!runner || !runner.online) return null;
-  // Two-pool capacity gate, decided from REAL run state (runnerLoad), not the
-  // drift-prone active_runs counter. Heavy work runs compete for `capacity`;
-  // lightweight run-smithers supervisors draw from a separate pool. This breaks
-  // the supervisor-slot deadlock: a parent supervisor no longer occupies a work
-  // slot its own child needs, so an `app-skinner` (supervisor + child) scales to
-  // the full work capacity instead of wedging at ~capacity/2.
-  const supervisorCapacity = supervisorPoolSize(runner.capacity);
-  const load = runnerLoad(runnerId);
-  // Fast reject only if BOTH pools are saturated — no candidate of either kind
-  // could be claimed this pass.
-  if (load.work >= runner.capacity && load.supervisors >= supervisorCapacity) return null;
-  const queued = listRuns({ status: "queued", limit: 200, includeInternal: true });
-  for (const candidate of queued) {
-    // Targeting: a run pre-assigned to a specific runner (e.g. "run on my laptop" vs "run on the VPS")
-    // is only claimable by that runner. Untargeted runs are claimable by any matching runner.
-    if (candidate.runnerId && candidate.runnerId !== runnerId) continue;
-    const capability = getCapability(candidate.capabilitySlug);
-    if (!runnerMatches(capability, runner, candidate)) continue;
-    // Gate this candidate against the pool it belongs to. A run with no free slot
-    // in its pool is skipped (not claimed), but a run in the other pool can still
-    // be claimed this pass — so a backlog of supervisors never blocks work runs.
-    const isSupervisor = candidate.capabilitySlug === SUPERVISOR_CAPABILITY_SLUG;
-    if (isSupervisor) {
-      if (load.supervisors >= supervisorCapacity) continue;
-    } else if (load.work >= runner.capacity) {
-      continue;
-    }
-    // Atomic claim: only succeeds if still queued and not targeted away, so two runners never both win it.
-    const timestamp = now();
-    const result = run(
-      "UPDATE runs SET runner_id=?, status='assigned', current_step='assigned to runner', assigned_at=?, updated_at=? WHERE id=? AND status='queued' AND (runner_id IS NULL OR runner_id=?)",
-      [runnerId, timestamp, timestamp, candidate.id, runnerId]
-    );
-    if (!result.changes) continue;
-    // Reserve the runner slot before anyone reads its capacity again.
-    adjustRunnerActiveRuns(runnerId, 1);
-    addRunEvent(candidate.id, "run.assigned", `Assigned to ${runner.name}`, { runnerId });
-    const claimedRun = getRun(candidate.id);
-    // Inject only the allowlisted secrets into THIS run as a separate
-    // claim-payload field. It rides the runner-scoped next-run channel and is
-    // never written into run.input/output/artifacts/logs, so secret values
-    // never land in stored state or any non-runner API response.
-    const secretEnv = getDecryptedSecretEnv(secretNamesForRun(capability, claimedRun?.input));
-    const agentRuntimePack = buildAgentRuntimePack(capability);
-    addRunEvent(candidate.id, "run.agent_runtime_pack", "Captured agent/skill runtime pack", {
-      schemaVersion: agentRuntimePack.schemaVersion,
-      capturedAt: agentRuntimePack.capturedAt,
-      agents: agentRuntimePack.agents.map((agent) => ({ slug: agent.slug, version: agent.version })),
-      skills: agentRuntimePack.skills.map((skill) => ({ slug: skill.slug, version: skill.version })),
-      missing: agentRuntimePack.missing
-    });
-    const payload = { run: claimedRun, capability, agentRuntimePack };
-    if (Object.keys(secretEnv).length) payload.secretEnv = secretEnv;
-    return payload;
-  }
-  return null;
+  return runClaimStore.claimNextRun(runnerId);
 }
 
-// The allowlist of secret names a run may receive: the capability's declared
-// `workflow.secrets` plus any per-run `input.secretNames`. A run never gets
-// every secret — only the names explicitly opted into here.
-export function secretNamesForRun(capability, runInput) {
-  const fromCapability = Array.isArray(capability?.workflow?.secrets) ? capability.workflow.secrets : [];
-  const fromInput = Array.isArray(runInput?.secretNames) ? runInput.secretNames : [];
-  return [...new Set([...fromCapability, ...fromInput].map((n) => String(n || "").trim()).filter(Boolean))];
-}
+export { secretNamesForRun } from "./runnerAssignment.js";
 
 // Count of runs that represent in-flight work on a runner (assigned + running).
 // This is the metric the updater drains to zero before swapping code — finishing
 // in-flight agent work, which (unlike the durable Hub) cannot survive a restart.
 export function countActiveRuns() {
-  return one("SELECT COUNT(*) AS count FROM runs WHERE status IN ('assigned','running')").count;
+  return runMutationStore.countActiveRuns();
 }
 
 // Count of runs currently executing. The hub may restart when this is 0 even if
 // queued work is waiting (queued/durable work resumes); see decideHubRestart.
 export function countRunningRuns() {
-  return one("SELECT COUNT(*) AS count FROM runs WHERE status = 'running'").count;
+  return runMutationStore.countRunningRuns();
 }
 
 // --- Operator alerts (_smithers_alerts) -------------------------------------
@@ -2619,239 +631,62 @@ export function countRunningRuns() {
 // the process that performed the update has since restarted.
 
 export function recordAlert({ kind, level = "info", title = "", message = "", data = {} }) {
-  if (!kind) throw new Error("recordAlert: kind is required");
-  const record = {
-    id: id("alert"),
-    kind: String(kind),
-    level: String(level || "info"),
-    title: String(title || "").slice(0, 200),
-    message: String(message || "").slice(0, 2000),
-    data: json(data, {}),
-    created_at: now()
-  };
-  run(
-    "INSERT INTO _smithers_alerts (id, kind, level, title, message, data, created_at) VALUES ($id, $kind, $level, $title, $message, $data, $created_at)",
-    record
-  );
-  return normalizeAlert(record);
-}
-
-function normalizeAlert(row) {
-  if (!row) return null;
-  return {
-    id: row.id,
-    kind: row.kind,
-    level: row.level,
-    title: row.title,
-    message: row.message,
-    data: typeof row.data === "string" ? parseJson(row.data, {}) : row.data || {},
-    createdAt: row.created_at
-  };
+  return operatorStore.recordAlert({ kind, level, title, message, data });
 }
 
 export function listAlerts({ kind = "", limit = 50 } = {}) {
-  const capped = Math.min(Math.max(Number(limit) || 50, 1), 500);
-  const rows = kind
-    ? all("SELECT * FROM _smithers_alerts WHERE kind = ? ORDER BY created_at DESC LIMIT ?", [kind, capped])
-    : all("SELECT * FROM _smithers_alerts ORDER BY created_at DESC LIMIT ?", [capped]);
-  return rows.map(normalizeAlert);
+  return operatorStore.listAlerts({ kind, limit });
 }
 
 export function latestAlert(kind) {
-  const row = kind
-    ? one("SELECT * FROM _smithers_alerts WHERE kind = ? ORDER BY created_at DESC LIMIT 1", [kind])
-    : one("SELECT * FROM _smithers_alerts ORDER BY created_at DESC LIMIT 1");
-  return normalizeAlert(row);
+  return operatorStore.latestAlert(kind);
 }
 
 // Counts queued / assigned / running runs — exposed so the Hub UI can render
 // a "queue depth" stat without scanning the whole run list.
 export function runnerPoolStats() {
-  const queued = one(`SELECT COUNT(*) AS count FROM runs WHERE status = 'queued' AND ${VISIBLE_RUN_WHERE}`).count;
-  const assigned = one(`SELECT COUNT(*) AS count FROM runs WHERE status = 'assigned' AND ${VISIBLE_RUN_WHERE}`).count;
-  const running = one(`SELECT COUNT(*) AS count FROM runs WHERE status = 'running' AND ${VISIBLE_RUN_WHERE}`).count;
-  const waitingApproval = one(`SELECT COUNT(*) AS count FROM runs WHERE status = 'waiting_approval' AND ${VISIBLE_RUN_WHERE}`).count;
+  const statusQueries = runnerPoolStatusQueries(VISIBLE_RUN_WHERE);
+  const counts = Object.fromEntries(
+    Object.entries(statusQueries).map(([key, query]) => [key, one(query.sql, query.params).count])
+  );
   const runners = listRunners();
-  const live = runners.filter((r) => r.online);
-  const totalCapacity = live.reduce((sum, r) => sum + (r.capacity || 0), 0);
-  const totalActive = live.reduce((sum, r) => sum + (r.workRuns || 0), 0);
-  const totalSupervisors = live.reduce((sum, r) => sum + (r.supervisorRuns || 0), 0);
-  const unhealthyRunners = runners.filter((r) => r.health?.state === "unhealthy" || r.health?.state === "offline").length;
-  const degradedRunners = runners.filter((r) => r.health?.state === "degraded").length;
-  return {
-    queued,
-    assigned,
-    running,
-    waitingApproval,
-    totalCapacity,
-    totalActive,
-    totalSupervisors,
-    availableSlots: Math.max(0, totalCapacity - totalActive),
-    onlineRunners: live.length,
-    runners: runners.length,
-    unhealthyRunners,
-    degradedRunners
-  };
+  return runnerPoolSummary({ counts, runners });
 }
 
 export function createArtifact({ runId, name, kind = "file", mimeType = "application/octet-stream", sizeBytes = 0, path: filePath, metadata = {} }) {
-  const record = {
-    id: id("art"),
-    run_id: runId,
-    name,
-    kind,
-    mime_type: mimeType,
-    size_bytes: sizeBytes,
-    path: filePath,
-    metadata: json(metadata, {}),
-    created_at: now()
-  };
-  run(
-    `INSERT INTO artifacts (id, run_id, name, kind, mime_type, size_bytes, path, metadata, created_at)
-     VALUES ($id, $run_id, $name, $kind, $mime_type, $size_bytes, $path, $metadata, $created_at)`,
-    record
-  );
-  addRunEvent(runId, "artifact.created", `Artifact stored: ${name}`, { artifactId: record.id });
-  return getArtifact(record.id);
+  return operatorStore.createArtifact({ runId, name, kind, mimeType, sizeBytes, path: filePath, metadata });
 }
 
 export function getArtifact(artifactId) {
-  const row = one("SELECT * FROM artifacts WHERE id = ?", [artifactId]);
-  if (!row) return null;
-  return {
-    id: row.id,
-    runId: row.run_id,
-    name: row.name,
-    kind: row.kind,
-    mimeType: row.mime_type,
-    sizeBytes: row.size_bytes,
-    path: row.path,
-    metadata: parseJson(row.metadata, {}),
-    createdAt: row.created_at
-  };
+  return operatorStore.getArtifact(artifactId);
 }
 
 export function listArtifacts({ runId = "", q = "" } = {}) {
-  if (runId) return all("SELECT * FROM artifacts WHERE run_id = ? ORDER BY created_at DESC", [runId]).map((row) => getArtifact(row.id));
-  if (q) {
-    const like = `%${q}%`;
-    return all("SELECT * FROM artifacts WHERE name LIKE ? OR metadata LIKE ? ORDER BY created_at DESC LIMIT 100", [like, like]).map((row) => getArtifact(row.id));
-  }
-  return all("SELECT * FROM artifacts ORDER BY created_at DESC LIMIT 100").map((row) => getArtifact(row.id));
+  return operatorStore.listArtifacts({ runId, q });
 }
 
 export function createApproval({ runId = null, title, description = "", requestedBy = "workflow", payload = {} }) {
-  const approval = {
-    id: id("appr"),
-    run_id: runId,
-    status: "pending",
-    title,
-    description,
-    requested_by: requestedBy,
-    payload: json(payload, {}),
-    created_at: now()
-  };
-  run(
-    `INSERT INTO approvals (id, run_id, status, title, description, requested_by, payload, created_at)
-     VALUES ($id, $run_id, $status, $title, $description, $requested_by, $payload, $created_at)`,
-    approval
-  );
-  if (runId) addRunEvent(runId, "approval.requested", title, { approvalId: approval.id });
-  return getApproval(approval.id);
+  return operatorStore.createApproval({ runId, title, description, requestedBy, payload });
 }
 
 export function getApproval(approvalId) {
-  const row = one("SELECT * FROM approvals WHERE id = ?", [approvalId]);
-  if (!row) return null;
-  return {
-    id: row.id,
-    runId: row.run_id,
-    status: row.status,
-    title: row.title,
-    description: row.description,
-    requestedBy: row.requested_by,
-    payload: parseJson(row.payload, {}),
-    createdAt: row.created_at,
-    resolvedAt: row.resolved_at,
-    resolvedBy: row.resolved_by,
-    decision: row.decision,
-    comment: row.comment
-  };
+  return operatorStore.getApproval(approvalId);
 }
 
 export function listApprovals(status = "") {
-  const rows = status
-    ? all("SELECT * FROM approvals WHERE status = ? ORDER BY created_at DESC", [status])
-    : all("SELECT * FROM approvals ORDER BY created_at DESC LIMIT 100");
-  return rows.map((row) => getApproval(row.id));
+  return operatorStore.listApprovals(status);
 }
 
 export function resolveApproval(approvalId, decision, resolvedBy = "api", comment = "") {
-  const normalizedDecision = decision === "approved" ? "approved" : decision === "changes_requested" ? "changes_requested" : "rejected";
-  const resolution = {
-    approved: {
-      status: "approved",
-      auditAction: "approval.approved",
-      eventType: "approval.approved",
-      runStatus: "queued",
-      currentStep: "approval granted; queued",
-      completedAt: null
-    },
-    rejected: {
-      status: "rejected",
-      auditAction: "approval.rejected",
-      eventType: "approval.rejected",
-      runStatus: "cancelled",
-      currentStep: "approval rejected",
-      completedAt: now()
-    },
-    changes_requested: {
-      status: "rejected",
-      auditAction: "approval.changes_requested",
-      eventType: "approval.changes_requested",
-      runStatus: "cancelled",
-      currentStep: "changes requested; run cancelled",
-      completedAt: now()
-    }
-  }[normalizedDecision];
-  run(
-    "UPDATE approvals SET status=?, decision=?, resolved_by=?, comment=?, resolved_at=? WHERE id=? AND status='pending'",
-    [resolution.status, normalizedDecision, resolvedBy, comment, now(), approvalId]
-  );
-  const approval = getApproval(approvalId);
-  if (approval) recordAudit(resolvedBy, resolution.auditAction, approvalId, { runId: approval.runId, decision: normalizedDecision, comment });
-  if (approval?.runId) {
-    addRunEvent(approval.runId, resolution.eventType, approval.title, { approvalId, decision: normalizedDecision, comment });
-    const runRecord = getRun(approval.runId);
-    if (runRecord?.status === "waiting_approval") {
-      updateRun(approval.runId, {
-        status: resolution.runStatus,
-        current_step: resolution.currentStep,
-        completed_at: resolution.completedAt
-      });
-    }
-  }
-  return approval;
+  return operatorStore.resolveApproval(approvalId, decision, resolvedBy, comment);
 }
 
 export function recordAudit(actor, action, target = null, detail = {}) {
-  const entry = { id: id("aud"), actor: actor || "", action, target, detail: json(detail, {}), created_at: now() };
-  run(
-    "INSERT INTO audit_log (id, actor, action, target, detail, created_at) VALUES ($id, $actor, $action, $target, $detail, $created_at)",
-    entry
-  );
-  return { id: entry.id, actor: entry.actor, action, target, detail, createdAt: entry.created_at };
+  return operatorStore.recordAudit(actor, action, target, detail);
 }
 
 export function listAudit({ limit = 100 } = {}) {
-  return all("SELECT * FROM audit_log ORDER BY created_at DESC LIMIT ?", [limit]).map((row) => ({
-    id: row.id,
-    actor: row.actor,
-    action: row.action,
-    target: row.target,
-    detail: parseJson(row.detail, {}),
-    createdAt: row.created_at
-  }));
+  return operatorStore.listAudit({ limit });
 }
 
 // --- Schedules (cron jobs) --------------------------------------------------
@@ -2863,132 +698,32 @@ export function listAudit({ limit = 100 } = {}) {
 // cron/timezone/run_at changes and after every fire. Missed ticks (Hub was
 // down) collapse to a single catch-up fire rather than a backfill storm.
 
-const SCHEDULE_TIMEZONE_DEFAULT = "UTC";
-
-export function normalizeSchedule(row) {
-  if (!row) return null;
-  return {
-    id: row.id,
-    name: row.name,
-    description: row.description || "",
-    capabilitySlug: row.capability_slug,
-    cron: row.cron || "",
-    timezone: row.timezone || SCHEDULE_TIMEZONE_DEFAULT,
-    input: parseJson(row.input, {}),
-    enabled: Boolean(row.enabled),
-    kind: row.cron ? "cron" : "once",
-    runAt: row.run_at || null,
-    nextRunAt: row.next_run_at || null,
-    lastRunAt: row.last_run_at || null,
-    lastRunId: row.last_run_id || null,
-    lastStatus: row.last_status || "",
-    createdBy: row.created_by || "",
-    createdAt: row.created_at,
-    updatedAt: row.updated_at
-  };
-}
-
-// Next fire instant (ISO) for a schedule definition. Cron schedules use the
-// expression; one-shot schedules use run_at while it is still in the future.
-// Returns null when there is nothing further to fire.
-function computeScheduleNext(def, fromIso = now()) {
-  if (def.cron) {
-    const next = cronNextRun(def.cron, new Date(fromIso), def.timezone || SCHEDULE_TIMEZONE_DEFAULT);
-    return next ? next.toISOString() : null;
-  }
-  if (def.runAt) return def.runAt > fromIso ? def.runAt : null;
-  return null;
-}
-
 export function createSchedule(input) {
-  const timestamp = now();
-  const cron = String(input.cron || "").trim();
-  const runAt = input.runAt ? new Date(input.runAt).toISOString() : null;
-  const timezone = input.timezone || SCHEDULE_TIMEZONE_DEFAULT;
-  const enabled = input.enabled === false ? 0 : 1;
-  const nextRunAt = enabled ? computeScheduleNext({ cron, runAt, timezone }, timestamp) : null;
-  const record = {
-    id: id("sched"),
-    name: input.name,
-    description: input.description || "",
-    capability_slug: input.capabilitySlug,
-    cron,
-    timezone,
-    input: json(input.input || {}, {}),
-    enabled,
-    run_at: runAt,
-    next_run_at: nextRunAt,
-    last_run_at: null,
-    last_run_id: null,
-    last_status: "",
-    created_by: input.createdBy || "",
-    created_at: timestamp,
-    updated_at: timestamp
-  };
-  run(
-    `INSERT INTO schedules
-     (id, name, description, capability_slug, cron, timezone, input, enabled, run_at, next_run_at,
-      last_run_at, last_run_id, last_status, created_by, created_at, updated_at)
-     VALUES ($id, $name, $description, $capability_slug, $cron, $timezone, $input, $enabled, $run_at, $next_run_at,
-      $last_run_at, $last_run_id, $last_status, $created_by, $created_at, $updated_at)`,
-    record
-  );
-  return getSchedule(record.id);
+  return scheduleStore.createSchedule(input);
 }
 
 export function getSchedule(idValue) {
-  return normalizeSchedule(one("SELECT * FROM schedules WHERE id = ?", [idValue]));
+  return scheduleStore.getSchedule(idValue);
 }
 
 export function listSchedules({ includeDisabled = true } = {}) {
-  const rows = includeDisabled
-    ? all("SELECT * FROM schedules ORDER BY created_at DESC")
-    : all("SELECT * FROM schedules WHERE enabled = 1 ORDER BY created_at DESC");
-  return rows.map(normalizeSchedule);
+  return scheduleStore.listSchedules({ includeDisabled });
 }
 
 export function updateSchedule(idValue, updates = {}) {
-  const existing = one("SELECT * FROM schedules WHERE id = ?", [idValue]);
-  if (!existing) return null;
-  const timestamp = now();
-  const merged = {
-    name: updates.name != null ? updates.name : existing.name,
-    description: updates.description != null ? updates.description : existing.description,
-    capability_slug: updates.capabilitySlug != null ? updates.capabilitySlug : existing.capability_slug,
-    cron: updates.cron != null ? String(updates.cron).trim() : existing.cron,
-    timezone: updates.timezone != null ? updates.timezone : existing.timezone,
-    input: updates.input !== undefined ? json(updates.input || {}, {}) : existing.input,
-    enabled: updates.enabled == null ? existing.enabled : updates.enabled === false ? 0 : 1,
-    run_at: updates.runAt !== undefined ? (updates.runAt ? new Date(updates.runAt).toISOString() : null) : existing.run_at
-  };
-  const nextRunAt = merged.enabled
-    ? computeScheduleNext({ cron: merged.cron, runAt: merged.run_at, timezone: merged.timezone }, timestamp)
-    : null;
-  run(
-    `UPDATE schedules SET name=?, description=?, capability_slug=?, cron=?, timezone=?, input=?, enabled=?,
-       run_at=?, next_run_at=?, updated_at=? WHERE id=?`,
-    [merged.name, merged.description, merged.capability_slug, merged.cron, merged.timezone, merged.input,
-      merged.enabled, merged.run_at, nextRunAt, timestamp, idValue]
-  );
-  return getSchedule(idValue);
+  return scheduleStore.updateSchedule(idValue, updates);
 }
 
 export function setScheduleEnabled(idValue, enabled) {
-  return updateSchedule(idValue, { enabled: Boolean(enabled) });
+  return scheduleStore.setScheduleEnabled(idValue, enabled);
 }
 
 export function deleteSchedule(idValue) {
-  const existing = getSchedule(idValue);
-  if (!existing) return null;
-  run("DELETE FROM schedules WHERE id = ?", [idValue]);
-  return existing;
+  return scheduleStore.deleteSchedule(idValue);
 }
 
 export function listDueSchedules(nowIso = now()) {
-  return all(
-    "SELECT * FROM schedules WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ? ORDER BY next_run_at ASC",
-    [nowIso]
-  ).map(normalizeSchedule);
+  return scheduleStore.listDueSchedules(nowIso);
 }
 
 // Atomically claim a due schedule for firing. Recomputes next_run_at strictly
@@ -2997,52 +732,27 @@ export function listDueSchedules(nowIso = now()) {
 // concurrent or overlapping ticks idempotent: exactly one caller gets ok:true
 // per due tick. One-shot (run_at) schedules are disabled once they fire.
 export function claimScheduleFire(idValue, expectedNextRunAt, nowIso = now()) {
-  const row = one("SELECT * FROM schedules WHERE id = ?", [idValue]);
-  if (!row) return { ok: false, reason: "not_found" };
-  if (!row.enabled) return { ok: false, reason: "disabled" };
-  if (row.next_run_at !== expectedNextRunAt) return { ok: false, reason: "raced" };
-  const oneShot = !row.cron;
-  const newNext = oneShot ? null : computeScheduleNext({ cron: row.cron, runAt: row.run_at, timezone: row.timezone }, nowIso);
-  const newEnabled = oneShot ? 0 : 1;
-  const result = run(
-    "UPDATE schedules SET next_run_at = ?, enabled = ?, updated_at = ? WHERE id = ? AND next_run_at = ? AND enabled = 1",
-    [newNext, newEnabled, nowIso, idValue, expectedNextRunAt]
-  );
-  if (!result.changes) return { ok: false, reason: "raced" };
-  return { ok: true, schedule: getSchedule(idValue) };
+  return scheduleStore.claimScheduleFire(idValue, expectedNextRunAt, nowIso);
 }
 
 // Record the outcome of a fire (manual run-now or ticker) on the schedule row
 // without touching next_run_at — that is owned by claimScheduleFire.
 export function recordScheduleFireResult(idValue, runId, status = "queued", firedAtIso = now()) {
-  run(
-    "UPDATE schedules SET last_run_at = ?, last_run_id = ?, last_status = ?, updated_at = ? WHERE id = ?",
-    [firedAtIso, runId || null, status, now(), idValue]
-  );
-  return getSchedule(idValue);
+  return scheduleStore.recordScheduleFireResult(idValue, runId, status, firedAtIso);
 }
 
 export function dashboardStats() {
   const counts = {};
-  for (const table of ["capabilities", "agents", "skills", "knowledge_resources", "runners", "runs", "artifacts", "approvals"]) {
-    counts[table] = table === "runs"
-      ? one(`SELECT COUNT(*) AS count FROM runs WHERE ${VISIBLE_RUN_WHERE}`).count
-      : one(`SELECT COUNT(*) AS count FROM ${table}`).count;
+  for (const table of DASHBOARD_COUNT_TABLES) {
+    const query = dashboardCountQuery(table, VISIBLE_RUN_WHERE);
+    counts[query.key] = one(query.sql, query.params).count;
   }
-  counts.pendingApprovals = one("SELECT COUNT(*) AS count FROM approvals WHERE status='pending'").count;
-  counts.runningRuns = one(`SELECT COUNT(*) AS count FROM runs WHERE status IN ('queued', 'assigned', 'running', 'waiting_approval') AND ${VISIBLE_RUN_WHERE}`).count;
+  for (const query of [pendingApprovalsCountQuery(), runningRunsCountQuery(VISIBLE_RUN_WHERE)]) {
+    counts[query.key] = one(query.sql, query.params).count;
+  }
   // Pool / queue breakdown so the UI can render runner capacity and a
   // queue-depth chip without having to fan-out to /api/runners + /api/runs.
-  const pool = runnerPoolStats();
-  counts.queuedRuns = pool.queued;
-  counts.assignedRuns = pool.assigned;
-  counts.activeRuns = pool.running;
-  counts.waitingApprovalRuns = pool.waitingApproval;
-  counts.onlineRunners = pool.onlineRunners;
-  counts.runnerCapacity = pool.totalCapacity;
-  counts.runnerActiveSlots = pool.totalActive;
-  counts.runnerAvailableSlots = pool.availableSlots;
-  return counts;
+  return applyDashboardPoolStats(counts, runnerPoolStats());
 }
 
 initDb();

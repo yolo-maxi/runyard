@@ -5,6 +5,7 @@ import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { createJsonApiClient } from "./http-client.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -21,23 +22,7 @@ const { app } = await import("../src/server.js");
 let server;
 let baseUrl;
 const token = "shub_cli_mcp_token";
-
-function api(pathname, options = {}) {
-  return fetch(`${baseUrl}${pathname}`, {
-    ...options,
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${token}`,
-      ...(options.headers || {})
-    },
-    body: options.body && typeof options.body !== "string" ? JSON.stringify(options.body) : options.body
-  }).then(async (response) => {
-    const text = await response.text();
-    const data = text ? JSON.parse(text) : null;
-    if (!response.ok) throw new Error(data?.error || `HTTP ${response.status}`);
-    return data;
-  });
-}
+const api = createJsonApiClient({ baseUrl: () => baseUrl, token });
 
 function parseToolText(response) {
   const text = response?.result?.content?.[0]?.text || "";

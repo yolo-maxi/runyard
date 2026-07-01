@@ -1,3 +1,23 @@
+import express from "express";
+
+const ARTIFACT_UPLOAD_PATH = /^\/api\/runs\/[^/]+\/artifacts\/?$/;
+
+export function jsonBodyMiddleware({
+  json = express.json,
+  standardLimit = "1mb",
+  artifactLimit = "25mb"
+} = {}) {
+  const standardJson = json({ limit: standardLimit });
+  const artifactJson = json({ limit: artifactLimit });
+
+  return (req, res, next) => {
+    const parser = req.method === "POST" && ARTIFACT_UPLOAD_PATH.test(req.path)
+      ? artifactJson
+      : standardJson;
+    return parser(req, res, next);
+  };
+}
+
 export function securityHeaders({ baseUrl = "" } = {}) {
   return (req, res, next) => {
     const appSurface = req.path === "/app";
@@ -26,6 +46,17 @@ export function createRateLimiter({ now = Date.now, sweepIntervalMs = 60_000 } =
     sweep,
     buckets,
     sweepExpired: () => sweepExpiredBuckets(buckets, now())
+  };
+}
+
+export function expressErrorHandler({ log = console.error } = {}) {
+  return (error, _req, res, _next) => {
+    log(error);
+    // Respect known client errors but never leak parser internals or stacks.
+    const status = error.status || error.statusCode;
+    if (status === 413) return res.status(413).json({ error: "payload too large" });
+    if (status === 400 && error.type) return res.status(400).json({ error: "invalid request body" });
+    res.status(500).json({ error: "internal server error" });
   };
 }
 

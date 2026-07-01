@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   buildQueueIndex,
+  cleanStringList,
   deriveRunDescription,
   deriveRunTitle,
+  hasNoChangeReviewRationale,
   normalizeSupervisionLineage,
   runOutcomeSummary,
   runPresentation,
@@ -23,6 +25,15 @@ describe("run presentation helpers", () => {
     assert.deepEqual(normalizeSupervisionLineage([{ id: 1 }]), [{ id: 1 }]);
     assert.deepEqual(normalizeSupervisionLineage('[{"id":1}]'), [{ id: 1 }]);
     assert.deepEqual(normalizeSupervisionLineage("bad json"), []);
+  });
+
+  it("normalizes outcome string lists and no-change review rationale", () => {
+    assert.deepEqual(cleanStringList([" a.js ", "", null, "b.js"]), ["a.js", "b.js"]);
+    assert.deepEqual(cleanStringList("not an array"), []);
+    assert.equal(hasNoChangeReviewRationale({ improvements: ["done"], risks: ["still risky"] }), false);
+    assert.equal(hasNoChangeReviewRationale({ improvements: [], risks: [" needs review "] }), true);
+    assert.equal(hasNoChangeReviewRationale({ summary: "No changes needed" }), true);
+    assert.equal(hasNoChangeReviewRationale({ improvements: [], risks: [" "] }), false);
   });
 
   it("unwraps supervised runs for presentation without exposing internals", () => {

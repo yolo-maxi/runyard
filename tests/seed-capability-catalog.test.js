@@ -1,0 +1,40 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+
+import { seedCapabilities } from "../src/seedCapabilityCatalog.js";
+import { seedCoreCapabilities } from "../src/seedCapabilityCore.js";
+import { seedInternalCapabilities } from "../src/seedCapabilityInternal.js";
+import { seedProductCapabilities } from "../src/seedCapabilityProduct.js";
+
+describe("seed capability catalog", () => {
+  it("aggregates domain catalog modules in stable seed order", () => {
+    assert.deepEqual(seedCapabilities, [
+      ...seedCoreCapabilities,
+      ...seedProductCapabilities,
+      ...seedInternalCapabilities
+    ]);
+    assert.deepEqual(seedCapabilities.map((capability) => capability.slug), [
+      "run-smithers",
+      "hello",
+      "runyard-smoke-check",
+      "runyard-support-agent",
+      "research",
+      "implement",
+      "smart-contract-audit",
+      "implement-change-gated",
+      "idea-to-product",
+      "app-skinner",
+      "run-knowledge-builder",
+      "workflow-doctor",
+      "improve-no-deploy",
+      "improve",
+      "product-workflow",
+      "reauth-cli"
+    ]);
+  });
+
+  it("keeps seeded capability slugs unique", () => {
+    const slugs = seedCapabilities.map((capability) => capability.slug);
+    assert.equal(new Set(slugs).size, slugs.length);
+  });
+});

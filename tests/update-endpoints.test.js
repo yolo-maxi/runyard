@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createJsonApiClient } from "./http-client.js";
 
 const temp = mkdtempSync(path.join(os.tmpdir(), "runyard-update-ep-"));
 process.env.SMITHERS_HUB_ROOT = process.cwd();
@@ -32,26 +33,11 @@ describe("version is sourced from package.json (no hardcoded drift)", () => {
 let server;
 let baseUrl;
 const adminToken = "shub_update_admin";
-
-function req(pathname, { method = "GET", token, body } = {}) {
-  return fetch(`${baseUrl}${pathname}`, {
-    method,
-    headers: {
-      "content-type": "application/json",
-      ...(token ? { authorization: `Bearer ${token}` } : {})
-    },
-    body: body ? JSON.stringify(body) : undefined
-  }).then(async (res) => {
-    const text = await res.text();
-    let data = null;
-    try {
-      data = text ? JSON.parse(text) : null;
-    } catch {
-      data = text;
-    }
-    return { status: res.status, data };
-  });
-}
+const req = createJsonApiClient({
+  baseUrl: () => baseUrl,
+  throwOnError: false,
+  includeStatus: true
+});
 
 before(async () => {
   await new Promise((resolve) => {

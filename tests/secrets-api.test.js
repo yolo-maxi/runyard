@@ -4,6 +4,7 @@ import { mkdtempSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
+import { createJsonApiClient } from "./http-client.js";
 
 const temp = mkdtempSync(path.join(os.tmpdir(), "smithers-hub-secrets-"));
 process.env.SMITHERS_HUB_ROOT = process.cwd();
@@ -22,21 +23,15 @@ let server;
 let baseUrl;
 const adminToken = "shub_secrets_admin";
 let readToken;
+const statusApi = createJsonApiClient({
+  baseUrl: () => baseUrl,
+  token: adminToken,
+  throwOnError: false,
+  includeStatus: true
+});
 
 function req(pathname, options = {}, bearer = adminToken) {
-  return fetch(`${baseUrl}${pathname}`, {
-    ...options,
-    headers: {
-      "content-type": "application/json",
-      ...(bearer ? { authorization: `Bearer ${bearer}` } : {}),
-      ...(options.headers || {})
-    },
-    body: options.body && typeof options.body !== "string" ? JSON.stringify(options.body) : options.body
-  }).then(async (response) => {
-    const text = await response.text();
-    const data = text ? JSON.parse(text) : null;
-    return { status: response.status, data };
-  });
+  return statusApi(pathname, { ...options, token: bearer });
 }
 
 before(async () => {

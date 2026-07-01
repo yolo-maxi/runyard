@@ -132,17 +132,18 @@ describe("CI release workflow", () => {
 });
 
 describe("HTTP apply launcher (cgroup survival)", () => {
-  const server = read("../src/server.js");
+  const selfUpdateRoutes = read("../src/selfUpdateRoutes.js");
+  const serverRoutes = read("../src/serverRoutes.js");
   it("prefers a transient systemd-run unit so the updater survives the hub restart", () => {
     // A child left in the hub's own cgroup would be killed by `systemctl restart
     // runyard`. The apply path must launch into its own cgroup when possible.
-    assert.match(server, /systemd-run/);
-    assert.match(server, /--collect/);
-    assert.match(server, /detached: true/);
+    assert.match(selfUpdateRoutes, /systemd-run/);
+    assert.match(selfUpdateRoutes, /--collect/);
+    assert.match(selfUpdateRoutes, /detached: true/);
   });
   it("admin apply is gated behind UPDATE_APPLY_ENABLED with a safe 503 default", () => {
-    assert.match(server, /if \(!env\.updateApplyEnabled\)/);
-    assert.match(server, /requireScopes\("admin"\)[\s\S]{0,80}update\/apply|update\/apply[\s\S]{0,200}requireScopes\("admin"\)/);
+    assert.match(selfUpdateRoutes, /if \(!env\.updateApplyEnabled\)/);
+    assert.match(serverRoutes, /requireScopes\("admin"\)[\s\S]{0,80}update\/apply|update\/apply[\s\S]{0,200}requireScopes\("admin"\)/);
   });
 });
 

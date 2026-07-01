@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createJsonApiClient } from "./http-client.js";
 
 const temp = mkdtempSync(path.join(os.tmpdir(), "smithers-hub-capver-"));
 process.env.SMITHERS_HUB_ROOT = process.cwd();
@@ -29,23 +30,7 @@ const { resolveCapabilityRef, isGitSha } = await import("../src/repoCatalog.js")
 let server;
 let baseUrl;
 const token = "shub_capver_token";
-
-function api(pathname, options = {}) {
-  return fetch(`${baseUrl}${pathname}`, {
-    ...options,
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${token}`,
-      ...(options.headers || {})
-    },
-    body: options.body && typeof options.body !== "string" ? JSON.stringify(options.body) : options.body
-  }).then(async (response) => {
-    const text = await response.text();
-    const data = text ? JSON.parse(text) : null;
-    if (!response.ok) throw new Error(data?.error || `HTTP ${response.status}`);
-    return data;
-  });
-}
+const api = createJsonApiClient({ baseUrl: () => baseUrl, token });
 
 before(async () => {
   await new Promise((resolve) => {

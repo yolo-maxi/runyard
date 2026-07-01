@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createJsonApiClient } from "./http-client.js";
 
 const temp = mkdtempSync(path.join(os.tmpdir(), "smithers-hub-source-"));
 process.env.SMITHERS_HUB_ROOT = process.cwd();
@@ -18,17 +19,7 @@ let server;
 let baseUrl;
 const token = "shub_test_token_source";
 const improveSource = readFileSync(new URL("../workflow-templates/workflows/improve.tsx", import.meta.url), "utf8");
-
-function api(pathname) {
-  return fetch(`${baseUrl}${pathname}`, {
-    headers: { authorization: `Bearer ${token}` }
-  }).then(async (response) => {
-    const text = await response.text();
-    const data = text ? JSON.parse(text) : null;
-    if (!response.ok) throw new Error(data?.error || `HTTP ${response.status}`);
-    return data;
-  });
-}
+const api = createJsonApiClient({ baseUrl: () => baseUrl, token });
 
 function raw(pathname) {
   return fetch(`${baseUrl}${pathname}`).then(async (response) => {

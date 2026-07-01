@@ -1,0 +1,64 @@
+import { cpSync, existsSync, mkdirSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+export const RUNNER_SETUP_COMMANDS = ["node", "bun", "smithers", "claude", "codex"];
+
+export function commandExists(cmd, { spawnSyncFn = spawnSync } = {}) {
+  return spawnSyncFn("/usr/bin/env", ["sh", "-c", `command -v ${cmd} >/dev/null 2>&1`]).status === 0;
+}
+
+export function runnerPrerequisiteSummary(commands = RUNNER_SETUP_COMMANDS, commandExistsFn = commandExists) {
+  return commands.map((cmd) => `${cmd}:${commandExistsFn(cmd) ? "ok" : "—"}`).join("  ");
+}
+
+export function setupRunnerWorkspace(
+  { workspace = process.cwd(), location = "local" } = {},
+  {
+    commandExistsFn = commandExists,
+    mkdirSyncFn = mkdirSync,
+    spawnSyncFn = spawnSync,
+    existsSyncFn = existsSync,
+    cpSyncFn = cpSync,
+    templateRoot = fileURLToPath(new URL("../workflow-templates", import.meta.url)),
+    log = console.log,
+    warn = console.warn,
+    error = console.error,
+    exit = process.exit
+  } = {}
+) {
+  const ws = path.resolve(workspace);
+  const exists = (cmd) => commandExistsFn(cmd);
+
+  log("Prerequisites:", runnerPrerequisiteSummary(RUNNER_SETUP_COMMANDS, exists));
+  if (!exists("bun") || !exists("smithers")) {
+    error("\nInstall the Smithers engine first, then re-run:");
+    error("  curl -fsSL https://bun.sh/install | bash   # if bun is missing");
+    error("  bun add -g smithers-orchestrator");
+    exit(1);
+    return { ok: false, reason: "missing-smithers-engine", workspace: ws };
+  }
+
+  if (!exists("claude") && !exists("codex")) {
+    warn("\nWarning: no 'claude' or 'codex' CLI on PATH. Workflows need at least one authed agent CLI.");
+  }
+
+  mkdirSyncFn(ws, { recursive: true });
+  log(`\nScaffolding Smithers workspace in ${ws} ...`);
+  const init = spawnSyncFn("smithers", ["init"], { cwd: ws, stdio: "inherit" });
+  if (init.status !== 0) {
+    error("`smithers init` failed.");
+    exit(1);
+    return { ok: false, reason: "smithers-init-failed", workspace: ws };
+  }
+
+  if (existsSyncFn(templateRoot)) {
+    cpSyncFn(path.join(templateRoot, "workflows"), path.join(ws, ".smithers", "workflows"), { recursive: true });
+    cpSyncFn(path.join(templateRoot, "examples"), path.join(ws, ".smithers", "examples"), { recursive: true });
+    log("Added Hub workflow templates (hello, fan-out-fan-in).");
+  }
+
+  log(`\n✓ Workspace ready. Start the runner:\n  runyard runner start --workspace ${ws} --location ${location}`);
+  return { ok: true, workspace: ws };
+}
