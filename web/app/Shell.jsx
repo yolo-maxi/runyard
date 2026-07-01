@@ -8,6 +8,7 @@ import { EnvChip } from "./EnvChip.jsx";
 import { Content } from "./Content.jsx";
 import { UpdateBadge } from "../components/UpdateBadge.jsx";
 import { SupportChat } from "../components/SupportChat.jsx";
+import { Icon } from "../components/ui.jsx";
 
 // Small count badge — hidden when zero, matching legacy .nav-badge behavior.
 function NavBadge({ kind, count }) {
@@ -35,7 +36,6 @@ const PRIMARY_VIEWS = new Map([
 
 const ADMIN_LINKS = [
   ["connect", "Connect & Tokens"],
-  ["approvals", "Approvals"],
   ["runners", "Runners"],
   ["audit", "Audit"],
   ["settings", "Settings & Secrets"]
@@ -53,6 +53,25 @@ function SidebarButton({ view, primary, label, current }) {
     >
       {label}
     </button>
+  );
+}
+
+function ApprovalNotificationLink({ count = 0, active = false }) {
+  const label = count
+    ? `${count} approval${count === 1 ? "" : "s"} need checking`
+    : "Approvals";
+  return (
+    <a
+      className={`button btn-icon approval-notifications${active ? " active" : ""}`}
+      href="#approvals"
+      aria-label={label}
+      aria-current={active ? "page" : undefined}
+      title={label}
+      data-has-pending={count > 0 ? "true" : "false"}
+    >
+      <Icon name="bell" size="18" />
+      <span className="approval-notifications-dot" aria-hidden="true" hidden={!count} />
+    </a>
   );
 }
 
@@ -103,9 +122,6 @@ export function Shell({ me }) {
           <a href="#agents/agents" data-primary-view="agents" className={current === "agents" ? "active" : undefined}>
             Agents
           </a>
-          <a href="#approvals" data-primary-view="approvals" className={current === "approvals" ? "active" : undefined}>
-            Approvals<NavBadge kind="approvals" count={badges.approvals} />
-          </a>
         </nav>
         <nav className="nav" aria-label="Support and admin">
           <a className="button support-link" href="/docs#deep-links" title="Every URL in the Hub is shareable — see Docs.">
@@ -115,6 +131,7 @@ export function Shell({ me }) {
             llms.txt
           </a>
           <UpdateBadge me={me} />
+          <ApprovalNotificationLink count={badges.approvals} active={route.view === "approvals"} />
           <details className="admin-menu" id="admin-menu">
             <summary className="button" aria-haspopup="true">
               <span className="admin-label-full">Admin</span>
