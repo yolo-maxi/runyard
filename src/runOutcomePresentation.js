@@ -74,6 +74,9 @@ export function collectChangedFiles(output) {
 // per-file lines (e.g. " src/foo.js | 5 +++--") also encode churn, but the
 // footer is the canonical total the workflow already computed, so we prefer it
 // and fall back to summing the per-file counts only when the footer is absent.
+// As a last resort we also accept `git diff --numstat` output (each line is
+// `<additions>\t<deletions>\t<path>`, with `-\t-` for binary files) — some
+// workflows emit numstat because it's easier to parse programmatically.
 export function parseGitDiffStat(text) {
   const raw = String(text || "");
   if (!raw.trim()) return null;
@@ -103,6 +106,16 @@ export function parseGitDiffStat(text) {
         if (ch === "+") insertions += 1;
         else if (ch === "-") deletions += 1;
       }
+    }
+  }
+  if (!insertions && !deletions) {
+    // `git diff --numstat` fallback: each line is `<adds>\t<dels>\t<path>`.
+    // Binary files render as `-\t-\tpath` and contribute nothing to churn.
+    for (const line of lines) {
+      const m = line.match(/^(\d+|-)\s+(\d+|-)\s+\S/);
+      if (!m) continue;
+      if (m[1] !== "-") insertions += Number(m[1]);
+      if (m[2] !== "-") deletions += Number(m[2]);
     }
   }
   if (!insertions && !deletions) return null;
@@ -146,7 +159,7 @@ export function collectCodeChurn(output) {
       if (!value || typeof value !== "object" || Array.isArray(value)) continue;
       const nodeChurn = normalizeChurn(value.churn) || normalizeChurn(value.codeChurn);
       if (nodeChurn) return nodeChurn;
-      const parsed = parseGitDiffStat(value.stat || value.diffStat || "");
+      const parsed = parseGitDiffStat(value.stat || value.diffStat || value.numstat || "");
       if (parsed) return parsed;
     }
   }

@@ -117,6 +117,12 @@ describe("run outcome presentation helpers", () => {
       parseGitDiffStat(" src/foo.js | 5 +++--\n src/bar.js | 2 +-"),
       { additions: 4, deletions: 3 }
     );
+    // `git diff --numstat` fallback: TAB-separated <adds>\t<dels>\t<path>,
+    // with `-\t-` for binary files (which contribute nothing to line churn).
+    assert.deepEqual(
+      parseGitDiffStat("5\t12\tsrc/foo.js\n3\t0\tsrc/bar.js\n-\t-\tpublic/logo.png"),
+      { additions: 8, deletions: 12 }
+    );
   });
 
   it("collects code churn from commit.stat, explicit numeric fields, and per-node payloads", () => {
@@ -134,6 +140,17 @@ describe("run outcome presentation helpers", () => {
     assert.deepEqual(
       collectCodeChurn({ outputs: { implement: { churn: { insertions: 3, deletions: 0 } } } }),
       { additions: 3, deletions: 0 }
+    );
+    // Numstat-style output on a per-node payload is also honored, so workflows
+    // that emit `git diff --numstat` (easier to parse than --stat) still surface
+    // churn to the UI.
+    assert.deepEqual(
+      collectCodeChurn({ outputs: { commit: { numstat: "5\t12\tsrc/foo.js" } } }),
+      { additions: 5, deletions: 12 }
+    );
+    assert.deepEqual(
+      collectCodeChurn({ outputs: { implement: { numstat: "1\t0\tsrc/only-added.js" } } }),
+      { additions: 1, deletions: 0 }
     );
     // A run that did not touch code stays null so the UI can hide the chip.
     assert.equal(
