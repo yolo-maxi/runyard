@@ -1,14 +1,17 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import {
   deriveWorkflowGraph,
   loadWorkflowSource,
+  MAX_WORKFLOW_BUNDLE_BYTES,
   parseWorkflowMetadata,
   sliceWorkflowSections,
-  workflowSourceCandidates
+  workflowBundleSizeError,
+  workflowSourceCandidates,
+  workflowTemplatesDir
 } from "../src/workflowSource.js";
 
 describe("workflow source helpers", () => {
@@ -32,6 +35,36 @@ describe("workflow source helpers", () => {
     assert.equal(source.relativePath, path.join("workflow-templates", "workflows", "demo.tsx"));
     assert.equal(source.language, "tsx");
     assert.match(source.code, /smithers-display-name/);
+    assert.equal(source.sizeBytes, Buffer.byteLength(source.code, "utf8"));
+  });
+
+  it("accepts bundles at the 500 KB cap and rejects bundles over it with a debuggable error", () => {
+    assert.equal(workflowBundleSizeError(null), null);
+    assert.equal(workflowBundleSizeError({ sizeBytes: 100, relativePath: "small.tsx" }), null);
+    assert.equal(workflowBundleSizeError({ sizeBytes: MAX_WORKFLOW_BUNDLE_BYTES }), null);
+
+    const oversized = {
+      sizeBytes: MAX_WORKFLOW_BUNDLE_BYTES + 1,
+      relativePath: path.join("workflow-templates", "workflows", "huge.tsx")
+    };
+    const error = workflowBundleSizeError(oversized);
+    assert.match(error, /huge\.tsx/);
+    assert.match(error, new RegExp(`is ${MAX_WORKFLOW_BUNDLE_BYTES + 1} bytes`));
+    assert.match(error, /500 KB/);
+    assert.match(error, new RegExp(`${MAX_WORKFLOW_BUNDLE_BYTES} byte`));
+  });
+
+  it("keeps every shipped workflow template under the 500 KB bundle cap", () => {
+    const templatesDir = workflowTemplatesDir(process.cwd());
+    const templates = readdirSync(templatesDir);
+    assert.ok(templates.length > 0, "expected shipped workflow templates");
+    for (const file of templates) {
+      const { size } = statSync(path.join(templatesDir, file));
+      assert.ok(
+        size <= MAX_WORKFLOW_BUNDLE_BYTES,
+        `${file} is ${size} bytes, over the ${MAX_WORKFLOW_BUNDLE_BYTES} byte workflow bundle cap`
+      );
+    }
   });
 
   it("parses metadata, source sections, and graph nodes from workflow JSX", () => {

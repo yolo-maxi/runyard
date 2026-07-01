@@ -7,6 +7,17 @@ export {
 
 export const WORKFLOW_EXTENSIONS = [".tsx", ".jsx", ".ts", ".js"];
 
+// Publish-time cap on workflow bundle size so oversized bundles fail fast at
+// the capability publish boundary instead of tripping DB/RPC/transport blob
+// ceilings at run time. Revisit if a legitimate workflow ever hits it.
+export const MAX_WORKFLOW_BUNDLE_BYTES = 500 * 1024;
+
+export function workflowBundleSizeError(source) {
+  if (!source || source.sizeBytes <= MAX_WORKFLOW_BUNDLE_BYTES) return null;
+  const where = source.relativePath ? ` (${source.relativePath})` : "";
+  return `workflow bundle${where} is ${source.sizeBytes} bytes, which exceeds the 500 KB (${MAX_WORKFLOW_BUNDLE_BYTES} byte) workflow bundle limit`;
+}
+
 export function workflowTemplatesDir(root) {
   return path.resolve(root, "workflow-templates", "workflows");
 }
@@ -25,6 +36,7 @@ export function loadWorkflowSource(capability, { root = process.cwd() } = {}) {
       absolutePath: absolute,
       relativePath: path.relative(root, absolute),
       language: ext || "txt",
+      sizeBytes: Buffer.byteLength(code, "utf8"),
       code
     };
   }

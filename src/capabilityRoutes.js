@@ -10,9 +10,12 @@ import {
   deriveWorkflowGraph,
   deriveWorkflowGraphFromMetadata,
   loadWorkflowSource,
+  MAX_WORKFLOW_BUNDLE_BYTES,
   parseWorkflowMetadata,
-  sliceWorkflowSections
+  sliceWorkflowSections,
+  workflowBundleSizeError
 } from "./workflowSource.js";
+import { normalizeCapabilityDefinition } from "./capabilityRecords.js";
 import { requireBodySlug } from "./requestContext.js";
 import {
   capabilityRunResponse,
@@ -60,6 +63,21 @@ export function createCapabilityHandlers({
     return capability;
   };
 
+  // Reject definitions whose workflow bundle exceeds the publish-time cap
+  // before anything is stored, so oversized bundles never reach dispatch.
+  const workflowBundleTooLarge = (res, definition) => {
+    const source = loadWorkflowSource(normalizeCapabilityDefinition(definition), { root });
+    const error = workflowBundleSizeError(source);
+    if (!error) return false;
+    res.status(413).json({
+      error,
+      sizeBytes: source.sizeBytes,
+      maxWorkflowBundleBytes: MAX_WORKFLOW_BUNDLE_BYTES,
+      path: source.relativePath
+    });
+    return true;
+  };
+
   return {
     listCapabilities(req, res) {
       const includeDisabled = req.query.all === "1" && (req.token.scopes || []).includes("admin");
@@ -68,6 +86,7 @@ export function createCapabilityHandlers({
 
     createCapability(req, res) {
       const body = { ...req.body, slug: requireBodySlug(req.body, "capability") };
+      if (workflowBundleTooLarge(res, body)) return;
       res.json({ capability: upsertCapability(body) });
     },
 
@@ -106,7 +125,9 @@ export function createCapabilityHandlers({
     updateCapability(req, res) {
       const existing = capabilityOr404(res, req.params.id);
       if (!existing) return;
-      res.json({ capability: upsertCapability({ ...existing, ...req.body, slug: existing.slug }) });
+      const merged = { ...existing, ...req.body, slug: existing.slug };
+      if (workflowBundleTooLarge(res, merged)) return;
+      res.json({ capability: upsertCapability(merged) });
     },
 
     async runCapability(req, res) {
@@ -152,7 +173,7 @@ function capabilitySourcePayload({ capability, source, withCapabilityLinks }) {
     capability: withCapabilityLinks(capability),
     path: source.relativePath,
     language: source.language,
-    sizeBytes: source.code.length,
+    sizeBytes: source.sizeBytes,
     metadata,
     sections,
     code: source.code,
