@@ -88,7 +88,7 @@ describe("run retrospective artifacts", () => {
         status: "succeeded",
         capabilitySlug: "improve",
         capabilityName: "Improve",
-        output: { outputs: { commit: { files: ["a.js", "b.js"] } } }
+        output: { outputs: { commit: { files: ["a.js", "b.js"], stat: " 2 files changed, 6 insertions(+), 1 deletion(-)" } } }
       },
       artifacts: [],
       logSummary: {}
@@ -96,6 +96,11 @@ describe("run retrospective artifacts", () => {
     const content = JSON.parse(artifact.content);
     assert.equal(content.outcome.changedFileCount, 2);
     assert.deepEqual(content.outcome.changedFiles, ["a.js", "b.js"]);
+    // GitHub-style churn is folded into the retrospective envelope so batch
+    // consumers can reason about diff size without re-parsing commit.stat.
+    assert.deepEqual(content.outcome.churn, { additions: 6, deletions: 1 });
+    assert.equal(typeof content.outcome.digest, "string");
+    assert.equal(content.outcome.digest, "In this run, we updated a.js and b.js.");
     assert.equal(content.outcome.workProduct, "2 changed files");
   });
 
@@ -105,7 +110,13 @@ describe("run retrospective artifacts", () => {
         id: "run_summary",
         status: "succeeded",
         capabilitySlug: "improve",
-        outcomeSummary: { changedFiles: 3, files: ["x", "y", "z"], workProduct: "3 changed files" }
+        outcomeSummary: {
+          changedFiles: 3,
+          files: ["x", "y", "z"],
+          churn: { additions: 12, deletions: 4 },
+          digest: "Reworked the runner state machine; deploy needs manual verification.",
+          workProduct: "3 changed files"
+        }
       },
       artifacts: [],
       logSummary: {}
@@ -113,6 +124,8 @@ describe("run retrospective artifacts", () => {
     const content = JSON.parse(artifact.content);
     assert.equal(content.outcome.changedFileCount, 3);
     assert.deepEqual(content.outcome.changedFiles, ["x", "y", "z"]);
+    assert.deepEqual(content.outcome.churn, { additions: 12, deletions: 4 });
+    assert.equal(content.outcome.digest, "Reworked the runner state machine; deploy needs manual verification.");
     assert.equal(content.outcome.workProduct, "3 changed files");
   });
 });

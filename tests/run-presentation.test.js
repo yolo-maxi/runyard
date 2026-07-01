@@ -71,7 +71,7 @@ describe("run presentation helpers", () => {
         output: {
           outputs: {
             baseline: { repoDir: "/repo" },
-            commit: { files: [" a.js ", "", "b.js"] },
+            commit: { files: [" a.js ", "", "b.js"], stat: " 2 files changed, 4 insertions(+), 1 deletion(-)" },
             review: { improvements: ["done"] }
           }
         }
@@ -80,6 +80,8 @@ describe("run presentation helpers", () => {
         repo: "/repo",
         changedFiles: 2,
         files: ["a.js", "b.js"],
+        churn: { additions: 4, deletions: 1 },
+        digest: "In this run, we updated a.js and b.js.",
         workProduct: "2 changed files",
         classification: "succeeded"
       }

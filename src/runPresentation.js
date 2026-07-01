@@ -19,8 +19,11 @@ import { SUPERVISOR_CAPABILITY_SLUG, stripSupervisionInternals } from "./supervi
 export {
   cleanStringList,
   collectChangedFiles,
+  collectCodeChurn,
   hasNoChangeReviewRationale,
   outputNode,
+  parseGitDiffStat,
+  runOutcomeDigest,
   runOutcomeSummary
 } from "./runOutcomePresentation.js";
 

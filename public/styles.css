@@ -2406,6 +2406,77 @@ details.advanced[open] summary {
   overflow-wrap: anywhere;
 }
 
+/* GitHub-style +added/-removed churn chip. Used inline in the outcome summary,
+ * run cards, and history rows so operators can eyeball diff size at a glance.
+ * Both halves stay on one line — the em-dash for deletions renders wider than a
+ * hyphen, which keeps the numbers visually parallel. */
+.code-churn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono, monospace);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.code-churn-add {
+  color: #1a7f37;
+  font-weight: var(--fw-semibold, 600);
+}
+.code-churn-del {
+  color: #cf222e;
+  font-weight: var(--fw-semibold, 600);
+}
+/* When the chip renders inside .run-outcome-summary's strong slot it inherits
+ * the tile's typographic scale — reset to match the surrounding number so the
+ * green/red stays visually anchored to the tile. */
+.run-outcome-summary strong .code-churn {
+  font-size: var(--fs-sm);
+}
+/* Card / history-row usage sits alongside project & branch chips; the border
+ * echoes .chip so churn doesn't visually collapse into the run title. */
+.run-card-chips .code-churn,
+.run-history-chips .code-churn {
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--soft);
+}
+
+/* One-sentence outcome digest — mirrors the muted, two-line-clamped voice of
+ * .run-desc so digests never blow out a card's height. Empty for old runs
+ * (see runDigest); when present it sits below the chips row so the operator
+ * has a plain-English readout without opening the run. */
+.run-card-digest {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.run-history-digest {
+  grid-column: 1 / -1;
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.run-outcome-digest {
+  margin: -4px 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--soft);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
 .run-id-mono {
   display: inline-block;
   font-family: var(--font-mono);

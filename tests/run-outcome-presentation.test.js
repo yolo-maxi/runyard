@@ -3,8 +3,11 @@ import { describe, it } from "node:test";
 import {
   cleanStringList,
   collectChangedFiles,
+  collectCodeChurn,
   hasNoChangeReviewRationale,
   outputNode,
+  parseGitDiffStat,
+  runOutcomeDigest,
   runOutcomeSummary
 } from "../src/runOutcomePresentation.js";
 
@@ -39,6 +42,8 @@ describe("run outcome presentation helpers", () => {
       repo: "/repo",
       changedFiles: 2,
       files: ["a.js", "b.js"],
+      churn: null,
+      digest: "In this run, we updated a.js and b.js.",
       workProduct: "2 changed files",
       classification: "succeeded"
     });
@@ -47,7 +52,11 @@ describe("run outcome presentation helpers", () => {
       output: { outputs: { review: { summary: "no changes needed" } } }
     }).workProduct, "explicit no-change review");
     assert.equal(runOutcomeSummary({ output: { ok: true } }).workProduct, "output only");
-    assert.equal(runOutcomeSummary({ project: "repo" }).workProduct, "none");
+    const emptyRun = runOutcomeSummary({ project: "repo" });
+    assert.equal(emptyRun.workProduct, "none");
+    // Old runs (no output) stay graceful — churn is null, digest is empty.
+    assert.equal(emptyRun.churn, null);
+    assert.equal(emptyRun.digest, "");
   });
 
   it("collects changed files from commit, implement, and workflow-doctor node keys", () => {
@@ -78,9 +87,86 @@ describe("run outcome presentation helpers", () => {
         repo: "unresolved",
         changedFiles: 2,
         files: ["a.js", "b.js"],
+        churn: null,
+        digest: "In this run, we updated a.js and b.js.",
         workProduct: "2 changed files",
         classification: "succeeded"
       }
     );
+  });
+
+  it("parses the trailing footer of `git diff --stat` for GitHub-style churn", () => {
+    assert.equal(parseGitDiffStat(""), null);
+    assert.equal(parseGitDiffStat(null), null);
+    assert.deepEqual(
+      parseGitDiffStat(" src/foo.js | 5 +++--\n 2 files changed, 8 insertions(+), 12 deletions(-)"),
+      { additions: 8, deletions: 12 }
+    );
+    // insertion-only run — the footer omits the deletion clause entirely.
+    assert.deepEqual(
+      parseGitDiffStat(" 1 file changed, 3 insertions(+)"),
+      { additions: 3, deletions: 0 }
+    );
+    // deletion-only run.
+    assert.deepEqual(
+      parseGitDiffStat(" 1 file changed, 2 deletions(-)"),
+      { additions: 0, deletions: 2 }
+    );
+    // Falls back to summing per-file +/- markers when the footer is absent.
+    assert.deepEqual(
+      parseGitDiffStat(" src/foo.js | 5 +++--\n src/bar.js | 2 +-"),
+      { additions: 4, deletions: 3 }
+    );
+  });
+
+  it("collects code churn from commit.stat, explicit numeric fields, and per-node payloads", () => {
+    assert.equal(collectCodeChurn(null), null);
+    assert.deepEqual(
+      collectCodeChurn({ outputs: { commit: { stat: " 1 file changed, 4 insertions(+), 1 deletion(-)" } } }),
+      { additions: 4, deletions: 1 }
+    );
+    // Explicit envelope-level churn wins over commit.stat.
+    assert.deepEqual(
+      collectCodeChurn({ churn: { additions: 9, deletions: 2 }, outputs: { commit: { stat: "ignored" } } }),
+      { additions: 9, deletions: 2 }
+    );
+    // A per-node churn payload is enough — the envelope doesn't have to expose it.
+    assert.deepEqual(
+      collectCodeChurn({ outputs: { implement: { churn: { insertions: 3, deletions: 0 } } } }),
+      { additions: 3, deletions: 0 }
+    );
+    // A run that did not touch code stays null so the UI can hide the chip.
+    assert.equal(
+      collectCodeChurn({ outputs: { review: { summary: "no changes needed" } } }),
+      null
+    );
+  });
+
+  it("builds a one-sentence digest from implement.summary / files and flags deploy verification", () => {
+    assert.equal(runOutcomeDigest(null, []), "");
+    // Explicit implement summary takes precedence.
+    assert.equal(
+      runOutcomeDigest({ outputs: { implement: { summary: "Refactored the runner state machine." } } }, ["a.js"]),
+      "Refactored the runner state machine."
+    );
+    // Fallback to a file-list sentence when no summary exists.
+    assert.equal(
+      runOutcomeDigest({ outputs: { commit: { files: ["a.js", "b.js"] } } }, ["a.js", "b.js"]),
+      "In this run, we updated a.js and b.js."
+    );
+    // Deploy verify hint appends "needs manual verification" so operators know
+    // to eyeball the change post-deploy.
+    assert.equal(
+      runOutcomeDigest(
+        { outputs: {
+          implement: { summary: "Improved the RunYard UI." },
+          deploy: { verify: "hub /api/health" }
+        } },
+        []
+      ),
+      "Improved the RunYard UI; hub /api/health needs manual verification."
+    );
+    // Old runs / non-code runs — return "" so the UI can hide the digest.
+    assert.equal(runOutcomeDigest({}, []), "");
   });
 });

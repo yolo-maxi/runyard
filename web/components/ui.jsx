@@ -138,6 +138,28 @@ export function Badge({ tone = "neutral", children }) {
   return <span className={`badge badge-${tone}`}>{children}</span>;
 }
 
+// GitHub-style +additions/-deletions chip. Rendered inline anywhere run context
+// is shown. Both halves render even when one is 0 so the shape stays consistent
+// across cards; callers filter out null churn upstream so we never render
+// "+0 -0" for runs that produced no diff.
+export function CodeChurn({ churn, className = "" }) {
+  if (!churn || typeof churn !== "object") return null;
+  const additions = Number(churn.additions);
+  const deletions = Number(churn.deletions);
+  if (!Number.isFinite(additions) || !Number.isFinite(deletions)) return null;
+  const title = `${additions} line${additions === 1 ? "" : "s"} added, ${deletions} line${deletions === 1 ? "" : "s"} removed`;
+  return (
+    <span
+      className={`code-churn${className ? ` ${className}` : ""}`}
+      aria-label={title}
+      title={title}
+    >
+      <span className="code-churn-add">+{additions}</span>
+      <span className="code-churn-del">−{deletions}</span>
+    </span>
+  );
+}
+
 // ---- Card / Panel -------------------------------------------------------
 // The standard surface container. `as` lets callers pick the element.
 export function Card({ as: Tag = "div", className = "", children, ...props }) {

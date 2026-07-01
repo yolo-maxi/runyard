@@ -315,7 +315,22 @@ describe("Runs page: filter toolbar, history rows, and detail order", () => {
     assert.match(runDetail, /<RunOutcomeSummary summary=\{run\.outcomeSummary\} \/>/);
     assert.match(runDetailParts, /function RunOutcomeSummary/);
     assert.match(runDetailParts, /Changed files/);
+    // GitHub-style +added/-removed churn + one-sentence digest surface on
+    // the run detail so operators see diff size + a plain-English readout
+    // without having to open the run log.
+    assert.match(runDetailParts, /Code churn/);
+    assert.match(runDetailParts, /<CodeChurn/);
+    assert.match(runDetailParts, /run-outcome-digest/);
+    assert.match(runCard, /runChurn/);
+    assert.match(runCard, /runDigest/);
+    assert.match(runCard, /run-card-digest/);
+    assert.match(runCard, /run-history-digest/);
     assert.match(css, /\.run-outcome-summary/);
+    assert.match(css, /\.code-churn-add/);
+    assert.match(css, /\.code-churn-del/);
+    assert.match(css, /\.run-outcome-digest/);
+    assert.match(css, /\.run-card-digest/);
+    assert.match(css, /\.run-history-digest/);
     assert.match(runDetail, /ShareButton hash=\{deepLinks\.runLogs\(run\.id\)\}/);
     assert.match(runDetail, /ShareButton hash=\{deepLinks\.runArtifacts\(run\.id\)\}/);
     assert.match(css, /\.run-section-summary\s*\{[^}]*min-height:\s*44px/s);

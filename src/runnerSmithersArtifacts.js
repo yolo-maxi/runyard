@@ -1,5 +1,5 @@
 import { markdownArtifactsFromOutputs } from "./runnerArtifacts.js";
-import { collectChangedFiles } from "./runOutcomePresentation.js";
+import { collectChangedFiles, collectCodeChurn } from "./runOutcomePresentation.js";
 import { smithersEventsArtifactContent } from "./runnerSmithersEvents.js";
 
 export async function collectSmithersRunResult(sid, { getState, nodeOutput, fetchEvents }) {
@@ -19,10 +19,13 @@ export async function collectSmithersRunResult(sid, { getState, nodeOutput, fetc
 // Snapshot of the real changed-file evidence the workflow produced, stamped
 // into smithers-output.json so the Runs UI (and any external consumer of the
 // terminal artifact) can read the count directly without re-deriving it from
-// node-specific keys.
+// node-specific keys. `churn` is folded in for GitHub-style +/- rendering when
+// the workflow exposes a stat block (commit/implement gate); it stays null for
+// non-code workflows so old consumers don't break.
 export function smithersChangeSummary(outputs = {}) {
   const files = collectChangedFiles({ outputs });
-  return { changedFileCount: files.length, files };
+  const churn = collectCodeChurn({ outputs });
+  return { changedFileCount: files.length, files, churn };
 }
 
 export function smithersArtifactPayloads({ sid, state, outputs = {}, eventLines = [] }) {

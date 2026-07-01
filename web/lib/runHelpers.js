@@ -67,6 +67,29 @@ export function runDescription(run) {
 export const runProject = (run) => run?.project || firstInputString(run?.input, PROJECT_INPUT_KEYS);
 export const runBranch = (run) => run?.branch || firstInputString(run?.input, BRANCH_INPUT_KEYS);
 
+// GitHub-style +additions/-deletions if the run's outcome summary reported any.
+// Returns null when the workflow didn't emit churn (older runs, non-code runs,
+// runs that never reached the commit gate) so the UI can hide the chip
+// gracefully instead of showing "+0 -0".
+export function runChurn(run) {
+  const churn = run?.outcomeSummary?.churn;
+  if (!churn || typeof churn !== "object") return null;
+  const additions = Number(churn.additions);
+  const deletions = Number(churn.deletions);
+  const okAdd = Number.isFinite(additions) && additions >= 0;
+  const okDel = Number.isFinite(deletions) && deletions >= 0;
+  if (!okAdd || !okDel) return null;
+  if (additions === 0 && deletions === 0) return null;
+  return { additions, deletions };
+}
+
+// One-sentence digest of what the run produced; empty string when the backend
+// couldn't derive one (old runs, no output nodes to summarize).
+export function runDigest(run) {
+  const digest = run?.outcomeSummary?.digest;
+  return typeof digest === "string" ? digest.trim() : "";
+}
+
 export function runExecutionLabel(run) {
   const execution = run?.execution || run?.input?.__execution || {};
   const mode = execution.mode && execution.mode !== "auto" ? execution.mode : "auto";

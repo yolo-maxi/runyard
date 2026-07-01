@@ -2,10 +2,10 @@ import { deepLinks } from "../lib/router.js";
 import {
   isActiveRun, isDiagnosticRun, runTitle, runDescription, runProject, runBranch,
   runExecutionLabel, runDurationMs, formatDuration, relativeTime, truncate,
-  artifactDisplayName, formatBytes
+  artifactDisplayName, formatBytes, runChurn, runDigest
 } from "../lib/runHelpers.js";
 import { rerunRun, editRerunById } from "../lib/runActions.js";
-import { Icon, StatusBadge, ShareButton, OverflowMenu } from "./ui.jsx";
+import { Icon, StatusBadge, ShareButton, OverflowMenu, CodeChurn } from "./ui.jsx";
 import { RunProgressStrip } from "./RunProgressStrip.jsx";
 
 function QueueBanner({ run }) {
@@ -65,6 +65,8 @@ export function RunCard({ run, artifacts = [], now = Date.now(), variant = "card
   const showFailureBlock = (run.status === "failed" || run.status === "error") && (reasonHint || run.failedStep);
   const showArtifacts = !active && artifacts.length > 0;
   const signal = runSignal(run, reasonHint, active);
+  const churn = runChurn(run);
+  const digest = runDigest(run);
 
   if (variant === "row") {
     // Active runs share the same grid layout as historical ones — only the
@@ -99,6 +101,7 @@ export function RunCard({ run, artifacts = [], now = Date.now(), variant = "card
         <div className="run-history-chips" aria-label="Run context">
           {project ? <span className="chip chip-project" title="Project / target"><Icon name="project" /> {project}</span> : null}
           {branch ? <span className="chip chip-branch" title="Branch"><Icon name="branch" /> {branch}</span> : null}
+          {churn ? <CodeChurn churn={churn} /> : null}
         </div>
         <div className="run-history-meta">
           <span title={run.createdAt || ""}>{created}</span>
@@ -111,6 +114,9 @@ export function RunCard({ run, artifacts = [], now = Date.now(), variant = "card
           <ShareButton hash={deepLinks.run(run.id)} label="Copy share link to this run" />
           <RunActions run={run} />
         </div>
+        {digest ? (
+          <p className="run-history-digest" title={digest}>{truncate(digest, 200)}</p>
+        ) : null}
       </article>
     );
   }
@@ -138,13 +144,17 @@ export function RunCard({ run, artifacts = [], now = Date.now(), variant = "card
       <p className="muted run-desc">{description}</p>
       <RunProgressStrip run={run} now={now} />
       {run.status === "queued" ? <QueueBanner run={run} /> : null}
-      {project || branch || run.workflowVersion || execution ? (
+      {project || branch || run.workflowVersion || execution || churn ? (
         <div className="run-card-chips">
           {project ? <span className="chip chip-project" title="Project / target"><Icon name="project" /> {project}</span> : null}
           {branch ? <span className="chip chip-branch" title="Branch"><Icon name="branch" /> {branch}</span> : null}
           {run.workflowVersion ? <span className="chip chip-version" title="Workflow version">v{run.workflowVersion}</span> : null}
           {execution ? <span className="chip chip-runner" title="Execution target">{execution}</span> : null}
+          {churn ? <CodeChurn churn={churn} /> : null}
         </div>
+      ) : null}
+      {digest ? (
+        <p className="run-card-digest" title={digest}>{truncate(digest, 240)}</p>
       ) : null}
       {reasonHint ? (
         <p className="run-reason-hint" title={reasonHint}>⚠ <span>{truncate(reasonHint, 140)}</span></p>

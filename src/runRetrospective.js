@@ -43,6 +43,10 @@ export function buildRunRetrospectiveArtifact({
     : runOutcomeSummary(run);
   const changedFiles = Array.isArray(outcomeSummary.files) ? outcomeSummary.files : [];
   const changedFileCount = Number.isFinite(outcomeSummary.changedFiles) ? outcomeSummary.changedFiles : changedFiles.length;
+  const churn = outcomeSummary.churn && typeof outcomeSummary.churn === "object" && !Array.isArray(outcomeSummary.churn)
+    ? { additions: Number(outcomeSummary.churn.additions) || 0, deletions: Number(outcomeSummary.churn.deletions) || 0 }
+    : null;
+  const digest = typeof outcomeSummary.digest === "string" ? outcomeSummary.digest : "";
   const content = {
     schemaVersion: RUN_RETROSPECTIVE_SCHEMA_VERSION,
     generatedAt,
@@ -93,6 +97,8 @@ export function buildRunRetrospectiveArtifact({
       succeeded: run?.status === "succeeded",
       changedFileCount,
       changedFiles,
+      churn,
+      digest,
       workProduct: outcomeSummary.workProduct || "",
       diagnostics: diagnosticSummary(diagnostics)
     },

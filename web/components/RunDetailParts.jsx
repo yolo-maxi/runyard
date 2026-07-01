@@ -5,7 +5,7 @@ import {
   artifactDisplayName, formatBytes, truncate
 } from "../lib/runHelpers.js";
 import { rerunRun, editRerunRun, cancelRun } from "../lib/runActions.js";
-import { StatusBadge, ShareButton, Icon, JsonBlock } from "./ui.jsx";
+import { StatusBadge, ShareButton, Icon, JsonBlock, CodeChurn } from "./ui.jsx";
 
 const FAILURE_STATUSES = new Set(["failed", "error", "cancelled", "rejected"]);
 
@@ -82,21 +82,41 @@ export function RunOutcomeSummary({ summary }) {
   const filesTitle = files.length
     ? `${files.length} changed file${files.length === 1 ? "" : "s"}:\n${files.join("\n")}`
     : "No changed files reported by this run.";
+  const churn = summary.churn && typeof summary.churn === "object" && !Array.isArray(summary.churn)
+    ? summary.churn
+    : null;
+  const additions = churn ? Number(churn.additions) : null;
+  const deletions = churn ? Number(churn.deletions) : null;
+  const hasChurn = Number.isFinite(additions) && Number.isFinite(deletions) && (additions || deletions);
+  const digest = typeof summary.digest === "string" ? summary.digest.trim() : "";
   const items = [
     ["Repo", summary.repo || "unresolved", null],
     ["Changed files", String(summary.changedFiles ?? 0), filesTitle],
+    // GitHub-style green +additions / red −deletions when a diff was produced;
+    // dash for runs (or old runs that pre-date the summary) with no churn.
+    ["Code churn", hasChurn ? { churn: { additions, deletions } } : "—",
+      hasChurn ? `${additions} line${additions === 1 ? "" : "s"} added · ${deletions} line${deletions === 1 ? "" : "s"} removed` : "No line-level churn was reported."],
     ["Work product", summary.workProduct || "none", null],
     ["Classification", summary.classification || "unknown", null]
   ];
   return (
-    <section className="run-outcome-summary" aria-label="Run outcome summary">
-      {items.map(([label, value, title]) => (
-        <p key={label} {...(title ? { title } : {})}>
-          <span className="muted">{label}</span>
-          <strong>{value}</strong>
-        </p>
-      ))}
-    </section>
+    <>
+      <section className="run-outcome-summary" aria-label="Run outcome summary">
+        {items.map(([label, value, title]) => (
+          <p key={label} {...(title ? { title } : {})}>
+            <span className="muted">{label}</span>
+            {value && typeof value === "object" && value.churn ? (
+              <strong><CodeChurn churn={value.churn} /></strong>
+            ) : (
+              <strong>{value}</strong>
+            )}
+          </p>
+        ))}
+      </section>
+      {digest ? (
+        <p className="run-outcome-digest" aria-label="Run digest">{digest}</p>
+      ) : null}
+    </>
   );
 }
 
