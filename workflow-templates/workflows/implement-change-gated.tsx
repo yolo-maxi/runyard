@@ -118,8 +118,8 @@ const inputSchema = z.object({
   project: z.string().default("").describe("Optional friendly project key resolved from IMPROVE_PROJECT_MAP or IMPROVE_REPO_MAP."),
   mutationMode: z
     .enum(["sequential", "parallel"])
-    .default("sequential")
-    .describe("Mutating checkout mode. sequential takes a repo/branch lease; parallel explicitly creates a unique branch/worktree and never deploys directly.")
+    .default("parallel")
+    .describe("Mutating checkout mode. parallel creates a unique branch/worktree and requires a later Hub promotion; sequential takes a repo/branch lease and pushes directly.")
 });
 
 const { Workflow, Task, smithers, outputs } = createSmithers({

@@ -16,6 +16,7 @@ export function registerServerRoutes(app, {
   requireRunOwnerOrAdmin,
   requireScopes,
   runLifecycleHandlers,
+  runPromotionHandlers,
   runReadHandlers,
   runRerunHandlers,
   scheduleHandlers,
@@ -121,6 +122,7 @@ export function registerServerRoutes(app, {
   app.post("/api/runs/:id/fail", requireAuth, requireScopes("runner"), requireRunOwnerOrAdmin, runLifecycleHandlers.failRun);
   app.post("/api/runs/:id/cancel", requireAuth, requireScopes("api", "mcp", "runner"), runLifecycleHandlers.cancelRun);
   app.post("/api/runs/:id/rerun", requireAuth, requireScopes("api", "mcp"), asyncHandler(runRerunHandlers.rerunRun));
+  app.post("/api/runs/:id/promote", requireAuth, requireScopes("api", "mcp"), asyncHandler(runPromotionHandlers.promoteRun));
 
   app.get("/api/runs/:id/artifacts", requireAuth, artifactHandlers.listRunArtifacts);
   app.post("/api/runs/:id/artifacts", requireAuth, requireScopes("runner"), requireRunOwnerOrAdmin, artifactHandlers.createRunArtifact);

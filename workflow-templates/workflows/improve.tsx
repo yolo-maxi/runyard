@@ -106,8 +106,8 @@ const inputSchema = z.object({
   targetBranch: z.string().default("main"),
   mutationMode: z
     .enum(["sequential", "parallel"])
-    .default("sequential")
-    .describe("Mutating checkout mode. sequential takes a repo/branch lease; parallel explicitly creates a unique branch/worktree and never deploys directly.")
+    .default("parallel")
+    .describe("Mutating checkout mode. parallel creates a unique branch/worktree and requires a later Hub promotion; sequential takes a repo/branch lease and pushes directly.")
 });
 
 const { Workflow, Task, smithers, outputs } = createSmithers({

@@ -3,7 +3,7 @@ export const seedProductCapabilities = [
     slug: "implement-change-gated",
     name: "Implement Change (gated)",
     description:
-      "Runs an implementation agent for a change request, then gates it (pnpm test, staged diff, a sane commit, push to origin) before optionally deploying to a configured production target. deploy=false stops after push and reports what would deploy.",
+      "Runs an implementation agent for a change request in an isolated worktree by default, gates it, commits and pushes a Runyard branch, then waits for explicit merge-to-main promotion.",
     category: "Engineering",
     keywords: ["implement", "build", "test", "git", "deploy", "gate", "smithers"],
     inputSchema: {
@@ -25,6 +25,11 @@ export const seedProductCapabilities = [
         project: {
           type: "string",
           description: "Optional friendly project key resolved from IMPROVE_PROJECT_MAP or IMPROVE_REPO_MAP."
+        },
+        mutationMode: {
+          type: "string",
+          enum: ["parallel", "sequential"],
+          description: "parallel creates an isolated branch/worktree and requires later promotion; sequential pushes the target branch directly."
         }
       }
     },
@@ -35,7 +40,7 @@ export const seedProductCapabilities = [
     requiredRunnerTags: ["smithers"],
     requiredSkills: ["implementation"],
     requiredAgents: ["implementation-agent"],
-    approvalPolicy: { required: true, reason: "Runs a coding agent that commits, pushes to origin, and can deploy to production." },
+    approvalPolicy: { required: true, reason: "Runs a coding agent that commits and pushes an isolated branch; merge to main is explicit." },
     workflow: { engine: "smithers", entry: ".smithers/workflows/implement-change-gated.tsx" }
   },
   {
@@ -252,7 +257,7 @@ export const seedProductCapabilities = [
     slug: "improve",
     name: "Improve",
     description:
-      "Inspects an existing feature, UI, or workflow with a taste-led Product Manager, identifies prioritized improvements with acceptance checks, then dispatches an implementation agent to apply them through the gated test/commit/push/deploy pipeline. By default it edits the runner's configured repo; repoDir or a mapped repo/project key can select another allowlisted runner-local git repo while the Hub remains the source of truth for logs and artifacts.",
+      "Inspects an existing feature, UI, or workflow with a taste-led Product Manager, identifies prioritized improvements, then applies them in an isolated worktree by default and waits for explicit merge-to-main promotion.",
     category: "Product",
     keywords: ["improve", "product", "manager", "review", "taste", "polish", "feature", "smithers"],
     inputSchema: {
@@ -290,6 +295,11 @@ export const seedProductCapabilities = [
         targetBranch: {
           type: "string",
           description: "Branch to push (default main)."
+        },
+        mutationMode: {
+          type: "string",
+          enum: ["parallel", "sequential"],
+          description: "parallel creates an isolated branch/worktree and requires later promotion; sequential pushes the target branch directly."
         }
       }
     },
@@ -309,7 +319,7 @@ export const seedProductCapabilities = [
     requiredAgents: ["product-manager", "implementation-agent"],
     approvalPolicy: {
       required: true,
-      reason: "Runs a Product Manager review then a coding agent that commits, pushes to origin, and can deploy to production."
+      reason: "Runs a Product Manager review then a coding agent that commits and pushes an isolated branch; merge to main is explicit."
     },
     // Default supervision envelope: a user starting `improve` gets a visible
     // run-smithers supervising run that wraps it, so a failure surfaces as

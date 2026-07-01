@@ -149,6 +149,7 @@ GET  /api/runs/:id/timeline          # unified ascending NDJSON-style timeline (
 GET  /api/runs/:id/logs              # log lines
 GET  /api/runs/:id/artifacts         # artifacts;  GET /api/artifacts/:id/download
 POST /api/runs/:id/rerun             # re-queue with the same (or edited) input
+POST /api/runs/:id/promote           # merge isolated branch to main and clean up
 POST /api/runs/:id/cancel
 
 # Approvals

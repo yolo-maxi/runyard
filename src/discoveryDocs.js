@@ -145,6 +145,7 @@ export function openApiDocument({ baseUrl, version }) {
       "/runs/{id}/logs": { get: { summary: "Get run log lines" } },
       "/runs/{id}/artifacts": { get: { summary: "List run artifacts" }, post: { summary: "Upload artifact (runner)" } },
       "/runs/{id}/rerun": { post: { summary: "Re-queue the run with the same or edited input" } },
+      "/runs/{id}/promote": { post: { summary: "Merge a successful isolated worktree run into its target branch, run gates, push, and clean up the branch/worktree" } },
       "/runs/{id}/cancel": { post: { summary: "Cancel a queued or running run" } },
       "/artifacts/{id}/download": { get: { summary: "Download an artifact's bytes" } },
       "/approvals": { get: { summary: "List approvals" } },

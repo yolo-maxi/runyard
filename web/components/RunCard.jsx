@@ -5,6 +5,7 @@ import {
   artifactDisplayName, formatBytes, runChangedFiles, runChurn, runDigest
 } from "../lib/runHelpers.js";
 import { rerunRun, editRerunById } from "../lib/runActions.js";
+import { promoteRun, runPromotionCandidate } from "../lib/runPromotion.js";
 import { Icon, StatusBadge, ShareButton, OverflowMenu, CodeChurn } from "./ui.jsx";
 import { RunProgressStrip } from "./RunProgressStrip.jsx";
 
@@ -32,8 +33,14 @@ function runSignal(run, reasonHint, active) {
 }
 
 function RunActions({ run, size = "sm" }) {
+  const promotion = runPromotionCandidate(run);
   return (
     <>
+      {promotion.available ? (
+        <button className="btn-sm primary" title={`Merge ${promotion.sourceBranch} into ${promotion.targetBranch}`} onClick={() => promoteRun(run.id)}>
+          <Icon name="branch" /> Merge to main
+        </button>
+      ) : null}
       <button className="btn-sm" onClick={() => rerunRun(run.id)}>Re-run</button>
       <OverflowMenu
         size={size}

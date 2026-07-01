@@ -22,6 +22,7 @@ import { maybeRecordFailureClassAlert as maybeRecordFailureAlert } from "./failu
 import { createWorkflowEndpointHandlers } from "./workflowEndpointRoutes.js";
 import { createRunLifecycleHandlers } from "./runLifecycleRoutes.js";
 import { createRunReadHandlers } from "./runReadRoutes.js";
+import { createRunPromotionHandlers } from "./runPromotionRoutes.js";
 import { createCapabilityHandlers } from "./capabilityRoutes.js";
 import { createScheduleHandlers } from "./scheduleRoutes.js";
 import { createCatalogHandlers } from "./catalogRoutes.js";
@@ -242,6 +243,14 @@ export function createServerComposition({
     withRunLinks
   });
 
+  const runPromotionHandlers = createRunPromotionHandlers({
+    addRunEvent,
+    getRun,
+    scrubStoredSecrets,
+    updateRun,
+    withRunLinks
+  });
+
   const capabilityHandlers = createCapabilityHandlers({
     addRunEvent,
     createRunResponseEndpoint,
@@ -419,6 +428,7 @@ export function createServerComposition({
       requireRunOwnerOrAdmin,
       requireScopes,
       runLifecycleHandlers,
+      runPromotionHandlers,
       runReadHandlers,
       runRerunHandlers,
       scheduleHandlers,

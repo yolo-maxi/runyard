@@ -1,0 +1,192 @@
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+const TERMINAL_SUCCESS = new Set(["succeeded", "recovered", "approved"]);
+
+function cleanString(value) {
+  return String(value ?? "").trim();
+}
+
+function outputNode(run, nodeId) {
+  return run?.output?.outputs?.[nodeId] || null;
+}
+
+function defaultWorktreeRoot(env = process.env) {
+  return path.resolve(env.RUNYARD_REPO_WORKTREE_DIR || path.join(os.tmpdir(), "runyard-worktrees"));
+}
+
+function safeRealpath(value) {
+  try {
+    return realpathSync(value);
+  } catch {
+    return "";
+  }
+}
+
+function assertSafeRunyardBranch(branch) {
+  if (!/^runyard\/[a-z0-9._/-]+\/run_[a-z0-9]/i.test(branch)) {
+    throw new Error(`promotion blocked: '${branch}' is not a Runyard isolated work branch`);
+  }
+}
+
+function runGit(args, { cwd, env, maxBuffer = 1024 * 1024 * 16 }) {
+  return execFileSync("git", args, { cwd, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer }).trim();
+}
+
+function runTool(cmd, args, { cwd, env, maxBuffer = 1024 * 1024 * 64 }) {
+  return execFileSync(cmd, args, { cwd, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer }).trim();
+}
+
+function packageScripts(repoDir) {
+  try {
+    const pkg = JSON.parse(readFileSync(path.join(repoDir, "package.json"), "utf8"));
+    return pkg?.scripts && typeof pkg.scripts === "object" ? pkg.scripts : {};
+  } catch {
+    return {};
+  }
+}
+
+export function runPromotionCandidate(run, { env = process.env } = {}) {
+  const baseline = outputNode(run, "baseline");
+  const push = outputNode(run, "push");
+  const lease = baseline?.lease || {};
+  const sourceBranch = cleanString(push?.branch || lease.pushBranch || lease.workBranch);
+  const targetBranch = cleanString(run?.input?.targetBranch || lease.targetBranch || "main") || "main";
+  const sourceRepoDir = cleanString(lease.sourceRepoDir);
+  const workRepoDir = cleanString(lease.workRepoDir || baseline?.repoDir || lease.repoDir);
+  const mode = cleanString(run?.input?.mutationMode || lease.mode);
+  const alreadyPromoted = Boolean(run?.output?.promotion?.merged);
+
+  const worktreeRoot = defaultWorktreeRoot(env);
+  const realWorkRepo = safeRealpath(workRepoDir);
+  const realWorktreeRoot = safeRealpath(worktreeRoot) || worktreeRoot;
+  const worktreeInsideRoot = Boolean(realWorkRepo && realWorkRepo.startsWith(`${realWorktreeRoot}${path.sep}`));
+
+  const available = Boolean(
+    run?.id
+    && TERMINAL_SUCCESS.has(run.status)
+    && !alreadyPromoted
+    && mode === "parallel"
+    && sourceBranch
+    && targetBranch
+    && sourceRepoDir
+    && workRepoDir
+    && worktreeInsideRoot
+  );
+
+  return {
+    available,
+    reason: available
+      ? ""
+      : alreadyPromoted
+        ? "already promoted"
+        : mode !== "parallel"
+          ? "run was not produced in isolated worktree mode"
+          : !TERMINAL_SUCCESS.has(run?.status)
+            ? "run is not successful"
+            : "missing isolated branch/worktree metadata",
+    sourceBranch,
+    targetBranch,
+    sourceRepoDir,
+    workRepoDir,
+    mode
+  };
+}
+
+export function promoteRunToMain(run, {
+  env = process.env,
+  gates = true,
+  gitEnv = process.env,
+  pnpmBin = process.env.PNPM_PATH || process.env.GATED_PNPM_BIN || "pnpm"
+} = {}) {
+  const candidate = runPromotionCandidate(run, { env });
+  if (!candidate.available) throw new Error(`promotion unavailable: ${candidate.reason}`);
+  assertSafeRunyardBranch(candidate.sourceBranch);
+
+  const repoDir = realpathSync(candidate.sourceRepoDir);
+  const workRepoDir = realpathSync(candidate.workRepoDir);
+  const worktreeRoot = safeRealpath(defaultWorktreeRoot(env)) || defaultWorktreeRoot(env);
+  if (!workRepoDir.startsWith(`${worktreeRoot}${path.sep}`)) {
+    throw new Error("promotion blocked: worktree is outside RUNYARD_REPO_WORKTREE_DIR");
+  }
+
+  const toolEnv = { ...gitEnv, PATH: [gitEnv.PATH || "", "/usr/local/bin", "/usr/bin", "/bin"].filter(Boolean).join(":") };
+  const beforeHead = runGit(["rev-parse", "HEAD"], { cwd: repoDir, env: toolEnv });
+  const currentBranch = runGit(["rev-parse", "--abbrev-ref", "HEAD"], { cwd: repoDir, env: toolEnv });
+  const dirty = runGit(["status", "--porcelain=v1"], { cwd: repoDir, env: toolEnv });
+  if (dirty) throw new Error(`promotion blocked: target checkout is dirty:\n${dirty.split("\n").slice(0, 20).join("\n")}`);
+
+  let mergeHead = "";
+  let merged = false;
+  try {
+    runGit(["fetch", "origin", candidate.targetBranch, candidate.sourceBranch], { cwd: repoDir, env: toolEnv });
+    runGit(["checkout", candidate.targetBranch], { cwd: repoDir, env: toolEnv });
+    runGit(["pull", "--ff-only", "origin", candidate.targetBranch], { cwd: repoDir, env: toolEnv });
+    runGit(["merge", "--no-ff", "--no-edit", candidate.sourceBranch], { cwd: repoDir, env: toolEnv });
+    merged = true;
+
+    const scripts = gates ? packageScripts(repoDir) : {};
+    if (scripts.test) runTool(pnpmBin, ["test"], { cwd: repoDir, env: toolEnv });
+    if (scripts.build) runTool(pnpmBin, ["build"], { cwd: repoDir, env: toolEnv });
+    runGit(["diff", "--check"], { cwd: repoDir, env: toolEnv });
+
+    mergeHead = runGit(["rev-parse", "HEAD"], { cwd: repoDir, env: toolEnv });
+    runGit(["push", "origin", `HEAD:${candidate.targetBranch}`], { cwd: repoDir, env: toolEnv });
+
+    // Cleanup happens only after target push succeeds. If cleanup fails, the
+    // merge is still valid and the operator can retry cleanup manually.
+    const cleanup = [];
+    try {
+      runGit(["worktree", "remove", "--force", workRepoDir], { cwd: repoDir, env: toolEnv });
+      cleanup.push("worktree");
+    } catch (error) {
+      cleanup.push(`worktree cleanup failed: ${String(error.stderr || error.message || error).slice(0, 300)}`);
+    }
+    try {
+      runGit(["branch", "-D", candidate.sourceBranch], { cwd: repoDir, env: toolEnv });
+      cleanup.push("local branch");
+    } catch (error) {
+      cleanup.push(`local branch cleanup skipped: ${String(error.stderr || error.message || error).slice(0, 300)}`);
+    }
+    try {
+      runGit(["push", "origin", "--delete", candidate.sourceBranch], { cwd: repoDir, env: toolEnv });
+      cleanup.push("remote branch");
+    } catch (error) {
+      cleanup.push(`remote branch cleanup skipped: ${String(error.stderr || error.message || error).slice(0, 300)}`);
+    }
+
+    return {
+      merged: true,
+      sourceBranch: candidate.sourceBranch,
+      targetBranch: candidate.targetBranch,
+      mergeCommit: mergeHead,
+      cleanup,
+      promotedAt: new Date().toISOString()
+    };
+  } catch (error) {
+    try {
+      runGit(["merge", "--abort"], { cwd: repoDir, env: toolEnv });
+    } catch {
+      // No active merge, or abort failed because the failure happened after merge.
+    }
+    if (merged) {
+      try {
+        runGit(["reset", "--hard", `origin/${candidate.targetBranch}`], { cwd: repoDir, env: toolEnv });
+      } catch {
+        // Surface the original failure; the dirty-check on the next attempt will
+        // force operator review if cleanup did not restore the target checkout.
+      }
+    }
+    if (!merged) {
+      try {
+        runGit(["checkout", currentBranch], { cwd: repoDir, env: toolEnv });
+        runGit(["reset", "--hard", beforeHead], { cwd: repoDir, env: toolEnv });
+      } catch {
+        // Best-effort restoration only. The next attempt re-checks cleanliness.
+      }
+    }
+    throw new Error(String(error.stderr || error.message || error).slice(0, 2000));
+  }
+}

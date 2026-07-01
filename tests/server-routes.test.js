@@ -19,6 +19,10 @@ describe("server route registration", () => {
       deps.requireRunOwnerOrAdmin,
       deps.runLifecycleHandlers.completeRun
     ]);
+    assertRoute(app, "post", "/api/runs/:id/promote", [
+      deps.requireAuth,
+      deps.scopes["api,mcp"]
+    ]);
     assertRoute(app, "post", "/api/runners/register", [deps.requireAuth, deps.scopes.runner]);
     assertRoute(app, "post", "/api/chat", [deps.requireAuth, deps.rateLimits["support-chat"]]);
     assertRoute(app, "use", "/public");
@@ -59,6 +63,7 @@ function routeDeps() {
       publicDir: "/tmp/runyard-public"
     },
     runLifecycleHandlers: handlers(["recordRunEvent", "startRun", "completeRun", "failRun", "cancelRun"]),
+    runPromotionHandlers: handlers(["promoteRun"]),
     runReadHandlers: handlers(["listRuns", "getRun", "listRunEvents", "streamRunEvents", "getRunLogSummary", "getRunDiagnostics", "getRunLogs", "getRunTimeline"]),
     runRerunHandlers: handlers(["rerunRun"]),
     scheduleHandlers: handlers(["listSchedules", "previewSchedule", "getSchedule", "createSchedule", "updateSchedule", "enableSchedule", "disableSchedule", "deleteSchedule", "runScheduleNowRoute"]),

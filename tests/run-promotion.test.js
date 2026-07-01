@@ -1,0 +1,98 @@
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { describe, it } from "node:test";
+import { promoteRunToMain, runPromotionCandidate } from "../src/runPromotion.js";
+
+function git(cwd, args) {
+  return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+}
+
+function initFixture() {
+  const root = mkdtempSync(path.join(os.tmpdir(), "runyard-promotion-"));
+  const origin = path.join(root, "origin.git");
+  const repo = path.join(root, "repo");
+  const worktrees = path.join(root, "worktrees");
+  execFileSync("git", ["init", "--bare", origin], { encoding: "utf8" });
+  execFileSync("git", ["clone", origin, repo], { encoding: "utf8" });
+  git(repo, ["config", "user.email", "test@example.com"]);
+  git(repo, ["config", "user.name", "Test User"]);
+  writeFileSync(path.join(repo, "README.md"), "base\n");
+  git(repo, ["add", "README.md"]);
+  git(repo, ["commit", "-m", "initial"]);
+  git(repo, ["branch", "-M", "main"]);
+  git(repo, ["push", "-u", "origin", "main"]);
+  return { root, origin, repo, worktrees };
+}
+
+function isolatedRun({ repo, worktrees }) {
+  const sourceBranch = "runyard/implement-change-gated/main/run_test123";
+  const workRepoDir = path.join(worktrees, "repo-run_test123");
+  const startHead = git(repo, ["rev-parse", "HEAD"]);
+  git(repo, ["worktree", "add", "-b", sourceBranch, workRepoDir, startHead]);
+  git(workRepoDir, ["config", "user.email", "test@example.com"]);
+  git(workRepoDir, ["config", "user.name", "Test User"]);
+  writeFileSync(path.join(workRepoDir, "feature.txt"), "feature\n");
+  git(workRepoDir, ["add", "feature.txt"]);
+  git(workRepoDir, ["commit", "-m", "feature"]);
+  const commit = git(workRepoDir, ["rev-parse", "HEAD"]);
+  git(workRepoDir, ["push", "origin", `HEAD:${sourceBranch}`]);
+  return {
+    id: "run_test123",
+    status: "succeeded",
+    input: { mutationMode: "parallel", targetBranch: "main" },
+    output: {
+      smithersRunId: "smithers_test",
+      outputs: {
+        baseline: {
+          repoDir: workRepoDir,
+          targetBranch: sourceBranch,
+          lease: {
+            mode: "parallel",
+            sourceRepoDir: repo,
+            workRepoDir,
+            workBranch: sourceBranch,
+            pushBranch: sourceBranch,
+            targetBranch: "main"
+          }
+        },
+        commit: { commit },
+        push: { pushed: true, branch: sourceBranch }
+      }
+    }
+  };
+}
+
+describe("run promotion", () => {
+  it("detects successful isolated runs as promotable", () => {
+    const { repo, worktrees } = initFixture();
+    const run = isolatedRun({ repo, worktrees });
+
+    const candidate = runPromotionCandidate(run, { env: { RUNYARD_REPO_WORKTREE_DIR: worktrees } });
+
+    assert.equal(candidate.available, true);
+    assert.equal(candidate.sourceBranch, "runyard/implement-change-gated/main/run_test123");
+    assert.equal(candidate.targetBranch, "main");
+  });
+
+  it("merges the isolated branch, pushes main, and removes branch/worktree", () => {
+    const { repo, origin, worktrees } = initFixture();
+    const run = isolatedRun({ repo, worktrees });
+
+    const promotion = promoteRunToMain(run, {
+      env: { RUNYARD_REPO_WORKTREE_DIR: worktrees },
+      gates: false
+    });
+
+    assert.equal(promotion.merged, true);
+    assert.match(promotion.mergeCommit, /^[0-9a-f]{40}$/);
+    assert.equal(git(repo, ["rev-parse", "--abbrev-ref", "HEAD"]), "main");
+    assert.equal(git(repo, ["show", "HEAD:feature.txt"]), "feature");
+    assert.equal(git(origin, ["rev-parse", "main"]), promotion.mergeCommit);
+    assert.equal(existsSync(run.output.outputs.baseline.lease.workRepoDir), false);
+    assert.throws(() => git(repo, ["rev-parse", "--verify", run.output.outputs.push.branch]));
+    assert.throws(() => git(origin, ["rev-parse", "--verify", run.output.outputs.push.branch]));
+  });
+});

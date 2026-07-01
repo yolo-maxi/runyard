@@ -56,6 +56,7 @@ describe("server composition", () => {
       "requireRunOwnerOrAdmin",
       "requireScopes",
       "runLifecycleHandlers",
+      "runPromotionHandlers",
       "runReadHandlers",
       "runRerunHandlers",
       "scheduleHandlers",

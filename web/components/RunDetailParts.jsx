@@ -5,6 +5,7 @@ import {
   artifactDisplayName, formatBytes, truncate
 } from "../lib/runHelpers.js";
 import { rerunRun, editRerunRun, cancelRun } from "../lib/runActions.js";
+import { promoteRun, runPromotionCandidate } from "../lib/runPromotion.js";
 import { StatusBadge, ShareButton, Icon, JsonBlock, CodeChurn } from "./ui.jsx";
 
 const FAILURE_STATUSES = new Set(["failed", "error", "cancelled", "rejected"]);
@@ -22,6 +23,7 @@ export function RunBanner({ run, diagnostics, title, slug, onChanged }) {
   const workflowHref = slug ? deepLinks.workflow(slug) : deepLinks.workflows();
   const workflowLabel = run.capabilityName || slug || "Workflow";
   const canCancel = isActiveRun(run);
+  const promotion = runPromotionCandidate(run);
 
   return (
     <header className="run-banner" data-status={statusKey} data-failure={isFailure ? "1" : "0"}>
@@ -39,6 +41,16 @@ export function RunBanner({ run, diagnostics, title, slug, onChanged }) {
         {slug ? <a className="run-cap-link" href={workflowHref}>{workflowLabel}</a> : null}
       </p>
       <div className="run-banner-actions" role="group" aria-label="Run actions">
+        {promotion.available ? (
+          <button
+            type="button"
+            className="primary"
+            title={`Merge ${promotion.sourceBranch} into ${promotion.targetBranch}, run gates, push, and clean up the branch/worktree`}
+            onClick={async () => { await promoteRun(run.id); onChanged?.(); }}
+          >
+            <Icon name="branch" /> Merge to main
+          </button>
+        ) : null}
         <button type="button" className="primary" title="Re-run with the same input (no editor)" onClick={() => rerunRun(run.id)}>Re-run same input</button>
         <details className="run-action-overflow">
           <summary className="button run-action-overflow-trigger" aria-haspopup="menu" aria-label="More run actions">More <span aria-hidden="true">▾</span></summary>
