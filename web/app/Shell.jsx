@@ -5,6 +5,7 @@ import { api } from "../lib/api.js";
 import { meIsAdmin } from "../lib/me.js";
 import { useSidebarBadges } from "../lib/badges.js";
 import { EnvChip } from "./EnvChip.jsx";
+import { ElectricChip } from "./ElectricChip.jsx";
 import { Content } from "./Content.jsx";
 import { UpdateBadge } from "../components/UpdateBadge.jsx";
 import { SupportChat } from "../components/SupportChat.jsx";
@@ -89,6 +90,7 @@ export function Shell({ me }) {
             Hub
           </span>
           <EnvChip />
+          <ElectricChip />
         </div>
         <nav className="mobile-primary-nav" aria-label="Primary navigation">
           <a href="#runs" data-primary-view="home" className={current === "home" ? "active" : undefined}>

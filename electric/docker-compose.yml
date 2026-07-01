@@ -1,0 +1,43 @@
+# RunYard Electric demo backend: Postgres (logical replication) + Electric sync service.
+# Isolated from production. Ports bound to localhost only; the RunYard demo hub
+# proxies Electric shape requests (auth) and runs the SQLite->Postgres projector.
+name: runyard-electric
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: runyard-electric-pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: runyard
+      POSTGRES_USER: runyard
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-runyard_electric_dev}
+    ports:
+      - '127.0.0.1:54329:5432'
+    volumes:
+      - ./postgres.conf:/etc/postgresql/postgresql.conf:ro
+      - runyard_electric_pgdata:/var/lib/postgresql/data
+    command: ['postgres', '-c', 'config_file=/etc/postgresql/postgresql.conf']
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U runyard -d runyard']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  electric:
+    image: electricsql/electric:latest
+    container_name: runyard-electric-sync
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://runyard:${PG_PASSWORD:-runyard_electric_dev}@postgres:5432/runyard?sslmode=disable
+      # Insecure mode is acceptable because Electric is bound to localhost and only
+      # reachable through the RunYard hub auth proxy; it is never exposed publicly.
+      ELECTRIC_INSECURE: 'true'
+    ports:
+      - '127.0.0.1:3316:3000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  runyard_electric_pgdata:

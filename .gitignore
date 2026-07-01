@@ -1,5 +1,7 @@
 node_modules/
 data/
+data-demo/
+electric/demo.env
 .env
 test-artifacts/
 runner.env
