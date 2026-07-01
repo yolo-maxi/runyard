@@ -323,6 +323,11 @@ describe("Runs page: filter toolbar, history rows, and detail order", () => {
     assert.match(runDetailParts, /run-outcome-digest/);
     assert.match(runCard, /runChurn/);
     assert.match(runCard, /runDigest/);
+    // The "N changed files" chip surfaces the same signal as run detail's
+    // "Changed files" tile so the runs history no longer implies "nothing
+    // changed" when the outcome summary carries the real count.
+    assert.match(runCard, /runChangedFiles/);
+    assert.match(runCard, /chip-files/);
     assert.match(runCard, /run-card-digest/);
     assert.match(runCard, /run-history-digest/);
     assert.match(css, /\.run-outcome-summary/);
@@ -331,6 +336,7 @@ describe("Runs page: filter toolbar, history rows, and detail order", () => {
     assert.match(css, /\.run-outcome-digest/);
     assert.match(css, /\.run-card-digest/);
     assert.match(css, /\.run-history-digest/);
+    assert.match(css, /\.chip-files/);
     assert.match(runDetail, /ShareButton hash=\{deepLinks\.runLogs\(run\.id\)\}/);
     assert.match(runDetail, /ShareButton hash=\{deepLinks\.runArtifacts\(run\.id\)\}/);
     assert.match(css, /\.run-section-summary\s*\{[^}]*min-height:\s*44px/s);

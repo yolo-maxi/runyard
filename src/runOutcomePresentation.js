@@ -51,14 +51,22 @@ function collectFromNode(node, seen, order) {
 }
 
 // Union of the changed-file entries the workflow reported — checks the
-// terminal envelope (`changedFiles` / `filesChanged`), the conventional
-// `commit.files` array, and every per-node output's `changedFiles` /
-// `filesChanged`. Preserves first-seen order so tests remain deterministic.
+// terminal envelope (`changedFiles` / `filesChanged`), the persisted
+// `changeSummary.files` block the runner stamps for every terminal run, the
+// conventional `commit.files` array, and every per-node output's
+// `changedFiles` / `filesChanged`. Preserves first-seen order so tests remain
+// deterministic. Trusting `changeSummary.files` here keeps the Runs UI aligned
+// with `smithers-output.json` even for runs whose per-node shape has drifted
+// (or been rewritten by supervision) since the count was computed.
 export function collectChangedFiles(output) {
   if (!output || typeof output !== "object" || Array.isArray(output)) return [];
   const seen = new Set();
   const order = [];
   collectFromNode(output, seen, order);
+  const changeSummary = output.changeSummary && typeof output.changeSummary === "object" && !Array.isArray(output.changeSummary)
+    ? output.changeSummary
+    : null;
+  addFiles(changeSummary?.files, seen, order);
   const commit = outputNode(output, "commit");
   addFiles(commit?.files, seen, order);
   const nodes = outputNodesObject(output);
@@ -138,13 +146,23 @@ function normalizeChurn(candidate) {
 }
 
 // GitHub-style +added/-deleted line churn. Union across the terminal envelope
-// (`churn`, `changeSummary`, `codeChurn`), the `commit.stat` text emitted by the
-// gated implement/improve workflows, and any per-node churn payload workflows
-// choose to surface. Returns null when nothing quantitative is available so old
-// runs stay graceful.
+// (`churn`, `codeChurn`, and the runner-stamped `changeSummary.churn`), the
+// `commit.stat` text emitted by the gated implement/improve workflows, and any
+// per-node churn payload workflows choose to surface. Returns null when nothing
+// quantitative is available so old runs stay graceful. The `changeSummary.churn`
+// branch is what makes the terminal `smithers-output.json` count the persisted
+// source of truth for the Runs UI — before it was here, that stamp was accepted
+// only by name (as `changeSummary`, whose top-level fields are file counts, not
+// churn) so churn silently fell through to per-node re-derivation.
 export function collectCodeChurn(output) {
   if (!output || typeof output !== "object" || Array.isArray(output)) return null;
-  const direct = normalizeChurn(output.churn) || normalizeChurn(output.codeChurn) || normalizeChurn(output.changeSummary);
+  const changeSummary = output.changeSummary && typeof output.changeSummary === "object" && !Array.isArray(output.changeSummary)
+    ? output.changeSummary
+    : null;
+  const direct = normalizeChurn(output.churn)
+    || normalizeChurn(output.codeChurn)
+    || normalizeChurn(changeSummary?.churn)
+    || normalizeChurn(changeSummary);
   if (direct) return direct;
   const commit = outputNode(output, "commit");
   if (commit) {

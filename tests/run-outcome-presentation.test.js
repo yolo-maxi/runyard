@@ -77,6 +77,27 @@ describe("run outcome presentation helpers", () => {
     );
   });
 
+  it("trusts the runner-stamped changeSummary.files even when per-node keys have drifted", () => {
+    // Terminal artifact / run envelope carries `changeSummary` as the persisted
+    // source of truth; the Runs UI should reflect that count directly instead
+    // of showing zero when the per-node shape doesn't match GENERIC_CHANGED_FILE_KEYS.
+    assert.deepEqual(
+      collectChangedFiles({
+        changeSummary: { changedFileCount: 2, files: ["a.js", "b.js"], churn: null },
+        outputs: { implement: { files_modified: ["a.js", "b.js"] } }
+      }),
+      ["a.js", "b.js"]
+    );
+    // Unions cleanly with per-node evidence — no double counting.
+    assert.deepEqual(
+      collectChangedFiles({
+        changeSummary: { files: ["a.js"] },
+        outputs: { commit: { files: ["a.js", "b.js"] } }
+      }),
+      ["a.js", "b.js"]
+    );
+  });
+
   it("reports the real changed-file count for workflows that use non-commit output keys", () => {
     assert.deepEqual(
       runOutcomeSummary({
@@ -156,6 +177,17 @@ describe("run outcome presentation helpers", () => {
     assert.equal(
       collectCodeChurn({ outputs: { review: { summary: "no changes needed" } } }),
       null
+    );
+    // The runner stamps `changeSummary.churn` on every terminal run — read the
+    // nested churn block instead of misinterpreting the wrapper as a churn
+    // record. Before this fix the wrapper (with `changedFileCount`/`files`/
+    // `churn`) always failed `normalizeChurn` at the top level, so the Runs UI
+    // fell back to zero churn whenever per-node re-derivation missed.
+    assert.deepEqual(
+      collectCodeChurn({
+        changeSummary: { changedFileCount: 2, files: ["a.js", "b.js"], churn: { additions: 6, deletions: 1 } }
+      }),
+      { additions: 6, deletions: 1 }
     );
   });
 

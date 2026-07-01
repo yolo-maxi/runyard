@@ -67,6 +67,23 @@ export function runDescription(run) {
 export const runProject = (run) => run?.project || firstInputString(run?.input, PROJECT_INPUT_KEYS);
 export const runBranch = (run) => run?.branch || firstInputString(run?.input, BRANCH_INPUT_KEYS);
 
+// Count of files the run's outcome summary reported as changed, plus the
+// underlying list for hover-tooltip context. Returns null when nothing changed
+// so the Runs history row can hide the chip gracefully (older runs, non-code
+// runs, and runs that succeeded without touching any tracked files). The list
+// view used to show only churn — this surfaces the same "N files changed"
+// signal the run detail summary shows, so operators can scan the run history
+// without opening each run.
+export function runChangedFiles(run) {
+  const summary = run?.outcomeSummary;
+  if (!summary || typeof summary !== "object") return null;
+  const rawCount = Number(summary.changedFiles);
+  const list = Array.isArray(summary.files) ? summary.files : [];
+  const count = Number.isFinite(rawCount) && rawCount >= 0 ? rawCount : list.length;
+  if (!count) return null;
+  return { count, files: list };
+}
+
 // GitHub-style +additions/-deletions if the run's outcome summary reported any.
 // Returns null when the workflow didn't emit churn (older runs, non-code runs,
 // runs that never reached the commit gate) so the UI can hide the chip

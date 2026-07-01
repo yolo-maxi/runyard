@@ -2112,6 +2112,16 @@ details.advanced[open] summary {
   color: #166534;
 }
 
+/* "N files" chip — surfaces the real changed-file count on the runs list
+ * next to the churn pill so operators can scan history without opening each
+ * run. Tuned quieter than chip-branch/chip-project so it recedes when both
+ * appear on the same row. */
+.chip-files {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+  color: #3730a3;
+}
+
 /* ---- Semantic chip modifiers --------------------------------------------
  * Differentiate chips by role on the run-detail meta strip so the page is
  * easier to scan: status pops, IDs are quiet & monospaced (fingerprint, not
