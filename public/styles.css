@@ -682,6 +682,33 @@ body.logged-out .mobile-primary-nav {
   font-size: var(--fs-base);
 }
 
+.approval-notifications {
+  position: relative;
+  color: var(--ink);
+}
+
+.approval-notifications.active,
+.approval-notifications:hover {
+  border-color: var(--brand);
+  color: var(--brand);
+  background: var(--brand-tint);
+}
+
+.approval-notifications-dot {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--danger);
+  box-shadow: 0 0 0 2px var(--panel);
+}
+
+.approval-notifications-dot[hidden] {
+  display: none;
+}
+
 .admin-label-short,
 .mobile-menu-only {
   display: none;
@@ -2846,8 +2873,8 @@ button.run-id-mono:focus-visible,
     padding-bottom: 2px;
   }
 
-  /* Shrink-to-fit equal columns so all four tabs (incl. "Approvals") stay
-     readable without clipping to "Ap…" or forcing a horizontal page scrollbar. */
+  /* Shrink-to-fit equal columns so the primary tabs stay readable without
+     clipping labels or forcing a horizontal page scrollbar. */
   .mobile-primary-nav a {
     flex: 1 1 0;
     min-width: 0;

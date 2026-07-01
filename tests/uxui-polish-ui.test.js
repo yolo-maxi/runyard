@@ -61,6 +61,18 @@ describe("UX polish: simplified navigation groups related admin pages", () => {
     assert.match(connect, /<Tokens embedded \/>/);
     assert.match(settings, /<Secrets embedded \/>/);
   });
+
+  it("pulls approvals out of Admin into a notification bell with a pending dot", () => {
+    assert.doesNotMatch(shell, /\["approvals", "Approvals"\]/);
+    assert.doesNotMatch(shell, /data-primary-view="approvals"/);
+    assert.match(shell, /ApprovalNotificationLink/);
+    assert.match(shell, /Icon name="bell"/);
+    assert.match(shell, /approval-notifications-dot/);
+    assert.match(shell, /data-has-pending=\{count > 0 \? "true" : "false"\}/);
+    assert.match(css, /\.approval-notifications\s*\{/);
+    assert.match(css, /\.approval-notifications-dot\s*\{/);
+    assert.match(css, /background:\s*var\(--danger\)/);
+  });
 });
 
 describe("UX polish: runner auth explains Claude token paste flow", () => {
