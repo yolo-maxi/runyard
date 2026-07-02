@@ -61,6 +61,20 @@ export function bubblewrapArgv({
   }
   const argv = [
     bwrapBin,
+    // Explicit user namespace with a deterministic single-uid mapping. Being
+    // unprivileged and non-setuid, bwrap needs a user namespace to gain the caps
+    // for its mounts; requesting it explicitly (rather than relying on the
+    // implicit default) and pinning the child to uid/gid 0 *inside* the namespace
+    // gives a stable, single-entry uid_map — which is what kernels that only
+    // permit a lone identity mapping will accept. Root here is confined to the
+    // namespace and maps back to the runner's unprivileged uid on the host, so
+    // files land with the runner's ownership. NOTE: this does not bypass an LSM
+    // that forbids unprivileged userns outright (e.g. Ubuntu's
+    // kernel.apparmor_restrict_unprivileged_userns=1) — that stays a host-config
+    // prerequisite for RUNNER_SANDBOX=bubblewrap.
+    "--unshare-user",
+    "--uid", "0",
+    "--gid", "0",
     // Tie the sandbox lifetime to the runner and give it fresh namespaces. The
     // launch is detached (`smithers up -d`), so the engine daemonizes inside;
     // --die-with-parent ensures an orphaned sandbox can't outlive the runner.

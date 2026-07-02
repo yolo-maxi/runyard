@@ -41,6 +41,16 @@ describe("bubblewrapArgv", () => {
     assert.deepEqual(bindIdxs.map((i) => argv[i + 1]), [WS]);
   });
 
+  it("requests an explicit user namespace with a deterministic uid/gid 0 mapping", () => {
+    const argv = bubblewrapArgv({ workspace: WS });
+    assert.ok(argv.includes("--unshare-user"), "must unshare the user namespace explicitly");
+    // --uid/--gid map the child to 0 inside the namespace (single-entry uid_map).
+    assert.equal(argv[argv.indexOf("--uid") + 1], "0");
+    assert.equal(argv[argv.indexOf("--gid") + 1], "0");
+    // The mapping flags precede the mounts (bwrap sets up the userns first).
+    assert.ok(argv.indexOf("--unshare-user") < argv.indexOf("--bind"));
+  });
+
   it("shares the network by default and unshares it only when asked", () => {
     assert.ok(!bubblewrapArgv({ workspace: WS }).includes("--unshare-net"));
     assert.ok(bubblewrapArgv({ workspace: WS, shareNet: false }).includes("--unshare-net"));
@@ -165,11 +175,15 @@ describe("resolveRunnerExecWrapper (preset + literal precedence)", () => {
 // namespaces work; skipped otherwise (e.g. this dev box, most CI). Proves the
 // generated argv delivers a writable HOME inside the workspace while host paths
 // stay invisible — i.e. the isolation the unit tests assert structurally.
+// Probe through the REAL generated argv so the gate matches exactly what the
+// test exercises: bwrap present, user namespaces permitted (AppArmor/sysctl can
+// block uid_map even when bwrap is installed), and a dynamically-linked binary
+// actually runnable inside the mount set (needs /usr + /lib* , not just /usr).
 const HAVE_BWRAP = (() => {
   try {
-    execFileSync("bwrap", ["--version"], { stdio: "ignore" });
-    // A --version success doesn't guarantee userns is permitted; probe a no-op.
-    execFileSync("bwrap", ["--ro-bind", "/usr", "/usr", "--proc", "/proc", "true"], { stdio: "ignore" });
+    const probeWs = mkdtempSync(nodePath.join(os.tmpdir(), "runyard-bwrap-probe-"));
+    const argv = bubblewrapArgv({ workspace: probeWs });
+    execFileSync(argv[0], [...argv.slice(1), "/bin/sh", "-c", "true"], { stdio: "ignore" });
     return true;
   } catch {
     return false;
