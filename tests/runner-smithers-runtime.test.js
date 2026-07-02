@@ -11,15 +11,58 @@ import {
 } from "../src/runnerSmithersRuntime.js";
 
 describe("runner Smithers runtime helpers", () => {
-  it("builds direct and wrapped Smithers commands", () => {
+  it("builds a direct command when no exec wrapper is configured", () => {
     assert.deepEqual(smithersCommand({ smithersBin: "smithers" }, ["inspect", "run-1"]), {
       cmd: "smithers",
       args: ["inspect", "run-1"]
     });
-    assert.deepEqual(smithersCommand({ smithersBin: "smithers", execWrapper: ["env", "-i"] }, ["events"]), {
-      cmd: "env",
-      args: ["-i", "smithers", "events"]
+    assert.deepEqual(smithersCommand({ smithersBin: "smithers" }, ["up", "/ws/wf.tsx"]), {
+      cmd: "smithers",
+      args: ["up", "/ws/wf.tsx"]
     });
+  });
+
+  it("wraps only the workflow launch (`up`) with the exec wrapper", () => {
+    assert.deepEqual(
+      smithersCommand({ smithersBin: "smithers", execWrapper: ["docker", "run", "--rm", "img"] }, [
+        "up",
+        "/ws/wf.tsx",
+        "--input",
+        "-"
+      ]),
+      {
+        cmd: "docker",
+        args: ["run", "--rm", "img", "smithers", "up", "/ws/wf.tsx", "--input", "-"]
+      }
+    );
+  });
+
+  it("never wraps polling/control commands, even with an exec wrapper set", () => {
+    const execWrapper = ["docker", "run", "--rm", "img"];
+    for (const args of [
+      ["events", "run-1", "--json"],
+      ["inspect", "run-1", "--format", "json"],
+      ["output", "run-1", "node-1", "--json"],
+      ["cancel", "run-1"]
+    ]) {
+      assert.deepEqual(
+        smithersCommand({ smithersBin: "smithers", execWrapper }, args),
+        { cmd: "smithers", args },
+        `expected ${args[0]} to run unwrapped`
+      );
+    }
+  });
+
+  it("wraps the real launch argv produced by smithersLaunchRequest", () => {
+    const request = smithersLaunchRequest({
+      entry: "workflow.tsx",
+      input: { prompt: "hi" },
+      workspace: "/tmp/ws",
+      maxInlineInputBytes: 1000
+    });
+    const command = smithersCommand({ smithersBin: "smithers", execWrapper: ["firejail", "--quiet"] }, request.args);
+    assert.equal(command.cmd, "firejail");
+    assert.deepEqual(command.args.slice(0, 4), ["--quiet", "smithers", "up", "/tmp/ws/workflow.tsx"]);
   });
 
   it("builds launch requests with stdin for large input and strips resume markers", () => {

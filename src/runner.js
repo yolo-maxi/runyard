@@ -181,9 +181,11 @@ function materializeAgentRuntimePack(run, pack) {
 }
 
 async function smithers(args, opts = {}) {
-  // Prepend the deployer-configured exec wrapper, if any:
-  //   wrapper set  -> `<wrapper[0]> <wrapper[1..]> <smithersBin> <args>`
-  //   wrapper unset -> `<smithersBin> <args>` (bare host default)
+  // Prepend the deployer-configured exec wrapper for workflow-launch (`up`)
+  // subcommands only; polling/control commands run the binary directly:
+  //   launch + wrapper set -> `<wrapper[0]> <wrapper[1..]> <smithersBin> <args>`
+  //   otherwise            -> `<smithersBin> <args>` (bare host)
+  // See WRAPPED_SUBCOMMANDS in runnerSmithersRuntime.js.
   const command = smithersCommand({ smithersBin, execWrapper }, args);
   if (!opts.stdin) {
     return execFileAsync(command.cmd, command.args, {

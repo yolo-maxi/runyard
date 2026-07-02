@@ -32,9 +32,13 @@ export function resolveSmithersBin(env = process.env) {
 // Optional execution wrapper for the engine. RunYard is intentionally
 // unopinionated about HOW/WHERE a run executes: by default the runner invokes
 // the engine directly on its host. A deployer who wants per-run isolation,
-// sandboxing, or container-per-build sets RUNNER_EXEC_WRAPPER and every engine
-// invocation becomes `<wrapper...> <smithersBin> <args>` instead of
-// `<smithersBin> <args>`. The wrapper can be `docker run …`, a DinD/`docker exec`
+// sandboxing, or container-per-build sets RUNNER_EXEC_WRAPPER and the workflow
+// *launch* becomes `<wrapper...> <smithersBin> up <args>` instead of
+// `<smithersBin> up <args>`. Only the launch is wrapped — the runner's
+// polling/control commands (events/inspect/output/cancel) always run the binary
+// directly against local state (see WRAPPED_SUBCOMMANDS in
+// runnerSmithersRuntime.js), so the wrapper never sits between the runner and
+// the run it supervises. The wrapper can be `docker run …`, a DinD/`docker exec`
 // command, a k8s job launcher, firejail, nsjail, a custom script — whatever the
 // deployer wishes. RunYard only prepends it; the deployer owns the wrapper's
 // behavior (workspace sharing, lifecycle, cleanup).
