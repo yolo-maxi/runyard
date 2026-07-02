@@ -1,4 +1,4 @@
-import express from "express";
+import gatewayHttp from "./gatewayHttpCompat.js";
 import { asyncHandler } from "./http.js";
 import { registerRunnerRoutes } from "./routes/runners.js";
 
@@ -39,7 +39,7 @@ export function registerServerRoutes(app, {
   app.get("/app", publicHandlers.app);
   app.get("/docs", publicHandlers.docs);
   app.get("/docs/quickstart", publicHandlers.docs);
-  app.use("/public", express.static(publicHandlers.publicDir));
+  app.use("/public", gatewayHttp.static(publicHandlers.publicDir));
 
   app.get("/llms.txt", publicHandlers.llmsTxt);
   app.get("/openapi.json", publicHandlers.openApi);

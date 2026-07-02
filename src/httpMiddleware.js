@@ -1,9 +1,9 @@
-import express from "express";
+import gatewayHttp from "./gatewayHttpCompat.js";
 
 const ARTIFACT_UPLOAD_PATH = /^\/api\/runs\/[^/]+\/artifacts\/?$/;
 
 export function jsonBodyMiddleware({
-  json = express.json,
+  json = gatewayHttp.json,
   standardLimit = "1mb",
   artifactLimit = "25mb"
 } = {}) {

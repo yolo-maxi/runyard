@@ -1,6 +1,6 @@
 import { StrictMode } from "react";
-import { createRoot } from "react-dom/client";
 import { QueryClientProvider } from "@tanstack/react-query";
+import { createGatewayReactRoot } from "smithers-orchestrator/gateway-react";
 import { queryClient } from "./lib/queryClient.js";
 import { AuthGate } from "./app/AuthGate.jsx";
 
@@ -14,12 +14,13 @@ function mount() {
     console.error("[runyard] #root mount node missing");
     return;
   }
-  createRoot(host).render(
+  createGatewayReactRoot(
     <StrictMode>
       <QueryClientProvider client={queryClient}>
         <AuthGate />
       </QueryClientProvider>
-    </StrictMode>
+    </StrictMode>,
+    { baseUrl: "/", rootId: "root" }
   );
 }
 

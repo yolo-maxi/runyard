@@ -1,4 +1,4 @@
-import express from "express";
+import gatewayHttp from "./gatewayHttpCompat.js";
 import { createRateLimiter, expressErrorHandler, jsonBodyMiddleware, securityHeaders } from "./httpMiddleware.js";
 import * as db from "./db.js";
 import { env } from "./env.js";
@@ -9,9 +9,16 @@ import { startServerRuntime } from "./serverRuntime.js";
 import { registerServerRoutes } from "./serverRoutes.js";
 import { createServerComposition } from "./serverComposition.js";
 
-const app = express();
+const app = gatewayHttp();
 app.disable("x-powered-by");
 app.set("trust proxy", env.trustProxy);
+app.setGatewayOptions({
+  workspaceRoot: env.root,
+  identity: {
+    backend: "runyard-sqlite",
+    version: env.version
+  }
+});
 
 // Passive update checker (the CHECK half of CHECK != APPLY). Outbound-only,
 // read-only GitHub Releases poll with a ~1h cache; degrades to "unknown" on any
@@ -27,7 +34,7 @@ export function setUpdateCheckerForTest(checker) {
 }
 
 app.use(jsonBodyMiddleware());
-app.use(express.urlencoded({ extended: false }));
+app.use(gatewayHttp.urlencoded({ extended: false }));
 
 const startedAt = Date.now();
 const rateLimiter = createRateLimiter();

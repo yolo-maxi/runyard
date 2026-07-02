@@ -107,7 +107,7 @@ export const env = {
   })(),
   // Optional allow-list of filesystem roots the runner may operate in. Empty = unrestricted (with a warning).
   runnerAllowedRoots: parseRootList(process.env.SMITHERS_RUNNER_ALLOWED_ROOTS),
-  // Express trust-proxy setting. Default 'loopback' so X-Forwarded-For can't be spoofed by clients.
+  // HTTP adapter trust-proxy setting. Default 'loopback' so X-Forwarded-For can't be spoofed by clients.
   // Set to a proxy IP/subnet, a hop count, or 'true' only behind a trusted reverse proxy.
   trustProxy: parseTrustProxy(process.env.SMITHERS_TRUST_PROXY),
   // Optional max-runtime backstop for the reaper. Heartbeat/stall liveness is primary; 0 disables.
