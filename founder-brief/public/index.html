@@ -1078,19 +1078,16 @@
       <div class="shell">
         <div class="section-head">
           <h2>Questions for Smithers</h2>
-          <p class="section-copy">The goal of the review is to pressure-test the architecture before v0.3.0 hardens around the wrong abstractions.</p>
+          <p class="section-copy">The Smithers docs already cover workflow authoring, approvals, Gateway observability, memory, tools, sandboxing, and provider pools. These questions focus on the boundaries RunYard still needs to get right.</p>
         </div>
         <div class="question-list">
-          <div class="question">What should RunYard treat as the stable workflow-as-code contract versus Smithers internals that should remain hidden?</div>
-          <div class="question">What is the right model for replay safety across checkpoints when a workflow has already committed, pushed, deployed, posted, or mutated shared state?</div>
-          <div class="question">Should side-effecting workflow steps be modeled as sagas with compensation, explicit finalization nodes, idempotency keys, or some Smithers-native primitive?</div>
-          <div class="question">How should RunYard pin workflow source/hash/version so resume, fork, and replay do not accidentally run against changed source?</div>
-          <div class="question">What is the cleanest abstraction for modular approval endpoints such as Telegram, Slack, webhooks, GitHub comments, and in-Hub approvals?</div>
-          <div class="question">Where should runner sandboxing live: RunYard policy layer, Smithers runtime layer, container/Kubernetes infrastructure, or a combination?</div>
-          <div class="question">What should provider routing and token budgeting look like if RunYard supports Codex, Fable, Claude, and future providers without a pile of special cases?</div>
-          <div class="question">How should workflow learning/self-improvement be represented so it is useful and auditable rather than mysterious automatic mutation?</div>
-          <div class="question">What failure/status taxonomy should exist between Smithers and RunYard so users see blocked, provider-limited, waiting, failed, and unsafe-to-retry correctly?</div>
-          <div class="question">What architecture would you avoid now because it will become painful once RunYard has many runners, providers, approvals, and workflows?</div>
+          <div class="question">Where should the Smithers contract end and the RunYard control-plane contract begin: workflow source/versioning, run state, approvals, runner dispatch, policy, or deployment?</div>
+          <div class="question">What is the intended Smithers pattern for external side effects after a checkpoint, especially commit, push, deploy, notify, or mutate-shared-state steps that cannot be blindly replayed?</div>
+          <div class="question">Should RunYard model side effects as explicit finalization nodes, idempotent receipts, sagas with compensation, or a higher-level primitive built on top of Smithers events?</div>
+          <div class="question">How should RunYard pin workflow bundle source, hash, runtime version, and dependency context so resume, fork, and audit always explain exactly what code ran?</div>
+          <div class="question">Which failure/status concepts should RunYard preserve from Smithers versus translate for operators, so stalled, waiting-approval, provider-limited, blocked-by-preflight, failed-after-side-effect, and unsafe-to-retry are never conflated?</div>
+          <div class="question">What parts of runner isolation should be product policy in RunYard versus infrastructure policy in containers, CVMs, Kubernetes, or future Smithers runtime primitives?</div>
+          <div class="question">What would you avoid building in RunYard because Smithers already plans to own it, and what should RunYard build now because waiting would create painful migration debt?</div>
         </div>
       </div>
     </section>
@@ -1099,7 +1096,7 @@
       <div class="shell">
         <div class="callout">
           <h3>The ask</h3>
-          <p>Please review whether this direction matches Smithers' intended durability model, where RunYard should rely on Smithers primitives versus add its own control-plane policy, and which abstractions should be locked down before v0.3.0.</p>
+          <p>Please review the boundary between Smithers and RunYard: what should be delegated to Smithers primitives, what should become RunYard policy, and which abstractions would be expensive to change after v0.3.0.</p>
         </div>
         <p class="print-note">Prepared July 1, 2026. This is a private draft brief, not public documentation.</p>
       </div>
