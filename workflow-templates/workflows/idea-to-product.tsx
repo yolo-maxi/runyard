@@ -1,10 +1,10 @@
 // smithers-source: authored
 // smithers-display-name: Idea to Product
-// smithers-description: Turns a raw idea into a scoped product spec, builds it, tests it, deploys it to a configured static host, and returns the URL. Private-by-default, with an explicit publicAccess escape hatch.
+// smithers-description: Turns a raw idea into a scoped product spec, builds it, tests it, deploys it to a configured static or server-backed host, and returns the URL. Private-by-default, with an explicit publicAccess escape hatch.
 /** @jsxImportSource smithers-orchestrator */
 import { createHash, randomBytes } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createSmithers, Sequence, ClaudeCodeAgent, CodexAgent } from "smithers-orchestrator";
@@ -18,6 +18,11 @@ const PUBLIC_SUFFIX = process.env.REPOBOX_PUBLIC_SUFFIX || process.env.STATIC_SI
 const REPOBOX_HOST = process.env.REPOBOX_HOST || process.env.STATIC_SITE_HOST || "";
 const REPOBOX_SSH_KEY = process.env.REPOBOX_SSH_KEY || process.env.STATIC_SITE_SSH_KEY || "";
 const REPOBOX_DEPLOY_MODE = process.env.REPOBOX_DEPLOY_MODE || "ssh";
+const SERVICE_ROOT = process.env.REPOBOX_SERVICE_ROOT || process.env.STATIC_SERVICE_ROOT || "/home/fran/services";
+const SERVICE_ENV_ROOT = process.env.REPOBOX_SERVICE_ENV_ROOT || process.env.STATIC_SERVICE_ENV_ROOT || "/home/fran/.config";
+const SERVICE_USER = process.env.REPOBOX_SERVICE_USER || "fran";
+const SERVICE_PORT_START = Number(process.env.REPOBOX_SERVICE_PORT_START || 3018);
+const SERVICE_PORT_END = Number(process.env.REPOBOX_SERVICE_PORT_END || 3099);
 const AGENT_PATH_PREFIX = [
   path.join(os.homedir(), ".npm-global/bin"),
   path.join(os.homedir(), ".bun/bin"),
@@ -96,6 +101,8 @@ const deploySchema = z.looseObject({
   subdomain: z.string(),
   target: z.string(),
   verify: z.string(),
+  deployKind: z.string().default("static"),
+  port: z.number().optional(),
   locale: z.string().default("en-US"),
   inScope: z.array(z.string()).default([]),
   outOfScope: z.array(z.string()).default([]),
@@ -278,6 +285,141 @@ function copyDist(dist: string, target: string) {
   );
 }
 
+function productUsesApi(productDir: string, dist: string) {
+  const pkgPath = path.join(productDir, "package.json");
+  if (packageScript(pkgPath, "start")) return true;
+  if (existsSync(path.join(productDir, "server", "index.mjs"))) return true;
+  try {
+    const out = shell(
+      "if command -v rg >/dev/null 2>&1; then rg -n -S '(/api/|fetch\\([\"'\"'`]/api|process\\.env\\.)' dist build out server package.json 2>/dev/null || true; fi",
+      productDir
+    ).trim();
+    return Boolean(out);
+  } catch {
+    return false;
+  }
+}
+
+function sourceEnvNames(productDir: string) {
+  let out = "";
+  try {
+    out = shell(
+      "if command -v rg >/dev/null 2>&1; then rg -o -N 'process\\.env\\.[A-Z0-9_]{2,}' server src package.json 2>/dev/null || true; fi",
+      productDir
+    );
+  } catch {
+    out = "";
+  }
+  const names = new Set<string>();
+  for (const match of out.matchAll(/process\.env\.([A-Z0-9_]{2,})/g)) names.add(match[1]);
+  return [...names].filter((name) => /^[A-Z0-9_]+$/.test(name));
+}
+
+function remoteFreeServicePort() {
+  const script =
+    `for p in $(seq ${Number(SERVICE_PORT_START)} ${Number(SERVICE_PORT_END)}); do ` +
+    `if ! ss -ltn | awk '{print $4}' | grep -Eq "[:.]$p$"; then echo "$p"; exit 0; fi; ` +
+    `done; echo "no free port in ${SERVICE_PORT_START}-${SERVICE_PORT_END}" >&2; exit 2`;
+  const out = shell(`ssh -i ${JSON.stringify(REPOBOX_SSH_KEY)} -o BatchMode=yes -o StrictHostKeyChecking=accept-new ${JSON.stringify(REPOBOX_HOST)} ${JSON.stringify(script)}`).trim();
+  const port = Number(out.split(/\s+/)[0]);
+  if (!Number.isInteger(port) || port <= 0) throw new Error(`GATE FAILED: could not allocate remote service port (${out})`);
+  return port;
+}
+
+function serviceCaddyBlock(subdomain: string, port: number, publicAccess: boolean, cookie: string, token: string) {
+  return publicAccess ? `
+${subdomain}.${PUBLIC_SUFFIX} {
+  reverse_proxy 127.0.0.1:${port}
+}
+` : `
+${subdomain}.${PUBLIC_SUFFIX} {
+  @token query token=${token}
+  handle @token {
+    header Set-Cookie "${cookie}=${token}; Path=/; Max-Age=2592000; Secure; HttpOnly; SameSite=Lax"
+    redir * / 302
+  }
+
+  @authed header Cookie *${cookie}=${token}*
+  handle @authed {
+    reverse_proxy 127.0.0.1:${port}
+  }
+
+  respond "Unauthorized" 401
+}
+`;
+}
+
+function installServiceCaddyBlock(block: string, subdomain: string) {
+  const routePattern = `^${subdomain.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")}\\.${PUBLIC_SUFFIX.replace(/\./g, "\\.")} {`;
+  const marker = `runyard-managed:${subdomain}.${PUBLIC_SUFFIX}`;
+  const markedBlock = `# ${marker}\n${block}\n# /${marker}\n`;
+  const remoteCmd =
+    `if grep -q '^# ${marker}$' ${remoteQuote(CADDYFILE)}; then ` +
+    `sudo awk 'BEGIN{skip=0} /^# ${marker}$/ {skip=1; next} /^# \\/${marker}$/ {skip=0; next} !skip {print}' ${remoteQuote(CADDYFILE)} | sudo tee ${remoteQuote(CADDYFILE)}.tmp >/dev/null; ` +
+    `sudo mv ${remoteQuote(CADDYFILE)}.tmp ${remoteQuote(CADDYFILE)}; ` +
+    `elif grep -q '${routePattern}' ${remoteQuote(CADDYFILE)}; then ` +
+    `echo 'GATE FAILED: ${subdomain}.${PUBLIC_SUFFIX} already has an unmanaged Caddy route; choose a fresh subdomain or remove/mark the route explicitly.' >&2; exit 2; fi; ` +
+    `cat <<'CADDY_BLOCK' | sudo tee -a ${remoteQuote(CADDYFILE)} >/dev/null\n${markedBlock}\nCADDY_BLOCK\n` +
+    `sudo caddy validate --config ${remoteQuote(CADDYFILE)} >/dev/null; sudo systemctl reload caddy`;
+  shell(`ssh -i ${JSON.stringify(REPOBOX_SSH_KEY)} -o BatchMode=yes -o StrictHostKeyChecking=accept-new ${JSON.stringify(REPOBOX_HOST)} ${JSON.stringify(remoteCmd)}`);
+}
+
+function deployServerBackedProduct(productDir: string, dist: string, subdomain: string, token: string, cookie: string, publicAccess: boolean) {
+  if (REPOBOX_DEPLOY_MODE === "local") {
+    throw new Error("GATE FAILED: server-backed idea products require REPOBOX_DEPLOY_MODE=ssh so the workflow can install a service and Caddy proxy.");
+  }
+  if (!REPOBOX_HOST || !REPOBOX_SSH_KEY) {
+    throw new Error("GATE FAILED: server-backed deploy requires REPOBOX_HOST/STATIC_SITE_HOST and REPOBOX_SSH_KEY/STATIC_SITE_SSH_KEY.");
+  }
+  const serverEntry = path.join(productDir, "server", "index.mjs");
+  if (!existsSync(serverEntry)) {
+    throw new Error("GATE FAILED: product uses /api or server runtime but does not provide server/index.mjs for service deployment.");
+  }
+
+  const port = remoteFreeServicePort();
+  const serviceName = slugify(subdomain);
+  const remoteDir = path.posix.join(SERVICE_ROOT, serviceName);
+  const remoteEnv = path.posix.join(SERVICE_ENV_ROOT, `${serviceName}.env`);
+  const localTmp = path.join(os.tmpdir(), `idea-product-${serviceName}-${Date.now()}`);
+  mkdirSync(localTmp, { recursive: true });
+  const bundle = path.join(localTmp, "bundle.tar.gz");
+  const envFile = path.join(localTmp, "service.env");
+  const distDirName = path.basename(dist);
+  const env: Record<string, string> = {
+    PORT: String(port),
+    HOST: "127.0.0.1"
+  };
+  for (const name of sourceEnvNames(productDir)) {
+    if (process.env[name] && !/^(PATH|HOME|PWD|SHELL|USER|LOGNAME|NODE_OPTIONS)$/.test(name)) env[name] = String(process.env[name]);
+  }
+  writeFileSync(envFile, Object.entries(env).map(([key, value]) => `${key}=${String(value).replace(/\n/g, "")}`).join("\n") + "\n", { mode: 0o600 });
+  shell(
+    `tar -C ${JSON.stringify(productDir)} ` +
+      `--exclude=node_modules --exclude=.git --exclude=src --exclude=tests --exclude='*.map' --exclude='.env*' ` +
+      `-czf ${JSON.stringify(bundle)} ${JSON.stringify(distDirName)} server package.json`
+  );
+  shell(
+    `ssh -i ${JSON.stringify(REPOBOX_SSH_KEY)} -o BatchMode=yes -o StrictHostKeyChecking=accept-new ${JSON.stringify(REPOBOX_HOST)} ` +
+      JSON.stringify(`mkdir -p ${remoteQuote(remoteDir)} ${remoteQuote(SERVICE_ENV_ROOT)}`) +
+      `; scp -i ${JSON.stringify(REPOBOX_SSH_KEY)} -q ${JSON.stringify(bundle)} ${JSON.stringify(`${REPOBOX_HOST}:/tmp/${serviceName}.tar.gz`)}` +
+      `; scp -i ${JSON.stringify(REPOBOX_SSH_KEY)} -q ${JSON.stringify(envFile)} ${JSON.stringify(`${REPOBOX_HOST}:/tmp/${serviceName}.env`)}` +
+      `; ssh -i ${JSON.stringify(REPOBOX_SSH_KEY)} -o BatchMode=yes -o StrictHostKeyChecking=accept-new ${JSON.stringify(REPOBOX_HOST)} ` +
+      JSON.stringify(
+        `set -e; ` +
+          `rm -rf ${remoteQuote(remoteDir)}/*; tar -xzf ${remoteQuote(`/tmp/${serviceName}.tar.gz`)} -C ${remoteQuote(remoteDir)}; ` +
+          `mv ${remoteQuote(`/tmp/${serviceName}.env`)} ${remoteQuote(remoteEnv)}; chmod 600 ${remoteQuote(remoteEnv)}; rm -f ${remoteQuote(`/tmp/${serviceName}.tar.gz`)}; ` +
+          `cat <<'UNIT' | sudo tee ${remoteQuote(`/etc/systemd/system/${serviceName}.service`)} >/dev/null\n` +
+          `[Unit]\nDescription=Idea product ${serviceName}\nAfter=network.target\n\n` +
+          `[Service]\nType=simple\nUser=${SERVICE_USER}\nWorkingDirectory=${remoteDir}\nEnvironmentFile=${remoteEnv}\nExecStart=/bin/bash -lc 'if command -v bun >/dev/null 2>&1; then exec bun server/index.mjs; elif [ -x /home/${SERVICE_USER}/.bun/bin/bun ]; then exec /home/${SERVICE_USER}/.bun/bin/bun server/index.mjs; else exec node server/index.mjs; fi'\nRestart=always\nRestartSec=5\nNoNewPrivileges=true\nPrivateTmp=true\nProtectSystem=full\nProtectHome=false\n\n[Install]\nWantedBy=multi-user.target\nUNIT\n` +
+          `sudo systemctl daemon-reload; sudo systemctl enable --now ${remoteQuote(`${serviceName}.service`)}; sudo systemctl restart ${remoteQuote(`${serviceName}.service`)}; ` +
+          `sleep 1; sudo systemctl is-active --quiet ${remoteQuote(`${serviceName}.service`)}; curl -fsS --max-time 10 ${remoteQuote(`http://127.0.0.1:${port}/api/health`)} >/dev/null || true`
+      )
+  );
+  rmSync(localTmp, { recursive: true, force: true });
+  installServiceCaddyBlock(serviceCaddyBlock(subdomain, port, publicAccess, cookie, token), subdomain);
+  return { target: remoteDir, port };
+}
+
 function isReplaceLiveRequested(input: any) {
   if (input?.replaceLive === true) return true;
   const raw = String(process.env.IDEA_TO_PRODUCT_FLAGS || process.env.REPLACE_LIVE_FLAG || "");
@@ -395,6 +537,7 @@ export default smithers((ctx) => {
               `- Mobile-first: layout must work at 360px width with no horizontal scroll, body text >=16px, tap targets >=44px, and the primary CTA visible above the fold.\n` +
               `- Include package.json scripts for build and at least one verification command (test or lint) when practical.\n` +
               `- Production output must be dist/, build/, or out/.\n` +
+              `- If the product needs server-side API calls, secrets, TTS, LLMs, payments, or any /api route, include a zero-dependency Node/Bun-compatible server at server/index.mjs that serves the built app and exposes the API. Keep secrets in process.env and never in browser code.\n` +
               `- Do not include credentials, .env files, source maps, databases, or node_modules in build output.\n` +
               `- Do not deploy or edit anything outside the product directory.\n` +
               `- Access mode for this run: ${ctx.input.publicAccess ? "PUBLIC/no-auth, explicitly requested" : "private magic-link auth"}.\n\n` +
@@ -504,6 +647,7 @@ export default smithers((ctx) => {
               const target = path.join(STATIC_ROOT, subdomain);
               const token = randomBytes(32).toString("hex");
               const cookie = `repo_box_${createHash("sha256").update(subdomain).digest("hex").slice(0, 16)}`;
+              const serverBacked = productUsesApi(productDir, dist);
               const locale = spec.locale || "en-US";
               const inScope = Array.isArray(spec.inScope) ? spec.inScope : [];
               const outOfScope = Array.isArray(spec.outOfScope) ? spec.outOfScope : [];
@@ -524,6 +668,7 @@ export default smithers((ctx) => {
                   subdomain,
                   target,
                   verify: "deploy=false",
+                  deployKind: serverBacked ? "service" : "static",
                   locale,
                   inScope,
                   outOfScope,
@@ -542,10 +687,20 @@ export default smithers((ctx) => {
                   `GATE FAILED: ${target} already hosts a live app at deploy time (entries: ${lateOccupant.replace(/\s+/g, " ").slice(0, 200)}). Re-run with replaceLive=true (or --replace-live).`
                 );
               }
-              copyDist(dist, target);
-              rmSync(path.join(target, ".git"), { recursive: true, force: true });
-              rmSync(path.join(target, "node_modules"), { recursive: true, force: true });
-              installCaddyBlock(caddyBlock(subdomain, target, Boolean(ctx.input.publicAccess), cookie, token), subdomain, target);
+              let finalTarget = target;
+              let port: number | undefined;
+              let deployKind = "static";
+              if (serverBacked) {
+                const service = deployServerBackedProduct(productDir, dist, subdomain, token, cookie, Boolean(ctx.input.publicAccess));
+                finalTarget = service.target;
+                port = service.port;
+                deployKind = "service";
+              } else {
+                copyDist(dist, target);
+                rmSync(path.join(target, ".git"), { recursive: true, force: true });
+                rmSync(path.join(target, "node_modules"), { recursive: true, force: true });
+                installCaddyBlock(caddyBlock(subdomain, target, Boolean(ctx.input.publicAccess), cookie, token), subdomain, target);
+              }
               const url = `https://${subdomain}.${PUBLIC_SUFFIX}`;
               const unauth = shell(`curl -s -o /dev/null -w "%{http_code}" --max-time 15 ${JSON.stringify(url)}`).trim();
               const auth = ctx.input.publicAccess
@@ -563,8 +718,10 @@ export default smithers((ctx) => {
                 magicLink: ctx.input.publicAccess ? "" : `${url}/?token=${token}`,
                 publicAccess: Boolean(ctx.input.publicAccess),
                 subdomain,
-                target,
+                target: finalTarget,
                 verify: ctx.input.publicAccess ? `public:${unauth}` : `unauth:${unauth} magic:${auth}`,
+                deployKind,
+                port,
                 locale,
                 inScope,
                 outOfScope,

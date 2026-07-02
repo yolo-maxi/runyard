@@ -19,6 +19,7 @@ let server;
 let baseUrl;
 const token = "shub_test_token_source";
 const improveSource = readFileSync(new URL("../workflow-templates/workflows/improve.tsx", import.meta.url), "utf8");
+const ideaToProductSource = readFileSync(new URL("../workflow-templates/workflows/idea-to-product.tsx", import.meta.url), "utf8");
 const api = createJsonApiClient({ baseUrl: () => baseUrl, token });
 
 function raw(pathname) {
@@ -47,6 +48,15 @@ describe("Workflow source + code viewer", () => {
     assert.doesNotMatch(improveSource, /applyRunyardRepoFallback/);
     assert.match(improveSource, /GATE FAILED: improve produced no changed files/);
     assert.match(improveSource, /noChangeEvidence/);
+  });
+
+  it("ships server-backed idea product deployment instead of static-only publishing", () => {
+    assert.match(ideaToProductSource, /function deployServerBackedProduct/);
+    assert.match(ideaToProductSource, /server\/index\.mjs/);
+    assert.match(ideaToProductSource, /REPOBOX_SERVICE_PORT_START/);
+    assert.match(ideaToProductSource, /reverse_proxy 127\.0\.0\.1:\$\{port\}/);
+    assert.match(ideaToProductSource, /command -v bun/);
+    assert.match(ideaToProductSource, /deployKind: serverBacked \? "service" : "static"/);
   });
 
   it("returns source, parsed metadata, sections, and a graph for a real workflow", async () => {
