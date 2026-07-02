@@ -36,12 +36,12 @@ test("hub boots, /api/setup responds, and login + full run lifecycle works", asy
 
   // Login does a full location.reload(); wait for the app shell to be visible.
   await page.waitForSelector("#app:not(.hidden)", { timeout: 10_000 });
-  await expect(page.locator("#login")).toHaveClass(/hidden/);
+  await expect(page.locator("#login")).toHaveCount(0);
 
   // --- UI: open the run detail and assert the terminal success state ---
   await page.goto(`${hub.baseURL}/app#runs/${runId}`);
   const banner = page.locator('header.run-banner[data-status="succeeded"]');
   await expect(banner).toBeVisible({ timeout: 10_000 });
   await expect(banner.locator(".run-banner-status .status")).toContainText("succeeded");
-  await expect(page.locator("#panel-logs")).toBeAttached();
+  await expect(page.locator('details.run-section[data-run-section="log"]')).toBeAttached();
 });

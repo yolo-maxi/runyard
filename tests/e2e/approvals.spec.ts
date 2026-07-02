@@ -42,7 +42,7 @@ async function login(page: any, hub: any) {
   await page.fill("#token", hub.adminToken);
   await page.click('#login-form button[type="submit"]');
   await page.waitForSelector("#app:not(.hidden)", { timeout: 10_000 });
-  await expect(page.locator("#login")).toHaveClass(/hidden/);
+  await expect(page.locator("#login")).toHaveCount(0);
 }
 
 test("approval-gated run: pending approval surfaces, approve unblocks run -> runner drives to succeeded", async ({
@@ -78,20 +78,20 @@ test("approval-gated run: pending approval surfaces, approve unblocks run -> run
 
   // --- UI: open the Approvals view (no sidebar button — navigate by hash) ---
   await page.goto(`${hub.baseURL}/app#approvals`);
-  const card = page.locator(`#approval-${approvalId}`);
+  const card = page.locator(".approval-card").filter({ hasText: approval.title });
   await expect(card).toBeVisible({ timeout: 10_000 });
   // The card exposes its pending status + an inline Approve button.
-  await expect(card.locator(`button[data-approve="${approvalId}"]`)).toBeVisible();
+  await expect(card.getByRole("button", { name: "Approve" })).toBeVisible();
 
   // --- UI: open the approval detail and approve it ---
   await page.goto(`${hub.baseURL}/app#approvals/${approvalId}`);
-  const approveBtn = page.locator("#approval-approve");
+  const approveBtn = page.getByRole("button", { name: "Approve" });
   await expect(approveBtn).toBeVisible({ timeout: 10_000 });
   await approveBtn.click();
 
   // Detail re-renders to the resolved state: the Approve button is gone and the
   // resolved banner reads "Approved".
-  await expect(page.locator("#approval-approve")).toHaveCount(0, { timeout: 10_000 });
+  await expect(page.getByRole("button", { name: "Approve" })).toHaveCount(0, { timeout: 10_000 });
   await expect(page.locator(".approval-resolved")).toContainText(/approved/i, {
     timeout: 10_000,
   });
@@ -136,13 +136,13 @@ test("approval-gated run: reject (request changes) cancels the run", async ({ hu
 
   // Open the approval detail; the UI exposes a "Request changes" control alongside Reject.
   await page.goto(`${hub.baseURL}/app#approvals/${approvalId}`);
-  const requestChanges = page.locator("#approval-request-changes");
+  const requestChanges = page.getByRole("button", { name: "Request changes" });
   await expect(requestChanges).toBeVisible({ timeout: 10_000 });
-  await page.fill("#approval-comment", "Please adjust the inputs before running.");
+  await page.getByLabel("Decision note").fill("Please adjust the inputs before running.");
   await requestChanges.click();
 
   // Detail re-renders resolved: decision controls gone, resolved banner present.
-  await expect(page.locator("#approval-request-changes")).toHaveCount(0, { timeout: 10_000 });
+  await expect(page.getByRole("button", { name: "Request changes" })).toHaveCount(0, { timeout: 10_000 });
   await expect(page.locator(".approval-resolved")).toBeVisible({ timeout: 10_000 });
 
   // --- Server: request-changes stores approval status 'rejected' and cancels the run ---

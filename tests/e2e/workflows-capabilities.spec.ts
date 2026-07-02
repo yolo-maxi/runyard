@@ -40,9 +40,9 @@ test("workflows list shows seeded capabilities with a run affordance", async ({ 
     const card = page.locator(`article.workflow-card#workflow-${slug}`);
     await expect(card).toBeVisible();
     // Launch/run affordance is present on every card.
-    await expect(card.locator(`button[data-run="${slug}"]`)).toBeVisible();
-    // And an "Open" link into the detail view.
-    await expect(card.locator(`a.button[href="#workflows/${slug}"]`)).toBeVisible();
+    await expect(card.getByRole("button", { name: /Run$/ })).toBeVisible();
+    // And the title links into the detail view.
+    await expect(card.locator(`h3 a[href="#workflows/${slug}"]`)).toBeVisible();
   }
 
   // Sanity: the seed set is non-trivial (more than the three we assert by name).
@@ -125,12 +125,14 @@ test("launch affordance on a capability reveals the inline run form", async ({ h
   await expect(card).toBeVisible({ timeout: 10_000 });
 
   // Click the card's run button -> routes to #workflows/hello/run -> showRunForm.
-  await card.locator('button[data-run="hello"]').click();
+  await card.getByRole("button", { name: /Run$/ }).click();
   await expect(page).toHaveURL(/#workflows\/hello\/run$/);
 
   // The inline run form appears with the schema-driven "topic" field.
   await expect(page.locator("#run-form")).toBeVisible({ timeout: 10_000 });
-  await expect(page.locator('#run-form [data-field="topic"]')).toBeVisible();
+  await expect(
+    page.locator("#run-form label").filter({ hasText: "topic" }).locator("input, textarea, select").first(),
+  ).toBeVisible();
   await expect(page.locator('#run-form button[type="submit"]')).toBeVisible();
 });
 
@@ -162,5 +164,5 @@ test("workflow runs tab live-updates a run's progress strip without a reload", a
   // We assert the polling-driven DOM change directly.
   await expect(
     page.locator(`[data-run-progress="${runId}"] .run-progress-phase[data-phase="outcome"].phase-ok`),
-  ).toBeVisible({ timeout: 20_000 });
+  ).toHaveClass(/phase-ok/, { timeout: 20_000 });
 });

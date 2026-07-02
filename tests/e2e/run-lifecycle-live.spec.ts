@@ -12,12 +12,9 @@ import { fakeRunner, type FakeRunner } from "./fakeRunner";
  * are exercised here (no behavior added to the app — this is a characterization
  * net of what actually ships today):
  *
- *  (A) The runs LIST / home view (`renderHome`, app.js:1748) mounts
- *      `pollActiveRunProgress(...)` which, every 4000ms, GET /api/runs/<id> and
- *      replaces the `<ol[data-run-progress=<id>]>` strip IN PLACE
- *      (app.js:1280-1317, node.replaceWith). This is a true setInterval poll: no
- *      reload, no navigation, no user action. We assert the strip's phase
- *      classes flip queued -> running -> done/failed purely from that timer.
+ *  (A) The runs LIST / home view is backed by the live runs collection. While a
+ *      run is active it refetches every few seconds and updates the row status
+ *      in place: no reload, no navigation, no user action.
  *
  *  (B) The run-DETAIL page (`renderRunDetail`, app.js:3248) is a one-shot fetch
  *      with NO interval of its own. Its live, no-`page.reload()` refresh path is
@@ -45,7 +42,7 @@ async function login(page: import("@playwright/test").Page, hub: { baseURL: stri
   await page.click('#login-form button[type="submit"]');
   // Login performs a single full location.reload(); after that the shell shows.
   await page.waitForSelector("#app:not(.hidden)", { timeout: 15_000 });
-  await expect(page.locator("#login")).toHaveClass(/hidden/);
+  await expect(page.locator("#login")).toHaveCount(0);
 }
 
 /**
@@ -145,37 +142,34 @@ test.describe("run-lifecycle-live (migration safety net)", () => {
     // Initial paint: the banner reflects the pre-start 'queued' status.
     const banner = page.locator("header.run-banner");
     await expect(banner).toHaveAttribute("data-status", "queued", { timeout: 15_000 });
-    await expect(page.locator("#panel-logs")).toBeAttached();
+    await expect(page.locator('details.run-section[data-run-section="log"]')).toBeAttached();
 
     // Arm the no-reload guards now that the detail page is open.
     await armNoReloadGuards(page);
 
     // ============================================================
-    // (A) LIST VIEW: prove the TRUE interval poll flips the strip
-    //     queued -> running with NO reload and NO navigation away.
+    // (A) LIST VIEW: prove the live collection flips the row queued -> running
+    //     with NO reload and NO navigation away.
     // ============================================================
-    // Navigate to the runs list; renderHome mounts pollActiveRunProgress (4s).
+    // Navigate to the runs list; Home subscribes to the live runs collection.
     await page.goto(`${hub.baseURL}/app#runs`);
     // Re-arm the sentinel for the list-view phase (the page.goto above is an SPA
     // hash nav within /app, not a document load, but re-plant to be explicit).
     await armNoReloadGuards(page);
 
-    const strip = page.locator(`[data-run-progress="${runId}"]`);
-    await expect(strip).toBeVisible({ timeout: 15_000 });
-    // Pre-start: queued phase active, running phase pending.
-    await expect(strip.locator('.run-progress-phase[data-phase="queued"]')).toHaveClass(/phase-active/);
-    await expect(strip.locator('.run-progress-phase[data-phase="running"]')).toHaveClass(/phase-pending/);
+    const row = page.locator(`article#run-${runId}`);
+    await expect(row).toBeVisible({ timeout: 15_000 });
+    await expect(row.locator(".run-history-status .status")).toContainText("queued");
 
     // Server-side transition queued -> running, WITHOUT touching the page.
     const runner = await fakeRunner(hub, { tags: ["smithers", "local"] });
     await driveToRunning(hub, runner, runId);
 
-    // The 4s strip poll must flip the running phase to active with zero reloads
-    // and zero navigation — purely the setInterval in pollActiveRunProgress.
-    await expect(strip.locator('.run-progress-phase[data-phase="running"]')).toHaveClass(/phase-active/, {
+    // The live collection must flip the row to running with zero reloads and
+    // zero navigation.
+    await expect(row.locator(".run-history-status .status")).toContainText("running", {
       timeout: 12_000,
     });
-    await expect(strip.locator('.run-progress-phase[data-phase="queued"]')).toHaveClass(/phase-done/);
     await assertNoReloadHappened(page);
 
     // ============================================================
@@ -223,7 +217,7 @@ test.describe("run-lifecycle-live (migration safety net)", () => {
     await expect(banner.locator(".run-banner-status .status")).toContainText("succeeded");
     // The output JSON is rendered in the Raw payload panel; assert our marker is
     // present (proves the live-refreshed page fetched the new output).
-    await expect(page.locator('[data-run-section="payload"]')).toContainText(outputMarker, {
+    await expect(page.locator('[data-run-section="io"]')).toContainText(outputMarker, {
       timeout: 12_000,
     });
     await assertNoReloadHappened(page);
@@ -259,14 +253,14 @@ test.describe("run-lifecycle-live (migration safety net)", () => {
     await assertNoReloadHappened(page);
 
     // ============================================================
-    // (A) LIST VIEW: prove the interval poll flips the outcome phase
-    //     to the FAILED state with no reload and no navigation.
+    // (A) LIST VIEW: prove the live collection flips the row to FAILED with no
+    //     reload and no navigation.
     // ============================================================
     await page.goto(`${hub.baseURL}/app#runs`);
     await armNoReloadGuards(page);
-    const strip = page.locator(`[data-run-progress="${runId}"]`);
-    await expect(strip).toBeVisible({ timeout: 15_000 });
-    await expect(strip.locator('.run-progress-phase[data-phase="running"]')).toHaveClass(/phase-active/, {
+    const row = page.locator(`article#run-${runId}`);
+    await expect(row).toBeVisible({ timeout: 15_000 });
+    await expect(row.locator(".run-history-status .status")).toContainText("running", {
       timeout: 12_000,
     });
 
@@ -274,8 +268,8 @@ test.describe("run-lifecycle-live (migration safety net)", () => {
     const failureReason = "smithers run ended in state 'failed' (live-fail-marker)";
     await runner.fail(runId, failureReason);
 
-    // The strip poll flips the outcome phase to fail, purely from the 4s timer.
-    await expect(strip.locator('.run-progress-phase[data-phase="outcome"]')).toHaveClass(/phase-fail/, {
+    // The row flips to failed from the collection refetch.
+    await expect(row.locator(".run-history-status .status")).toContainText("failed", {
       timeout: 12_000,
     });
     await assertNoReloadHappened(page);

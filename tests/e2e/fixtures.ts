@@ -22,6 +22,7 @@ export const ADMIN_TOKEN = "shub_e2e_admin_token_pick_anything";
 
 /** A known non-dev session secret so the production guard never fires under http. */
 const SESSION_SECRET = "e2e-test-secret-not-the-dev-default-0123456789";
+const SECRETS_ENC_KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=";
 
 export type ApiResult<T = any> = { status: number; ok: boolean; body: T };
 
@@ -126,6 +127,7 @@ export const test = base.extend<{ hub: Hub }>({
           HOST: "127.0.0.1",
           SMITHERS_HUB_BOOTSTRAP_TOKEN: ADMIN_TOKEN,
           SMITHERS_HUB_SESSION_SECRET: SESSION_SECRET,
+          SECRETS_ENC_KEY,
           // Keep base url http so cookies are not marked Secure and the
           // production session-secret guard does not fire.
           BASE_URL: baseURL,

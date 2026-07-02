@@ -37,7 +37,7 @@ function ApprovalFact({ label, children }) {
 // Approvals list. Ported from renderApprovals().
 export function Approvals() {
   const { data, isLoading } = useQuery({
-    queryKey: ["approvals"],
+    queryKey: ["approvals-view"],
     queryFn: () => api("/api/approvals")
   });
   const approvals = data?.approvals || [];

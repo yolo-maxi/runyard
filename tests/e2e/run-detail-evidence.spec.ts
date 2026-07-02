@@ -110,12 +110,12 @@ test("succeeded run detail renders timeline, log summary, artifact (with downloa
   await expect(metaStrip).toContainText("Duration");
 
   // EVENTS / TIMELINE: the full timeline lists the emitted events.
-  const logPanel = page.locator('details.run-section[data-run-section="log"]#panel-logs');
+  const logPanel = page.locator('details.run-section[data-run-section="log"]');
   await expect(logPanel).toBeAttached();
   // The log section may render collapsed depending on stored prefs/status — open
   // it so its body (timeline + totals) is reliably visible.
   await logPanel.evaluate((el) => ((el as HTMLDetailsElement).open = true));
-  const timeline = page.locator("#run-log-full-list");
+  const timeline = logPanel.locator(".run-log-list");
   await expect(timeline).toBeVisible();
   const timelineRows = timeline.locator("li.run-log-event");
   // We emitted HAPPY_EVENTS plus the runner adds lifecycle events; assert the
@@ -132,9 +132,7 @@ test("succeeded run detail renders timeline, log summary, artifact (with downloa
   await expect(totals).toContainText("highlights");
 
   // ARTIFACTS: the uploaded artifact is listed with a working download link.
-  const artifactsPanel = page.locator(
-    'details.run-section[data-run-section="artifacts"]#panel-artifacts',
-  );
+  const artifactsPanel = page.locator('details.run-section[data-run-section="artifacts"]');
   await expect(artifactsPanel).toBeAttached();
   // The section may render collapsed depending on stored prefs — open it so the
   // body (and its links) are reliably visible.
@@ -142,7 +140,7 @@ test("succeeded run detail renders timeline, log summary, artifact (with downloa
   const artifactRow = artifactsPanel.locator(`li.artifact-row#artifact-${artifactId}`);
   await expect(artifactRow).toBeVisible();
   await expect(artifactRow.locator(".artifact-row-name")).toContainText(artifactName);
-  const downloadLink = artifactRow.locator(`a[href="/api/artifacts/${artifactId}/download"]`);
+  const downloadLink = artifactRow.locator(`a[href="/api/artifacts/${artifactId}/download"]`).first();
   await expect(downloadLink).toBeVisible();
 
   // Verify the download link actually serves the artifact content (authn via
@@ -204,7 +202,7 @@ test("failed run detail renders the diagnostics panel with a failure timeline", 
   await expect(diagPanel).toContainText(/failed/i);
 });
 
-test("runs list progress strip updates to succeeded WITHOUT a page reload (live poll)", async ({
+test("runs list row updates to succeeded WITHOUT a page reload (live poll)", async ({
   hub,
   page,
 }) => {
@@ -225,12 +223,10 @@ test("runs list progress strip updates to succeeded WITHOUT a page reload (live 
   // redirect; there is already a run so it won't trigger anyway).
   await page.goto(`${hub.baseURL}/app#runs`);
 
-  // The queued run renders an active progress strip whose outcome phase is
-  // still pending (not yet ok/fail/cancel).
-  const strip = page.locator(`[data-run-progress="${runId}"]`);
-  await expect(strip).toBeVisible({ timeout: 10_000 });
-  const outcomePhase = strip.locator('.run-progress-phase[data-phase="outcome"]');
-  await expect(outcomePhase).toHaveClass(/phase-pending/);
+  // The queued run renders in the live runs list.
+  const row = page.locator(`article#run-${runId}`);
+  await expect(row).toBeVisible({ timeout: 10_000 });
+  await expect(row.locator(".run-history-status .status")).toContainText("queued");
 
   // Drive the run to terminal success server-side (no page interaction).
   let claimed = false;
@@ -248,17 +244,9 @@ test("runs list progress strip updates to succeeded WITHOUT a page reload (live 
   await runner.emitMany(runId, HAPPY_EVENTS);
   await runner.complete(runId, { ok: true });
 
-  // LIVE-UPDATE ASSERTION (no page.reload()): the per-card poll
-  // (pollActiveRunProgress, 4s cadence) re-fetches GET /api/runs/:id and swaps
-  // the [data-run-progress] <ol> in place. The outcome phase must flip from
-  // phase-pending to phase-ok ("Done") on its own. We re-resolve the locator
-  // each poll (the node is replaced) and allow > one 4s tick.
-  await expect(page.locator(`[data-run-progress="${runId}"] .run-progress-phase[data-phase="outcome"]`)).toHaveClass(
-    /phase-ok/,
-    { timeout: 15_000 },
-  );
-  // And it shows the terminal "Done" label, again with no reload.
-  await expect(
-    page.locator(`[data-run-progress="${runId}"] .run-progress-phase[data-phase="outcome"] .run-progress-label`),
-  ).toHaveText("Done");
+  // LIVE-UPDATE ASSERTION (no page.reload()): the runs collection refetches and
+  // the row flips from queued to succeeded on its own.
+  await expect(row.locator(".run-history-status .status")).toContainText("succeeded", {
+    timeout: 15_000,
+  });
 });

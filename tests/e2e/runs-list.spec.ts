@@ -11,11 +11,9 @@ import { fakeRunner } from "./fakeRunner";
  * transition WITHOUT a page reload (the 4s strip poll).
  *
  * Selectors come from public/app.js:
- *   - run cards:        article.run-card  (id #run-<id>, classes include run.status)
- *   - status badge:     article.run-card .run-card-status .status
- *   - detail link:      article.run-card .run-card-title a[href="#runs/<id>"]
- *   - progress strip:   [data-run-progress="<id>"]  (the node the poll replaces)
- *   - outcome phase:    .run-progress-phase[data-phase="outcome"]
+ *   - run rows/cards:   article#run-<id>  (classes include run.status)
+ *   - status badge:     article#run-<id> .run-history-status .status
+ *   - detail link:      article#run-<id> .run-history-title a[href="#runs/<id>"]
  *   - status filter:    #runs?status=<value> (home filter; renderHome fetches
  *                       /api/runs?status=<value>)
  */
@@ -106,30 +104,30 @@ test("runs list renders cards with status badges + detail links and reflects dif
 
   // Cards render for all three runs, each with a status badge + a detail link.
   for (const id of [succeededId, failedId, queuedId]) {
-    const card = page.locator(`article.run-card#run-${id}`);
+    const card = page.locator(`article#run-${id}`);
     await expect(card).toBeVisible({ timeout: 10_000 });
-    await expect(card.locator(".run-card-status .status")).toBeVisible();
-    await expect(card.locator(`.run-card-title a[href="#runs/${id}"]`)).toBeVisible();
+    await expect(card.locator(".run-history-status .status, .run-card-status .status")).toBeVisible();
+    await expect(card.locator(`.run-history-title a[href="#runs/${id}"], .run-card-title a[href="#runs/${id}"]`)).toBeVisible();
   }
 
   // The list reflects the three distinct statuses: the run-card root carries the
   // status as a class, and the badge text shows the status word.
-  await expect(page.locator(`article.run-card#run-${succeededId}.succeeded`)).toBeVisible();
-  await expect(page.locator(`article.run-card#run-${failedId}.failed`)).toBeVisible();
-  await expect(page.locator(`article.run-card#run-${queuedId}.queued`)).toBeVisible();
+  await expect(page.locator(`article#run-${succeededId}.succeeded`)).toBeVisible();
+  await expect(page.locator(`article#run-${failedId}.failed`)).toBeVisible();
+  await expect(page.locator(`article#run-${queuedId}.queued`)).toBeVisible();
 
   await expect(
-    page.locator(`article.run-card#run-${succeededId} .run-card-status .status`),
+    page.locator(`article#run-${succeededId} .run-history-status .status, article#run-${succeededId} .run-card-status .status`),
   ).toContainText("succeeded");
   await expect(
-    page.locator(`article.run-card#run-${failedId} .run-card-status .status`),
+    page.locator(`article#run-${failedId} .run-history-status .status, article#run-${failedId} .run-card-status .status`),
   ).toContainText("failed");
   await expect(
-    page.locator(`article.run-card#run-${queuedId} .run-card-status .status`),
+    page.locator(`article#run-${queuedId} .run-history-status .status, article#run-${queuedId} .run-card-status .status`),
   ).toContainText("queued");
 
   // The detail link actually navigates into the run detail view.
-  await page.locator(`article.run-card#run-${succeededId} .run-card-title a`).click();
+  await page.locator(`article#run-${succeededId} .run-history-title a, article#run-${succeededId} .run-card-title a`).click();
   await expect(
     page.locator('header.run-banner[data-status="succeeded"]'),
   ).toBeVisible({ timeout: 10_000 });
@@ -159,26 +157,26 @@ test("status filter narrows the runs list to a single status", async ({ hub, pag
   // Filter to succeeded only via the route the UI exposes (renderHome fetches
   // /api/runs?status=succeeded). The succeeded card shows; the failed one does not.
   await page.goto(`${hub.baseURL}/app#runs?status=succeeded`);
-  await expect(page.locator(`article.run-card#run-${succeededId}`)).toBeVisible({
+  await expect(page.locator(`article#run-${succeededId}`)).toBeVisible({
     timeout: 10_000,
   });
-  await expect(page.locator(`article.run-card#run-${failedId}`)).toHaveCount(0);
+  await expect(page.locator(`article#run-${failedId}`)).toHaveCount(0);
   // The active-filter chip confirms the status filter is in effect.
   await expect(page.locator('[data-filter-chip="status"]')).toContainText("succeeded");
 
   // Flip the filter to failed: now only the failed card is present.
   await page.goto(`${hub.baseURL}/app#runs?status=failed`);
-  await expect(page.locator(`article.run-card#run-${failedId}`)).toBeVisible({
+  await expect(page.locator(`article#run-${failedId}`)).toBeVisible({
     timeout: 10_000,
   });
-  await expect(page.locator(`article.run-card#run-${succeededId}`)).toHaveCount(0);
+  await expect(page.locator(`article#run-${succeededId}`)).toHaveCount(0);
 
   // And clearing the filter (plain #runs) shows both again.
   await page.goto(`${hub.baseURL}/app#runs`);
-  await expect(page.locator(`article.run-card#run-${succeededId}`)).toBeVisible({
+  await expect(page.locator(`article#run-${succeededId}`)).toBeVisible({
     timeout: 10_000,
   });
-  await expect(page.locator(`article.run-card#run-${failedId}`)).toBeVisible();
+  await expect(page.locator(`article#run-${failedId}`)).toBeVisible();
 });
 
 test("?limit caps how many runs the list requests/renders", async ({ hub, page }) => {
@@ -197,7 +195,7 @@ test("?limit caps how many runs the list requests/renders", async ({ hub, page }
   await login(page, hub);
   await page.goto(`${hub.baseURL}/app#runs`);
   for (const id of ids) {
-    await expect(page.locator(`article.run-card#run-${id}`)).toBeVisible({
+    await expect(page.locator(`article#run-${id}`)).toBeVisible({
       timeout: 10_000,
     });
   }
@@ -214,14 +212,10 @@ test("runs list reflects a status transition live, without a page reload", async
   await login(page, hub);
   await page.goto(`${hub.baseURL}/app#runs`);
 
-  // The queued run's card is active and its outcome phase is still pending.
-  const card = page.locator(`article.run-card#run-${runId}`);
+  // The queued run's row is active.
+  const card = page.locator(`article#run-${runId}`);
   await expect(card).toBeVisible({ timeout: 10_000 });
-  const strip = page.locator(`[data-run-progress="${runId}"]`);
-  await expect(strip).toBeVisible();
-  await expect(
-    strip.locator('.run-progress-phase[data-phase="outcome"]'),
-  ).toHaveClass(/phase-pending/);
+  await expect(card.locator(".run-history-status .status")).toContainText("queued");
 
   // Now drive the run to succeeded on the server AFTER the page is rendered.
   const runner = await fakeRunner(hub, { tags: ["smithers", "local"] });
@@ -232,15 +226,9 @@ test("runs list reflects a status transition live, without a page reload", async
     .poll(async () => (await hub.api("GET", `/api/runs/${runId}`)).body.run.status)
     .toBe("succeeded");
 
-  // LIVE ASSERTION (no page.reload(), no re-navigation): the 4s strip poll
-  // (pollActiveRunProgress, app.js:1280-1317) GETs /api/runs/<id>, rebuilds the
-  // strip, and replaces the [data-run-progress] <ol> in place. So the outcome
-  // phase flips from phase-pending to phase-ok purely from the polling-driven
-  // DOM update. We wait past the 4s cadence for the swap.
-  await expect(
-    page.locator(`[data-run-progress="${runId}"] .run-progress-phase[data-phase="outcome"]`),
-  ).toHaveClass(/phase-ok/, { timeout: 15_000 });
-  await expect(
-    page.locator(`[data-run-progress="${runId}"] .run-progress-phase[data-phase="outcome"]`),
-  ).not.toHaveClass(/phase-pending/);
+  // LIVE ASSERTION (no page.reload(), no re-navigation): the runs collection
+  // refetches and the row status flips in place.
+  await expect(card.locator(".run-history-status .status")).toContainText("succeeded", {
+    timeout: 15_000,
+  });
 });
