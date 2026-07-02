@@ -24,6 +24,7 @@ describe("seed capability catalog", () => {
       "implement-change-gated",
       "idea-to-product",
       "app-skinner",
+      "gobbler-comic-pipeline",
       "run-knowledge-builder",
       "workflow-doctor",
       "improve-no-deploy",

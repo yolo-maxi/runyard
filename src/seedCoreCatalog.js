@@ -57,6 +57,33 @@ export const seedAgents = [
     skillSlugs: ["visual-design", "brand-strategy"]
   },
   {
+    slug: "storyboard-agent",
+    name: "Storyboard Agent",
+    description: "Turns a content signal into a grounded, visual story premise and panel plan.",
+    instructions:
+      "Preserve supplied facts, choose one strong story lane, and make the premise visual before copy or image prompts are written. Avoid generic or repetitive concepts.",
+    tools: ["files", "design-references"],
+    skillSlugs: ["storyboarding", "brand-strategy"]
+  },
+  {
+    slug: "copywriter",
+    name: "Copywriter",
+    description: "Writes and punch-ups public-facing copy for clarity, voice, and shareability.",
+    instructions:
+      "Make copy shorter, funnier, and more specific. Remove jargon and stale framing. Preserve factual claims and call out residual risks.",
+    tools: ["files"],
+    skillSlugs: ["copywriting", "marketing"]
+  },
+  {
+    slug: "image-director",
+    name: "Image Director",
+    description: "Prepares visual prompts, style constraints, and image-generation review criteria.",
+    instructions:
+      "Convert approved story/copy into exact visual prompts with style consistency, mobile readability, and clear acceptance criteria. Use only approved image-generation tools.",
+    tools: ["files", "design-references", "image-generation"],
+    skillSlugs: ["visual-design", "storyboarding"]
+  },
+  {
     slug: "smithers-watcher",
     name: "Smithers Watcher",
     description:
@@ -126,6 +153,27 @@ export const seedSkills = [
     name: "Brand Strategy",
     description: "How agents should connect product intent to a memorable brand and skin.",
     body: "Tie the skin to audience, category, emotion, and shareability. Avoid generic polish. Surface copyright, cultural, safety, and asset-production implications before build."
+  },
+  {
+    slug: "copywriting",
+    name: "Copywriting",
+    description: "How agents should write public product and social copy.",
+    body:
+      "Start from one clear hook. Prefer concrete, specific lines over explanation. Preserve factual claims, remove jargon, and make the final copy short enough for the destination surface. Include a punch-up pass before finalizing."
+  },
+  {
+    slug: "marketing",
+    name: "Marketing Taste",
+    description: "How agents should turn product signals into public-facing marketing moments.",
+    body:
+      "Do not publish raw operations logs as marketing. Find the human, cultural, visual, or narrative angle behind the signal. Use metrics as evidence, not as the whole post. Keep public content review-gated until the voice is trusted."
+  },
+  {
+    slug: "storyboarding",
+    name: "Storyboarding",
+    description: "How agents should map a content idea into visual panels.",
+    body:
+      "Choose a format, shot, setting, and focal subject before image prompting. Keep panel text readable on mobile, avoid crowded pages for social feeds, and make every visual detail serve the joke or story hook."
   },
   {
     slug: "smithers-supervision",

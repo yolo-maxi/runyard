@@ -124,6 +124,73 @@ export const seedProductCapabilities = [
     workflow: { engine: "smithers", entry: ".smithers/workflows/app-skinner.tsx" }
   },
   {
+    slug: "gobbler-comic-pipeline",
+    name: "Gobbler Comic Pipeline",
+    description:
+      "Turns Warplet Gobbler signals into a Gloom & Gobble comic/storyboard packet, runs a mandatory copy/funniness pass, then prepares exact Codex image_gen prompts for human review before any image generation or public posting.",
+    category: "Marketing",
+    keywords: [
+      "gobbler",
+      "warplet",
+      "comic",
+      "farcaster",
+      "marketing",
+      "storyboard",
+      "copywriter",
+      "funniness",
+      "image_gen",
+      "smithers"
+    ],
+    inputSchema: {
+      type: "object",
+      required: ["signal"],
+      properties: {
+        signal: {
+          type: "string",
+          description: "Raw content signal: gobble event, auction result, fee spike, volume spike, milestone, or boring-day summary."
+        },
+        sourceFacts: {
+          type: "string",
+          description: "Optional grounded facts to preserve: Warplet id, traits, tx hash, reserve count, auction result, fee/volume context."
+        },
+        warpletId: { type: "string", description: "Optional Warplet token id for real-event episodes." },
+        warpletImageUrl: { type: "string", description: "Optional reference image URL for the Warplet/NFT visual." },
+        sidequestLane: {
+          type: "string",
+          description:
+            "Optional lane: missing-bureau, insurance-desk, auction-gossip, evidence-board, witness-statement, city-notice, diet-review, courtroom, intern, conspiracy, or auto."
+        },
+        format: {
+          type: "string",
+          description: "Optional format: single-panel, two-panel, three-panel, missing-poster, cctv-still, case-file, front-page, or auto."
+        },
+        styleNotes: { type: "string", description: "Optional extra style guidance or current brand feedback." },
+        avoid: { type: "string", description: "Optional content or visual elements to avoid for this run." },
+        imageCount: { type: "number", description: "How many final Codex image_gen prompts to prepare (1-3, default 1)." },
+        castCount: { type: "number", description: "How many Farcaster copy options to draft before selecting/polishing (1-5, default 3)." }
+      }
+    },
+    outputSchema: {
+      type: "object",
+      properties: {
+        storyboard: { type: "object" },
+        copyPass: { type: "object" },
+        imagePack: { type: "object" },
+        reviewPacket: { type: "object" }
+      }
+    },
+    requiredRunnerTags: ["smithers", "vps"],
+    requiredSkills: ["copywriting", "visual-design", "marketing", "storyboarding"],
+    requiredAgents: ["storyboard-agent", "copywriter", "image-director"],
+    approvalPolicy: {
+      required: true,
+      reason:
+        "Produces public-marketing candidates and Codex image_gen prompts; human review is required before image generation or posting."
+    },
+    supervision: { default: true },
+    workflow: { engine: "smithers", entry: ".smithers/workflows/gobbler-comic-pipeline.tsx" }
+  },
+  {
     slug: "run-knowledge-builder",
     name: "Run Knowledge Builder",
     description:
