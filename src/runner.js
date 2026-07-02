@@ -21,7 +21,8 @@ import { readClaudeOauthToken } from "./claudeOauthToken.js";
 import { isDraining, resolveDataDir } from "./drain.js";
 import { resolveHubUrl, resolveHubToken } from "./hubConnection.js";
 import { packageVersion } from "./packageInfo.js";
-import { resolveSmithersBin, resolveExecWrapper } from "./resolveSmithersBin.js";
+import { resolveSmithersBin } from "./resolveSmithersBin.js";
+import { resolveRunnerExecWrapper } from "./runnerSandbox.js";
 import {
   createSmithersRunRegistry,
   isHubTerminalStatus,
@@ -52,14 +53,16 @@ const execFileAsync = promisify(execFile);
 // Resolve once at startup: env override → pinned bun global install → PATH.
 // Keeps the pinned smithers-orchestrator engine deterministic on dstack images.
 const smithersBin = resolveSmithersBin();
-// Unopinionated execution seam: empty = run the engine directly on the host
-// (default); set RUNNER_EXEC_WRAPPER to run each engine invocation through a
-// deployer-chosen sandbox/container/job launcher. See resolveExecWrapper().
-const execWrapper = resolveExecWrapper();
 
 const baseUrl = resolveHubUrl();
 const token = resolveHubToken({ allowBootstrap: true });
 const workspace = path.resolve(process.env.SMITHERS_WORKSPACE || process.cwd());
+// Unopinionated launch-only execution seam: empty = run the engine directly on
+// the host (default). RUNNER_SANDBOX=bubblewrap generates a bwrap sandbox argv;
+// otherwise a literal RUNNER_EXEC_WRAPPER (docker/firejail/custom) is used
+// verbatim. Only the workflow launch is wrapped — see resolveRunnerExecWrapper()
+// and WRAPPED_SUBCOMMANDS. Needs `workspace`/`smithersBin`, hence resolved here.
+const execWrapper = resolveRunnerExecWrapper({ workspace, smithersBin });
 const location = process.env.SMITHERS_RUNNER_LOCATION || "vps"; // "vps" | "local"
 const name = process.env.SMITHERS_RUNNER_NAME || `${os.hostname()} (${location})`;
 const tags = normalizeRunnerTags(

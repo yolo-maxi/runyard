@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { resolveSmithersBin, resolveExecWrapper } from "../src/resolveSmithersBin.js";
+import { resolveSmithersBin, resolveExecWrapper, parseCommandList } from "../src/resolveSmithersBin.js";
 
 function tmpDir() {
   return mkdtempSync(path.join(os.tmpdir(), "resolve-smithers-"));
@@ -62,4 +62,12 @@ test("resolveExecWrapper: JSON array preserves args with spaces", () => {
 
 test("resolveExecWrapper: RUNYARD_ alias works", () => {
   assert.deepEqual(resolveExecWrapper({ RUNYARD_RUNNER_EXEC_WRAPPER: "firejail" }), ["firejail"]);
+});
+
+test("parseCommandList: shared tokenizer handles blank, whitespace, and JSON forms", () => {
+  assert.deepEqual(parseCommandList(""), []);
+  assert.deepEqual(parseCommandList("   "), []);
+  assert.deepEqual(parseCommandList(undefined), []);
+  assert.deepEqual(parseCommandList("/opt/a /opt/b"), ["/opt/a", "/opt/b"]);
+  assert.deepEqual(parseCommandList('["/a b","/c"]'), ["/a b", "/c"]);
 });

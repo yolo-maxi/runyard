@@ -43,18 +43,26 @@ export function resolveSmithersBin(env = process.env) {
 // deployer wishes. RunYard only prepends it; the deployer owns the wrapper's
 // behavior (workspace sharing, lifecycle, cleanup).
 //
-// Accepts a JSON array (precise argv — use when any token contains spaces) or a
-// plain whitespace-separated string. Returns [] when unset (bare host default).
-export function resolveExecWrapper(env = process.env) {
-  const raw = (env.RUNNER_EXEC_WRAPPER || env.RUNYARD_RUNNER_EXEC_WRAPPER || "").trim();
-  if (!raw) return [];
-  if (raw.startsWith("[")) {
+// Tokenize an operator-supplied list value. Accepts a JSON array (precise tokens
+// — use when any token contains spaces) or a plain whitespace-separated string.
+// Empty/blank input yields []. Shared by the exec-wrapper and sandbox-bind
+// parsing so both accept the same forgiving syntax.
+export function parseCommandList(raw) {
+  const trimmed = (raw || "").trim();
+  if (!trimmed) return [];
+  if (trimmed.startsWith("[")) {
     try {
-      const arr = JSON.parse(raw);
+      const arr = JSON.parse(trimmed);
       if (Array.isArray(arr)) return arr.map(String).filter((s) => s.length > 0);
     } catch {
       // not valid JSON — fall through to whitespace tokenization
     }
   }
-  return raw.split(/\s+/).filter((s) => s.length > 0);
+  return trimmed.split(/\s+/).filter((s) => s.length > 0);
+}
+
+// Returns [] when unset (bare host default). RUNYARD_RUNNER_EXEC_WRAPPER is an
+// accepted alias.
+export function resolveExecWrapper(env = process.env) {
+  return parseCommandList(env.RUNNER_EXEC_WRAPPER || env.RUNYARD_RUNNER_EXEC_WRAPPER || "");
 }
