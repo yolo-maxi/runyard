@@ -1,5 +1,6 @@
 import path from "node:path";
 import { largeInputPayload } from "./runnerPolicy.js";
+import { allowlistedBaseEnv } from "./childEnv.js";
 
 export const HUB_TERMINAL_STATUSES = new Set([
   "succeeded",
@@ -27,7 +28,10 @@ export function supervisorChildEnv({ baseEnv = process.env, token = "", baseUrl 
   if (claudeOauthToken && !secretEnv.CLAUDE_CODE_OAUTH_TOKEN) {
     supervisorEnv.CLAUDE_CODE_OAUTH_TOKEN = claudeOauthToken;
   }
-  return { ...baseEnv, ...supervisorEnv, ...secretEnv, ...runEnv };
+  // Only the OS/toolchain baseline from baseEnv reaches the child; the runner's
+  // own secrets stay behind. Everything the workflow needs comes through the
+  // explicit supervisor / secretEnv / runEnv channels below (highest precedence).
+  return { ...allowlistedBaseEnv(baseEnv), ...supervisorEnv, ...secretEnv, ...runEnv };
 }
 
 export function smithersLaunchRequest({ entry, input, workspace, resume = null, maxInlineInputBytes }) {

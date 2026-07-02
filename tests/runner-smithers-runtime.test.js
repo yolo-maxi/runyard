@@ -92,14 +92,21 @@ describe("runner Smithers runtime helpers", () => {
 
   it("builds supervisor child env with explicit hub URL/token and secret override precedence", () => {
     const env = supervisorChildEnv({
-      baseEnv: { BASE: "1" },
+      baseEnv: { PATH: "/usr/bin", HOME: "/home/runner", SECRETS_ENC_KEY: "master-key", BASE: "1" },
       token: "hub-token",
       baseUrl: "http://hub",
       claudeOauthToken: "local-oauth",
       secretEnv: { CLAUDE_CODE_OAUTH_TOKEN: "secret-oauth", API_KEY: "secret" }
     });
 
-    assert.equal(env.BASE, "1");
+    // Allowlisted OS/toolchain baseline still passes through.
+    assert.equal(env.PATH, "/usr/bin");
+    assert.equal(env.HOME, "/home/runner");
+    // Runner secrets and unlisted vars never reach the child.
+    assert.equal(env.SECRETS_ENC_KEY, undefined);
+    assert.equal(env.BASE, undefined);
+    // Explicit supervisor / secret channels still work, secretEnv wins over the
+    // locally-resolved oauth token.
     assert.equal(env.RUN_SMITHERS_HUB_TOKEN, "hub-token");
     assert.equal(env.RUN_SMITHERS_HUB_URL, "http://hub");
     assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, "secret-oauth");
