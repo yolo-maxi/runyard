@@ -18,3 +18,15 @@ ui-polish-screens/**
 test-results/
 playwright-report/
 /.last-run.json
+
+# smithers runtime state
+smithers.db
+smithers.db-shm
+smithers.db-wal
+
+# local code-review scratch tool
+review-site/
+
+# Local Smithers workspace + orchestration scripts (regenerate with `smithers init`)
+.smithers/
+smithers.sh
