@@ -9,11 +9,8 @@ import { AuthGate } from "./app/AuthGate.jsx";
 // public/app.js, which public/index.html loads as a module. See bin/build-web.mjs.
 
 function mount() {
-  const host = document.getElementById("root");
-  if (!host) {
-    console.error("[runyard] #root mount node missing");
-    return;
-  }
+  // createGatewayReactRoot resolves the mount node itself from `rootId` and
+  // throws if it is missing, so there is no separate host lookup here.
   createGatewayReactRoot(
     <StrictMode>
       <QueryClientProvider client={queryClient}>
