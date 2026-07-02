@@ -531,3 +531,54 @@ describe("gateway HTTP compat response helpers", () => {
     assert.match(cookies[2], /^session=; .*Max-Age=0/);
   });
 });
+
+describe("gateway HTTP compat error-handler and HEAD robustness", () => {
+  function baseReq(method, url) {
+    return { headers: {}, method, socket: { remoteAddress: "127.0.0.1" }, url };
+  }
+
+  it("falls back to 500 when an error handler itself throws instead of hanging the response", async () => {
+    const app = gatewayHttp();
+    app.get("/boom", () => {
+      throw new Error("route failure");
+    });
+    // 4-arg error handler that throws — must not escape handle().
+    app.use((_err, _req, _res, _next) => {
+      throw new Error("handler failure");
+    });
+    const res = createResponse();
+
+    const handled = await app.handle(baseReq("GET", "/boom"), res);
+
+    assert.equal(handled, true);
+    assert.equal(res.statusCode, 500);
+    assert.equal(res.writableEnded, true);
+    assert.deepEqual(JSON.parse(res.body), { error: "internal server error" });
+  });
+
+  it("does not double-send when an error handler already ended the response", async () => {
+    const app = gatewayHttp();
+    app.get("/boom", () => {
+      throw new Error("route failure");
+    });
+    app.use((_err, _req, res, _next) => res.status(418).json({ handled: true }));
+    const res = createResponse();
+
+    const handled = await app.handle(baseReq("GET", "/boom"), res);
+
+    assert.equal(handled, true);
+    assert.equal(res.statusCode, 418);
+    assert.deepEqual(JSON.parse(res.body), { handled: true });
+  });
+
+  it("answers HEAD with the matching GET route instead of 404", async () => {
+    const app = gatewayHttp();
+    app.get("/app", (_req, res) => res.status(200).send("<html></html>"));
+    const res = createResponse();
+
+    const handled = await app.handle(baseReq("HEAD", "/app"), res);
+
+    assert.equal(handled, true);
+    assert.equal(res.statusCode, 200);
+  });
+});

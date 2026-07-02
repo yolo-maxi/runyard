@@ -417,7 +417,10 @@ function safeDecodeURIComponent(value) {
 }
 
 function routeMatches(entry, req) {
-  if (entry.method && entry.method !== req.method) return false;
+  // Express answers HEAD with the matching GET handler; mirror that so HEAD
+  // probes to app routes don't fall through to the 404 fallback.
+  const effectiveMethod = req.method === "HEAD" ? "GET" : req.method;
+  if (entry.method && entry.method !== effectiveMethod) return false;
   if (entry.kind === "use") {
     if (entry.path === "/") return true;
     return req.path === entry.path || req.path.startsWith(`${entry.path}/`);
@@ -604,12 +607,23 @@ class GatewayBackedHttpApp {
         req._matchedUsePath = previousMatchedUsePath;
       }
     } catch (error) {
-      for (const handler of this.#errorHandlers) {
-        const continued = await runHandler(handler, req, res, error);
-        if (!continued || res.writableEnded) return true;
+      try {
+        for (const handler of this.#errorHandlers) {
+          const continued = await runHandler(handler, req, res, error);
+          if (!continued || res.writableEnded) return true;
+        }
+      } catch (handlerError) {
+        // An error handler itself threw or called next(err). Log it and fall
+        // through to the terminal 500 below rather than letting the rejection
+        // escape handle() (which would hang the response with no reply).
+        console.error(handlerError);
       }
       console.error(error);
-      if (!res.headersSent) res.status(500).json({ error: "internal server error" });
+      // Only write the fallback if the response hasn't already been (partly)
+      // sent; writing after headers/end would throw ERR_STREAM_WRITE_AFTER_END.
+      if (!res.headersSent && !res.writableEnded) {
+        res.status(500).json({ error: "internal server error" });
+      }
       return true;
     }
     if (!res.writableEnded) {
