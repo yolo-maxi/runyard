@@ -12,6 +12,7 @@
 // `pnpm build:vendor`, which index.html links directly. `pnpm build` runs both
 // steps for release builds.
 import { build, context } from "esbuild";
+import { readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -30,6 +31,12 @@ function resolveAppPeer(specifier) {
   } catch {
     return null;
   }
+}
+
+async function stripTrailingWhitespace(file) {
+  const code = await readFile(file, "utf8");
+  const normalized = code.replace(/[ \t]+$/gm, "");
+  if (normalized !== code) await writeFile(file, normalized);
 }
 
 /** @type {import('esbuild').BuildOptions} */
@@ -68,5 +75,6 @@ if (watch) {
   console.log(`watching web/ -> ${outfile}`);
 } else {
   await build(options);
+  await stripTrailingWhitespace(outfile);
   console.log(`built web app -> ${outfile}`);
 }

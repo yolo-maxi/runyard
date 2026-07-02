@@ -66,11 +66,19 @@ describe("run lifecycle route handlers", () => {
   it("records scrubbed run events and updates workflow steps", () => {
     const { events, handlers, updates } = harness();
     const res = response();
-    handlers.recordRunEvent(req({ type: "workflow.step", message: "use secret", data: { keep: true } }), res);
+    handlers.recordRunEvent(req({
+      type: "workflow.step",
+      message: "use secret token=shub_raw_event_token",
+      data: {
+        keep: true,
+        header: "authorization=Bearer shub_nested_event_token"
+      }
+    }), res);
 
-    assert.equal(res.body.event.message, "use [redacted]");
+    assert.equal(res.body.event.message, "use [redacted] token=[redacted]");
+    assert.equal(res.body.event.detail.header, "authorization=[redacted]");
     assert.equal(events[0].type, "workflow.step");
-    assert.deepEqual(updates, [{ runId: "run_1", patch: { current_step: "use [redacted]" } }]);
+    assert.deepEqual(updates, [{ runId: "run_1", patch: { current_step: "use [redacted] token=[redacted]" } }]);
   });
 
   it("starts runs idempotently without duplicate started events", () => {

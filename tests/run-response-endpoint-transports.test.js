@@ -55,6 +55,26 @@ describe("run response endpoint transports", () => {
     assert.match(result.error, /\[redacted\]/);
   });
 
+  it("blocks HTTP delivery to hostnames that resolve to private addresses", async () => {
+    const calls = [];
+    const result = await deliverHttpResponseEndpoint(
+      { type: "http", config: { url: "https://callback.example/hook", method: "POST" } },
+      {},
+      {
+        timeoutMs: 1000,
+        lookup: async () => [{ address: "127.0.0.1", family: 4 }],
+        fetchImpl: async () => {
+          calls.push("fetch");
+          return response();
+        }
+      }
+    );
+
+    assert.equal(result.ok, false);
+    assert.match(result.error, /unsafe response endpoint URL/);
+    assert.equal(calls.length, 0);
+  });
+
   it("builds and delivers Telegram messages", async () => {
     const run = { id: "run_1", status: "failed", capabilityName: "Deploy" };
     const payload = { error: "boom", artifacts: [{ id: "artifact_1" }] };

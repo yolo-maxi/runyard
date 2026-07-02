@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -131,6 +132,28 @@ export function releaseRepoLease(lease, { env = process.env } = {}) {
   if (current?.leaseId !== lease.leaseId) return false;
   rmSync(lease.lockDir, { recursive: true, force: true });
   return true;
+}
+
+export function releaseRunRepoLeases(runId, { env = process.env } = {}) {
+  const targetRunId = cleanString(runId);
+  if (!targetRunId) return 0;
+  const root = leaseRoot(env);
+  let released = 0;
+  let entries = [];
+  try {
+    entries = readdirSync(root, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.endsWith(".lock")) continue;
+    const lockDir = path.join(root, entry.name);
+    const lease = readLease(lockDir);
+    if (lease?.runId !== targetRunId || !lease?.leaseId) continue;
+    rmSync(lockDir, { recursive: true, force: true });
+    released += 1;
+  }
+  return released;
 }
 
 export function acquireRepoLease({

@@ -9,6 +9,7 @@
 //
 // Slice 2 will add the actual outbound delivery — see
 // `specs/run-response-endpoints.md` for the full contract.
+import { blockedHttpTargetReason } from "./httpTargetSafety.js";
 
 const ALLOWED_TYPES = new Set(["http", "telegram"]);
 const HTTP_METHODS = new Set(["POST", "PUT"]);
@@ -77,6 +78,8 @@ function parseHttpConfig(config) {
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     return fail("config.url must use http or https");
   }
+  const blockedReason = blockedHttpTargetReason(url);
+  if (blockedReason) return fail(`config.url is not allowed: ${blockedReason}`);
   const method = String(config.method || "POST").toUpperCase().trim();
   if (!HTTP_METHODS.has(method)) return fail("config.method must be POST or PUT");
   let headers = {};

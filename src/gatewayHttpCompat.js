@@ -423,6 +423,65 @@ function routeMatches(entry, req) {
   return true;
 }
 
+function normalizeRegisteredPath(routePath) {
+  const normalized = String(routePath || "/").trim().replace(/\/+$/, "") || "/";
+  return normalized.startsWith("/") ? normalized : `/${normalized}`;
+}
+
+/*
+ * The Smithers light-gateway owns these HTTP paths before app routes run:
+ * - GET /health
+ * - GET /workflows
+ * - GET /metrics
+ * - POST /rpc
+ *
+ * Smithers gateway RPC protocol v1 uses X-Smithers-API-Version: v1, POST /rpc,
+ * and POST /v1/rpc/:method. App routes registered for those concrete paths are
+ * never reached because light-gateway answers them first.
+ */
+const GATEWAY_RESERVED_EXACT_PATHS = [
+  { method: "GET", path: "/health", label: "GET /health" },
+  { method: "GET", path: "/workflows", label: "GET /workflows" },
+  { method: "GET", path: "/metrics", label: "GET /metrics" },
+  { method: "POST", path: "/rpc", label: "POST /rpc" }
+];
+const GATEWAY_RESERVED_RPC_SAMPLE = "/v1/rpc/__method__";
+
+function reservedGatewayShadowForRoute(method, routePath) {
+  const normalizedPath = normalizeRegisteredPath(routePath);
+  const compiled = compileRoutePath(normalizedPath);
+  const exactShadow = GATEWAY_RESERVED_EXACT_PATHS.find((reserved) => (
+    reserved.method === method && compiled.regexp.test(reserved.path)
+  ));
+  if (exactShadow) return exactShadow.label;
+
+  if (method !== "POST") return "";
+  if (compiled.regexp.test(GATEWAY_RESERVED_RPC_SAMPLE)) return "POST /v1/rpc/:method";
+  if (/^\/v1\/rpc\/[^/]+$/.test(normalizedPath)) return "POST /v1/rpc/:method";
+  return "";
+}
+
+function usePathCoversReservedPath(pathPrefix, reservedPath) {
+  if (pathPrefix === "/") return false;
+  return reservedPath === pathPrefix || reservedPath.startsWith(`${pathPrefix}/`);
+}
+
+function reservedGatewayShadowForUse(pathPrefix) {
+  const normalizedPath = normalizeRegisteredPath(pathPrefix);
+  const exactShadow = GATEWAY_RESERVED_EXACT_PATHS.find((reserved) => usePathCoversReservedPath(normalizedPath, reserved.path));
+  if (exactShadow) return exactShadow.label;
+  if (usePathCoversReservedPath(normalizedPath, GATEWAY_RESERVED_RPC_SAMPLE)) return "POST /v1/rpc/:method";
+  return "";
+}
+
+function assertNotGatewayReserved(kind, method, routePath) {
+  const shadowed = kind === "use"
+    ? reservedGatewayShadowForUse(routePath)
+    : reservedGatewayShadowForRoute(method, routePath);
+  if (!shadowed) return;
+  throw new Error(`Cannot register ${kind === "use" ? "middleware" : `${method} route`} for ${routePath}: shadowed by Smithers gateway reserved path ${shadowed}`);
+}
+
 async function runHandler(handler, req, res, error) {
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -481,6 +540,7 @@ class GatewayBackedHttpApp {
 
   use(pathOrHandler, ...handlers) {
     const pathPrefix = typeof pathOrHandler === "string" ? pathOrHandler.replace(/\/+$/, "") || "/" : "/";
+    if (typeof pathOrHandler === "string") assertNotGatewayReserved("use", null, pathPrefix);
     const stack = typeof pathOrHandler === "string" ? handlers : [pathOrHandler, ...handlers];
     for (const handler of stack.flat()) {
       if (typeof handler !== "function") continue;
@@ -491,6 +551,7 @@ class GatewayBackedHttpApp {
   }
 
   #route(method, routePath, handlers) {
+    assertNotGatewayReserved("route", method, routePath);
     const compiled = compileRoutePath(routePath);
     this.#entries.push({ kind: "route", method, path: routePath, ...compiled, handlers: handlers.flat() });
     return this;
@@ -519,11 +580,9 @@ class GatewayBackedHttpApp {
   async handle(req, res) {
     decorateRequest(req, this.#settings);
     decorateResponse(res);
-    let matchedRoute = false;
     try {
       for (const entry of this.#entries) {
         if (!routeMatches(entry, req)) continue;
-        if (entry.kind === "route") matchedRoute = true;
         const previousMatchedUsePath = req._matchedUsePath;
         if (entry.kind === "use") req._matchedUsePath = entry.path === "/" ? "" : entry.path;
         for (const handler of entry.handlers) {
@@ -542,7 +601,10 @@ class GatewayBackedHttpApp {
       if (!res.headersSent) res.status(500).json({ error: "internal server error" });
       return true;
     }
-    return matchedRoute;
+    if (!res.writableEnded) {
+      res.status(404).json({ error: "not found" });
+    }
+    return true;
   }
 
   listen(port = 0, host, callback) {

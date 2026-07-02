@@ -1,13 +1,14 @@
 import { after, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
   acquireRepoLease,
   prepareMutatingRepo,
   releaseRepoLease,
+  releaseRunRepoLeases,
   validateBeforeCommit,
   validateBeforePush
 } from "../workflow-templates/workflows/repo-mutation-lease.js";
@@ -53,7 +54,7 @@ describe("repo mutation leases", () => {
     const lease = acquireRepoLease({ repoDir, targetBranch: "main", workflow: "test", env });
 
     assert.equal(lease.mode, "sequential");
-    assert.equal(lease.repoDir, repoDir);
+    assert.equal(lease.repoDir, realpathSync(repoDir));
     assert.equal(lease.targetBranch, "main");
     assert.ok(existsSync(lease.lockDir));
     assert.equal(releaseRepoLease(lease, { env }), true);
@@ -71,6 +72,16 @@ describe("repo mutation leases", () => {
     );
 
     releaseRepoLease(first, { env });
+  });
+
+  it("releases all sequential leases for a terminal runner run", () => {
+    const repoDir = initRepo("cleanup");
+    const env = leaseEnv("cleanup");
+    const lease = acquireRepoLease({ repoDir, targetBranch: "main", workflow: "test", env });
+
+    assert.equal(existsSync(lease.lockDir), true);
+    assert.equal(releaseRunRepoLeases("run_cleanup", { env }), 1);
+    assert.equal(existsSync(lease.lockDir), false);
   });
 
   it("refuses to start a mutating lease on a dirty checkout", () => {

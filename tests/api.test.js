@@ -966,6 +966,8 @@ describe("Run response endpoints (slice 1)", () => {
       { responseEndpoint: { type: "http" } }, // no config
       { responseEndpoint: { type: "http", config: { url: "not-a-url" } } }, // bad URL
       { responseEndpoint: { type: "http", config: { url: "ftp://example.com/x" } } }, // wrong scheme
+      { responseEndpoint: { type: "http", config: { url: "http://127.0.0.1/hook" } } }, // local SSRF target
+      { responseEndpoint: { type: "http", config: { url: "https://user:pass@example.com/hook" } } }, // credentials
       { responseEndpoint: { type: "http", config: { url: "https://example.com", method: "DELETE" } } },
       {
         responseEndpoint: {

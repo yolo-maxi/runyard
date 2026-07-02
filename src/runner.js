@@ -19,6 +19,7 @@ import { DEFAULT_MAX_INLINE_INPUT_BYTES } from "./runnerPolicy.js";
 import { smithersEventMessage } from "./runnerSmithersEvents.js";
 import { readClaudeOauthToken } from "./claudeOauthToken.js";
 import { isDraining, resolveDataDir } from "./drain.js";
+import { releaseRunRepoLeases } from "../workflow-templates/workflows/repo-mutation-lease.js";
 import { resolveSmithersBin, resolveExecWrapper } from "./resolveSmithersBin.js";
 import {
   createSmithersRunRegistry,
@@ -501,6 +502,16 @@ async function executeAssignment(assignment) {
     await failRun(run.id, error.stack || error.message).catch(() => {});
     console.error(`Run ${run.id} failed:`, error.message);
   } finally {
+    try {
+      const releasedLeases = releaseRunRepoLeases(run.id, { env: process.env });
+      if (releasedLeases) {
+        await event(run.id, "runner.repo_leases_released", `Released ${releasedLeases} repo mutation lease(s) for ${run.id}`, {
+          releasedLeases
+        });
+      }
+    } catch (error) {
+      console.error(`repo lease cleanup failed for ${run.id}:`, error.message);
+    }
     smithersRegistry.unregister(run.id);
     activeRuns.delete(run.id);
     activeRunKinds.delete(run.id);

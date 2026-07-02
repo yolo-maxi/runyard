@@ -51,6 +51,37 @@ async function requestTrustProbe({ trustProxy, remoteAddress = "127.0.0.1", encr
   return JSON.parse(res.body);
 }
 
+describe("gateway HTTP compat routing", () => {
+  it("returns the app 404 response for an unregistered path instead of falling through to the gateway stub", async () => {
+    const app = gatewayHttp();
+    app.use((_req, res) => res.status(404).json({ error: "app not found" }));
+    const req = {
+      headers: {},
+      method: "GET",
+      socket: {
+        remoteAddress: "127.0.0.1"
+      },
+      url: "/does-not-exist"
+    };
+    const res = createResponse();
+
+    const handled = await app.handle(req, res);
+
+    assert.equal(handled, true);
+    assert.equal(res.statusCode, 404);
+    assert.deepEqual(JSON.parse(res.body), { error: "app not found" });
+  });
+
+  it("rejects app routes shadowed by light-gateway reserved paths", () => {
+    const app = gatewayHttp();
+
+    assert.throws(
+      () => app.get("/health", (_req, res) => res.json({ ok: true })),
+      /shadowed by Smithers gateway reserved path GET \/health/
+    );
+  });
+});
+
 describe("gateway HTTP compat trust proxy", () => {
   it("uses X-Forwarded-For and X-Forwarded-Proto when a loopback peer is trusted", async () => {
     const body = await requestTrustProbe({

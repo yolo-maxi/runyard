@@ -1,10 +1,16 @@
 node_modules/
 data/
 .env
+.env.*
+!.env.example
+*.log
+logs/
+.DS_Store
 test-artifacts/
 runner.env
 .runtime/
 support-runner.env
+.jj/
 
 # Security: never track env backups, runtime logs, or UI screenshots of admin pages
 *.bak

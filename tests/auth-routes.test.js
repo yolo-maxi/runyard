@@ -79,8 +79,7 @@ describe("auth route helpers", () => {
       telegramConfigured: true,
       telegramApprovalPrivateConfigured: true,
       telegramApprovalTarget: "fallback-chat",
-      telegramWebhookSecured: true,
-      dataDir: "/data"
+      telegramWebhookSecured: true
     });
   });
 

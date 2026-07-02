@@ -1,5 +1,6 @@
 import { deepLinks } from "./deepLinks.js";
 import { now } from "./ids.js";
+import { redactValue } from "./redaction.js";
 import { executionIntentFromInput } from "./runExecution.js";
 import { classifyFailureStatus, failureEventType, normalizeFailureStatus } from "./runFailureClass.js";
 import { requestOrigin } from "./requestContext.js";
@@ -20,6 +21,8 @@ export function createRunLifecycleHandlers({
   updateRun,
   withRunLinks
 } = {}) {
+  const scrubForStorage = (value) => redactValue(scrubStoredSecrets(value));
+
   function queueNextChainedRun(parentRun, output, req) {
     const { chain, index } = chainMetadata(parentRun.input || {});
     const next = chain[index];
@@ -58,8 +61,8 @@ export function createRunLifecycleHandlers({
 
   return {
     recordRunEvent(req, res) {
-      const message = scrubStoredSecrets(req.body.message || "");
-      const data = scrubStoredSecrets(req.body.data || {});
+      const message = scrubForStorage(req.body.message || "");
+      const data = scrubForStorage(req.body.data || {});
       const event = addRunEvent(req.params.id, req.body.type || "log", message, data);
       if (req.body.type === "workflow.step") updateRun(req.params.id, { current_step: message });
       res.json({ event });
@@ -73,7 +76,7 @@ export function createRunLifecycleHandlers({
     },
 
     completeRun(req, res) {
-      const output = scrubStoredSecrets(req.body.output || {});
+      const output = scrubForStorage(req.body.output || {});
       const result = transitionRun(req.params.id, "succeeded", { current_step: "completed", output, completed_at: now() });
       if (sendTransitionError(res, result)) return;
       recordIgnoredTransition(result, req.params.id, "succeeded", addRunEvent);
@@ -87,7 +90,7 @@ export function createRunLifecycleHandlers({
     },
 
     failRun(req, res) {
-      const error = scrubStoredSecrets(req.body.error || "failed");
+      const error = scrubForStorage(req.body.error || "failed");
       const status = normalizeFailureStatus(req.body.status || classifyFailureStatus(error));
       const result = transitionRun(req.params.id, status, { current_step: status, error, completed_at: now() });
       if (sendTransitionError(res, result)) return;
@@ -104,7 +107,7 @@ export function createRunLifecycleHandlers({
       const result = transitionRun(req.params.id, "cancelled", { current_step: "cancelled", completed_at: now() });
       if (sendTransitionError(res, result)) return;
       ifActiveTransition(result, () => {
-        addRunEvent(req.params.id, "run.cancelled", req.body.reason || "Run cancelled");
+        addRunEvent(req.params.id, "run.cancelled", scrubForStorage(req.body.reason || "Run cancelled"));
         recordRunTerminalArtifacts(result.run.id);
       });
       res.json({ run: result.run });
