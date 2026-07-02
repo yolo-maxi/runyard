@@ -28,6 +28,7 @@
     "build:web": "node bin/build-web.mjs",
     "watch:web": "node bin/build-web.mjs --watch",
     "prebuild": "node scripts/remind-smithers-link.mjs",
+    "prepublishOnly": "node scripts/remind-smithers-link.mjs",
     "build": "node bin/build-vendor.mjs && node bin/build-web.mjs",
     "smoke:smart-contract-audit": "node scripts/smoke-smart-contract-audit.mjs",
     "test": "node --experimental-sqlite --test tests/*.test.js",
