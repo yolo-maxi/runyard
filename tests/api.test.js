@@ -1917,10 +1917,63 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
     assert.equal(start.status, 403);
   });
 
+  it("blocks runner-scoped tokens from cancelling runs they do not own", async () => {
+    const created = await api("/api/capabilities/hello/run", { method: "POST", body: { input: { goal: "runner cancel owner" } } });
+    const ownerToken = (await api("/api/tokens", { method: "POST", body: { name: "runner-cancel-owner", scopes: ["runner"] } })).token.token;
+    const otherToken = (await api("/api/tokens", { method: "POST", body: { name: "runner-cancel-other", scopes: ["runner"] } })).token.token;
+    const owner = await raw("/api/runners/register", { method: "POST", body: { name: "cancel-owner", tags: ["smithers", "node"] } }, ownerToken);
+    assert.equal(owner.status, 200);
+
+    const claimed = await raw(`/api/runners/${owner.data.runner.id}/next-run`, {}, ownerToken);
+    assert.equal(claimed.status, 200);
+    assert.equal(claimed.data.run.id, created.run.id);
+
+    const forbidden = await raw(`/api/runs/${created.run.id}/cancel`, { method: "POST", body: { reason: "not mine" } }, otherToken);
+    assert.equal(forbidden.status, 403);
+    assert.deepEqual(forbidden.data, { error: "run not owned by this runner" });
+
+    const allowed = await raw(`/api/runs/${created.run.id}/cancel`, { method: "POST", body: { reason: "owner stop" } }, ownerToken);
+    assert.equal(allowed.status, 200);
+    assert.equal(allowed.data.run.status, "cancelled");
+  });
+
+  it("blocks runner-scoped tokens from creating approvals on runs they do not own", async () => {
+    const created = await api("/api/capabilities/hello/run", { method: "POST", body: { input: { goal: "runner approval owner" } } });
+    const ownerToken = (await api("/api/tokens", { method: "POST", body: { name: "runner-approval-owner", scopes: ["runner"] } })).token.token;
+    const otherToken = (await api("/api/tokens", { method: "POST", body: { name: "runner-approval-other", scopes: ["runner"] } })).token.token;
+    const owner = await raw("/api/runners/register", { method: "POST", body: { name: "approval-owner", tags: ["smithers", "node"] } }, ownerToken);
+    assert.equal(owner.status, 200);
+
+    const claimed = await raw(`/api/runners/${owner.data.runner.id}/next-run`, {}, ownerToken);
+    assert.equal(claimed.status, 200);
+    assert.equal(claimed.data.run.id, created.run.id);
+
+    const forbidden = await raw("/api/approvals", {
+      method: "POST",
+      body: { runId: created.run.id, title: "Foreign approval" }
+    }, otherToken);
+    assert.equal(forbidden.status, 403);
+    assert.deepEqual(forbidden.data, { error: "run not owned by this runner" });
+
+    const allowed = await raw("/api/approvals", {
+      method: "POST",
+      body: { runId: created.run.id, title: "Owned approval" }
+    }, ownerToken);
+    assert.equal(allowed.status, 201);
+    assert.equal(allowed.data.approval.runId, created.run.id);
+  });
+
   it("does not let a runner token hijack another runner's id", async () => {
     const runnerToken = (await api("/api/tokens", { method: "POST", body: { name: "rt", scopes: ["runner"] } })).token.token;
+    const otherRunnerToken = (await api("/api/tokens", { method: "POST", body: { name: "rt-other", scopes: ["runner"] } })).token.token;
     const mine = await raw("/api/runners/register", { method: "POST", body: { name: "mine", tags: ["smithers", "node"] } }, runnerToken);
     const myId = mine.data.runner.id;
+    const heartbeat = await raw(`/api/runners/${myId}/heartbeat`, { method: "POST", body: { tags: ["intruder"] } }, otherRunnerToken);
+    assert.equal(heartbeat.status, 403);
+    assert.deepEqual(heartbeat.data, { error: "runner not owned by this token" });
+    const claim = await raw(`/api/runners/${myId}/next-run`, {}, otherRunnerToken);
+    assert.equal(claim.status, 403);
+    assert.deepEqual(claim.data, { error: "runner not owned by this token" });
     // A different token (admin) tries to register using my runner id -> must NOT overwrite mine.
     const other = await api("/api/runners/register", { method: "POST", body: { id: myId, name: "hijack", tags: ["smithers", "node"] } });
     assert.notEqual(other.runner.id, myId);

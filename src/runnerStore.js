@@ -10,6 +10,7 @@ import {
   runnerListQuery,
   runnerLoadQuery,
   runnerOwnedLookupQuery,
+  runnerOwnerTokenQuery,
   runnerRegistrationInsertQuery,
   runnerRegistrationPayload,
   runnerRegistrationUpdateQuery,
@@ -47,6 +48,11 @@ export function createRunnerStore({
     const live = runnerIsLive(row.last_heartbeat_at);
     const load = runnerLoad(row.id);
     return normalizeRunner(row, { live, load });
+  }
+
+  function runnerOwnerTokenId(runnerId) {
+    const query = runnerOwnerTokenQuery(runnerId);
+    return one(query.sql, query.params)?.token_id || null;
   }
 
   function registerRunner(input, tokenId = null) {
@@ -138,6 +144,7 @@ export function createRunnerStore({
     registerRunner,
     runnerIsLive,
     runnerLoad,
+    runnerOwnerTokenId,
     supervisorPoolSize
   };
 }

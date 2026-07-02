@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   approvalResolutionIssue,
   createApprovalHandlers,
+  runnerApprovalOwnershipIssue,
   telegramApprovalActor,
   telegramApprovalComment
 } from "../src/approvalHttpRoutes.js";
@@ -10,13 +11,13 @@ import { mockResponse as response } from "./response.js";
 
 const APPROVAL_ID = "appr_0123456789abcdefabcd";
 
-function req({ body = {}, headers = {}, params = {}, query = {}, tokenName = "operator" } = {}) {
+function req({ body = {}, headers = {}, params = {}, query = {}, scopes = [], tokenId = "tok_1", tokenName = "operator" } = {}) {
   return {
     body,
     headers,
     params,
     query,
-    token: { id: "tok_1", name: tokenName }
+    token: { id: tokenId, name: tokenName, scopes }
   };
 }
 
@@ -72,6 +73,7 @@ function harness(overrides = {}) {
       resolved.push({ id, decision, actor, comment });
       return next;
     },
+    runOwnerTokenId: overrides.runOwnerTokenId || (() => "tok_owner"),
     telegramApprovalTarget: () => overrides.telegramTarget || { chatId: "123", private: true },
     telegramWebhookSecret: () => overrides.telegramWebhookSecret ?? "secret",
     timingSafeEqualStr: (a, b) => a === b,
@@ -153,6 +155,57 @@ describe("approval HTTP route helpers", () => {
     assert.equal(created[0].runId, "run_1");
     assert.equal(createRes.body.idempotent, false);
     assert.deepEqual(notifications, ["appr_created0000000000"]);
+  });
+
+  it("restricts runner-created approvals to runs owned by that runner", async () => {
+    assert.equal(runnerApprovalOwnershipIssue({ id: "tok_other", scopes: ["api"] }, "run_1", {}), null);
+    assert.deepEqual(
+      runnerApprovalOwnershipIssue({ id: "tok_other", scopes: ["runner"] }, "run_1", {
+        getRun: () => ({ id: "run_1" }),
+        runOwnerTokenId: () => "tok_owner"
+      }),
+      { status: 403, body: { error: "run not owned by this runner" } }
+    );
+
+    const { created, handlers, notifications } = harness();
+    const blocked = response();
+    await handlers.createApproval(req({
+      scopes: ["runner"],
+      tokenId: "tok_other",
+      body: { runId: "run_1", title: "Foreign approval" }
+    }), blocked);
+
+    assert.equal(blocked.statusCode, 403);
+    assert.deepEqual(blocked.body, { error: "run not owned by this runner" });
+    assert.equal(created.length, 0);
+    assert.deepEqual(notifications, []);
+
+    const foreignExisting = harness({
+      approvals: [{ id: "appr_foreign", status: "pending", runId: "run_1", title: "Existing", payload: { childRunId: "run_1", nodeId: "gate" } }]
+    });
+    const foreignExistingRes = response();
+    await foreignExisting.handlers.createApproval(req({
+      scopes: ["runner"],
+      tokenId: "tok_other",
+      body: { payload: { childRunId: "run_1", nodeId: "gate" } }
+    }), foreignExistingRes);
+    assert.equal(foreignExistingRes.statusCode, 403);
+
+    const owner = response();
+    await handlers.createApproval(req({
+      scopes: ["runner"],
+      tokenId: "tok_owner",
+      body: { runId: "run_1", title: "Owned approval" }
+    }), owner);
+    assert.equal(owner.statusCode, 201);
+
+    const notYetVisibleChild = response();
+    await handlers.createApproval(req({
+      scopes: ["runner"],
+      tokenId: "tok_other",
+      body: { payload: { childRunId: "run_not_visible", nodeId: "review" } }
+    }), notYetVisibleChild);
+    assert.equal(notYetVisibleChild.statusCode, 201);
   });
 
   it("dedupes repeated child-run approval requests", async () => {

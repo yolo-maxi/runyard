@@ -23,6 +23,12 @@ describe("server route registration", () => {
       deps.requireAuth,
       deps.scopes["api,mcp"]
     ]);
+    assertRoute(app, "post", "/api/runs/:id/cancel", [
+      deps.requireAuth,
+      deps.scopes["api,mcp,runner"],
+      deps.requireRunOwnerIfRunner,
+      deps.runLifecycleHandlers.cancelRun
+    ]);
     assertRoute(app, "post", "/api/workflow-bundles", [deps.requireAuth, deps.scopes.admin, deps.workflowBundleHandlers.publishWorkflowBundle]);
     assertRoute(app, "get", "/api/workflow-bundles/:id", [deps.requireAuth, deps.workflowBundleHandlers.getWorkflowBundle]);
     assertRoute(app, "post", "/api/runners/register", [deps.requireAuth, deps.scopes.runner]);
@@ -34,6 +40,7 @@ describe("server route registration", () => {
 function routeDeps() {
   const deps = {
     requireAuth: marker("requireAuth"),
+    requireRunOwnerIfRunner: marker("requireRunOwnerIfRunner"),
     requireRunOwnerOrAdmin: marker("requireRunOwnerOrAdmin"),
     scopes: {},
     rateLimits: {}

@@ -96,6 +96,28 @@ describe("run promotion", () => {
     assert.equal(candidate.sourceBranch, "runyard/implement-change-gated/main/run_test123");
   });
 
+  it("rejects unsafe target and isolated branch metadata before promotion", () => {
+    const { repo, worktrees } = initFixture();
+    const badTarget = isolatedRun({ repo, worktrees });
+    badTarget.input.targetBranch = "--upload-pack=/tmp/evil";
+    badTarget.output.outputs.baseline.lease.targetBranch = "--upload-pack=/tmp/evil";
+
+    const targetCandidate = runPromotionCandidate(badTarget, { env: { RUNYARD_REPO_WORKTREE_DIR: worktrees } });
+    assert.equal(targetCandidate.available, false);
+    assert.equal(targetCandidate.reason, "invalid target branch metadata");
+    assert.throws(
+      () => promoteRunToMain(badTarget, { env: { RUNYARD_REPO_WORKTREE_DIR: worktrees }, gates: false }),
+      /invalid target branch metadata/
+    );
+
+    const sourceFixture = initFixture();
+    const badSource = isolatedRun({ repo: sourceFixture.repo, worktrees: sourceFixture.worktrees });
+    badSource.output.outputs.push.branch = "runyard/implement-change-gated/main/run_test123 bad";
+    const sourceCandidate = runPromotionCandidate(badSource, { env: { RUNYARD_REPO_WORKTREE_DIR: sourceFixture.worktrees } });
+    assert.equal(sourceCandidate.available, false);
+    assert.equal(sourceCandidate.reason, "invalid isolated branch metadata");
+  });
+
   it("merges the isolated branch, pushes main, and removes branch/worktree", () => {
     const { repo, origin, worktrees } = initFixture();
     const run = isolatedRun({ repo, worktrees });

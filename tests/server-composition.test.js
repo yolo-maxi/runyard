@@ -53,6 +53,7 @@ describe("server composition", () => {
       "operatorReadHandlers",
       "publicHandlers",
       "requireAuth",
+      "requireRunOwnerIfRunner",
       "requireRunOwnerOrAdmin",
       "requireScopes",
       "runLifecycleHandlers",

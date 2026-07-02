@@ -6,8 +6,21 @@ import {
   renderLlmsTxt
 } from "./discoveryDocs.js";
 
-export function publicUrl(req) {
-  return `${req.protocol}://${req.get("host")}`;
+export function publicUrl(req, configuredBaseUrl = "") {
+  const configured = String(configuredBaseUrl || "").trim().replace(/\/+$/, "");
+  if (configured) return configured;
+  const protocol = req?.protocol === "https" ? "https" : "http";
+  const host = safeRequestHost(req?.get?.("host"));
+  return `${protocol}://${host}`;
+}
+
+function safeRequestHost(value) {
+  const host = String(value || "").trim();
+  const hostname = "(?:[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?|localhost)";
+  const port = "(?::[0-9]{1,5})?";
+  const ipv6 = "\\[[0-9A-Fa-f:.]+\\]";
+  const validHost = new RegExp(`^(?:${hostname}|${ipv6})${port}$`);
+  return validHost.test(host) ? host : "localhost";
 }
 
 export function healthPayload(startedAt, nowMs = Date.now()) {
@@ -37,7 +50,7 @@ export function createPublicHandlers({
 
   function hubMenuPayload(req) {
     return buildHubMenuPayload({
-      baseUrl: publicUrl(req),
+      baseUrl: publicUrl(req, env.baseUrl),
       capabilities: listCapabilities().map(withCapabilityLinks),
       pool: runnerPoolStats()
     });
@@ -76,7 +89,7 @@ export function createPublicHandlers({
     },
 
     installScript(req, res) {
-      res.type("text/plain").send(renderInstallScript(publicUrl(req)));
+      res.type("text/plain").send(renderInstallScript(publicUrl(req, env.baseUrl)));
     },
 
     landing(req, res) {
@@ -93,11 +106,11 @@ export function createPublicHandlers({
     },
 
     llmsTxt(req, res) {
-      res.type("text/plain").send(renderLlmsTxt(hubMenuPayload(req), publicUrl(req)));
+      res.type("text/plain").send(renderLlmsTxt(hubMenuPayload(req), publicUrl(req, env.baseUrl)));
     },
 
     openApi(req, res) {
-      res.json(openApiDocument({ baseUrl: publicUrl(req), version: env.version }));
+      res.json(openApiDocument({ baseUrl: publicUrl(req, env.baseUrl), version: env.version }));
     },
 
     menu(req, res) {

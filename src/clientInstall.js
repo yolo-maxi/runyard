@@ -16,10 +16,16 @@ export function createCliTarballBuilder({ root, dataDir, exists = existsSync, ex
   };
 }
 
+export function shellSingleQuote(value) {
+  return `'${String(value || "").replace(/'/g, "'\\''")}'`;
+}
+
 export function installScript(hubUrl) {
+  const defaultHubUrl = shellSingleQuote(hubUrl);
   return `#!/usr/bin/env bash
 set -euo pipefail
-HUB_URL="\${RUNYARD_HUB_URL:-\${SMITHERS_HUB_URL:-${hubUrl}}}"
+DEFAULT_HUB_URL=${defaultHubUrl}
+HUB_URL="\${RUNYARD_HUB_URL:-\${SMITHERS_HUB_URL:-$DEFAULT_HUB_URL}}"
 APP="$HOME/.runyard/app"
 BIN="$HOME/.local/bin"
 echo "Installing RunYard client from $HUB_URL ..."

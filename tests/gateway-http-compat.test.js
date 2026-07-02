@@ -80,6 +80,42 @@ describe("gateway HTTP compat routing", () => {
       /shadowed by Smithers gateway reserved path GET \/health/
     );
   });
+
+  it("treats malformed encoded route params as not found instead of internal errors", async () => {
+    const app = gatewayHttp();
+    app.get("/api/runs/:id", (req, res) => res.json({ id: req.params.id }));
+    const req = {
+      headers: {},
+      method: "GET",
+      socket: { remoteAddress: "127.0.0.1" },
+      url: "/api/runs/%E0%A4%A"
+    };
+    const res = createResponse();
+
+    const handled = await app.handle(req, res);
+
+    assert.equal(handled, true);
+    assert.equal(res.statusCode, 404);
+    assert.deepEqual(JSON.parse(res.body), { error: "not found" });
+  });
+
+  it("treats malformed encoded static paths as not found instead of internal errors", async () => {
+    const app = gatewayHttp();
+    app.use("/public", gatewayHttp.static(process.cwd()));
+    const req = {
+      headers: {},
+      method: "GET",
+      socket: { remoteAddress: "127.0.0.1" },
+      url: "/public/%E0%A4%A"
+    };
+    const res = createResponse();
+
+    const handled = await app.handle(req, res);
+
+    assert.equal(handled, true);
+    assert.equal(res.statusCode, 404);
+    assert.deepEqual(JSON.parse(res.body), { error: "not found" });
+  });
 });
 
 describe("gateway HTTP compat trust proxy", () => {

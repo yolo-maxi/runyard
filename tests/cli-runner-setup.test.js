@@ -28,8 +28,23 @@ describe("CLI runner setup helpers", () => {
     assert.equal(found, true);
     assert.deepEqual(calls, [{
       cmd: "/usr/bin/env",
-      args: ["sh", "-c", "command -v bun >/dev/null 2>&1"]
+      args: ["sh", "-c", "command -v \"$1\" >/dev/null 2>&1", "sh", "bun"]
     }]);
+  });
+
+  it("passes command names as shell parameters instead of interpolating them", () => {
+    const calls = [];
+    commandExists("bun; exit 9", {
+      spawnSyncFn: (cmd, args) => {
+        calls.push({ cmd, args });
+        return { status: 1 };
+      }
+    });
+
+    assert.deepEqual(calls[0], {
+      cmd: "/usr/bin/env",
+      args: ["sh", "-c", "command -v \"$1\" >/dev/null 2>&1", "sh", "bun; exit 9"]
+    });
   });
 
   it("summarizes prerequisites with stable labels", () => {

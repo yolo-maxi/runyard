@@ -36,9 +36,30 @@ function safeRealpath(value) {
   }
 }
 
+function isSafeGitBranch(branch) {
+  const value = cleanString(branch);
+  if (!value || value.length > 240) return false;
+  if (value.startsWith("-") || value.startsWith("/") || value.endsWith("/") || value.endsWith(".")) return false;
+  if (value.toLowerCase().startsWith("refs/")) return false;
+  if (!/^[A-Za-z0-9._/-]+$/.test(value)) return false;
+  if (value.includes("..") || value.includes("//") || value.includes("@{")) return false;
+  if (/[~^:?*[\]\\\s\x00-\x1f\x7f]/.test(value)) return false;
+  return value.split("/").every((part) => part && !part.startsWith(".") && !part.endsWith(".lock"));
+}
+
+function isSafeRunyardBranch(branch) {
+  return isSafeGitBranch(branch) && /^runyard\/[a-z0-9._/-]+\/run_[a-z0-9][a-z0-9._/-]*$/i.test(branch);
+}
+
 function assertSafeRunyardBranch(branch) {
-  if (!/^runyard\/[a-z0-9._/-]+\/run_[a-z0-9]/i.test(branch)) {
+  if (!isSafeRunyardBranch(branch)) {
     throw new Error(`promotion blocked: '${branch}' is not a Runyard isolated work branch`);
+  }
+}
+
+function assertSafeTargetBranch(branch) {
+  if (!isSafeGitBranch(branch)) {
+    throw new Error(`promotion blocked: '${branch}' is not a safe git target branch`);
   }
 }
 
@@ -96,6 +117,8 @@ export function runPromotionCandidate(run, { env = process.env } = {}) {
   const realWorkRepo = safeRealpath(workRepoDir);
   const realWorktreeRoot = safeRealpath(worktreeRoot) || worktreeRoot;
   const worktreeInsideRoot = Boolean(realWorkRepo && realWorkRepo.startsWith(`${realWorktreeRoot}${path.sep}`));
+  const safeSourceBranch = isSafeRunyardBranch(sourceBranch);
+  const safeTargetBranch = isSafeGitBranch(targetBranch);
 
   const available = Boolean(
     run?.id
@@ -107,6 +130,8 @@ export function runPromotionCandidate(run, { env = process.env } = {}) {
     && sourceRepoDir
     && workRepoDir
     && worktreeInsideRoot
+    && safeSourceBranch
+    && safeTargetBranch
   );
 
   return {
@@ -119,7 +144,11 @@ export function runPromotionCandidate(run, { env = process.env } = {}) {
           ? "run was not produced in isolated worktree mode"
           : !TERMINAL_SUCCESS.has(run?.status)
             ? "run is not successful"
-            : "missing isolated branch/worktree metadata",
+            : !safeSourceBranch
+              ? "invalid isolated branch metadata"
+              : !safeTargetBranch
+                ? "invalid target branch metadata"
+                : "missing isolated branch/worktree metadata",
     sourceBranch,
     targetBranch,
     sourceRepoDir,
@@ -137,6 +166,7 @@ export function promoteRunToMain(run, {
   const candidate = runPromotionCandidate(run, { env });
   if (!candidate.available) throw new Error(`promotion unavailable: ${candidate.reason}`);
   assertSafeRunyardBranch(candidate.sourceBranch);
+  assertSafeTargetBranch(candidate.targetBranch);
 
   const repoDir = realpathSync(candidate.sourceRepoDir);
   const workRepoDir = realpathSync(candidate.workRepoDir);

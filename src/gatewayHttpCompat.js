@@ -408,6 +408,14 @@ function compileRoutePath(pattern) {
   return { keys, regexp: new RegExp(`^${source}/?$`) };
 }
 
+function safeDecodeURIComponent(value) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
+}
+
 function routeMatches(entry, req) {
   if (entry.method && entry.method !== req.method) return false;
   if (entry.kind === "use") {
@@ -416,10 +424,12 @@ function routeMatches(entry, req) {
   }
   const match = entry.regexp.exec(req.path);
   if (!match) return false;
-  req.params = {};
+  const params = {};
   entry.keys.forEach((key, index) => {
-    req.params[key] = decodeURIComponent(match[index + 1] || "");
+    params[key] = safeDecodeURIComponent(match[index + 1] || "");
   });
+  if (Object.values(params).some((value) => value === null)) return false;
+  req.params = params;
   return true;
 }
 
@@ -508,7 +518,8 @@ export function staticFiles(rootDir) {
   return (req, res, next) => {
     if (req.method !== "GET" && req.method !== "HEAD") return next();
     const prefix = req._matchedUsePath || "";
-    const rawPath = decodeURIComponent(req.path.slice(prefix.length) || "/");
+    const rawPath = safeDecodeURIComponent(req.path.slice(prefix.length) || "/");
+    if (rawPath === null) return next();
     const requested = path.resolve(root, `.${rawPath}`);
     if (requested !== root && !requested.startsWith(`${root}${path.sep}`)) return next();
     if (!existsSync(requested) || !statSync(requested).isFile()) return next();

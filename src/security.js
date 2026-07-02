@@ -42,15 +42,25 @@ export function timingSafeEqualStr(a, b) {
 }
 
 export function parseCookies(req) {
-  const header = req.headers.cookie || "";
-  return Object.fromEntries(
-    header
-      .split(";")
-      .map((part) => part.trim())
-      .filter(Boolean)
-      .map((part) => {
-        const index = part.indexOf("=");
-        return [decodeURIComponent(part.slice(0, index)), decodeURIComponent(part.slice(index + 1))];
-      })
-  );
+  const header = String(req?.headers?.cookie || "");
+  const cookies = {};
+  for (const rawPart of header.split(";")) {
+    const part = rawPart.trim();
+    if (!part) continue;
+    const index = part.indexOf("=");
+    if (index < 1) continue;
+    const name = safeDecodeCookiePart(part.slice(0, index));
+    const value = safeDecodeCookiePart(part.slice(index + 1));
+    if (!name || value == null) continue;
+    cookies[name] = value;
+  }
+  return cookies;
+}
+
+function safeDecodeCookiePart(value) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
 }
