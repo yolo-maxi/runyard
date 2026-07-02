@@ -6,7 +6,7 @@
 // local Claude Code / Codex CLI as the worker), streams Smithers events back to the Hub as run
 // events, and uploads the workflow's outputs + event trace as artifacts. Nothing is faked: the
 // agent runs here, on this machine, and the Hub is the durable record.
-import { execFile, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -22,7 +22,7 @@ import { isDraining, resolveDataDir } from "./drain.js";
 import { resolveHubUrl, resolveHubToken } from "./hubConnection.js";
 import { packageVersion } from "./packageInfo.js";
 import { resolveSmithersBin } from "./resolveSmithersBin.js";
-import { resolveRunnerExecWrapper } from "./runnerSandbox.js";
+import { resolveRunnerExecWrapper, isBubblewrapWrapper, usernsRemediation } from "./runnerSandbox.js";
 import {
   createSmithersRunRegistry,
   isHubTerminalStatus,
@@ -63,6 +63,23 @@ const workspace = path.resolve(process.env.SMITHERS_WORKSPACE || process.cwd());
 // verbatim. Only the workflow launch is wrapped — see resolveRunnerExecWrapper()
 // and WRAPPED_SUBCOMMANDS. Needs `workspace`/`smithersBin`, hence resolved here.
 const execWrapper = resolveRunnerExecWrapper({ workspace, smithersBin });
+
+// Startup preflight: if the bubblewrap sandbox is selected, prove once that it
+// can actually create a user namespace. A blocked userns (Ubuntu's restriction)
+// would otherwise fail every launch cryptically; surface the fix up front. Runs
+// the real wrapper against a no-op `/bin/sh -c :`; best-effort and non-fatal —
+// launches already fail closed, so this is an early, actionable warning only.
+if (isBubblewrapWrapper(execWrapper)) {
+  try {
+    execFileSync(execWrapper[0], [...execWrapper.slice(1), "/bin/sh", "-c", ":"], {
+      timeout: 15_000,
+      stdio: "ignore"
+    });
+  } catch {
+    console.warn(`[sandbox] ${usernsRemediation()}`);
+  }
+}
+
 const location = process.env.SMITHERS_RUNNER_LOCATION || "vps"; // "vps" | "local"
 const name = process.env.SMITHERS_RUNNER_NAME || `${os.hostname()} (${location})`;
 const tags = normalizeRunnerTags(

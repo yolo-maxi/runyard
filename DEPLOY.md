@@ -104,6 +104,23 @@ docker compose -f docker-compose.yml -f deploy/compose/runner-docker-socket.yml 
 Or run a rootless DinD sidecar and set the runner's `DOCKER_HOST` to it — preferred
 where socket mounts are disallowed by policy.
 
+### Optional: per-launch sandbox (`RUNNER_SANDBOX=bubblewrap`)
+
+Set `RUNNER_SANDBOX=bubblewrap` to run each workflow launch inside a Bubblewrap
+sandbox (filesystem-isolated, writable HOME under the workspace). Requires
+`bwrap` on the runner host. On Ubuntu 23.10+ unprivileged user namespaces are
+restricted, so install the narrow AppArmor profile once — it grants `userns` to
+`/usr/bin/bwrap` only, leaving the box-wide restriction in force for everything
+else:
+
+```bash
+sudo deploy/apparmor/install.sh          # see deploy/apparmor/README.md
+```
+
+Without it (and without the broader `sysctl` fallback) launches fail with
+`setting up uid map: Permission denied`; the runner logs this remediation at
+startup.
+
 ### Local development
 
 ```bash

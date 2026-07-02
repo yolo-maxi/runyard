@@ -133,6 +133,27 @@ export function resolveSandboxWrapper({ env = process.env, workspace, smithersBi
   });
 }
 
+// True when `execWrapper` is this module's Bubblewrap preset (as opposed to an
+// empty/bare host or a literal RUNNER_EXEC_WRAPPER). Keys off the explicit
+// user-namespace unshare the preset always emits and no literal wrapper would.
+export function isBubblewrapWrapper(execWrapper = []) {
+  return execWrapper.includes("--unshare-user") && execWrapper.includes("--uid");
+}
+
+// One-line, actionable remediation for the failure operators hit when they
+// select the Bubblewrap sandbox on a host that forbids unprivileged user
+// namespaces (Ubuntu's `setting up uid map: Permission denied`). Kept here, and
+// unit-tested, so the runner's startup preflight and docs stay in sync.
+export function usernsRemediation() {
+  return (
+    "RUNNER_SANDBOX=bubblewrap is set but bwrap cannot create a user namespace " +
+    "(unprivileged user namespaces are restricted on this host). Install the " +
+    "narrow AppArmor profile with `sudo deploy/apparmor/install.sh`, or set " +
+    "`sysctl kernel.apparmor_restrict_unprivileged_userns=0`. Until then every " +
+    "workflow launch will fail with 'setting up uid map: Permission denied'."
+  );
+}
+
 // Single entry point the runner uses to resolve its launch exec-wrapper. The
 // RUNNER_SANDBOX preset takes precedence; when no preset is selected it falls
 // back to a literal RUNNER_EXEC_WRAPPER (the unopinionated escape hatch).

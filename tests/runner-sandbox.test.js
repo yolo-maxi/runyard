@@ -10,6 +10,8 @@ import {
   bubblewrapArgv,
   resolveSandboxWrapper,
   resolveRunnerExecWrapper,
+  isBubblewrapWrapper,
+  usernsRemediation,
   SANDBOX_HOME_SUBDIR
 } from "../src/runnerSandbox.js";
 import { smithersCommand } from "../src/runnerSmithersRuntime.js";
@@ -147,6 +149,21 @@ describe("resolveSandboxWrapper", () => {
       () => resolveSandboxWrapper({ env: { RUNNER_SANDBOX: "firejail" }, workspace: WS }),
       /unknown RUNNER_SANDBOX preset/
     );
+  });
+});
+
+describe("isBubblewrapWrapper / usernsRemediation (startup preflight guards)", () => {
+  it("recognizes the bubblewrap preset and rejects bare/literal wrappers", () => {
+    assert.equal(isBubblewrapWrapper(bubblewrapArgv({ workspace: WS })), true);
+    assert.equal(isBubblewrapWrapper([]), false);
+    assert.equal(isBubblewrapWrapper(["docker", "run", "--rm", "img"]), false);
+    assert.equal(isBubblewrapWrapper(["firejail", "--quiet"]), false);
+  });
+
+  it("gives an actionable, install-script-pointing remediation for blocked userns", () => {
+    const msg = usernsRemediation();
+    assert.match(msg, /deploy\/apparmor\/install\.sh/);
+    assert.match(msg, /uid map|user namespace/i);
   });
 });
 

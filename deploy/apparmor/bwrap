@@ -1,0 +1,17 @@
+# RunYard: narrow AppArmor profile that lets `bwrap` create unprivileged user
+# namespaces on kernels where they are otherwise restricted (Ubuntu 23.10+,
+# kernel.apparmor_restrict_unprivileged_userns=1). It grants ONLY the `userns`
+# capability to the bwrap binary and confines nothing else (flags=(unconfined)),
+# so the box-wide restriction stays in force for every other program — a much
+# smaller blast radius than `sysctl kernel.apparmor_restrict_unprivileged_userns=0`.
+#
+# Required by RUNNER_SANDBOX=bubblewrap. Install with deploy/apparmor/install.sh.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile bwrap /usr/bin/bwrap flags=(unconfined) {
+  userns,
+
+  # Site-specific additions and overrides.
+  include if exists <local/bwrap>
+}
