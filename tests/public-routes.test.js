@@ -58,6 +58,7 @@ function handlers(overrides = {}) {
     authFromRequest: (request) => request.token,
     dashboardStats: () => ({ ok: true }),
     env: {
+      baseUrl: "",
       dataDir: "/tmp/runyard-data",
       instanceName: "Runyard",
       root: "/srv/runyard",
@@ -75,6 +76,8 @@ function handlers(overrides = {}) {
 describe("public route helpers", () => {
   it("builds a request public URL", () => {
     assert.equal(publicUrl(req({ protocol: "http", host: "localhost:3000" })), "http://localhost:3000");
+    assert.equal(publicUrl(req({ protocol: "https", host: "hub.example" }), "https://configured.example/"), "https://configured.example");
+    assert.equal(publicUrl(req({ protocol: "https", host: "hub.example\"$(touch pwn)" })), "https://localhost");
   });
 
   it("builds stable public metadata payloads", () => {

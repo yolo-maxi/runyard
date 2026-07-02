@@ -45,6 +45,14 @@ describe("auth middleware helpers", () => {
     assert.equal(middleware.authFromRequest(req).id, "tok_admin");
   });
 
+  it("ignores non-string authorization headers", () => {
+    const middleware = auth();
+
+    assert.equal(middleware.authFromRequest({
+      headers: { authorization: ["Bearer admin-token"] }
+    }), null);
+  });
+
   it("authenticates signed session cookies", () => {
     const middleware = auth();
     const req = {
@@ -54,6 +62,24 @@ describe("auth middleware helpers", () => {
     };
 
     assert.equal(middleware.authFromRequest(req).id, "tok_runner");
+  });
+
+  it("ignores malformed cookie pairs without breaking valid session cookies", () => {
+    const middleware = auth();
+
+    assert.equal(middleware.authFromRequest({}), null);
+    assert.equal(
+      middleware.authFromRequest({ headers: { cookie: "bad=%E0%A4%A; no_equals" } }),
+      null
+    );
+    assert.equal(
+      middleware.authFromRequest({
+        headers: {
+          cookie: `bad=%E0%A4%A; shub_session=${encodeURIComponent(sign("runner-token"))}`
+        }
+      }).id,
+      "tok_runner"
+    );
   });
 
   it("requires authentication and enforces Telegram session route access", () => {
@@ -104,6 +130,25 @@ describe("auth middleware helpers", () => {
     assert.equal(missing.res.statusCode, 404);
 
     const forbidden = runMiddleware(middleware.requireRunOwnerOrAdmin, {
+      params: { id: "run_1" },
+      token: { id: "someone_else", scopes: ["runner"] }
+    });
+    assert.equal(forbidden.res.statusCode, 403);
+    assert.deepEqual(forbidden.res.body, { error: "run not owned by this runner" });
+  });
+
+  it("requires ownership only when cancellation is attempted by a runner-scoped token", () => {
+    const middleware = auth();
+    assert.equal(runMiddleware(middleware.requireRunOwnerIfRunner, {
+      params: { id: "run_1" },
+      token: { id: "tok_api", scopes: ["api"] }
+    }).nextCalled, true);
+    assert.equal(runMiddleware(middleware.requireRunOwnerIfRunner, {
+      params: { id: "run_1" },
+      token: { id: "tok_runner", scopes: ["runner"] }
+    }).nextCalled, true);
+
+    const forbidden = runMiddleware(middleware.requireRunOwnerIfRunner, {
       params: { id: "run_1" },
       token: { id: "someone_else", scopes: ["runner"] }
     });

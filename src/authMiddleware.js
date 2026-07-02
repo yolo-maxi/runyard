@@ -16,7 +16,7 @@ export function createAuthMiddleware({
   }
 
   function authFromRequest(req) {
-    const header = req.headers.authorization || "";
+    const header = headerString(req?.headers?.authorization);
     const bearer = header.toLowerCase().startsWith("bearer ") ? header.slice(7) : "";
     const cookies = parseCookies(req);
     const cookieToken = cookies.shub_session ? unsign(cookies.shub_session) : "";
@@ -51,10 +51,23 @@ export function createAuthMiddleware({
     return res.status(403).json({ error: "run not owned by this runner" });
   }
 
+  function requireRunOwnerIfRunner(req, res, next) {
+    const scopes = req.token?.scopes || [];
+    if (scopes.includes("admin") || !scopes.includes("runner")) return next();
+    if (!getRun(req.params.id)) return res.status(404).json({ error: "run not found" });
+    if (runOwnerTokenId(req.params.id) === req.token.id) return next();
+    return res.status(403).json({ error: "run not owned by this runner" });
+  }
+
   return {
     authFromRequest,
     requireAuth,
+    requireRunOwnerIfRunner,
     requireRunOwnerOrAdmin,
     requireScopes
   };
+}
+
+function headerString(value) {
+  return typeof value === "string" ? value : "";
 }

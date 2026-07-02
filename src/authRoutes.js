@@ -4,7 +4,6 @@ import { TELEGRAM_WEBAPP_SESSION_MAX_AGE_MS } from "./telegramWebAppAuth.js";
 export const ACCESS_TOKEN_SESSION_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 365;
 
 export function setupPayload({
-  dataDir,
   environment,
   hostname,
   instanceName,
@@ -24,8 +23,7 @@ export function setupPayload({
     telegramConfigured: Boolean(telegramBotToken && telegramTarget),
     telegramApprovalPrivateConfigured: Boolean(telegramApprovalChatId),
     telegramApprovalTarget: telegramTarget ? (telegramTarget.private ? "private" : "fallback-chat") : "none",
-    telegramWebhookSecured: Boolean(telegramWebhookSecret),
-    dataDir
+    telegramWebhookSecured: Boolean(telegramWebhookSecret)
   };
 }
 

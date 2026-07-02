@@ -1,10 +1,16 @@
 node_modules/
 data/
 .env
+.env.*
+!.env.example
+*.log
+logs/
+.DS_Store
 test-artifacts/
 runner.env
 .runtime/
 support-runner.env
+.jj/
 
 # Security: never track env backups, runtime logs, or UI screenshots of admin pages
 *.bak
@@ -13,3 +19,20 @@ support-runner.env
 runner.env.bak*
 ui-polish-screens/
 ui-polish-screens/**
+
+# Playwright e2e artifacts
+test-results/
+playwright-report/
+/.last-run.json
+
+# smithers runtime state
+smithers.db
+smithers.db-shm
+smithers.db-wal
+
+# local code-review scratch tool
+review-site/
+
+# Local Smithers workspace + orchestration scripts (regenerate with `smithers init`)
+.smithers/
+smithers.sh

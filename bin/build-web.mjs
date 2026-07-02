@@ -3,8 +3,8 @@
 // of web/) into public/app.js — the module that public/index.html loads. The
 // bundle is fully self-contained (React, ReactDOM, @xyflow/react, highlight.js,
 // and the TanStack packages are all bundled in), so the Hub stays self-hosted:
-// no runtime CDN, the same CSP that protects the rest of the app, and Express
-// keeps serving the output via express.static with zero server changes.
+// no runtime CDN, the same CSP that protects the rest of the app, and the
+// Gateway-backed HTTP adapter keeps serving the output with zero server changes.
 //
 // Run with `pnpm build:web`. Pass --watch for an incremental dev rebuild.
 //
@@ -12,6 +12,8 @@
 // `pnpm build:vendor`, which index.html links directly. `pnpm build` runs both
 // steps for release builds.
 import { build, context } from "esbuild";
+import { readFile, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -20,6 +22,22 @@ const entry = join(root, "web", "main.jsx");
 const outfile = join(root, "public", "app.js");
 const watch = process.argv.includes("--watch");
 const dev = watch || process.argv.includes("--dev");
+const require = createRequire(import.meta.url);
+const reactPeerRe = /^react(?:\/.*)?$|^react-dom(?:\/.*)?$/;
+
+function resolveAppPeer(specifier) {
+  try {
+    return require.resolve(specifier, { paths: [root] });
+  } catch {
+    return null;
+  }
+}
+
+async function stripTrailingWhitespace(file) {
+  const code = await readFile(file, "utf8");
+  const normalized = code.replace(/[ \t]+$/gm, "");
+  if (normalized !== code) await writeFile(file, normalized);
+}
 
 /** @type {import('esbuild').BuildOptions} */
 const options = {
@@ -37,6 +55,17 @@ const options = {
   nodePaths: [join(root, "node_modules")],
   outfile,
   define: { "process.env.NODE_ENV": dev ? '"development"' : '"production"' },
+  plugins: [
+    {
+      name: "runyard-react-peer-dedupe",
+      setup(build) {
+        build.onResolve({ filter: reactPeerRe }, (args) => {
+          const peerPath = resolveAppPeer(args.path);
+          return peerPath ? { path: peerPath } : undefined;
+        });
+      }
+    }
+  ],
   logLevel: "info"
 };
 
@@ -46,5 +75,6 @@ if (watch) {
   console.log(`watching web/ -> ${outfile}`);
 } else {
   await build(options);
+  await stripTrailingWhitespace(outfile);
   console.log(`built web app -> ${outfile}`);
 }

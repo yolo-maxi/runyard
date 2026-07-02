@@ -97,6 +97,14 @@ describe("runner store", () => {
     assert.match(write.params[5], /codex/);
   });
 
+  it("looks up the runner owner token without exposing it in runner payloads", () => {
+    const { store } = createHarness({
+      oneRows: [{ token_id: "tok_owner" }]
+    });
+
+    assert.equal(store.runnerOwnerTokenId("runner_1"), "tok_owner");
+  });
+
   it("prunes stale idle runners and ignores disabled pruning", () => {
     const { calls, store } = createHarness({
       allRows: [{ id: "runner_1" }, { id: "runner_2" }]

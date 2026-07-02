@@ -319,6 +319,7 @@ export function createServerComposition({
     listApprovals,
     notifyTelegram,
     resolveApproval,
+    runOwnerTokenId,
     telegramApprovalTarget,
     telegramWebhookSecret: () => env.telegramWebhookSecret,
     timingSafeEqualStr,
@@ -386,6 +387,7 @@ export function createServerComposition({
   const {
     authFromRequest,
     requireAuth,
+    requireRunOwnerIfRunner,
     requireRunOwnerOrAdmin,
     requireScopes
   } = createAuthMiddleware({
@@ -437,6 +439,7 @@ export function createServerComposition({
       operatorReadHandlers,
       publicHandlers,
       requireAuth,
+      requireRunOwnerIfRunner,
       requireRunOwnerOrAdmin,
       requireScopes,
       runLifecycleHandlers,

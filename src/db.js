@@ -557,6 +557,10 @@ export function getRunner(runnerId) {
   return runnerStore.getRunner(runnerId);
 }
 
+export function runnerOwnerTokenId(runnerId) {
+  return runnerStore.runnerOwnerTokenId(runnerId);
+}
+
 export function listRunners() {
   return runnerStore.listRunners();
 }

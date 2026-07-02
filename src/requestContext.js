@@ -9,7 +9,7 @@ export function tokenRequestVia(token = {}) {
 }
 
 export function bearerFromRequest(req) {
-  const header = req?.headers?.authorization || "";
+  const header = headerString(req?.headers?.authorization);
   return header.toLowerCase().startsWith("bearer ") ? header.slice(7).trim() : "";
 }
 
@@ -19,11 +19,11 @@ export function requestOrigin(req, input = {}) {
   const via = tokenRequestVia(token);
   const explicit = normalizeOrigin(req.body?.origin) || normalizeOrigin(input?.origin) || normalizeOrigin(input?.source) || normalizeOrigin(input?.context?.origin);
   const headerOrigin = normalizeOrigin({
-    label: req.headers["x-smithers-origin"] || "",
-    url: req.headers["x-smithers-origin-url"] || "",
-    chat: req.headers["x-smithers-origin-chat"] || "",
-    thread: req.headers["x-smithers-origin-thread"] || "",
-    messageId: req.headers["x-smithers-origin-message-id"] || ""
+    label: headerString(req.headers?.["x-smithers-origin"]),
+    url: headerString(req.headers?.["x-smithers-origin-url"]),
+    chat: headerString(req.headers?.["x-smithers-origin-chat"]),
+    thread: headerString(req.headers?.["x-smithers-origin-thread"]),
+    messageId: headerString(req.headers?.["x-smithers-origin-message-id"])
   });
   return {
     requestedBy: `${via}: ${token.name || token.id || "unknown"}`,
@@ -39,5 +39,10 @@ export function requestOrigin(req, input = {}) {
 }
 
 export function requireBodySlug(body = {}, fallback) {
-  return body.slug || slugify(body.name || body.title || fallback);
+  const explicit = typeof body.slug === "string" ? slugify(body.slug) : "";
+  return explicit || slugify(body.name || body.title || fallback);
+}
+
+function headerString(value) {
+  return typeof value === "string" ? value : "";
 }

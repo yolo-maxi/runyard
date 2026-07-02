@@ -19,6 +19,7 @@
     "runyard-runner": "./bin/runyard-runner.js"
   },
   "scripts": {
+    "prestart": "node scripts/remind-smithers-link.mjs",
     "start": "node --experimental-sqlite src/server.js",
     "runner": "node src/runner.js",
     "mcp": "node src/mcp.js",
@@ -26,14 +27,17 @@
     "build:vendor": "node bin/build-vendor.mjs",
     "build:web": "node bin/build-web.mjs",
     "watch:web": "node bin/build-web.mjs --watch",
+    "prebuild": "node scripts/remind-smithers-link.mjs",
+    "prepublishOnly": "node scripts/remind-smithers-link.mjs",
     "build": "node bin/build-vendor.mjs && node bin/build-web.mjs",
     "smoke:smart-contract-audit": "node scripts/smoke-smart-contract-audit.mjs",
-    "test": "node --experimental-sqlite --test tests/*.test.js"
+    "test": "node --experimental-sqlite --test tests/*.test.js",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@smithers-orchestrator/server": "link:../smithers/packages/server",
     "commander": "^14.0.2",
-    "express": "^4.19.2",
-    "smithers-orchestrator": "0.22.0",
+    "smithers-orchestrator": "link:../smithers/packages/smithers",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -41,6 +45,7 @@
     "@tanstack/query-db-collection": "^1.0.42",
     "@tanstack/react-db": "^0.1.88",
     "@tanstack/react-query": "^5.101.1",
+    "@playwright/test": "^1.61.0",
     "@xyflow/react": "^12.11.0",
     "esbuild": "^0.28.1",
     "highlight.js": "^11.11.1",

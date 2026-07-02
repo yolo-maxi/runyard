@@ -34,6 +34,13 @@ export function runnerOwnedLookupQuery(runnerId) {
   };
 }
 
+export function runnerOwnerTokenQuery(runnerId) {
+  return {
+    sql: "SELECT token_id FROM runners WHERE id = ?",
+    params: [runnerId]
+  };
+}
+
 export function runnerStableIdentityLookupQuery({ tokenId, name, hostname }) {
   return {
     sql: "SELECT * FROM runners WHERE token_id = ? AND name = ? AND hostname = ? ORDER BY last_heartbeat_at DESC LIMIT 1",

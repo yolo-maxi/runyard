@@ -12,6 +12,7 @@ import {
   runnerListQuery,
   runnerLoadQuery,
   runnerOwnedLookupQuery,
+  runnerOwnerTokenQuery,
   runnerRegistrationInsertQuery,
   runnerRegistrationPayload,
   runnerRegistrationUpdateQuery,
@@ -56,6 +57,10 @@ describe("runner record helpers", () => {
 
     assert.deepEqual(runnerOwnedLookupQuery("runner_1"), {
       sql: "SELECT * FROM runners WHERE id = ?",
+      params: ["runner_1"]
+    });
+    assert.deepEqual(runnerOwnerTokenQuery("runner_1"), {
+      sql: "SELECT token_id FROM runners WHERE id = ?",
       params: ["runner_1"]
     });
     assert.deepEqual(runnerStableIdentityLookupQuery({ tokenId: "tok_1", name: "runner", hostname: "host" }), {

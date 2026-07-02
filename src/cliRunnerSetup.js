@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 export const RUNNER_SETUP_COMMANDS = ["node", "bun", "smithers", "claude", "codex"];
 
 export function commandExists(cmd, { spawnSyncFn = spawnSync } = {}) {
-  return spawnSyncFn("/usr/bin/env", ["sh", "-c", `command -v ${cmd} >/dev/null 2>&1`]).status === 0;
+  return spawnSyncFn("/usr/bin/env", ["sh", "-c", "command -v \"$1\" >/dev/null 2>&1", "sh", String(cmd)]).status === 0;
 }
 
 export function runnerPrerequisiteSummary(commands = RUNNER_SETUP_COMMANDS, commandExistsFn = commandExists) {

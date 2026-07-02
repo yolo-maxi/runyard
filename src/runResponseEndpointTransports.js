@@ -1,4 +1,5 @@
 import { env } from "./env.js";
+import { assertSafeHttpTarget } from "./httpTargetSafety.js";
 import { redactResponseEndpointText } from "./runResponseEndpointPayload.js";
 
 export const DEFAULT_RESPONSE_ENDPOINT_TIMEOUT_MS = 10_000;
@@ -25,13 +26,23 @@ export async function postJson(url, body, options, { fetchImpl, timeoutMs, heade
   }
 }
 
-export async function deliverHttpResponseEndpoint(endpoint, payload, { fetchImpl, timeoutMs }) {
+export async function deliverHttpResponseEndpoint(endpoint, payload, {
+  allowPrivateTargets = false,
+  fetchImpl,
+  lookup,
+  timeoutMs
+}) {
   const config = endpoint.config || {};
   const method = String(config.method || "POST").toUpperCase();
   // Slice 1 already validated method in {POST, PUT}; reject anything else
   // defensively so a malformed row cannot issue an unplanned GET.
   if (method !== "POST" && method !== "PUT") {
     return { ok: false, error: `unsupported http method: ${method}` };
+  }
+  try {
+    await assertSafeHttpTarget(config.url, { allowPrivateTargets, lookup });
+  } catch (error) {
+    return { ok: false, error: safeResponseEndpointError(error?.message || error) };
   }
   const result = await postJson(
     config.url,
@@ -102,7 +113,12 @@ export async function deliverResponseEndpointTransport(endpoint, run, payload, o
   const telegramBotToken = options.telegramBotToken ?? env.telegramBotToken;
   const baseUrl = options.baseUrl ?? env.baseUrl;
   if (endpoint.type === "http") {
-    return deliverHttpResponseEndpoint(endpoint, payload, { fetchImpl, timeoutMs });
+    return deliverHttpResponseEndpoint(endpoint, payload, {
+      allowPrivateTargets: options.allowPrivateTargets === true,
+      fetchImpl,
+      lookup: options.lookup,
+      timeoutMs
+    });
   }
   if (endpoint.type === "telegram") {
     return deliverTelegramResponseEndpoint(endpoint, run, payload, {

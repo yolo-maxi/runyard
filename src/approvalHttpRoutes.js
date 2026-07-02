@@ -2,7 +2,8 @@ import {
   approvalCreateInput,
   decisionTriggersTerminalDelivery,
   defaultApprovalComment,
-  findExistingChildRunApproval
+  findExistingChildRunApproval,
+  requestedApprovalRunId
 } from "./approvalRoutes.js";
 import {
   approvalDecisionLabel,
@@ -56,6 +57,7 @@ export function createApprovalHandlers({
   logger = console,
   notifyTelegram,
   resolveApproval,
+  runOwnerTokenId,
   telegramApprovalTarget,
   telegramWebhookSecret,
   timingSafeEqualStr,
@@ -97,6 +99,11 @@ export function createApprovalHandlers({
     async createApproval(req, res) {
       try {
         const payload = req.body?.payload && typeof req.body.payload === "object" ? req.body.payload : {};
+        const ownershipIssue = runnerApprovalOwnershipIssue(req.token || {}, requestedApprovalRunId(req.body || {}, payload), {
+          getRun,
+          runOwnerTokenId
+        });
+        if (ownershipIssue) return res.status(ownershipIssue.status).json(ownershipIssue.body);
         const existing = findExistingChildRunApproval(listApprovals("pending"), payload);
         if (existing) return res.status(200).json({ approval: withApprovalLinks(existing), idempotent: true });
 
@@ -167,5 +174,16 @@ export function createApprovalHandlers({
       await clearTelegramApprovalButtons(callback);
       return res.json({ ok: true, approval: withApprovalLinks(resolved) });
     }
+  };
+}
+
+export function runnerApprovalOwnershipIssue(token = {}, requestedRunId, { getRun, runOwnerTokenId } = {}) {
+  const scopes = token.scopes || [];
+  if (scopes.includes("admin") || !scopes.includes("runner") || !requestedRunId) return null;
+  if (!getRun?.(requestedRunId)) return null;
+  if (runOwnerTokenId?.(requestedRunId) === token.id) return null;
+  return {
+    status: 403,
+    body: { error: "run not owned by this runner" }
   };
 }

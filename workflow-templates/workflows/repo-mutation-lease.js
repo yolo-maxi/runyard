@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -38,6 +39,23 @@ function safeSegment(value, fallback = "run") {
     .replace(/^-+|-+$/g, "")
     .slice(0, 96);
   return clean || fallback;
+}
+
+export function isSafeGitBranch(branch) {
+  const value = cleanString(branch);
+  if (!value || value.length > 240) return false;
+  if (value.startsWith("-") || value.startsWith("/") || value.endsWith("/") || value.endsWith(".")) return false;
+  if (value.toLowerCase().startsWith("refs/")) return false;
+  if (!/^[A-Za-z0-9._/-]+$/.test(value)) return false;
+  if (value.includes("..") || value.includes("//") || value.includes("@{")) return false;
+  if (/[~^:?*[\]\\\s\x00-\x1f\x7f]/.test(value)) return false;
+  return value.split("/").every((part) => part && !part.startsWith(".") && !part.endsWith(".lock"));
+}
+
+function assertSafeTargetBranch(branch) {
+  if (!isSafeGitBranch(branch)) {
+    throw new Error(`REPO LEASE BLOCKED: target branch is not a safe git branch: ${branch}`);
+  }
 }
 
 function runIdFromEnv(env = process.env) {
@@ -133,6 +151,28 @@ export function releaseRepoLease(lease, { env = process.env } = {}) {
   return true;
 }
 
+export function releaseRunRepoLeases(runId, { env = process.env } = {}) {
+  const targetRunId = cleanString(runId);
+  if (!targetRunId) return 0;
+  const root = leaseRoot(env);
+  let released = 0;
+  let entries = [];
+  try {
+    entries = readdirSync(root, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.endsWith(".lock")) continue;
+    const lockDir = path.join(root, entry.name);
+    const lease = readLease(lockDir);
+    if (lease?.runId !== targetRunId || !lease?.leaseId) continue;
+    rmSync(lockDir, { recursive: true, force: true });
+    released += 1;
+  }
+  return released;
+}
+
 export function acquireRepoLease({
   repoDir,
   targetBranch = "main",
@@ -142,6 +182,7 @@ export function acquireRepoLease({
   env = process.env
 } = {}) {
   const branch = cleanString(targetBranch) || "main";
+  assertSafeTargetBranch(branch);
   const { root, lockDir, key, repoPath } = leasePaths(repoDir, branch, env);
   mkdirSync(root, { recursive: true });
   const runId = runIdFromEnv(env);
@@ -233,6 +274,7 @@ export function prepareMutatingRepo({
 } = {}) {
   const requestedMode = cleanString(mode) || "sequential";
   const branch = cleanString(targetBranch) || "main";
+  assertSafeTargetBranch(branch);
   if (requestedMode !== "parallel") {
     const lease = acquireRepoLease({ repoDir, targetBranch: branch, workflow, gitBin, gitEnv, env });
     return { ...lease, workRepoDir: lease.repoDir, workBranch: lease.startBranch, pushBranch: branch };

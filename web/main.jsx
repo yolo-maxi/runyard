@@ -1,6 +1,6 @@
 import { StrictMode } from "react";
-import { createRoot } from "react-dom/client";
 import { QueryClientProvider } from "@tanstack/react-query";
+import { createGatewayReactRoot } from "smithers-orchestrator/gateway-react";
 import { queryClient } from "./lib/queryClient.js";
 import { AuthGate } from "./app/AuthGate.jsx";
 
@@ -9,17 +9,15 @@ import { AuthGate } from "./app/AuthGate.jsx";
 // public/app.js, which public/index.html loads as a module. See bin/build-web.mjs.
 
 function mount() {
-  const host = document.getElementById("root");
-  if (!host) {
-    console.error("[runyard] #root mount node missing");
-    return;
-  }
-  createRoot(host).render(
+  // createGatewayReactRoot resolves the mount node itself from `rootId` and
+  // throws if it is missing, so there is no separate host lookup here.
+  createGatewayReactRoot(
     <StrictMode>
       <QueryClientProvider client={queryClient}>
         <AuthGate />
       </QueryClientProvider>
-    </StrictMode>
+    </StrictMode>,
+    { baseUrl: "/", rootId: "root" }
   );
 }
 

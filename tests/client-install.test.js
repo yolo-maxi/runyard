@@ -52,8 +52,16 @@ describe("client install helpers", () => {
     const script = installScript("https://hub.example");
 
     assert.ok(script.startsWith("#!/usr/bin/env bash\n"));
-    assert.ok(script.includes('HUB_URL="${RUNYARD_HUB_URL:-${SMITHERS_HUB_URL:-https://hub.example}}"'));
+    assert.ok(script.includes("DEFAULT_HUB_URL='https://hub.example'"));
+    assert.ok(script.includes('HUB_URL="${RUNYARD_HUB_URL:-${SMITHERS_HUB_URL:-$DEFAULT_HUB_URL}}"'));
     assert.ok(script.includes('curl -fsSL "$HUB_URL/cli.tgz" -o "$tmp"'));
     assert.ok(script.includes("runyard mcp install --all"));
+  });
+
+  it("shell-quotes the default Hub URL in the rendered installer", () => {
+    const script = installScript("https://hub.example/'$(touch pwn)'");
+
+    assert.ok(script.includes("DEFAULT_HUB_URL='https://hub.example/'\\''$(touch pwn)'\\'''"));
+    assert.doesNotMatch(script, /SMITHERS_HUB_URL:-https:\/\/hub\.example\/'\$\(touch pwn\)'/);
   });
 });

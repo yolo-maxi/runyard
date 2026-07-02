@@ -22,6 +22,19 @@ export function applyRedactionRules(value, rules = COMMON_SECRET_REDACTION_RULES
   return text;
 }
 
+export function redactValue(value, rules = COMMON_SECRET_REDACTION_RULES) {
+  if (typeof value === "string") return applyRedactionRules(value, rules);
+  if (Array.isArray(value)) return value.map((item) => redactValue(item, rules));
+  if (value && typeof value === "object") {
+    const output = {};
+    for (const [key, item] of Object.entries(value)) {
+      output[key] = redactValue(item, rules);
+    }
+    return output;
+  }
+  return value;
+}
+
 export function truncateText(value, max, { collapseWhitespace = false, wordBoundary = false } = {}) {
   const text = collapseWhitespace
     ? String(value ?? "").replace(/\s+/g, " ").trim()
