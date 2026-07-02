@@ -69,12 +69,15 @@ test("approval-gated run: pending approval surfaces, approve unblocks run -> run
   // --- UI: log in ---
   await login(page, hub);
 
-  // The approvals nav badge reflects the pending approval count. refreshSidebarBadges()
-  // runs on boot (and every 30s) and toggles the hidden attr + textContent on the
-  // mobile-primary-nav badge. Since the approval existed before login, the boot refresh
-  // populates it. Assert it shows the pending count without any page.reload().
-  const navBadge = page.locator('.mobile-primary-nav [data-badge="approvals"]');
-  await expect(navBadge).toHaveText("1", { timeout: 10_000 });
+  // The approval notification link in the top nav reflects the pending approval
+  // count. useSidebarBadges() runs a reactive live query over the approvals
+  // collection, so once it refetches the link flips data-has-pending to "true"
+  // and its accessible label announces the count — all without a page.reload().
+  const approvalLink = page.locator(".approval-notifications");
+  await expect(approvalLink).toHaveAttribute("data-has-pending", "true", {
+    timeout: 10_000,
+  });
+  await expect(approvalLink).toHaveAttribute("aria-label", "1 approval need checking");
 
   // --- UI: open the Approvals view (no sidebar button — navigate by hash) ---
   await page.goto(`${hub.baseURL}/app#approvals`);
