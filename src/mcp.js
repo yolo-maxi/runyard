@@ -1,25 +1,16 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
 import { HubClient } from "./apiClient.js";
 import { resolveRemote } from "./config.js";
-
-// Version straight from package.json (importing env.js here would trigger its
-// data-dir/secret side effects in a stdio MCP process).
-const mcpVersion = (() => {
-  try {
-    return JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version || "0.0.0";
-  } catch {
-    return "0.0.0";
-  }
-})();
+import { resolveHubUrl, resolveHubToken } from "./hubConnection.js";
+import { packageVersion as mcpVersion } from "./packageInfo.js";
 
 // Resolve target hub from (in order): env, --remote <name> in argv, the current saved remote.
 const remoteArgIndex = process.argv.indexOf("--remote");
 const remoteName = remoteArgIndex >= 0 ? process.argv[remoteArgIndex + 1] : null;
 const remote = resolveRemote(remoteName);
 const client = new HubClient({
-  baseUrl: process.env.RUNYARD_HUB_URL || process.env.SMITHERS_HUB_URL || process.env.HUB_URL || remote.url || "http://127.0.0.1:43117",
-  token: process.env.RUNYARD_HUB_TOKEN || process.env.SMITHERS_HUB_TOKEN || process.env.HUB_TOKEN || remote.token
+  baseUrl: resolveHubUrl({ remote }),
+  token: resolveHubToken({ remote })
 });
 
 const tools = [

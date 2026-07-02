@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { HubClient } from "./apiClient.js";
 import { readConfig, writeConfig, setRemote, resolveRemote } from "./config.js";
+import { resolveHubUrl, resolveHubToken } from "./hubConnection.js";
 import { parseJsonOption } from "./cliJson.js";
 import { renderData, renderMenu, renderRunCreated } from "./cliPresentation.js";
 import { normalizeRunnerTags } from "./runExecution.js";
@@ -25,15 +26,8 @@ process.stdout.on("error", (error) => {
 function client(options = {}) {
   const remoteName = options.remote || program.opts().remote;
   const remote = resolveRemote(remoteName);
-  const baseUrl =
-    options.url ||
-    program.opts().url ||
-    process.env.RUNYARD_HUB_URL ||
-    process.env.SMITHERS_HUB_URL ||
-    remote.url ||
-    "http://127.0.0.1:43117";
-  const token =
-    options.token || program.opts().token || process.env.RUNYARD_HUB_TOKEN || process.env.SMITHERS_HUB_TOKEN || remote.token;
+  const baseUrl = resolveHubUrl({ explicit: options.url || program.opts().url, remote });
+  const token = resolveHubToken({ explicit: options.token || program.opts().token, remote });
   if (!token) throw new Error("No token configured. Run: runyard login");
   return new HubClient({ baseUrl, token });
 }
@@ -420,8 +414,8 @@ runnerCommand
     const remote = resolveRemote(program.opts().remote);
     const env = {
       ...process.env,
-      RUNYARD_HUB_URL: program.opts().url || process.env.RUNYARD_HUB_URL || process.env.SMITHERS_HUB_URL || remote.url,
-      RUNYARD_HUB_TOKEN: program.opts().token || process.env.RUNYARD_HUB_TOKEN || process.env.SMITHERS_HUB_TOKEN || remote.token,
+      RUNYARD_HUB_URL: resolveHubUrl({ explicit: program.opts().url, remote }),
+      RUNYARD_HUB_TOKEN: resolveHubToken({ explicit: program.opts().token, remote }),
       SMITHERS_WORKSPACE: opts.workspace,
       SMITHERS_RUNNER_LOCATION: opts.location
     };

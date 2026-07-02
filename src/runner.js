@@ -19,6 +19,8 @@ import { DEFAULT_MAX_INLINE_INPUT_BYTES } from "./runnerPolicy.js";
 import { smithersEventMessage } from "./runnerSmithersEvents.js";
 import { readClaudeOauthToken } from "./claudeOauthToken.js";
 import { isDraining, resolveDataDir } from "./drain.js";
+import { resolveHubUrl, resolveHubToken } from "./hubConnection.js";
+import { packageVersion } from "./packageInfo.js";
 import { resolveSmithersBin, resolveExecWrapper } from "./resolveSmithersBin.js";
 import {
   createSmithersRunRegistry,
@@ -55,14 +57,8 @@ const smithersBin = resolveSmithersBin();
 // deployer-chosen sandbox/container/job launcher. See resolveExecWrapper().
 const execWrapper = resolveExecWrapper();
 
-const baseUrl =
-  process.env.RUNYARD_HUB_URL || process.env.SMITHERS_HUB_URL || process.env.HUB_URL || "http://127.0.0.1:43117";
-const token =
-  process.env.RUNYARD_HUB_TOKEN ||
-  process.env.SMITHERS_HUB_TOKEN ||
-  process.env.HUB_TOKEN ||
-  process.env.RUNYARD_HUB_BOOTSTRAP_TOKEN ||
-  process.env.SMITHERS_HUB_BOOTSTRAP_TOKEN;
+const baseUrl = resolveHubUrl();
+const token = resolveHubToken({ allowBootstrap: true });
 const workspace = path.resolve(process.env.SMITHERS_WORKSPACE || process.cwd());
 const location = process.env.SMITHERS_RUNNER_LOCATION || "vps"; // "vps" | "local"
 const name = process.env.SMITHERS_RUNNER_NAME || `${os.hostname()} (${location})`;
@@ -276,7 +272,7 @@ async function register() {
     name,
     hostname: os.hostname(),
     platform: `${os.platform()} ${os.release()}`,
-    version: "0.2.0",
+    version: packageVersion,
     tags,
     capacity: concurrency
   });
