@@ -721,7 +721,7 @@
           <div class="node-row">
             <div class="node warn">
               <strong>Runner Pool</strong>
-              <span>Claims work by tag/capability; future sandbox and Kubernetes path.</span>
+              <span>Claims work by tag/capability; future Bubblewrap/justbash sandbox path.</span>
             </div>
             <div class="node warn">
               <strong>Side Effects</strong>
@@ -795,7 +795,7 @@
               <span class="num">3</span>
               <div>
                 <strong>Runner claims matching work</strong>
-                <span>Runner tags and auth health determine what can run where. Future versions should add stronger sandbox policy.</span>
+                <span>Runner tags and auth health determine what can run where. Future versions should add Bubblewrap/justbash execution policy.</span>
               </div>
             </div>
             <div class="flow-step">
@@ -878,7 +878,7 @@
               <li>Capability-tagged runner pools</li>
               <li>Filesystem and network boundaries</li>
               <li>Ephemeral runner direction</li>
-              <li>Kubernetes path for larger deployments</li>
+              <li>Bubblewrap/justbash sandbox path before heavier orchestration</li>
             </ul>
           </article>
           <article class="panel">
@@ -995,7 +995,7 @@
             <div class="version">0.7</div>
             <div>
               <h3>Scalable sandboxed runners</h3>
-              <p>Runner pools, leases, cleanup, isolation controls, safer secret injection, and a Kubernetes or ephemeral-runner path.</p>
+              <p>Runner pools, leases, cleanup, Bubblewrap/justbash isolation controls, safer secret injection, and a later Kubernetes or ephemeral-runner path only if scale demands it.</p>
             </div>
           </article>
           <article class="milestone">
@@ -1086,7 +1086,7 @@
           <div class="question">Should RunYard model side effects as explicit finalization nodes, idempotent receipts, sagas with compensation, or a higher-level primitive built on top of Smithers events?</div>
           <div class="question">How should RunYard pin workflow bundle source, hash, runtime version, and dependency context so resume, fork, and audit always explain exactly what code ran?</div>
           <div class="question">Which failure/status concepts should RunYard preserve from Smithers versus translate for operators, so stalled, waiting-approval, provider-limited, blocked-by-preflight, failed-after-side-effect, and unsafe-to-retry are never conflated?</div>
-          <div class="question">What parts of runner isolation should be product policy in RunYard versus infrastructure policy in containers, CVMs, Kubernetes, or future Smithers runtime primitives?</div>
+          <div class="question">If RunYard starts with Bubblewrap and justbash for runner isolation, what must still be represented in the product contract so we can later move to CVMs, Kubernetes, or Smithers-native isolation without rewriting workflows?</div>
           <div class="question">What would you avoid building in RunYard because Smithers already plans to own it, and what should RunYard build now because waiting would create painful migration debt?</div>
         </div>
       </div>
