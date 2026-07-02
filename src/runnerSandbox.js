@@ -26,6 +26,19 @@ const FALSEY = new Set(["0", "false", "off", "no"]);
 // portable across merged-usr (/bin -> /usr/bin) and non-merged layouts.
 const SYSTEM_RO_BINDS = ["/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc"];
 
+// The launched workflow gets a writable HOME here, a dotdir under its own
+// workspace. The runner host's real HOME (operator SSH keys, ~/.config creds,
+// the runner's own secrets) is never mounted; this replaces it with fresh,
+// isolated, workspace-local storage. Shared per-workspace across a runner's
+// concurrent runs, never exposed to the host.
+export const SANDBOX_HOME_SUBDIR = ".home";
+
+// Host XDG base-dir vars are cleared inside the sandbox: on the host they point
+// at the (unmounted) host HOME, so leaving them set would send config/cache/data
+// writes at dead paths. Cleared, tools re-derive them from the sandbox HOME
+// per the XDG spec ($HOME/.config, $HOME/.cache, $HOME/.local/share).
+const SANDBOX_UNSET_ENV = ["XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR"];
+
 function isFalsey(raw) {
   return FALSEY.has(String(raw ?? "").trim().toLowerCase());
 }
@@ -33,7 +46,9 @@ function isFalsey(raw) {
 // Build the Bubblewrap argv that wraps a workflow launch. The workspace is the
 // only writable mount and is bound at the SAME path inside the sandbox, so the
 // absolute workflow path the runner passes (`smithers up /ws/workflow.tsx`)
-// resolves identically inside and out.
+// resolves identically inside and out. The child also gets a writable HOME
+// (a dotdir under the workspace) with the host HOME/XDG dirs walled off — see
+// SANDBOX_HOME_SUBDIR.
 export function bubblewrapArgv({
   workspace,
   smithersBin = "smithers",
@@ -67,13 +82,22 @@ export function bubblewrapArgv({
     const binDir = path.dirname(smithersBin);
     if (!SYSTEM_RO_BINDS.includes(binDir)) argv.push("--ro-bind-try", binDir, binDir);
   }
-  // Operator-supplied extra read-only binds (custom toolchain, $HOME caches the
-  // engine needs). Each is an absolute path bound at itself.
+  // Operator-supplied extra read-only binds (custom toolchain, shared runtime
+  // dirs the engine needs). Each is an absolute path bound at itself. (The
+  // workflow's writable HOME is provided below, not via these.)
   for (const p of roBinds) {
     if (path.isAbsolute(p)) argv.push("--ro-bind-try", p, p);
   }
-  // Writable workspace last so it wins any overlap, then chdir into it.
-  argv.push("--bind", workspace, workspace, "--chdir", workspace);
+  // Writable workspace last so it wins any overlap. Then carve a writable HOME
+  // out of it (--dir materializes the dotdir inside the just-bound workspace),
+  // repoint HOME there, and clear the host XDG_* that pointed at the unmounted
+  // host HOME. This is the whole "sane writable HOME/cache" story: the child can
+  // write ~/.cache, ~/.config, etc. without ever touching — or exposing — the
+  // runner host's home. Finally chdir into the workspace.
+  const homeDir = path.join(workspace, SANDBOX_HOME_SUBDIR);
+  argv.push("--bind", workspace, workspace, "--dir", homeDir, "--setenv", "HOME", homeDir);
+  for (const key of SANDBOX_UNSET_ENV) argv.push("--unsetenv", key);
+  argv.push("--chdir", workspace);
   return argv;
 }
 

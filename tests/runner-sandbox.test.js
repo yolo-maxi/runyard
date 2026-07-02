@@ -1,21 +1,35 @@
 import { describe, it, test } from "node:test";
 import assert from "node:assert/strict";
 
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
+import os from "node:os";
+import nodePath from "node:path";
+
 import {
   bubblewrapArgv,
   resolveSandboxWrapper,
-  resolveRunnerExecWrapper
+  resolveRunnerExecWrapper,
+  SANDBOX_HOME_SUBDIR
 } from "../src/runnerSandbox.js";
 import { smithersCommand } from "../src/runnerSmithersRuntime.js";
 
 const WS = "/srv/runner/workspace";
 
+// Index of the token that follows the first `flag value` pair matching `flag`.
+function valueAfter(argv, flag) {
+  const i = argv.indexOf(flag);
+  return i >= 0 ? argv[i + 1] : undefined;
+}
+
 describe("bubblewrapArgv", () => {
   it("binds system dirs read-only and the workspace read-write at the same path", () => {
     const argv = bubblewrapArgv({ workspace: WS });
     assert.equal(argv[0], "bwrap");
-    // Workspace is the sole writable mount, bound at the same path, then chdir'd.
-    assert.deepEqual(argv.slice(-5), ["--bind", WS, WS, "--chdir", WS]);
+    // Workspace is the sole writable mount, bound at the same path; the sandbox
+    // finishes by chdir'ing into it.
+    assert.deepEqual(argv.slice(-2), ["--chdir", WS]);
+    assert.deepEqual([valueAfter(argv, "--bind"), argv[argv.indexOf("--bind") + 2]], [WS, WS]);
     // System dirs are read-only via -try (portable across merged-usr layouts).
     assert.ok(argv.includes("--ro-bind-try"));
     for (const dir of ["/usr", "/etc", "/lib"]) {
@@ -57,6 +71,35 @@ describe("bubblewrapArgv", () => {
     assert.throws(() => bubblewrapArgv({ workspace: "" }), /absolute workspace/);
     assert.throws(() => bubblewrapArgv({ workspace: "relative/ws" }), /absolute workspace/);
   });
+
+  it("gives the child a writable HOME under the workspace and walls off the host HOME", () => {
+    const argv = bubblewrapArgv({ workspace: WS });
+    const homeDir = `${WS}/${SANDBOX_HOME_SUBDIR}`;
+    // HOME is repointed into the workspace...
+    assert.equal(valueAfter(argv, "--setenv"), "HOME");
+    assert.equal(argv[argv.indexOf("--setenv") + 2], homeDir);
+    // ...and materialized so it exists before the engine writes to it.
+    assert.equal(valueAfter(argv, "--dir"), homeDir);
+    // The HOME dir is created AFTER the workspace is bound rw (order matters:
+    // --dir lands inside the bind, not on an empty sandbox root).
+    assert.ok(argv.lastIndexOf("--bind") < argv.indexOf("--dir"), "--dir must follow the workspace --bind");
+    // The runner host HOME is never bound in.
+    assert.ok(!argv.includes(os.homedir()) || os.homedir() === WS, "host HOME must not be a mount source");
+  });
+
+  it("clears host XDG_* so config/cache/data re-derive from the sandbox HOME", () => {
+    const argv = bubblewrapArgv({ workspace: WS });
+    for (const key of ["XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR"]) {
+      const i = argv.indexOf(key);
+      assert.ok(i > 0 && argv[i - 1] === "--unsetenv", `${key} should be --unsetenv'd`);
+    }
+  });
+
+  it("keeps the writable HOME inside the workspace regardless of workspace path", () => {
+    const argv = bubblewrapArgv({ workspace: "/data/runs/ws-42" });
+    assert.equal(valueAfter(argv, "--setenv"), "HOME");
+    assert.equal(argv[argv.indexOf("--setenv") + 2], "/data/runs/ws-42/.home");
+  });
 });
 
 describe("resolveSandboxWrapper", () => {
@@ -70,7 +113,7 @@ describe("resolveSandboxWrapper", () => {
     for (const RUNNER_SANDBOX of ["bubblewrap", "bwrap", "BubbleWrap"]) {
       const argv = resolveSandboxWrapper({ env: { RUNNER_SANDBOX }, workspace: WS });
       assert.equal(argv[0], "bwrap");
-      assert.deepEqual(argv.slice(-5), ["--bind", WS, WS, "--chdir", WS]);
+      assert.deepEqual(argv.slice(-2), ["--chdir", WS]);
     }
   });
 
@@ -116,6 +159,46 @@ describe("resolveRunnerExecWrapper (preset + literal precedence)", () => {
   it("returns [] (bare host) when neither is set", () => {
     assert.deepEqual(resolveRunnerExecWrapper({ env: {}, workspace: WS }), []);
   });
+});
+
+// Real Bubblewrap smoke — only runs where `bwrap` is actually installed AND user
+// namespaces work; skipped otherwise (e.g. this dev box, most CI). Proves the
+// generated argv delivers a writable HOME inside the workspace while host paths
+// stay invisible — i.e. the isolation the unit tests assert structurally.
+const HAVE_BWRAP = (() => {
+  try {
+    execFileSync("bwrap", ["--version"], { stdio: "ignore" });
+    // A --version success doesn't guarantee userns is permitted; probe a no-op.
+    execFileSync("bwrap", ["--ro-bind", "/usr", "/usr", "--proc", "/proc", "true"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+test("real bwrap: sandbox HOME is writable and host paths are invisible", { skip: !HAVE_BWRAP && "bwrap unavailable" }, () => {
+  const workspace = mkdtempSync(nodePath.join(os.tmpdir(), "runyard-bwrap-ws-"));
+  const secretDir = mkdtempSync(nodePath.join(os.tmpdir(), "runyard-host-secret-"));
+  const secretFile = nodePath.join(secretDir, "runner-secret");
+  writeFileSync(secretFile, "TOP-SECRET-RUNNER-KEY");
+
+  const argv = bubblewrapArgv({ workspace });
+  const script = [
+    'printf "HOME=%s\\n" "$HOME"',
+    'touch "$HOME/canary" && echo WROTE_HOME',
+    `cat ${secretFile} 2>/dev/null && echo LEAK || echo NO_LEAK`
+  ].join("; ");
+  const out = execFileSync(argv[0], [...argv.slice(1), "/bin/sh", "-c", script], { encoding: "utf8" });
+
+  assert.match(out, new RegExp(`HOME=${workspace}/${SANDBOX_HOME_SUBDIR}`), "HOME points into the workspace");
+  assert.match(out, /WROTE_HOME/, "HOME is writable");
+  assert.match(out, /NO_LEAK/, "host secret outside the workspace is not readable");
+  assert.doesNotMatch(out, /TOP-SECRET-RUNNER-KEY/);
+  // The canary the sandbox wrote is visible on the host workspace HOME dir.
+  assert.equal(
+    readFileSync(nodePath.join(workspace, SANDBOX_HOME_SUBDIR, "canary"), "utf8"),
+    ""
+  );
 });
 
 // End-to-end seam proof: the bwrap preset wraps a launch (`up`) but the runner's
