@@ -230,6 +230,52 @@ describe("runReauth (mocked child process — never a live login)", () => {
     assert.match(result.error, /exited 1/);
   });
 
+  it("spawns the login child with the allowlisted baseline only — no runner secrets, HOME pinned", async () => {
+    const home = mkdtempSync(path.join(os.tmpdir(), "reauth-env-home-"));
+    const baseEnv = {
+      PATH: "/usr/local/bin:/usr/bin",
+      HOME: "/some/other/home",
+      LANG: "en_US.UTF-8",
+      NODE_EXTRA_CA_CERTS: "/etc/ssl/corp.pem",
+      // Reauth-runner secrets that must never reach a CLI login flow.
+      SECRETS_ENC_KEY: "master-key-must-not-leak",
+      RUNYARD_HUB_BOOTSTRAP_TOKEN: "bootstrap-must-not-leak",
+      RUNYARD_READ_TOKEN: "read-token-must-not-leak",
+      OPENAI_API_KEY: "sk-must-not-leak",
+      TELEGRAM_BOT_TOKEN: "telegram-must-not-leak",
+      REAUTH_ENABLED: "1"
+    };
+
+    let spawnOpts = null;
+    const child = fakeChild();
+    const spawnFn = (bin, args, opts) => {
+      spawnOpts = opts;
+      setImmediate(() => child.emit("exit", 1));
+      return child;
+    };
+
+    await runReauth({ provider: "codex" }, { spawnFn, home, baseEnv });
+
+    assert.ok(spawnOpts, "spawnFn should have been called");
+    assert.equal(spawnOpts.cwd, home);
+    // Baseline survives; HOME is pinned to the resolved home so auth files land
+    // where deriveHealth reads them.
+    assert.equal(spawnOpts.env.PATH, "/usr/local/bin:/usr/bin");
+    assert.equal(spawnOpts.env.LANG, "en_US.UTF-8");
+    assert.equal(spawnOpts.env.NODE_EXTRA_CA_CERTS, "/etc/ssl/corp.pem");
+    assert.equal(spawnOpts.env.HOME, home);
+    for (const key of [
+      "SECRETS_ENC_KEY",
+      "RUNYARD_HUB_BOOTSTRAP_TOKEN",
+      "RUNYARD_READ_TOKEN",
+      "OPENAI_API_KEY",
+      "TELEGRAM_BOT_TOKEN",
+      "REAUTH_ENABLED"
+    ]) {
+      assert.equal(spawnOpts.env[key], undefined, `${key} must not leak into the login child`);
+    }
+  });
+
   it("rejects an unknown provider without spawning anything", async () => {
     let spawned = false;
     const result = await runReauth({ provider: "bogus" }, { spawnFn: () => { spawned = true; return fakeChild(); } });
