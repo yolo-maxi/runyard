@@ -16,6 +16,7 @@ export function createRunReadHandlers({
   hiddenRunSlugs = [],
   listArtifacts,
   listRunEvents,
+  listRunLineage = () => [],
   listRunResponseEndpointsForRun,
   listRuns,
   presentRunResponseEndpoint,
@@ -65,6 +66,7 @@ export function createRunReadHandlers({
         artifacts: linkedRunArtifacts(run),
         decorateSingleRun,
         events: runEvents(run),
+        lineage: listRunLineage(run.id),
         listRunResponseEndpointsForRun,
         presentRunResponseEndpoint,
         run,
@@ -132,6 +134,7 @@ export function runDetailPayload({
   artifacts,
   decorateSingleRun,
   events,
+  lineage = [],
   listRunResponseEndpointsForRun,
   presentRunResponseEndpoint,
   run,
@@ -143,6 +146,9 @@ export function runDetailPayload({
     run: decorateSingleRun(run),
     events,
     artifacts,
+    // Hub-supervisor self-heal history (run_lineage rows): one entry per
+    // resume / repair / escalate / give_up decision, oldest first.
+    lineage,
     responseEndpoints,
     diagnostics: runDiagnostics(run, events, artifacts),
     logSummary: summarizeRunEvents(events),

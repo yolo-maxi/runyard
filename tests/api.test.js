@@ -16,7 +16,7 @@ process.env.SMITHERS_OBSTRUCTION_ANALYSIS_ENABLED = "0";
 
 const { app, notifyTelegram } = await import("../src/server.js");
 const { env } = await import("../src/env.js");
-const { addRunEvent, autoQueueLegacyRunStartApprovals, countRuns, createApproval, createRun, getCapability, getRun, listRuns, transitionRun, updateRun } = await import("../src/db.js");
+const { addRunEvent, autoQueueLegacyRunStartApprovals, countRuns, createApproval, createRun, getCapability, getRun, listRuns, recordRunLineage, transitionRun, updateRun } = await import("../src/db.js");
 const {
   RUN_OBSTRUCTION_ANALYSIS_ARTIFACT_NAME,
   setRunObstructionAnalyzerForTest
@@ -2150,6 +2150,54 @@ describe("Failure / cancellation diagnostics", () => {
     });
     const text = await logsResponse.text();
     assert.doesNotMatch(text, /shub_AAAABBBBCCCCDDDDEEEE/);
+  });
+
+  it("surfaces hub-supervisor self-heal lineage and counters on run detail", async () => {
+    const created = await api("/api/capabilities/hello/run", {
+      method: "POST",
+      body: { input: { goal: "self-heal visibility" } }
+    });
+    const runId = created.run.id;
+
+    // Fresh runs expose zeroed counters and an empty history.
+    const before = await api(`/api/runs/${runId}`);
+    assert.equal(before.run.attempt, 0);
+    assert.equal(before.run.repairCount, 0);
+    assert.deepEqual(before.lineage, []);
+
+    // Simulate two hub-supervisor decisions (what adjudicateRun records).
+    recordRunLineage(runId, {
+      attempt: 1,
+      action: "resume",
+      reason: "runner runner_a offline (no heartbeat)",
+      fingerprint: "",
+      prevRunnerId: "runner_a",
+      checkpoint: "run-12345"
+    });
+    recordRunLineage(runId, {
+      attempt: 1,
+      action: "escalate",
+      reason: "max attempts reached",
+      fingerprint: "TypeError: boom",
+      prevRunnerId: "runner_b",
+      checkpoint: null
+    });
+
+    const detail = await api(`/api/runs/${runId}`);
+    assert.equal(detail.lineage.length, 2);
+    // Both rows can land in the same millisecond, so look entries up by
+    // action instead of relying on created_at tiebreak order.
+    const resume = detail.lineage.find((entry) => entry.action === "resume");
+    const escalate = detail.lineage.find((entry) => entry.action === "escalate");
+    assert.ok(resume && escalate);
+    assert.equal(resume.runId, runId);
+    assert.equal(resume.action, "resume");
+    assert.equal(resume.attempt, 1);
+    assert.equal(resume.prevRunnerId, "runner_a");
+    assert.equal(resume.checkpoint, "run-12345");
+    assert.ok(resume.createdAt);
+    assert.equal(escalate.action, "escalate");
+    assert.equal(escalate.fingerprint, "TypeError: boom");
   });
 
   it("surfaces approval comments as the cancellation reason when an approval rejected the run", async () => {

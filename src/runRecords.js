@@ -22,6 +22,11 @@ export function normalizeRun(row) {
     // existing path (RUNYARD_CAPABILITY_VERSIONING unset); see src/runExecution.js.
     capabilitySha: row.capability_sha || null,
     parentRunId: row.parent_run_id || null,
+    // Hub-supervisor self-heal counters (docs/design/hub-supervisor.md):
+    // attempt counts resume re-dispatches, repairCount counts one-shot code
+    // repairs. Both stay 0 for runs the supervisor never touched.
+    attempt: Number(row.attempt) || 0,
+    repairCount: Number(row.repair_count) || 0,
     createdAt: row.created_at,
     assignedAt: row.assigned_at,
     startedAt: row.started_at,

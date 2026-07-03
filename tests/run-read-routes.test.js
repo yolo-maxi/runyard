@@ -19,6 +19,9 @@ function harness(overrides = {}) {
   const artifacts = overrides.artifacts || [
     { id: "art_1", name: "summary.txt", createdAt: "2026-01-01T00:00:02.000Z" }
   ];
+  const lineage = overrides.lineage || [
+    { id: "lin_1", runId: "run_1", attempt: 1, action: "resume", reason: "runner offline", fingerprint: "", prevRunnerId: "runner_a", checkpoint: "run-123", createdAt: "2026-01-01T00:00:03.000Z" }
+  ];
   const handlers = createRunReadHandlers({
     countRuns: (filters) => {
       calls.countRuns.push(filters);
@@ -29,6 +32,7 @@ function harness(overrides = {}) {
     hiddenRunSlugs: ["support-agent"],
     listArtifacts: () => artifacts,
     listRunEvents: () => events,
+    listRunLineage: (runId) => lineage.filter((entry) => entry.runId === runId),
     listRunResponseEndpointsForRun: () => [{ id: "endpoint_1", type: "http" }],
     listRuns: (options) => {
       calls.listRuns.push(options);
@@ -46,7 +50,7 @@ function harness(overrides = {}) {
     withArtifactLinks: (artifact) => ({ ...artifact, url: `/artifacts/${artifact.id}` }),
     withRunLinks: (run, queueIndex) => ({ ...run, queueIndex: queueIndex?.map?.get(run.id) || null, url: `/runs/${run.id}` })
   });
-  return { artifacts, calls, events, handlers, runs };
+  return { artifacts, calls, events, handlers, lineage, runs };
 }
 
 describe("run read route helpers", () => {
@@ -70,6 +74,7 @@ describe("run read route helpers", () => {
     });
 
     assert.deepEqual(payload.run, { id: "run_1", status: "failed", decorated: true });
+    assert.deepEqual(payload.lineage, []);
     assert.deepEqual(payload.responseEndpoints, [{ id: "endpoint_1", redacted: true }]);
     assert.deepEqual(payload.diagnostics, { runId: "run_1", eventCount: 1, artifactCount: 1 });
     assert.equal(payload.logSummary.totals.events, 1);
@@ -98,7 +103,7 @@ describe("run read route helpers", () => {
   });
 
   it("presents run detail with diagnostics, artifacts, endpoints, and log summary", () => {
-    const { handlers } = harness();
+    const { handlers, lineage } = harness();
     const res = response();
     handlers.getRun({ params: { id: "run_1" } }, res);
 
@@ -107,6 +112,14 @@ describe("run read route helpers", () => {
     assert.deepEqual(res.body.responseEndpoints[0], { id: "endpoint_1", type: "http", redacted: true });
     assert.equal(res.body.diagnostics.headline, "ok");
     assert.ok(res.body.logSummary);
+    assert.deepEqual(res.body.lineage, lineage);
+  });
+
+  it("returns an empty self-heal lineage for runs the supervisor never touched", () => {
+    const { handlers } = harness();
+    const res = response();
+    handlers.getRun({ params: { id: "run_2" } }, res);
+    assert.deepEqual(res.body.lineage, []);
   });
 
   it("serves redacted text logs and gated timelines", () => {
