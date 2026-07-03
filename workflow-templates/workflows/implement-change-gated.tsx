@@ -2,13 +2,14 @@
 // smithers-display-name: Implement Change (gated)
 // smithers-description: Runs an implementation agent for a change request, then gates it (pnpm install --frozen-lockfile, pnpm test, staged diff, a sane commit, push to origin) before optionally deploying to a configured production target. deploy=false stops after push and reports what would deploy.
 /** @jsxImportSource smithers-orchestrator */
-import { createSmithers, Sequence, CodexAgent, ClaudeCodeAgent } from "smithers-orchestrator";
+import { createSmithers, Sequence, CodexAgent, ClaudeCodeAgent, PiAgent } from "smithers-orchestrator";
 import { existsSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { z } from "zod/v4";
 import { resolveImproveRepo } from "./improve-repo.js";
 import { withAgentFallback } from "./agent-fallback.js";
+import { createPiAgentFromEnv, resolveAgentCli } from "./pi-harness.js";
 import { prepareMutatingRepo, releaseRepoLease, validateBeforeCommit, validateBeforePush } from "./repo-mutation-lease.js";
 
 // Repo + deploy target are deployment-specific; set env vars on your runner.
@@ -132,7 +133,7 @@ const { Workflow, Task, smithers, outputs } = createSmithers({
   deploy: deployOut
 });
 
-const IMPLEMENT_AGENT_CLI = String(process.env.RUNYARD_IMPLEMENT_AGENT_CLI || "codex").toLowerCase();
+const IMPLEMENT_AGENT_CLI = resolveAgentCli(process.env, { workflow: "IMPLEMENT", fallback: "codex" });
 
 function createBuilder(repoDir) {
   const systemPrompt =
@@ -160,9 +161,19 @@ function createBuilder(repoDir) {
     timeoutMs: 45 * 60 * 1000,
     systemPrompt
   });
-  return IMPLEMENT_AGENT_CLI === "claude"
-    ? withAgentFallback(claude, codex, { label: "implement-change-gated" })
-    : withAgentFallback(codex, claude, { label: "implement-change-gated" });
+  const cliPair =
+    IMPLEMENT_AGENT_CLI === "claude"
+      ? withAgentFallback(claude, codex, { label: "implement-change-gated" })
+      : withAgentFallback(codex, claude, { label: "implement-change-gated" });
+  if (IMPLEMENT_AGENT_CLI !== "pi") return cliPair;
+  const pi = createPiAgentFromEnv({
+    PiAgent,
+    workflow: "IMPLEMENT",
+    cwd: repoDir,
+    systemPrompt,
+    timeoutMs: 45 * 60 * 1000
+  });
+  return withAgentFallback(pi, cliPair, { label: "implement-change-gated" });
 }
 
 function preflightDeployConfig(repoDir) {

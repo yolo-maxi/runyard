@@ -2,13 +2,13 @@
 // smithers-display-name: Workflow Doctor
 // smithers-description: Diagnoses failed Smithers workflows from redacted Hub run evidence, proposes the smallest workflow-source fix, and optionally applies it behind capability approval.
 /** @jsxImportSource smithers-orchestrator */
-import { createSmithers, Sequence, ClaudeCodeAgent, CodexAgent } from "smithers-orchestrator";
+import { createSmithers, Sequence, ClaudeCodeAgent, CodexAgent, PiAgent } from "smithers-orchestrator";
 import { existsSync, realpathSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { z } from "zod/v4";
 import { syncWorkflowToWorkspace } from "./workflow-repair.js";
-import { createAgentFallbackPair } from "./agent-fallback.js";
+import { createAgentFallbackPair, resolveAgentCli } from "./agent-fallback.js";
 
 const HUB_URL = String(process.env.RUN_KNOWLEDGE_HUB_URL || process.env.SMITHERS_HUB_URL || process.env.HUB_URL || "http://127.0.0.1:43117").replace(/\/$/, "");
 const HUB_TOKEN = process.env.RUN_KNOWLEDGE_HUB_TOKEN || process.env.SMITHERS_HUB_TOKEN || process.env.HUB_TOKEN || "";
@@ -100,7 +100,9 @@ const { Workflow, Task, smithers, outputs } = createSmithers({
 const diagnostician = createAgentFallbackPair({
   ClaudeCodeAgent,
   CodexAgent,
-  primaryCli: process.env.RUNYARD_WORKFLOW_DOCTOR_AGENT_CLI || "claude",
+  PiAgent,
+  primaryCli: resolveAgentCli(process.env, { workflow: "WORKFLOW_DOCTOR", fallback: "claude" }),
+  workflow: "WORKFLOW_DOCTOR",
   label: "workflow-doctor-diagnose",
   cwd: process.cwd(),
   claude: {
@@ -120,7 +122,9 @@ function createFixer(repoRoot: string) {
   return createAgentFallbackPair({
     ClaudeCodeAgent,
     CodexAgent,
-    primaryCli: process.env.RUNYARD_WORKFLOW_DOCTOR_AGENT_CLI || "claude",
+    PiAgent,
+    primaryCli: resolveAgentCli(process.env, { workflow: "WORKFLOW_DOCTOR", fallback: "claude" }),
+    workflow: "WORKFLOW_DOCTOR",
     label: "workflow-doctor-fix",
     cwd: repoRoot,
     claude: {

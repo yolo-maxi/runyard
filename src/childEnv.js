@@ -45,13 +45,35 @@ export const CHILD_ENV_ALLOWLIST = new Set([
   "APPDATA"
 ]);
 
+// Harness/provider SELECTION config the workflow templates read from their own
+// process env: which agent CLI drives a workflow (claude/codex/pi), which model,
+// and — for the Pi harness — the custom-endpoint descriptor (provider label,
+// model, endpoint URL, and the NAME of the env var carrying the API key).
+// These are labels and names, never credentials: `..._PI_API_KEY_ENV` holds the
+// key's variable name, and the key itself still only reaches the child through
+// the Hub's encrypted per-run secretEnv channel. Anything ending in API_KEY,
+// TOKEN, or SECRET deliberately matches none of these patterns.
+export const CHILD_ENV_ALLOWLIST_PATTERNS = [
+  /^RUNYARD_(?:[A-Z0-9]+(?:_[A-Z0-9]+)*_)?AGENT_CLI$/,
+  /^RUNYARD_(?:[A-Z0-9]+(?:_[A-Z0-9]+)*_)?(?:AGENT|CLAUDE|CODEX|PI)_MODEL$/,
+  /^RUNYARD_(?:[A-Z0-9]+(?:_[A-Z0-9]+)*_)?PI_(?:PROVIDER|BASE_URL|API_KEY_ENV)$/
+];
+
 // Return only the allowlisted entries of `baseEnv`. Undefined values are dropped
 // so an unset variable never becomes the string "undefined" in the child.
-export function allowlistedBaseEnv(baseEnv = process.env, allowlist = CHILD_ENV_ALLOWLIST) {
+export function allowlistedBaseEnv(
+  baseEnv = process.env,
+  allowlist = CHILD_ENV_ALLOWLIST,
+  patterns = CHILD_ENV_ALLOWLIST_PATTERNS
+) {
   const out = {};
   for (const key of allowlist) {
     const value = baseEnv[key];
     if (value !== undefined) out[key] = value;
+  }
+  for (const [key, value] of Object.entries(baseEnv)) {
+    if (value === undefined || key in out) continue;
+    if (patterns.some((pattern) => pattern.test(key))) out[key] = value;
   }
   return out;
 }

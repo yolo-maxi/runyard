@@ -2,9 +2,9 @@
 // smithers-display-name: Run Knowledge Builder
 // smithers-description: Reads recent Smithers Hub runs, redacts run evidence, and produces recommendation-only lessons and improvement ideas as a Markdown report.
 /** @jsxImportSource smithers-orchestrator */
-import { createSmithers, Sequence, ClaudeCodeAgent, CodexAgent } from "smithers-orchestrator";
+import { createSmithers, Sequence, ClaudeCodeAgent, CodexAgent, PiAgent } from "smithers-orchestrator";
 import { z } from "zod/v4";
-import { createAgentFallbackPair } from "./agent-fallback.js";
+import { createAgentFallbackPair, resolveAgentCli } from "./agent-fallback.js";
 
 const DEFAULT_STATUSES = ["succeeded", "failed", "cancelled", "waiting_approval", "error", "rejected"];
 const HUB_URL = String(process.env.RUN_KNOWLEDGE_HUB_URL || process.env.SMITHERS_HUB_URL || process.env.HUB_URL || "http://127.0.0.1:43117").replace(/\/$/, "");
@@ -102,7 +102,9 @@ const { Workflow, Task, smithers, outputs } = createSmithers({
 const analyst = createAgentFallbackPair({
   ClaudeCodeAgent,
   CodexAgent,
-  primaryCli: process.env.RUNYARD_KNOWLEDGE_AGENT_CLI || "claude",
+  PiAgent,
+  primaryCli: resolveAgentCli(process.env, { workflow: "KNOWLEDGE", fallback: "claude" }),
+  workflow: "KNOWLEDGE",
   label: "run-knowledge-builder",
   cwd: "/tmp",
   claude: {

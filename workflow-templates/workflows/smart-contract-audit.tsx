@@ -2,11 +2,11 @@
 // smithers-display-name: Smart Contract Audit
 // smithers-description: Sandboxed Solidity audit. Sanitizes the target into /tmp, builds local auditor bundles, runs read-only Smithers audit agents over them, and consolidates findings into a Markdown report. Artifacts only; never writes the target.
 /** @jsxImportSource smithers-orchestrator */
-import { createSmithers, Sequence, Parallel, ClaudeCodeAgent, CodexAgent } from "smithers-orchestrator";
+import { createSmithers, Sequence, Parallel, ClaudeCodeAgent, CodexAgent, PiAgent } from "smithers-orchestrator";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod/v4";
-import { createAgentFallbackPair } from "./agent-fallback.js";
+import { createAgentFallbackPair, resolveAgentCli } from "./agent-fallback.js";
 
 // The local audit skill (sandbox + bundle scripts + references) must be installed on the runner.
 const SKILL_DIR = process.env.AUDIT_SKILL_DIR || path.join(os.homedir(), "clawd", "skills", "audit");
@@ -76,7 +76,9 @@ function auditor() {
   return createAgentFallbackPair({
     ClaudeCodeAgent,
     CodexAgent,
-    primaryCli: process.env.RUNYARD_AUDIT_AGENT_CLI || "claude",
+    PiAgent,
+    primaryCli: resolveAgentCli(process.env, { workflow: "AUDIT", fallback: "claude" }),
+    workflow: "AUDIT",
     label: "smart-contract-audit",
     cwd: "/tmp",
     claude: {

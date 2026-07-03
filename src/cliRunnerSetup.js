@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const RUNNER_SETUP_COMMANDS = ["node", "bun", "smithers", "claude", "codex"];
+export const RUNNER_SETUP_COMMANDS = ["node", "bun", "smithers", "claude", "codex", "pi"];
 
 export function commandExists(cmd, { spawnSyncFn = spawnSync } = {}) {
   return spawnSyncFn("/usr/bin/env", ["sh", "-c", `command -v ${cmd} >/dev/null 2>&1`]).status === 0;
@@ -40,8 +40,8 @@ export function setupRunnerWorkspace(
     return { ok: false, reason: "missing-smithers-engine", workspace: ws };
   }
 
-  if (!exists("claude") && !exists("codex")) {
-    warn("\nWarning: no 'claude' or 'codex' CLI on PATH. Workflows need at least one authed agent CLI.");
+  if (!exists("claude") && !exists("codex") && !exists("pi")) {
+    warn("\nWarning: no 'claude', 'codex', or 'pi' CLI on PATH. Workflows need at least one authed agent CLI.");
   }
 
   mkdirSyncFn(ws, { recursive: true });

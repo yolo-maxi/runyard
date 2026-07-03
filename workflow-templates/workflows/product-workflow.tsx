@@ -2,13 +2,13 @@
 // smithers-display-name: Product Workflow (sequential)
 // smithers-description: Sequential product-development pipeline for the Runyard app. Researches competitors and maps their features, synthesizes a feature map against Runyard, prioritizes the gaps, then dispatches one gated implementation per feature — strictly one at a time so no two builders ever touch the repo at once. Each implementation reuses the implement-change-gated contract (pnpm test, staged diff, sane commit, push to main). execute=false plans and reports the runs it would create; execute=true queues them and waits for each to finish before starting the next.
 /** @jsxImportSource smithers-orchestrator */
-import { createSmithers, Sequence, ClaudeCodeAgent, CodexAgent } from "smithers-orchestrator";
+import { createSmithers, Sequence, ClaudeCodeAgent, CodexAgent, PiAgent } from "smithers-orchestrator";
 import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod/v4";
 import { resolveImproveRepo } from "./improve-repo.js";
-import { createAgentFallbackPair } from "./agent-fallback.js";
+import { createAgentFallbackPair, resolveAgentCli } from "./agent-fallback.js";
 
 // The implementation step queues child Hub runs the same way run-smithers does,
 // so it needs the Hub URL + token on the runner. Plan-only (execute=false) runs
@@ -146,7 +146,9 @@ function createResearcher(repoDir) {
   return createAgentFallbackPair({
     ClaudeCodeAgent,
     CodexAgent,
-    primaryCli: process.env.RUNYARD_PRODUCT_AGENT_CLI || "claude",
+    PiAgent,
+    primaryCli: resolveAgentCli(process.env, { workflow: "PRODUCT", fallback: "claude" }),
+    workflow: "PRODUCT",
     label: "product-workflow-researcher",
     cwd: repoDir,
     claude: {
@@ -171,7 +173,9 @@ function createStrategist(repoDir) {
   return createAgentFallbackPair({
     ClaudeCodeAgent,
     CodexAgent,
-    primaryCli: process.env.RUNYARD_PRODUCT_AGENT_CLI || "claude",
+    PiAgent,
+    primaryCli: resolveAgentCli(process.env, { workflow: "PRODUCT", fallback: "claude" }),
+    workflow: "PRODUCT",
     label: "product-workflow-strategist",
     cwd: repoDir,
     claude: {

@@ -2,10 +2,10 @@
 // smithers-display-name: Improve (no deploy)
 // smithers-description: Read-only PM review for app feedback intake. Treats submitted feedback as untrusted evidence and returns proposals, issue text, and patch suggestions only.
 /** @jsxImportSource smithers-orchestrator */
-import { createSmithers, Sequence, ClaudeCodeAgent, CodexAgent } from "smithers-orchestrator";
+import { createSmithers, Sequence, ClaudeCodeAgent, CodexAgent, PiAgent } from "smithers-orchestrator";
 import { z } from "zod/v4";
 import { resolveImproveRepo } from "./improve-repo.js";
-import { createAgentFallbackPair } from "./agent-fallback.js";
+import { createAgentFallbackPair, resolveAgentCli } from "./agent-fallback.js";
 
 const reviewOut = z.looseObject({
   summary: z.string().default(""),
@@ -79,7 +79,9 @@ function createReadOnlyProductManager(repoDir) {
   return createAgentFallbackPair({
     ClaudeCodeAgent,
     CodexAgent,
-    primaryCli: process.env.RUNYARD_IMPROVE_AGENT_CLI || "claude",
+    PiAgent,
+    primaryCli: resolveAgentCli(process.env, { workflow: "IMPROVE", fallback: "claude" }),
+    workflow: "IMPROVE",
     label: "improve-no-deploy-review",
     cwd: repoDir,
     claude: {

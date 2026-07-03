@@ -19,7 +19,23 @@ const RUNNER_ENV = {
   RUNYARD_READ_TOKEN: "read-token",
   OPENAI_API_KEY: "sk-runner-openai",
   TELEGRAM_BOT_TOKEN: "telegram-bot",
-  SMITHERS_OBSTRUCTION_ANALYSIS_API_KEY: "obstruction-key"
+  SMITHERS_OBSTRUCTION_ANALYSIS_API_KEY: "obstruction-key",
+  // Endpoint API keys must ride the per-run secretEnv channel, never ambient env
+  // — even when they belong to the Pi harness config family.
+  VENICE_API_KEY: "vk-ambient",
+  RUNYARD_PI_API_KEY: "pi-literal-key",
+  RUNYARD_HUB_SUPPORT_AGENT_API_KEY: "support-key",
+  // Harness selection + Pi endpoint descriptors (names/labels, no credentials)
+  // are the one RUNYARD_* family that must reach the workflow child.
+  RUNYARD_IMPLEMENT_AGENT_CLI: "pi",
+  RUNYARD_AGENT_CLI: "pi",
+  RUNYARD_IMPROVE_CLAUDE_MODEL: "claude-opus-4-7",
+  RUNYARD_IMPLEMENT_AGENT_MODEL: "glm-4.7",
+  RUNYARD_PI_PROVIDER: "venice",
+  RUNYARD_PI_MODEL: "llama-3.3-70b",
+  RUNYARD_PI_BASE_URL: "https://api.venice.ai/api/v1",
+  RUNYARD_PI_API_KEY_ENV: "VENICE_API_KEY",
+  RUNYARD_IMPLEMENT_PI_PROVIDER: "glm"
 };
 
 const SENSITIVE_KEYS = [
@@ -29,7 +45,22 @@ const SENSITIVE_KEYS = [
   "RUNYARD_READ_TOKEN",
   "OPENAI_API_KEY",
   "TELEGRAM_BOT_TOKEN",
-  "SMITHERS_OBSTRUCTION_ANALYSIS_API_KEY"
+  "SMITHERS_OBSTRUCTION_ANALYSIS_API_KEY",
+  "VENICE_API_KEY",
+  "RUNYARD_PI_API_KEY",
+  "RUNYARD_HUB_SUPPORT_AGENT_API_KEY"
+];
+
+const HARNESS_CONFIG_KEYS = [
+  "RUNYARD_IMPLEMENT_AGENT_CLI",
+  "RUNYARD_AGENT_CLI",
+  "RUNYARD_IMPROVE_CLAUDE_MODEL",
+  "RUNYARD_IMPLEMENT_AGENT_MODEL",
+  "RUNYARD_PI_PROVIDER",
+  "RUNYARD_PI_MODEL",
+  "RUNYARD_PI_BASE_URL",
+  "RUNYARD_PI_API_KEY_ENV",
+  "RUNYARD_IMPLEMENT_PI_PROVIDER"
 ];
 
 describe("child env allowlist", () => {
@@ -44,6 +75,13 @@ describe("child env allowlist", () => {
 
     for (const key of SENSITIVE_KEYS) {
       assert.equal(env[key], undefined, `${key} must not leak into the child`);
+    }
+  });
+
+  it("passes harness selection and Pi endpoint descriptors through to the child", () => {
+    const env = allowlistedBaseEnv(RUNNER_ENV);
+    for (const key of HARNESS_CONFIG_KEYS) {
+      assert.equal(env[key], RUNNER_ENV[key], `${key} must reach the workflow child`);
     }
   });
 
@@ -78,6 +116,8 @@ describe("child env allowlist", () => {
     assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, "local-oauth");
     assert.equal(env.API_KEY, "per-run-secret");
     assert.equal(env.RUNYARD_RUN_ID, "run_42");
+    assert.equal(env.RUNYARD_PI_PROVIDER, "venice");
+    assert.equal(env.RUNYARD_IMPLEMENT_AGENT_CLI, "pi");
 
     // No runner/hub secret survives the launch env.
     for (const key of SENSITIVE_KEYS) {

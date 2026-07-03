@@ -2,9 +2,9 @@
 // smithers-display-name: Gobbler Comic Pipeline
 // smithers-description: Creates a Gloom & Gobble comic/storyboard packet from Warplet Gobbler signals, runs a mandatory copy/funniness pass, then produces exact Codex image_gen prompts for human review.
 /** @jsxImportSource smithers-orchestrator */
-import { createSmithers, Sequence, ClaudeCodeAgent, CodexAgent } from "smithers-orchestrator";
+import { createSmithers, Sequence, ClaudeCodeAgent, CodexAgent, PiAgent } from "smithers-orchestrator";
 import { z } from "zod/v4";
-import { createAgentFallbackPair } from "./agent-fallback.js";
+import { createAgentFallbackPair, resolveAgentCli } from "./agent-fallback.js";
 
 const inputSchema = z.object({
   signal: z
@@ -144,7 +144,9 @@ function createContentAgent(label: string, systemPrompt: string) {
   return createAgentFallbackPair({
     ClaudeCodeAgent,
     CodexAgent,
-    primaryCli: process.env.RUNYARD_GOBBLER_COMIC_AGENT_CLI || "claude",
+    PiAgent,
+    primaryCli: resolveAgentCli(process.env, { workflow: "GOBBLER_COMIC", fallback: "claude" }),
+    workflow: "GOBBLER_COMIC",
     label,
     cwd: process.cwd(),
     claude: {

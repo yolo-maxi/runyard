@@ -2,11 +2,11 @@
 // smithers-display-name: Improve
 // smithers-description: Inspects an existing feature, UI, or workflow with a taste-led Product Manager, prioritizes improvements with acceptance checks, then dispatches a builder to apply them through the gated test/commit/push/deploy pipeline. PM analysis runs first; builder consumes that brief and the same gates as implement-change-gated run after.
 /** @jsxImportSource smithers-orchestrator */
-import { createSmithers, Sequence, ClaudeCodeAgent, CodexAgent } from "smithers-orchestrator";
+import { createSmithers, Sequence, ClaudeCodeAgent, CodexAgent, PiAgent } from "smithers-orchestrator";
 import { existsSync } from "node:fs";
 import { z } from "zod/v4";
 import { resolveImproveRepo } from "./improve-repo.js";
-import { createAgentFallbackPair } from "./agent-fallback.js";
+import { createAgentFallbackPair, resolveAgentCli } from "./agent-fallback.js";
 import { runyardAgentSystemPrompt } from "./runyard-runtime.js";
 import { prepareMutatingRepo, releaseRepoLease, validateBeforeCommit, validateBeforePush } from "./repo-mutation-lease.js";
 
@@ -136,7 +136,9 @@ function createProductManager(repoDir) {
   return createAgentFallbackPair({
     ClaudeCodeAgent,
     CodexAgent,
-    primaryCli: process.env.RUNYARD_IMPROVE_AGENT_CLI || "claude",
+    PiAgent,
+    primaryCli: resolveAgentCli(process.env, { workflow: "IMPROVE", fallback: "claude" }),
+    workflow: "IMPROVE",
     label: "improve-product-manager",
     cwd: repoDir,
     claude: {
@@ -167,7 +169,9 @@ function createBuilder(repoDir) {
   return createAgentFallbackPair({
     ClaudeCodeAgent,
     CodexAgent,
-    primaryCli: process.env.RUNYARD_IMPROVE_AGENT_CLI || "claude",
+    PiAgent,
+    primaryCli: resolveAgentCli(process.env, { workflow: "IMPROVE", fallback: "claude" }),
+    workflow: "IMPROVE",
     label: "improve-builder",
     cwd: repoDir,
     claude: {

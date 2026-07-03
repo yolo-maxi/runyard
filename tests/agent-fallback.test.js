@@ -3,7 +3,27 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-const { shouldFallbackAgent, withAgentFallback } = await import("../workflow-templates/workflows/agent-fallback.js");
+const { shouldFallbackAgent, withAgentFallback, createAgentFallbackPair } = await import(
+  "../workflow-templates/workflows/agent-fallback.js"
+);
+
+class FakeAgent {
+  constructor(opts = {}) {
+    this.opts = opts;
+  }
+
+  async generate() {
+    return { text: this.constructor.name };
+  }
+}
+class FakeClaude extends FakeAgent {}
+class FakeCodex extends FakeAgent {}
+class FakePi extends FakeAgent {
+  constructor(opts = {}) {
+    super(opts);
+    this.cliEngine = "pi";
+  }
+}
 
 describe("workflow agent fallback", () => {
   it("classifies auth, quota, rate-limit, and refusal errors as fallbackable", () => {
@@ -66,6 +86,100 @@ describe("workflow agent fallback", () => {
     await assert.rejects(() => agent.generate(), /syntax error/);
   });
 
+  it("classifies a missing CLI binary (ENOENT spawn failure) as fallbackable", () => {
+    assert.equal(shouldFallbackAgent(new Error("spawn pi ENOENT")), true);
+  });
+
+  it("puts PiAgent first when the pi harness is selected, degrading to the CLI pair", async () => {
+    const env = {
+      RUNYARD_PI_PROVIDER: "venice",
+      RUNYARD_PI_MODEL: "llama-3.3-70b",
+      RUNYARD_PI_API_KEY_ENV: "VENICE_API_KEY"
+    };
+    const agent = createAgentFallbackPair({
+      ClaudeCodeAgent: FakeClaude,
+      CodexAgent: FakeCodex,
+      PiAgent: FakePi,
+      primaryCli: "pi",
+      workflow: "IMPROVE",
+      env,
+      label: "pi-test",
+      cwd: "/repo",
+      claude: { systemPrompt: "sp", timeoutMs: 1000 }
+    });
+    assert.match(agent.cliEngine, /^pi\+fallback:/);
+    assert.deepEqual(await agent.generate({}), { text: "FakePi" });
+  });
+
+  it("falls back from a failing pi endpoint to the CLI pair", async () => {
+    class FailingPi extends FakePi {
+      async generate() {
+        throw new Error("401 unauthorized from custom endpoint");
+      }
+    }
+    const agent = createAgentFallbackPair({
+      ClaudeCodeAgent: FakeClaude,
+      CodexAgent: FakeCodex,
+      PiAgent: FailingPi,
+      primaryCli: "pi",
+      workflow: "IMPROVE",
+      env: { RUNYARD_PI_PROVIDER: "fugu", RUNYARD_PI_MODEL: "fugu-large" }
+    });
+    assert.deepEqual(await agent.generate({}), { text: "FakeClaude" });
+  });
+
+  it("builds PiAgent with the endpoint config and no API key material", () => {
+    let seen = null;
+    class CapturingPi extends FakePi {
+      constructor(opts) {
+        super(opts);
+        seen = opts;
+      }
+    }
+    createAgentFallbackPair({
+      ClaudeCodeAgent: FakeClaude,
+      CodexAgent: FakeCodex,
+      PiAgent: CapturingPi,
+      primaryCli: "pi",
+      workflow: "IMPLEMENT",
+      env: {
+        RUNYARD_IMPLEMENT_PI_PROVIDER: "glm",
+        RUNYARD_IMPLEMENT_PI_MODEL: "glm-4.7",
+        RUNYARD_IMPLEMENT_PI_API_KEY_ENV: "ZAI_API_KEY",
+        ZAI_API_KEY: "zai-secret"
+      },
+      cwd: "/repo"
+    });
+    assert.equal(seen.provider, "glm");
+    assert.equal(seen.model, "glm-4.7");
+    assert.equal(seen.cwd, "/repo");
+    assert.equal(JSON.stringify(seen).includes("zai-secret"), false);
+  });
+
+  it("throws when the pi harness is selected without an endpoint config", () => {
+    assert.throws(
+      () =>
+        createAgentFallbackPair({
+          ClaudeCodeAgent: FakeClaude,
+          CodexAgent: FakeCodex,
+          PiAgent: FakePi,
+          primaryCli: "pi",
+          env: {}
+        }),
+      /RUNYARD_PI_PROVIDER/
+    );
+  });
+
+  it("keeps claude/codex pairs unchanged when pi is not selected", async () => {
+    const agent = createAgentFallbackPair({
+      ClaudeCodeAgent: FakeClaude,
+      CodexAgent: FakeCodex,
+      primaryCli: "codex",
+      env: {}
+    });
+    assert.deepEqual(await agent.generate({}), { text: "FakeCodex" });
+  });
+
   it("ships fallback wiring in agent-backed workflow templates", () => {
     for (const file of [
       "app-skinner.tsx",
@@ -84,6 +198,8 @@ describe("workflow agent fallback", () => {
       assert.match(src, /agent-fallback\.js|withAgentFallback|createAgentFallbackPair/, file);
       assert.match(src, /CodexAgent/, file);
       assert.match(src, /ClaudeCodeAgent/, file);
+      assert.match(src, /PiAgent/, file);
+      assert.match(src, /resolveAgentCli/, file);
     }
   });
 

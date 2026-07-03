@@ -75,7 +75,7 @@ describe("CLI runner setup helpers", () => {
     );
 
     assert.equal(result.ok, true);
-    assert.ok(warnings.lines[0].includes("no 'claude' or 'codex' CLI"));
+    assert.ok(warnings.lines[0].includes("no 'claude', 'codex', or 'pi' CLI"));
   });
 
   it("scaffolds the workspace and overlays bundled templates", () => {

@@ -2351,7 +2351,8 @@ describe("Gated implement-change capability", () => {
     assert.match(src, /git.*push.*origin|push", "origin"/);
     assert.match(src, /CodexAgent/);
     assert.match(src, /ClaudeCodeAgent/);
-    assert.match(src, /RUNYARD_IMPLEMENT_AGENT_CLI/);
+    assert.match(src, /resolveAgentCli\(process\.env, \{ workflow: "IMPLEMENT"/);
+    assert.match(src, /PiAgent/);
     assert.match(src, /withAgentFallback/);
   });
 });
