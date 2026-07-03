@@ -1,4 +1,22 @@
-# Goal: Put UI-startable runs under the `run-smithers` supervisor and smoke reruns
+# SUPERSEDED: do not execute this goal
+
+This goal has been superseded by `specs/v0.11-hub-native-supervision.md`.
+
+Live production evidence in July 2026 showed that wrapping normal UI/API runs
+inside `run-smithers` by default creates doubled failure rows, stale parent/child
+state, and poorer supervision than the Hub already has. The current direction is:
+
+- normal user-startable workflows run directly by default;
+- `run-smithers` remains explicit/manual only;
+- supervision policy moves into Hub-native scheduler/reaper state;
+- Hub-native supervision is slotted as the v0.11 reliability milestone.
+
+Keep this file only as historical context for why the older direction existed.
+Do not use it as an implementation prompt.
+
+---
+
+# Historical goal: Put UI-startable runs under the `run-smithers` supervisor and smoke reruns
 
 Fran reported that runs started from the Hub UI were auto-failing when the repo was not selected correctly. We verified two prod failures from 2026-06-20:
 
