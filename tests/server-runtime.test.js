@@ -45,7 +45,11 @@ describe("server runtime helpers", () => {
       reapStuckRunsWithRetrospectives: (ms) => info.push(`reap ${ms}`),
       reconcileFailedRecoverable: ({ dispatchRepair }) => dispatchRepair ? ["run_1"] : [],
       reconcileRunnerActiveRuns: () => [{ id: "runner_1", from: 2, to: 1 }],
-      setIntervalFn: timer("interval", callbacks)
+      setIntervalFn: timer("interval", callbacks),
+      sweepTimedApprovals: () => [
+        { id: "appr_1", action: "fallback_applied", decision: "approved" },
+        { id: "appr_2", action: "fallback_required" }
+      ]
     });
 
     callbacks[0].callback();
@@ -53,6 +57,7 @@ describe("server runtime helpers", () => {
     assert.equal(callbacks[0].ms, 60_000);
     assert.equal(reaper.unrefCalled, true);
     assert.deepEqual(info, [
+      "Timed approvals swept: appr_1 fallback_applied:approved, appr_2 fallback_required",
       "reap 10",
       "Hub supervisor reconciled 1 failed-recoverable run(s): run_1",
       "Reconciled active_runs for 1 runner(s): runner_1 2->1",
@@ -72,12 +77,14 @@ describe("server runtime helpers", () => {
       reapStuckRunsWithRetrospectives: () => { throw new Error("reap failed"); },
       reconcileFailedRecoverable: () => { throw new Error("reconcile failed"); },
       reconcileRunnerActiveRuns: () => { throw new Error("active failed"); },
-      setIntervalFn: timer("interval", callbacks)
+      setIntervalFn: timer("interval", callbacks),
+      sweepTimedApprovals: () => { throw new Error("sweep failed"); }
     });
 
     callbacks[0].callback();
 
     assert.deepEqual(errors.map((entry) => entry[0]), [
+      "Timed-approval sweep failed:",
       "Run reaper failed:",
       "Hub supervisor reconcile failed:",
       "active_runs reconcile failed:",

@@ -121,7 +121,8 @@ export function createServerComposition({
     scrubStoredSecrets,
     recordAlert,
     listAlerts,
-    latestAlert
+    latestAlert,
+    sweepTimedApprovals
   } = db;
 
   const {
@@ -431,6 +432,7 @@ export function createServerComposition({
     reconcileFailedRecoverable,
     reconcileSupervisedChildTerminals,
     reconcileRunnerActiveRuns,
+    sweepTimedApprovals,
     routes: {
       adminReadHandlers,
       approvalHandlers,

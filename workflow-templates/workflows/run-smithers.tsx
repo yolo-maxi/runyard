@@ -127,8 +127,12 @@ async function pollChildRun(runId: string) {
 // a pending human decision (the hub approval card stays the visible blocker,
 // and hub liveness + the runner deadline both hold approval-blocked runs open).
 // POLL_DEADLINE_MS deliberately does NOT apply here — it only bounds
-// non-approval child polling. There is no autopilot fallback yet; until one
-// exists, a late human means "keep waiting", not "fail the run".
+// non-approval child polling. Timed approvals are hub-native: a card created
+// with timeoutMs + an explicit fallback decision is resolved by the hub's
+// timed-approval sweep when the timer elapses (this wait then observes it like
+// any human decision); a timed card with no fallback is surfaced as
+// fallback_required and stays pending. Either way a late human means "keep
+// waiting", never "fail the run".
 async function waitForChildApprovalDecision(runId: string) {
   while (true) {
     const detail = await hubJson(`/api/runs/${encodeURIComponent(runId)}`);

@@ -17,7 +17,17 @@ function jsonField(value, fallback) {
   return JSON.stringify(value === undefined ? fallback : value);
 }
 
-export function approvalRecord({ id, runId = null, title, description = "", requestedBy = "workflow", payload = {}, createdAt }) {
+export function approvalRecord({
+  id,
+  runId = null,
+  title,
+  description = "",
+  requestedBy = "workflow",
+  payload = {},
+  createdAt,
+  timeoutAt = null,
+  fallback = null
+}) {
   return {
     id,
     run_id: runId,
@@ -26,7 +36,11 @@ export function approvalRecord({ id, runId = null, title, description = "", requ
     description,
     requested_by: requestedBy,
     payload: jsonField(payload, {}),
-    created_at: createdAt
+    created_at: createdAt,
+    // NULL timeout_at = blocking approval; fallback is only stored when the
+    // requester explicitly configured one (and only with a timer to trigger it).
+    timeout_at: timeoutAt,
+    fallback: timeoutAt && fallback ? JSON.stringify(fallback) : null
   };
 }
 
@@ -44,7 +58,11 @@ export function normalizeApproval(row) {
     resolvedAt: row.resolved_at,
     resolvedBy: row.resolved_by,
     decision: row.decision,
-    comment: row.comment
+    comment: row.comment,
+    timeoutAt: row.timeout_at || null,
+    fallback: row.fallback ? parseMaybeJson(row.fallback, null) : null,
+    timerState: row.timer_state || "",
+    timerElapsedAt: row.timer_elapsed_at || null
   };
 }
 
@@ -62,8 +80,8 @@ export function approvalListQuery(status = "") {
 
 export function approvalInsertQuery() {
   return {
-    sql: `INSERT INTO approvals (id, run_id, status, title, description, requested_by, payload, created_at)
-     VALUES ($id, $run_id, $status, $title, $description, $requested_by, $payload, $created_at)`
+    sql: `INSERT INTO approvals (id, run_id, status, title, description, requested_by, payload, created_at, timeout_at, fallback)
+     VALUES ($id, $run_id, $status, $title, $description, $requested_by, $payload, $created_at, $timeout_at, $fallback)`
   };
 }
 

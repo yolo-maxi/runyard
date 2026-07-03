@@ -29,6 +29,9 @@ describe("operator record helpers", () => {
 
     assert.equal(record.status, "pending");
     assert.equal(record.payload, '{"kind":"checkpoint"}');
+    // No timer requested = blocking approval: NULL timer columns.
+    assert.equal(record.timeout_at, null);
+    assert.equal(record.fallback, null);
     assert.deepEqual(normalizeApproval({ ...record, resolved_at: null, resolved_by: null, decision: null, comment: null }), {
       id: "appr_1",
       runId: "run_1",
@@ -41,8 +44,34 @@ describe("operator record helpers", () => {
       resolvedAt: null,
       resolvedBy: null,
       decision: null,
-      comment: null
+      comment: null,
+      timeoutAt: null,
+      fallback: null,
+      timerState: "",
+      timerElapsedAt: null
     });
+  });
+
+  it("stores timed-approval columns only when a timer is present", () => {
+    const timed = approvalRecord({
+      id: "appr_2",
+      title: "Timed",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      timeoutAt: "2026-01-01T01:00:00.000Z",
+      fallback: { decision: "approved", comment: "" }
+    });
+    assert.equal(timed.timeout_at, "2026-01-01T01:00:00.000Z");
+    assert.equal(timed.fallback, '{"decision":"approved","comment":""}');
+
+    // A fallback without a timer is inert and must not be stored.
+    const blocking = approvalRecord({
+      id: "appr_3",
+      title: "Blocking",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      fallback: { decision: "approved" }
+    });
+    assert.equal(blocking.timeout_at, null);
+    assert.equal(blocking.fallback, null);
   });
 
   it("normalizes approval decisions into run/audit side-effect metadata", () => {
@@ -118,8 +147,8 @@ describe("operator record helpers", () => {
     const resolution = approvalResolution("approved", "ignored");
 
     assert.deepEqual(approvalInsertQuery(), {
-      sql: `INSERT INTO approvals (id, run_id, status, title, description, requested_by, payload, created_at)
-     VALUES ($id, $run_id, $status, $title, $description, $requested_by, $payload, $created_at)`
+      sql: `INSERT INTO approvals (id, run_id, status, title, description, requested_by, payload, created_at, timeout_at, fallback)
+     VALUES ($id, $run_id, $status, $title, $description, $requested_by, $payload, $created_at, $timeout_at, $fallback)`
     });
     assert.deepEqual(approvalLookupQuery("appr_1"), {
       sql: "SELECT * FROM approvals WHERE id = ?",

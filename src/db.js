@@ -177,6 +177,7 @@ export function initDb() {
   migrateRunsCapabilityVersioningColumns();
   migrateRunnerAuthHealthColumn();
   migrateRunsSupervisorColumns();
+  migrateApprovalsTimerColumns();
   dbBootstrap.setSettingDefault("instance_name", env.instanceName);
   dbBootstrap.seedCatalog();
   dbBootstrap.seedWorkflowEndpoints();
@@ -257,6 +258,21 @@ function migrateRunsSupervisorColumns() {
     { name: "attempt", definition: "attempt INTEGER NOT NULL DEFAULT 0" },
     { name: "repair_count", definition: "repair_count INTEGER NOT NULL DEFAULT 0" },
     { name: "supervisor_meta", definition: "supervisor_meta TEXT" }
+  ]);
+}
+
+// Timed approvals. NULL timeout_at = blocking approval (waits forever, the
+// PR #9 contract). `fallback` is the explicitly configured autopilot decision
+// applied when the timer elapses; with none the card is marked
+// timer_state='fallback_required' but stays pending, so the approval hold
+// keeps protecting the run. All nullable/defaulted: existing rows are plain
+// blocking approvals after this backfill.
+function migrateApprovalsTimerColumns() {
+  migrateMissingColumns("approvals", [
+    { name: "timeout_at", definition: "timeout_at TEXT" },
+    { name: "fallback", definition: "fallback TEXT" },
+    { name: "timer_state", definition: "timer_state TEXT NOT NULL DEFAULT ''" },
+    { name: "timer_elapsed_at", definition: "timer_elapsed_at TEXT" }
   ]);
 }
 
@@ -694,8 +710,21 @@ export function listArtifacts({ runId = "", q = "" } = {}) {
   return operatorStore.listArtifacts({ runId, q });
 }
 
-export function createApproval({ runId = null, title, description = "", requestedBy = "workflow", payload = {} }) {
-  return operatorStore.createApproval({ runId, title, description, requestedBy, payload });
+export function createApproval({
+  runId = null,
+  title,
+  description = "",
+  requestedBy = "workflow",
+  payload = {},
+  timeoutMs = null,
+  timeoutAt = null,
+  fallback = null
+}) {
+  return operatorStore.createApproval({ runId, title, description, requestedBy, payload, timeoutMs, timeoutAt, fallback });
+}
+
+export function sweepTimedApprovals() {
+  return operatorStore.sweepTimedApprovals();
 }
 
 export function getApproval(approvalId) {
