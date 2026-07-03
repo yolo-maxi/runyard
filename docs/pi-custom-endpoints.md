@@ -2,7 +2,8 @@
 
 RunYard workflows are driven by an agent CLI ("harness"). Alongside `claude`
 and `codex`, RunYard supports [Pi](https://github.com/badlogic/pi-mono)
-(`@mariozechner/pi-coding-agent`) through Smithers' native `PiAgent`. Pi is the
+(`@earendil-works/pi-coding-agent`, formerly `@mariozechner/pi-coding-agent`)
+through Smithers' native `PiAgent`. Pi is the
 harness of choice for **custom OpenAI-compatible endpoints** — Fugu, Venice,
 GLM/Z.AI, OpenRouter, local llama.cpp — because the Pi CLI has a first-class
 custom-provider registry, and Smithers keeps its Pi semantics (sessions,
@@ -38,7 +39,7 @@ the default harness**.
 ### 1. Ensure Pi is installed on the runner host
 
 ```bash
-npm install -g @mariozechner/pi-coding-agent   # provides `pi` on PATH
+npm install -g @earendil-works/pi-coding-agent   # provides `pi` on PATH
 pi --version
 ```
 

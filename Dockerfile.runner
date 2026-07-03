@@ -28,7 +28,7 @@ ARG DOCKER_CLI_VERSION=29.6.0
 # Agent CLIs the runner shells out to (codex/claude/pi). Pinned + overridable.
 ARG CODEX_VERSION=0.142.2
 ARG CLAUDE_VERSION=2.1.195
-ARG PI_VERSION=0.73.1
+ARG PI_VERSION=0.80.3
 
 FROM node:${NODE_VERSION}-bookworm-slim AS runtime
 ARG PNPM_VERSION
@@ -87,7 +87,7 @@ RUN set -eux; \
     npm install -g --no-fund --no-audit \
         "@openai/codex@${CODEX_VERSION}" \
         "@anthropic-ai/claude-code@${CLAUDE_VERSION}" \
-        "@mariozechner/pi-coding-agent@${PI_VERSION}"; \
+        "@earendil-works/pi-coding-agent@${PI_VERSION}"; \
     codex --version; \
     claude --version; \
     pi --version

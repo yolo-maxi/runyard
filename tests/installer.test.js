@@ -43,7 +43,7 @@ describe("install.sh — defensiveness + idempotency", () => {
     // "no codex on the machine" failure. Pinned for reproducibility.
     assert.match(install, /@openai\/codex@\$\{RUNYARD_CODEX_VERSION:-[\d.]+\}/);
     assert.match(install, /@anthropic-ai\/claude-code@\$\{RUNYARD_CLAUDE_VERSION:-[\d.]+\}/);
-    assert.match(install, /@mariozechner\/pi-coding-agent@\$\{RUNYARD_PI_VERSION:-[\d.]+\}/);
+    assert.match(install, /@earendil-works\/pi-coding-agent@\$\{RUNYARD_PI_VERSION:-[\d.]+\}/);
     assert.match(install, /smithers-orchestrator@\$\{RUNYARD_SMITHERS_VERSION:-[\d.]+\}/);
     // Only on a runner host, and OPT-IN by default (off) so a headless
     // `curl | bash` install can't stall on a forced global CLI install.
