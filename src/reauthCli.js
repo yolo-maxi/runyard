@@ -28,6 +28,7 @@ import { spawn as nodeSpawn } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { extractClaudeOauthToken, writeClaudeOauthToken } from "./claudeOauthToken.js";
+import { parseBool } from "./configParsing.js";
 import { collectAuthHealth } from "./runnerAuthHealth.js";
 
 const CODEX_BIN = process.env.REAUTH_CODEX_BIN || "codex";
@@ -35,7 +36,7 @@ const CLAUDE_BIN = process.env.REAUTH_CLAUDE_BIN || "claude";
 const DEFAULT_TIMEOUT_MS = Number(process.env.REAUTH_TIMEOUT_MS || 5 * 60_000);
 
 export function reauthEnabled() {
-  return process.env.REAUTH_ENABLED === "1" || process.env.REAUTH_ENABLED === "true";
+  return parseBool(process.env.REAUTH_ENABLED, false);
 }
 
 // Strip ANSI so URL/code regexes match clean text.

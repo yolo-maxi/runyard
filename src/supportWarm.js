@@ -14,6 +14,7 @@
 
 import { execFile } from "node:child_process";
 import { readClaudeOauthToken } from "./claudeOauthToken.js";
+import { parseBool } from "./configParsing.js";
 import { resolveHubUrl } from "./hubConnection.js";
 
 const CLAUDE_BIN = process.env.SUPPORT_WARM_CLAUDE_BIN || "claude";
@@ -27,7 +28,7 @@ const MAX_BUFFER = 8 * 1024 * 1024;
 // data into the prompt, so the agent answers in a single fast turn instead of
 // deflecting with "I can't fetch that". Uses a scope:["read"] token; the server
 // rejects any mutation, so this is read-only by construction.
-const READ_ENABLED = process.env.SUPPORT_WARM_TOOLS === "1" || process.env.SUPPORT_WARM_TOOLS === "true";
+const READ_ENABLED = parseBool(process.env.SUPPORT_WARM_TOOLS, false);
 const READ_TOKEN = process.env.RUNYARD_READ_TOKEN || "";
 const READ_HUB_URL = resolveHubUrl();
 
@@ -97,7 +98,7 @@ async function gatherRelevantHubData(input) {
 }
 
 export function supportWarmEnabled() {
-  return process.env.SUPPORT_WARM === "1" || process.env.SUPPORT_WARM === "true";
+  return parseBool(process.env.SUPPORT_WARM, false);
 }
 
 function renderTranscript(messages = []) {
