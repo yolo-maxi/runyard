@@ -42,7 +42,7 @@ docker build -f Dockerfile.hub    -t runyard-hub:local .
 docker build -f Dockerfile.runner -t runyard-runner:local .
 ```
 
-Pinned build ARGs (override if needed): `SMITHERS_VERSION=0.25.1`,
+Pinned build ARGs (override if needed): `SMITHERS_VERSION=0.22.0`,
 `BUN_VERSION=1.3.14`, `DOCKER_CLI_VERSION=29.6.0`, `NODE_VERSION=22`,
 `PNPM_VERSION=10.33.0`.
 
@@ -103,6 +103,28 @@ docker compose -f docker-compose.yml -f deploy/compose/runner-docker-socket.yml 
 
 Or run a rootless DinD sidecar and set the runner's `DOCKER_HOST` to it — preferred
 where socket mounts are disallowed by policy.
+
+### Optional: per-launch sandbox (`RUNNER_SANDBOX=bubblewrap`)
+
+Set `RUNNER_SANDBOX=bubblewrap` to run each workflow launch inside a Bubblewrap
+sandbox (filesystem-isolated, writable HOME under the workspace). Requires
+`bwrap` on the runner host. On Ubuntu 23.10+ unprivileged user namespaces are
+restricted, so install the narrow AppArmor profile once — it grants `userns` to
+`/usr/bin/bwrap` only, leaving the box-wide restriction in force for everything
+else:
+
+```bash
+sudo deploy/apparmor/install.sh          # see deploy/apparmor/README.md
+```
+
+Without it (and without the broader `sysctl` fallback) launches fail with
+`setting up uid map: Permission denied`; the runner logs this remediation at
+startup.
+
+This whole path — `apt install bubblewrap`, the AppArmor install script, and a
+real sandboxed launch probe — is gated in CI on every PR and release tag (the
+`sandbox-smoke` job; see `deploy/apparmor/README.md`), so a release cannot ship
+with the documented sandbox setup broken.
 
 ### Local development
 

@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { parseBool, parseRootList, parseTrustProxy } from "./configParsing.js";
+import { parseBool, parseTrustProxy } from "./configParsing.js";
 import {
   defaultDbPath,
   deriveEnvironmentLabel,
@@ -105,8 +105,6 @@ export const env = {
     const raw = Number(process.env.SMITHERS_SUPERVISOR_SLOT_RATIO);
     return Number.isFinite(raw) && raw > 0 ? raw : 1.0;
   })(),
-  // Optional allow-list of filesystem roots the runner may operate in. Empty = unrestricted (with a warning).
-  runnerAllowedRoots: parseRootList(process.env.SMITHERS_RUNNER_ALLOWED_ROOTS),
   // Express trust-proxy setting. Default 'loopback' so X-Forwarded-For can't be spoofed by clients.
   // Set to a proxy IP/subnet, a hop count, or 'true' only behind a trusted reverse proxy.
   trustProxy: parseTrustProxy(process.env.SMITHERS_TRUST_PROXY),

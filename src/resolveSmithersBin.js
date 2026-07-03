@@ -32,25 +32,37 @@ export function resolveSmithersBin(env = process.env) {
 // Optional execution wrapper for the engine. RunYard is intentionally
 // unopinionated about HOW/WHERE a run executes: by default the runner invokes
 // the engine directly on its host. A deployer who wants per-run isolation,
-// sandboxing, or container-per-build sets RUNNER_EXEC_WRAPPER and every engine
-// invocation becomes `<wrapper...> <smithersBin> <args>` instead of
-// `<smithersBin> <args>`. The wrapper can be `docker run …`, a DinD/`docker exec`
+// sandboxing, or container-per-build sets RUNNER_EXEC_WRAPPER and the workflow
+// *launch* becomes `<wrapper...> <smithersBin> up <args>` instead of
+// `<smithersBin> up <args>`. Only the launch is wrapped — the runner's
+// polling/control commands (events/inspect/output/cancel) always run the binary
+// directly against local state (see WRAPPED_SUBCOMMANDS in
+// runnerSmithersRuntime.js), so the wrapper never sits between the runner and
+// the run it supervises. The wrapper can be `docker run …`, a DinD/`docker exec`
 // command, a k8s job launcher, firejail, nsjail, a custom script — whatever the
 // deployer wishes. RunYard only prepends it; the deployer owns the wrapper's
 // behavior (workspace sharing, lifecycle, cleanup).
 //
-// Accepts a JSON array (precise argv — use when any token contains spaces) or a
-// plain whitespace-separated string. Returns [] when unset (bare host default).
-export function resolveExecWrapper(env = process.env) {
-  const raw = (env.RUNNER_EXEC_WRAPPER || env.RUNYARD_RUNNER_EXEC_WRAPPER || "").trim();
-  if (!raw) return [];
-  if (raw.startsWith("[")) {
+// Tokenize an operator-supplied list value. Accepts a JSON array (precise tokens
+// — use when any token contains spaces) or a plain whitespace-separated string.
+// Empty/blank input yields []. Shared by the exec-wrapper and sandbox-bind
+// parsing so both accept the same forgiving syntax.
+export function parseCommandList(raw) {
+  const trimmed = (raw || "").trim();
+  if (!trimmed) return [];
+  if (trimmed.startsWith("[")) {
     try {
-      const arr = JSON.parse(raw);
+      const arr = JSON.parse(trimmed);
       if (Array.isArray(arr)) return arr.map(String).filter((s) => s.length > 0);
     } catch {
       // not valid JSON — fall through to whitespace tokenization
     }
   }
-  return raw.split(/\s+/).filter((s) => s.length > 0);
+  return trimmed.split(/\s+/).filter((s) => s.length > 0);
+}
+
+// Returns [] when unset (bare host default). RUNYARD_RUNNER_EXEC_WRAPPER is an
+// accepted alias.
+export function resolveExecWrapper(env = process.env) {
+  return parseCommandList(env.RUNNER_EXEC_WRAPPER || env.RUNYARD_RUNNER_EXEC_WRAPPER || "");
 }

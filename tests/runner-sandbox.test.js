@@ -1,0 +1,278 @@
+import { describe, it, test } from "node:test";
+import assert from "node:assert/strict";
+
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
+import os from "node:os";
+import nodePath from "node:path";
+
+import {
+  bubblewrapArgv,
+  resolveSandboxWrapper,
+  resolveRunnerExecWrapper,
+  isBubblewrapWrapper,
+  usernsRemediation,
+  SANDBOX_HOME_SUBDIR
+} from "../src/runnerSandbox.js";
+import { smithersCommand } from "../src/runnerSmithersRuntime.js";
+
+const WS = "/srv/runner/workspace";
+
+// Index of the token that follows the first `flag value` pair matching `flag`.
+function valueAfter(argv, flag) {
+  const i = argv.indexOf(flag);
+  return i >= 0 ? argv[i + 1] : undefined;
+}
+
+describe("bubblewrapArgv", () => {
+  it("binds system dirs read-only and the workspace read-write at the same path", () => {
+    const argv = bubblewrapArgv({ workspace: WS });
+    assert.equal(argv[0], "bwrap");
+    // Workspace is the sole writable mount, bound at the same path; the sandbox
+    // finishes by chdir'ing into it.
+    assert.deepEqual(argv.slice(-2), ["--chdir", WS]);
+    assert.deepEqual([valueAfter(argv, "--bind"), argv[argv.indexOf("--bind") + 2]], [WS, WS]);
+    // System dirs are read-only via -try (portable across merged-usr layouts).
+    assert.ok(argv.includes("--ro-bind-try"));
+    for (const dir of ["/usr", "/etc", "/lib"]) {
+      const i = argv.indexOf(dir);
+      assert.ok(i > 0 && argv[i - 1] === "--ro-bind-try", `${dir} should be ro-bind-try`);
+    }
+    // No writable bind other than the workspace.
+    const bindIdxs = argv.reduce((acc, tok, i) => (tok === "--bind" ? [...acc, i] : acc), []);
+    assert.deepEqual(bindIdxs.map((i) => argv[i + 1]), [WS]);
+  });
+
+  it("requests an explicit user namespace with a deterministic uid/gid 0 mapping", () => {
+    const argv = bubblewrapArgv({ workspace: WS });
+    assert.ok(argv.includes("--unshare-user"), "must unshare the user namespace explicitly");
+    // --uid/--gid map the child to 0 inside the namespace (single-entry uid_map).
+    assert.equal(argv[argv.indexOf("--uid") + 1], "0");
+    assert.equal(argv[argv.indexOf("--gid") + 1], "0");
+    // The mapping flags precede the mounts (bwrap sets up the userns first).
+    assert.ok(argv.indexOf("--unshare-user") < argv.indexOf("--bind"));
+  });
+
+  it("shares the network by default and unshares it only when asked", () => {
+    assert.ok(!bubblewrapArgv({ workspace: WS }).includes("--unshare-net"));
+    assert.ok(bubblewrapArgv({ workspace: WS, shareNet: false }).includes("--unshare-net"));
+  });
+
+  it("binds the engine's directory when it lives outside the system dirs", () => {
+    const argv = bubblewrapArgv({ workspace: WS, smithersBin: "/home/runner/.bun/bin/smithers" });
+    const i = argv.indexOf("/home/runner/.bun/bin");
+    assert.ok(i > 0 && argv[i - 1] === "--ro-bind-try");
+    // A bare (PATH-resolved) binary adds no extra bind.
+    assert.ok(!bubblewrapArgv({ workspace: WS, smithersBin: "smithers" }).includes("--ro-bind-try/home"));
+  });
+
+  it("adds operator-supplied read-only binds and honours a custom bwrap path", () => {
+    const argv = bubblewrapArgv({
+      workspace: WS,
+      bwrapBin: "/usr/bin/bwrap",
+      roBinds: ["/opt/toolchain", "relative/skip"]
+    });
+    assert.equal(argv[0], "/usr/bin/bwrap");
+    const i = argv.indexOf("/opt/toolchain");
+    assert.ok(i > 0 && argv[i - 1] === "--ro-bind-try");
+    // Relative binds are ignored (bwrap needs absolute source paths).
+    assert.ok(!argv.includes("relative/skip"));
+  });
+
+  it("rejects a missing or relative workspace", () => {
+    assert.throws(() => bubblewrapArgv({ workspace: "" }), /absolute workspace/);
+    assert.throws(() => bubblewrapArgv({ workspace: "relative/ws" }), /absolute workspace/);
+  });
+
+  it("gives the child a writable HOME under the workspace and walls off the host HOME", () => {
+    const argv = bubblewrapArgv({ workspace: WS });
+    const homeDir = `${WS}/${SANDBOX_HOME_SUBDIR}`;
+    // HOME is repointed into the workspace...
+    assert.equal(valueAfter(argv, "--setenv"), "HOME");
+    assert.equal(argv[argv.indexOf("--setenv") + 2], homeDir);
+    // ...and materialized so it exists before the engine writes to it.
+    assert.equal(valueAfter(argv, "--dir"), homeDir);
+    // The HOME dir is created AFTER the workspace is bound rw (order matters:
+    // --dir lands inside the bind, not on an empty sandbox root).
+    assert.ok(argv.lastIndexOf("--bind") < argv.indexOf("--dir"), "--dir must follow the workspace --bind");
+    // The runner host HOME is never bound in.
+    assert.ok(!argv.includes(os.homedir()) || os.homedir() === WS, "host HOME must not be a mount source");
+  });
+
+  it("clears host XDG_* so config/cache/data re-derive from the sandbox HOME", () => {
+    const argv = bubblewrapArgv({ workspace: WS });
+    for (const key of ["XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_RUNTIME_DIR"]) {
+      const i = argv.indexOf(key);
+      assert.ok(i > 0 && argv[i - 1] === "--unsetenv", `${key} should be --unsetenv'd`);
+    }
+  });
+
+  it("keeps the writable HOME inside the workspace regardless of workspace path", () => {
+    const argv = bubblewrapArgv({ workspace: "/data/runs/ws-42" });
+    assert.equal(valueAfter(argv, "--setenv"), "HOME");
+    assert.equal(argv[argv.indexOf("--setenv") + 2], "/data/runs/ws-42/.home");
+  });
+});
+
+describe("resolveSandboxWrapper", () => {
+  it("returns [] when no preset is selected", () => {
+    for (const RUNNER_SANDBOX of [undefined, "", "none", "host", "off"]) {
+      assert.deepEqual(resolveSandboxWrapper({ env: { RUNNER_SANDBOX }, workspace: WS }), []);
+    }
+  });
+
+  it("builds a bwrap argv for bubblewrap/bwrap selectors", () => {
+    for (const RUNNER_SANDBOX of ["bubblewrap", "bwrap", "BubbleWrap"]) {
+      const argv = resolveSandboxWrapper({ env: { RUNNER_SANDBOX }, workspace: WS });
+      assert.equal(argv[0], "bwrap");
+      assert.deepEqual(argv.slice(-2), ["--chdir", WS]);
+    }
+  });
+
+  it("threads env knobs (bwrap path, network off, extra binds) into the argv", () => {
+    const argv = resolveSandboxWrapper({
+      env: {
+        RUNNER_SANDBOX: "bubblewrap",
+        RUNNER_SANDBOX_BWRAP: "/opt/bwrap",
+        RUNNER_SANDBOX_NETWORK: "0",
+        RUNNER_SANDBOX_RO_BIND: '["/opt/a","/opt/b"]'
+      },
+      workspace: WS
+    });
+    assert.equal(argv[0], "/opt/bwrap");
+    assert.ok(argv.includes("--unshare-net"));
+    assert.ok(argv.includes("/opt/a") && argv.includes("/opt/b"));
+  });
+
+  it("throws loud on an unknown preset name (fails closed, not silently unsandboxed)", () => {
+    assert.throws(
+      () => resolveSandboxWrapper({ env: { RUNNER_SANDBOX: "firejail" }, workspace: WS }),
+      /unknown RUNNER_SANDBOX preset/
+    );
+  });
+});
+
+describe("isBubblewrapWrapper / usernsRemediation (startup preflight guards)", () => {
+  it("recognizes the bubblewrap preset and rejects bare/literal wrappers", () => {
+    assert.equal(isBubblewrapWrapper(bubblewrapArgv({ workspace: WS })), true);
+    assert.equal(isBubblewrapWrapper([]), false);
+    assert.equal(isBubblewrapWrapper(["docker", "run", "--rm", "img"]), false);
+    assert.equal(isBubblewrapWrapper(["firejail", "--quiet"]), false);
+  });
+
+  it("gives an actionable, install-script-pointing remediation for blocked userns", () => {
+    const msg = usernsRemediation();
+    assert.match(msg, /deploy\/apparmor\/install\.sh/);
+    assert.match(msg, /uid map|user namespace/i);
+  });
+});
+
+describe("resolveRunnerExecWrapper (preset + literal precedence)", () => {
+  it("prefers the sandbox preset over a literal exec wrapper", () => {
+    const argv = resolveRunnerExecWrapper({
+      env: { RUNNER_SANDBOX: "bubblewrap", RUNNER_EXEC_WRAPPER: "docker run img" },
+      workspace: WS
+    });
+    assert.equal(argv[0], "bwrap");
+  });
+
+  it("falls back to the literal exec wrapper when no preset is selected", () => {
+    assert.deepEqual(
+      resolveRunnerExecWrapper({ env: { RUNNER_EXEC_WRAPPER: "firejail --quiet" }, workspace: WS }),
+      ["firejail", "--quiet"]
+    );
+  });
+
+  it("returns [] (bare host) when neither is set", () => {
+    assert.deepEqual(resolveRunnerExecWrapper({ env: {}, workspace: WS }), []);
+  });
+});
+
+// Real Bubblewrap smoke — only runs where `bwrap` is actually installed AND user
+// namespaces work; skipped otherwise (e.g. this dev box, most CI). Proves the
+// generated argv delivers a writable HOME inside the workspace while host paths
+// stay invisible — i.e. the isolation the unit tests assert structurally.
+// Probe through the REAL generated argv so the gate matches exactly what the
+// test exercises: bwrap present, user namespaces permitted (AppArmor/sysctl can
+// block uid_map even when bwrap is installed), and a dynamically-linked binary
+// actually runnable inside the mount set (needs /usr + /lib* , not just /usr).
+const BWRAP_PROBE = (() => {
+  try {
+    const probeWs = mkdtempSync(nodePath.join(os.tmpdir(), "runyard-bwrap-probe-"));
+    const argv = bubblewrapArgv({ workspace: probeWs });
+    execFileSync(argv[0], [...argv.slice(1), "/bin/sh", "-c", "true"], {
+      stdio: ["ignore", "ignore", "pipe"]
+    });
+    return { ok: true };
+  } catch (err) {
+    const stderr = err?.stderr?.toString().trim();
+    return { ok: false, reason: stderr || err?.message || String(err) };
+  }
+})();
+const HAVE_BWRAP = BWRAP_PROBE.ok;
+
+// CI enforcement: with RUNYARD_REQUIRE_BWRAP set (any value but off/0/false),
+// a host where the probe fails is a test FAILURE, not a skip. This is what
+// keeps the real-bwrap smoke below from rotting into always-skipped on the one
+// place that exists to run it (the sandbox-smoke CI job). Unset by default so
+// dev boxes without bwrap/userns keep the graceful skip.
+const REQUIRE_BWRAP = !["", "0", "false", "off", "no"].includes(
+  String(process.env.RUNYARD_REQUIRE_BWRAP ?? "").trim().toLowerCase()
+);
+
+test(
+  "RUNYARD_REQUIRE_BWRAP: real-bwrap userns smoke must be runnable, not skipped",
+  { skip: !REQUIRE_BWRAP && "opt in with RUNYARD_REQUIRE_BWRAP=1" },
+  () => {
+    assert.ok(
+      BWRAP_PROBE.ok,
+      "RUNYARD_REQUIRE_BWRAP is set but the bwrap userns probe failed:\n" +
+        `${BWRAP_PROBE.reason}\n\n${usernsRemediation()}`
+    );
+  }
+);
+
+test("real bwrap: sandbox HOME is writable and host paths are invisible", { skip: !HAVE_BWRAP && "bwrap unavailable" }, () => {
+  const workspace = mkdtempSync(nodePath.join(os.tmpdir(), "runyard-bwrap-ws-"));
+  const secretDir = mkdtempSync(nodePath.join(os.tmpdir(), "runyard-host-secret-"));
+  const secretFile = nodePath.join(secretDir, "runner-secret");
+  writeFileSync(secretFile, "TOP-SECRET-RUNNER-KEY");
+
+  const argv = bubblewrapArgv({ workspace });
+  const script = [
+    'printf "HOME=%s\\n" "$HOME"',
+    'touch "$HOME/canary" && echo WROTE_HOME',
+    `cat ${secretFile} 2>/dev/null && echo LEAK || echo NO_LEAK`
+  ].join("; ");
+  const out = execFileSync(argv[0], [...argv.slice(1), "/bin/sh", "-c", script], { encoding: "utf8" });
+
+  assert.match(out, new RegExp(`HOME=${workspace}/${SANDBOX_HOME_SUBDIR}`), "HOME points into the workspace");
+  assert.match(out, /WROTE_HOME/, "HOME is writable");
+  assert.match(out, /NO_LEAK/, "host secret outside the workspace is not readable");
+  assert.doesNotMatch(out, /TOP-SECRET-RUNNER-KEY/);
+  // The canary the sandbox wrote is visible on the host workspace HOME dir.
+  assert.equal(
+    readFileSync(nodePath.join(workspace, SANDBOX_HOME_SUBDIR, "canary"), "utf8"),
+    ""
+  );
+});
+
+// End-to-end seam proof: the bwrap preset wraps a launch (`up`) but the runner's
+// control/polling commands still run the binary directly, even with the sandbox on.
+test("bubblewrap preset wraps launch only, control commands stay direct", () => {
+  const execWrapper = resolveSandboxWrapper({ env: { RUNNER_SANDBOX: "bubblewrap" }, workspace: WS });
+  const smithersBin = "/home/runner/.bun/bin/smithers";
+
+  const launch = smithersCommand({ smithersBin, execWrapper }, ["up", `${WS}/workflow.tsx`, "--input", "-"]);
+  assert.equal(launch.cmd, "bwrap");
+  // ...<bwrap flags>... <smithersBin> up <workflow> --input -
+  assert.deepEqual(launch.args.slice(-5), [smithersBin, "up", `${WS}/workflow.tsx`, "--input", "-"]);
+
+  for (const args of [["events", "run-1"], ["inspect", "run-1"], ["output", "run-1", "n1"], ["cancel", "run-1"]]) {
+    assert.deepEqual(
+      smithersCommand({ smithersBin, execWrapper }, args),
+      { cmd: smithersBin, args },
+      `${args[0]} must run directly, outside the sandbox`
+    );
+  }
+});

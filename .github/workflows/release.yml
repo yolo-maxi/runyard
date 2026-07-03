@@ -1,9 +1,12 @@
 name: CI & Release
 
-# Two responsibilities:
+# Three responsibilities:
 #  1. Gate: run `pnpm test` on every PR and every push to main.
-#  2. Release: on a pushed v* tag, run the same tests and ONLY publish the
-#     GitHub Release if they pass. A red test run must never publish a release.
+#  2. Sandbox gate: prove the RUNNER_SANDBOX=bubblewrap path works for real —
+#     bwrap installed, the repo's narrow AppArmor profile loaded via the SAME
+#     script operators run, and the userns smoke forced on (no silent skip).
+#  3. Release: on a pushed v* tag, run the same gates and ONLY publish the
+#     GitHub Release if they pass. A red run must never publish a release.
 on:
   push:
     branches: [main]
@@ -45,9 +48,43 @@ jobs:
       - name: Build assets
         run: pnpm build
 
+  # Real-bubblewrap integration gate. The unit suite proves the generated argv
+  # structurally; this job proves it on a real Ubuntu kernel with the userns
+  # restriction handled the way we tell operators to handle it:
+  #   1. install bubblewrap,
+  #   2. load the narrow AppArmor profile via deploy/apparmor/install.sh
+  #      (dogfoods the operator install path, including its built-in verify
+  #      that an unprivileged user can now create a userns via bwrap),
+  #   3. run the sandbox + AppArmor suites with RUNYARD_REQUIRE_BWRAP=1 so the
+  #      real-bwrap smoke FAILS instead of skipping if the path regresses.
+  # The runner VM is ephemeral — loading the profile mutates nothing durable.
+  # No pnpm install: these suites' import graph is node: builtins only.
+  sandbox-smoke:
+    name: Sandbox smoke (bwrap + userns + AppArmor)
+    # Pinned, not ubuntu-latest: deploy/apparmor/bwrap targets abi <abi/4.0>,
+    # which needs AppArmor >= 4 (Ubuntu 24.04).
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install bubblewrap
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+
+      - name: Load AppArmor userns profile (operator install path)
+        run: sudo ./deploy/apparmor/install.sh
+
+      - name: Run sandbox suites with real-bwrap smoke required
+        run: RUNYARD_REQUIRE_BWRAP=1 node --test tests/runner-sandbox.test.js tests/apparmor-profile.test.js
+
   release:
     name: Publish GitHub Release
-    needs: test
+    needs: [test, sandbox-smoke]
     # Only for pushed v* tags, and only after the test job is green (needs: test).
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest

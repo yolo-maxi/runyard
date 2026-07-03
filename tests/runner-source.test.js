@@ -31,7 +31,10 @@ describe("Smithers runner deadline containment", () => {
     assert.match(source, /launchSmithers/);
     assert.match(smithersRuntimeSource, /supervisorEnv\.RUN_SMITHERS_HUB_TOKEN = token/);
     assert.match(smithersRuntimeSource, /supervisorEnv\.RUN_SMITHERS_HUB_URL = baseUrl/);
-    assert.match(smithersRuntimeSource, /\.\.\.baseEnv, \.\.\.supervisorEnv, \.\.\.secretEnv/);
+    // The child env is the allowlisted OS/toolchain baseline plus the explicit
+    // supervisor/secret/run channels — never a raw spread of the runner's env.
+    assert.match(smithersRuntimeSource, /\.\.\.allowlistedBaseEnv\(baseEnv\), \.\.\.supervisorEnv, \.\.\.secretEnv/);
+    assert.doesNotMatch(smithersRuntimeSource, /\{ \.\.\.baseEnv,/);
   });
 
   it("can exit after a bounded number of assignments for smoke evaluation", () => {

@@ -14,6 +14,7 @@
 
 import { execFile } from "node:child_process";
 import { readClaudeOauthToken } from "./claudeOauthToken.js";
+import { resolveHubUrl } from "./hubConnection.js";
 
 const CLAUDE_BIN = process.env.SUPPORT_WARM_CLAUDE_BIN || "claude";
 const CLAUDE_MODEL = process.env.SUPPORT_WARM_MODEL || "claude-sonnet-4-6";
@@ -28,7 +29,7 @@ const MAX_BUFFER = 8 * 1024 * 1024;
 // rejects any mutation, so this is read-only by construction.
 const READ_ENABLED = process.env.SUPPORT_WARM_TOOLS === "1" || process.env.SUPPORT_WARM_TOOLS === "true";
 const READ_TOKEN = process.env.RUNYARD_READ_TOKEN || "";
-const READ_HUB_URL = (process.env.RUNYARD_HUB_URL || "https://hub.repo.box").replace(/\/$/, "");
+const READ_HUB_URL = resolveHubUrl();
 
 async function hubGet(apiPath) {
   if (!READ_TOKEN) return null;

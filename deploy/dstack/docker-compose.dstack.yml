@@ -38,7 +38,7 @@ services:
     image: ghcr.io/yolo-maxi/runyard-runner@sha256:REPLACE_WITH_RUNNER_DIGEST
     environment:
       # The runner reaches the hub on the same CVM/compose by service name.
-      RUNYARD_HUB_URL: "${RUNYARD_HUB_URL:-${RUNYARD_HUB_URL:-http://hub:80}}"
+      RUNYARD_HUB_URL: "${RUNYARD_HUB_URL:-http://hub:80}"
       SMITHERS_RUNNER_LOCATION: "dstack"
       SMITHERS_RUNNER_TAGS: "${SMITHERS_RUNNER_TAGS:-smithers,dstack,reauth}"
       REAUTH_ENABLED: "1"

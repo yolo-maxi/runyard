@@ -6,7 +6,7 @@
 // local Claude Code / Codex CLI as the worker), streams Smithers events back to the Hub as run
 // events, and uploads the workflow's outputs + event trace as artifacts. Nothing is faked: the
 // agent runs here, on this machine, and the Hub is the durable record.
-import { execFile, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -19,7 +19,10 @@ import { DEFAULT_MAX_INLINE_INPUT_BYTES } from "./runnerPolicy.js";
 import { smithersEventMessage } from "./runnerSmithersEvents.js";
 import { readClaudeOauthToken } from "./claudeOauthToken.js";
 import { isDraining, resolveDataDir } from "./drain.js";
-import { resolveSmithersBin, resolveExecWrapper } from "./resolveSmithersBin.js";
+import { resolveHubUrl, resolveHubToken } from "./hubConnection.js";
+import { packageVersion } from "./packageInfo.js";
+import { resolveSmithersBin } from "./resolveSmithersBin.js";
+import { resolveRunnerExecWrapper, isBubblewrapWrapper, usernsRemediation } from "./runnerSandbox.js";
 import {
   createSmithersRunRegistry,
   isHubTerminalStatus,
@@ -50,20 +53,33 @@ const execFileAsync = promisify(execFile);
 // Resolve once at startup: env override → pinned bun global install → PATH.
 // Keeps the pinned smithers-orchestrator engine deterministic on dstack images.
 const smithersBin = resolveSmithersBin();
-// Unopinionated execution seam: empty = run the engine directly on the host
-// (default); set RUNNER_EXEC_WRAPPER to run each engine invocation through a
-// deployer-chosen sandbox/container/job launcher. See resolveExecWrapper().
-const execWrapper = resolveExecWrapper();
 
-const baseUrl =
-  process.env.RUNYARD_HUB_URL || process.env.SMITHERS_HUB_URL || process.env.HUB_URL || "http://127.0.0.1:43117";
-const token =
-  process.env.RUNYARD_HUB_TOKEN ||
-  process.env.SMITHERS_HUB_TOKEN ||
-  process.env.HUB_TOKEN ||
-  process.env.RUNYARD_HUB_BOOTSTRAP_TOKEN ||
-  process.env.SMITHERS_HUB_BOOTSTRAP_TOKEN;
+const baseUrl = resolveHubUrl();
+const token = resolveHubToken({ allowBootstrap: true });
 const workspace = path.resolve(process.env.SMITHERS_WORKSPACE || process.cwd());
+// Unopinionated launch-only execution seam: empty = run the engine directly on
+// the host (default). RUNNER_SANDBOX=bubblewrap generates a bwrap sandbox argv;
+// otherwise a literal RUNNER_EXEC_WRAPPER (docker/firejail/custom) is used
+// verbatim. Only the workflow launch is wrapped — see resolveRunnerExecWrapper()
+// and WRAPPED_SUBCOMMANDS. Needs `workspace`/`smithersBin`, hence resolved here.
+const execWrapper = resolveRunnerExecWrapper({ workspace, smithersBin });
+
+// Startup preflight: if the bubblewrap sandbox is selected, prove once that it
+// can actually create a user namespace. A blocked userns (Ubuntu's restriction)
+// would otherwise fail every launch cryptically; surface the fix up front. Runs
+// the real wrapper against a no-op `/bin/sh -c :`; best-effort and non-fatal —
+// launches already fail closed, so this is an early, actionable warning only.
+if (isBubblewrapWrapper(execWrapper)) {
+  try {
+    execFileSync(execWrapper[0], [...execWrapper.slice(1), "/bin/sh", "-c", ":"], {
+      timeout: 15_000,
+      stdio: "ignore"
+    });
+  } catch {
+    console.warn(`[sandbox] ${usernsRemediation()}`);
+  }
+}
+
 const location = process.env.SMITHERS_RUNNER_LOCATION || "vps"; // "vps" | "local"
 const name = process.env.SMITHERS_RUNNER_NAME || `${os.hostname()} (${location})`;
 const tags = normalizeRunnerTags(
@@ -185,9 +201,11 @@ function materializeAgentRuntimePack(run, pack) {
 }
 
 async function smithers(args, opts = {}) {
-  // Prepend the deployer-configured exec wrapper, if any:
-  //   wrapper set  -> `<wrapper[0]> <wrapper[1..]> <smithersBin> <args>`
-  //   wrapper unset -> `<smithersBin> <args>` (bare host default)
+  // Prepend the deployer-configured exec wrapper for workflow-launch (`up`)
+  // subcommands only; polling/control commands run the binary directly:
+  //   launch + wrapper set -> `<wrapper[0]> <wrapper[1..]> <smithersBin> <args>`
+  //   otherwise            -> `<smithersBin> <args>` (bare host)
+  // See WRAPPED_SUBCOMMANDS in runnerSmithersRuntime.js.
   const command = smithersCommand({ smithersBin, execWrapper }, args);
   if (!opts.stdin) {
     return execFileAsync(command.cmd, command.args, {
@@ -276,7 +294,7 @@ async function register() {
     name,
     hostname: os.hostname(),
     platform: `${os.platform()} ${os.release()}`,
-    version: "0.2.0",
+    version: packageVersion,
     tags,
     capacity: concurrency
   });
