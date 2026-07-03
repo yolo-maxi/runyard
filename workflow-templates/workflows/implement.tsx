@@ -2,12 +2,13 @@
 // smithers-display-name: Implement
 // smithers-description: Runs an implementation agent, then a validation pass, and returns structured implementation notes.
 /** @jsxImportSource smithers-orchestrator */
-import { createSmithers, Sequence, ClaudeCodeAgent, CodexAgent } from "smithers-orchestrator";
+import { createSmithers, Sequence, ClaudeCodeAgent, CodexAgent, PiAgent } from "smithers-orchestrator";
 import { z } from "zod/v4";
 import { withAgentFallback } from "./agent-fallback.js";
+import { createPiAgentFromEnv, resolveAgentCli } from "./pi-harness.js";
 
 const REPO = process.env.IMPLEMENT_REPO_DIR || process.cwd();
-const IMPLEMENT_AGENT_CLI = String(process.env.RUNYARD_IMPLEMENT_AGENT_CLI || "codex").toLowerCase();
+const IMPLEMENT_AGENT_CLI = resolveAgentCli(process.env, { workflow: "IMPLEMENT", fallback: "codex" });
 
 const inputSchema = z.object({
   prompt: z.string().describe("What to implement.")
@@ -47,9 +48,19 @@ function makeAgents({ label, claudeModel, codexModel, systemPrompt, claudeAllowe
     timeoutMs: label === "validate" ? 20 * 60 * 1000 : 45 * 60 * 1000,
     systemPrompt
   });
-  return IMPLEMENT_AGENT_CLI === "claude"
-    ? withAgentFallback(claude, codex, { label })
-    : withAgentFallback(codex, claude, { label });
+  const cliPair =
+    IMPLEMENT_AGENT_CLI === "claude"
+      ? withAgentFallback(claude, codex, { label })
+      : withAgentFallback(codex, claude, { label });
+  if (IMPLEMENT_AGENT_CLI !== "pi") return cliPair;
+  const pi = createPiAgentFromEnv({
+    PiAgent,
+    workflow: "IMPLEMENT",
+    cwd: REPO,
+    systemPrompt,
+    timeoutMs: label === "validate" ? 20 * 60 * 1000 : 45 * 60 * 1000
+  });
+  return withAgentFallback(pi, cliPair, { label });
 }
 
 const builder = makeAgents({

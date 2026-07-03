@@ -7,9 +7,9 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createSmithers, Sequence, ClaudeCodeAgent, CodexAgent } from "smithers-orchestrator";
+import { createSmithers, Sequence, ClaudeCodeAgent, CodexAgent, PiAgent } from "smithers-orchestrator";
 import { z } from "zod/v4";
-import { createAgentFallbackPair } from "./agent-fallback.js";
+import { createAgentFallbackPair, resolveAgentCli } from "./agent-fallback.js";
 
 const PRODUCTS_ROOT = process.env.IDEA_PRODUCTS_ROOT || path.join(os.homedir(), "idea-products");
 const STATIC_ROOT = process.env.REPOBOX_STATIC_ROOT || process.env.STATIC_SITE_ROOT || "/var/www/runyard/subdomains";
@@ -123,7 +123,9 @@ const { Workflow, Task, smithers, outputs } = createSmithers({
 const strategist = createAgentFallbackPair({
   ClaudeCodeAgent,
   CodexAgent,
-  primaryCli: process.env.RUNYARD_IDEA_AGENT_CLI || "claude",
+  PiAgent,
+  primaryCli: resolveAgentCli(process.env, { workflow: "IDEA", fallback: "claude" }),
+  workflow: "IDEA",
   label: "idea-to-product-strategist",
   cwd: PRODUCTS_ROOT,
   claude: {
@@ -146,7 +148,9 @@ const strategist = createAgentFallbackPair({
 const builder = createAgentFallbackPair({
   ClaudeCodeAgent,
   CodexAgent,
-  primaryCli: process.env.RUNYARD_IDEA_AGENT_CLI || "claude",
+  PiAgent,
+  primaryCli: resolveAgentCli(process.env, { workflow: "IDEA", fallback: "claude" }),
+  workflow: "IDEA",
   label: "idea-to-product-builder",
   cwd: PRODUCTS_ROOT,
   claude: {
@@ -172,7 +176,9 @@ const builder = createAgentFallbackPair({
 const copywriter = createAgentFallbackPair({
   ClaudeCodeAgent,
   CodexAgent,
-  primaryCli: process.env.RUNYARD_IDEA_AGENT_CLI || "claude",
+  PiAgent,
+  primaryCli: resolveAgentCli(process.env, { workflow: "IDEA", fallback: "claude" }),
+  workflow: "IDEA",
   label: "idea-to-product-copywriter",
   cwd: PRODUCTS_ROOT,
   claude: {

@@ -2,9 +2,10 @@
 // smithers-display-name: Runyard Support Agent
 // smithers-description: Internal in-app support chat answered by a subscribed on-runner CLI agent.
 /** @jsxImportSource smithers-orchestrator */
-import { createSmithers, CodexAgent, ClaudeCodeAgent } from "smithers-orchestrator";
+import { createSmithers, CodexAgent, ClaudeCodeAgent, PiAgent } from "smithers-orchestrator";
 import { z } from "zod/v4";
 import { withAgentFallback } from "./agent-fallback.js";
+import { createPiAgentFromEnv, resolveAgentCli } from "./pi-harness.js";
 
 const inputSchema = z.object({
   system: z.string().default(""),
@@ -24,7 +25,7 @@ const { Workflow, Task, smithers, outputs } = createSmithers({
   support: supportOutput
 });
 
-const provider = String(process.env.RUNYARD_SUPPORT_AGENT_CLI || "claude").toLowerCase();
+const provider = resolveAgentCli(process.env, { workflow: "SUPPORT", fallback: "claude" });
 
 const codex = new CodexAgent({
   model: process.env.RUNYARD_SUPPORT_CODEX_MODEL || (provider === "codex" ? process.env.RUNYARD_SUPPORT_AGENT_MODEL : "") || "gpt-5.3-codex",
@@ -44,10 +45,26 @@ const claude = new ClaudeCodeAgent({
     "Keep the reply concise and preserve any valid trailing buttons JSON block requested by the system prompt."
 });
 
-const supportAgent =
+const supportCliPair =
   provider === "codex"
     ? withAgentFallback(codex, claude, { label: "runyard-support-agent" })
     : withAgentFallback(claude, codex, { label: "runyard-support-agent" });
+
+const supportAgent =
+  provider === "pi"
+    ? withAgentFallback(
+        createPiAgentFromEnv({
+          PiAgent,
+          workflow: "SUPPORT",
+          timeoutMs: 2 * 60 * 1000,
+          systemPrompt:
+            "You are answering inside Runyard's floating support chat. Return only JSON with a string field named reply. " +
+            "Keep the reply concise and preserve any valid trailing buttons JSON block requested by the system prompt."
+        }),
+        supportCliPair,
+        { label: "runyard-support-agent" }
+      )
+    : supportCliPair;
 
 function transcript(messages: Array<{ role?: string; content?: string }>) {
   return messages

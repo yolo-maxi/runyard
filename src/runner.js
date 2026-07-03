@@ -47,6 +47,7 @@ import {
   preflightAssignment
 } from "./runnerRuntime.js";
 import { handleRunnerSpecialRun } from "./runnerSpecialRuns.js";
+import { harnessSelectionRunEnv, resolveHarnessSelection } from "./runHarnessSelection.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -308,12 +309,15 @@ async function register() {
 // Launch `smithers up` detached and return the Smithers runId. `secretEnv` is
 // the allowlisted, decrypted secrets the Hub injected with this run's claim;
 // they are merged into the child process env so the workflow's agent can use
-// them, and never written to disk/inputs/logs.
-async function launch(entry, input, secretEnv = {}, resume = null, hubRunId = "") {
+// them, and never written to disk/inputs/logs. `harnessEnv` is the run's
+// harness/endpoint selection (RUNYARD_RUN_* names and labels only, no
+// credentials) resolved from run input / capability workflow config.
+async function launch(entry, input, secretEnv = {}, resume = null, hubRunId = "", harnessEnv = {}) {
   const claudeOauthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN || readClaudeOauthToken();
   const runEnv = {
     RUNYARD_RUN_ID: String(hubRunId || ""),
-    SMITHERS_HUB_RUN_ID: String(hubRunId || "")
+    SMITHERS_HUB_RUN_ID: String(hubRunId || ""),
+    ...harnessEnv
   };
   return launchSmithers({
     runSmithers: smithers,
@@ -427,7 +431,10 @@ async function executeAssignment(assignment) {
     // A hub-supervised resume carries the prior Smithers run id in __resume.
     const resume = run.input && typeof run.input === "object" ? run.input.__resume : null;
     const runtimeEnv = materializeAgentRuntimePack(run, assignment.agentRuntimePack);
-    const sid = await launch(entry, run.input, { ...runtimeEnv, ...secretEnv }, resume, run.id);
+    // Per-run harness/endpoint selection (validated by preflight above) rides
+    // the runEnv channel so it outranks the runner's ambient RUNYARD_* env.
+    const harnessEnv = harnessSelectionRunEnv(resolveHarnessSelection({ capability, input: run.input || {} }).selection);
+    const sid = await launch(entry, run.input, { ...runtimeEnv, ...secretEnv }, resume, run.id, harnessEnv);
     smithersRegistry.register(run.id, sid);
     if (resume?.smithersRunId) {
       await event(run.id, "runner.resumed", `Resuming Smithers run ${sid} from checkpoint (attempt ${resume.attempt || "?"})`, {

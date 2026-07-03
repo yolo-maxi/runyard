@@ -2,6 +2,7 @@ import {
   executionIntentFromInput,
   executionIntentMatchesRunnerTags
 } from "./runExecution.js";
+import { harnessSelectionSecretNames, resolveHarnessSelection } from "./runHarnessSelection.js";
 
 function publicRunnerAvailability(runner) {
   return {
@@ -43,5 +44,11 @@ export function supportRunnerAvailabilityResult({ capability, runners = [] }) {
 export function secretNamesForRun(capability, runInput) {
   const fromCapability = Array.isArray(capability?.workflow?.secrets) ? capability.workflow.secrets : [];
   const fromInput = Array.isArray(runInput?.secretNames) ? runInput.secretNames : [];
-  return [...new Set([...fromCapability, ...fromInput].map((name) => String(name || "").trim()).filter(Boolean))];
+  // A harness selection that names an endpoint key env (piApiKeyEnv) implies
+  // delivery of that one secret — same trust as input.secretNames, which
+  // already lets a run request any Hub secret by name.
+  const fromSelection = harnessSelectionSecretNames(resolveHarnessSelection({ capability, input: runInput }).selection);
+  return [
+    ...new Set([...fromCapability, ...fromInput, ...fromSelection].map((name) => String(name || "").trim()).filter(Boolean))
+  ];
 }

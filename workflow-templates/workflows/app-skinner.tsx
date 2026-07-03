@@ -2,9 +2,9 @@
 // smithers-display-name: App Skinner
 // smithers-description: Explores visual skins for an app idea, proposes a shortlist, pauses for approval, then produces a concrete skin brief.
 /** @jsxImportSource smithers-orchestrator */
-import { createSmithers, ClaudeCodeAgent, CodexAgent } from "smithers-orchestrator";
+import { createSmithers, ClaudeCodeAgent, CodexAgent, PiAgent } from "smithers-orchestrator";
 import { z } from "zod/v4";
-import { createAgentFallbackPair } from "./agent-fallback.js";
+import { createAgentFallbackPair, resolveAgentCli } from "./agent-fallback.js";
 
 const inputSchema = z.object({
   appIdea: z.string().describe("Raw app, miniapp, product, or feature idea to skin."),
@@ -65,7 +65,9 @@ const { Workflow, Task, Approval, Sequence, smithers, outputs } = createSmithers
 const skinner = createAgentFallbackPair({
   ClaudeCodeAgent,
   CodexAgent,
-  primaryCli: process.env.RUNYARD_APP_SKINNER_AGENT_CLI || "claude",
+  PiAgent,
+  primaryCli: resolveAgentCli(process.env, { workflow: "APP_SKINNER", fallback: "claude" }),
+  workflow: "APP_SKINNER",
   label: "app-skinner",
   cwd: process.cwd(),
   claude: {

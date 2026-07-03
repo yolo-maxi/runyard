@@ -5,6 +5,10 @@
 // the Smithers engine only needs an object with generate(), so workflows can use
 // it without changing orchestrator internals.
 
+import { createPiAgentFromEnv } from "./pi-harness.js";
+
+export { resolveAgentCli, resolvePiEndpoint } from "./pi-harness.js";
+
 function errorText(error) {
   if (!error) return "";
   const parts = [
@@ -41,7 +45,13 @@ export function shouldFallbackAgent(error) {
     "auth",
     "authentication",
     "api_error_status",
-    "refusal"
+    "refusal",
+    // Spawn failures (missing CLI binary) — lets a runner without the selected
+    // harness on PATH degrade to the fallback CLI instead of failing the run.
+    "enoent",
+    // A pi endpoint whose named key env was never delivered (pi-harness.js
+    // missingPiApiKeyMessage) — degrade instead of failing the run.
+    "selects api key env"
   ].some((needle) => text.includes(needle));
 }
 
@@ -58,7 +68,8 @@ export function withAgentFallback(primary, fallback, { label = "agent" } = {}) {
         return await primary.generate(options);
       } catch (error) {
         if (!shouldFallbackAgent(error)) throw error;
-        const message = `[runyard] ${label}: ${agentName(primary)} failed; retrying with ${agentName(fallback)}.\n`;
+        const reason = String(error?.message || error || "").split("\n")[0].slice(0, 300);
+        const message = `[runyard] ${label}: ${agentName(primary)} failed (${reason}); retrying with ${agentName(fallback)}.\n`;
         try {
           options.onStderr?.(message);
         } catch {
@@ -80,11 +91,15 @@ export function withAgentFallback(primary, fallback, { label = "agent" } = {}) {
 export function createAgentFallbackPair({
   ClaudeCodeAgent,
   CodexAgent,
+  PiAgent,
   primaryCli = "claude",
+  workflow = "",
+  env = process.env,
   label = "agent",
   cwd,
   claude = {},
-  codex = {}
+  codex = {},
+  pi = {}
 } = {}) {
   if (!ClaudeCodeAgent || !CodexAgent) {
     throw new Error("createAgentFallbackPair requires ClaudeCodeAgent and CodexAgent constructors");
@@ -106,7 +121,21 @@ export function createAgentFallbackPair({
     ...(timeoutMs && !codex.timeoutMs ? { timeoutMs } : {}),
     ...(systemPrompt && !codex.systemPrompt ? { systemPrompt } : {})
   });
-  return String(primaryCli || "claude").toLowerCase() === "codex"
-    ? withAgentFallback(codexAgent, claudeAgent, { label })
-    : withAgentFallback(claudeAgent, codexAgent, { label });
+  const cli = String(primaryCli || "claude").toLowerCase();
+  const cliPair =
+    cli === "codex"
+      ? withAgentFallback(codexAgent, claudeAgent, { label })
+      : withAgentFallback(claudeAgent, codexAgent, { label });
+  if (cli !== "pi") return cliPair;
+  // Pi primary (custom OpenAI-compatible endpoint), degrading to the
+  // claude→codex pair when the endpoint errors or the pi CLI is missing.
+  const piAgent = createPiAgentFromEnv({
+    PiAgent,
+    env,
+    workflow,
+    cwd: pi.cwd || cwd,
+    systemPrompt: pi.systemPrompt || systemPrompt,
+    timeoutMs: pi.timeoutMs || timeoutMs
+  });
+  return withAgentFallback(piAgent, cliPair, { label });
 }
