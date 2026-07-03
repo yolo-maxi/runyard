@@ -20,6 +20,7 @@ export function createRunReadHandlers({
   listRuns,
   presentRunResponseEndpoint,
   reapStuckRunsWithRetrospectives,
+  runApprovalHold = () => false,
   runDeadlineMs = () => 0,
   runDiagnostics,
   runnerPoolStats,
@@ -62,6 +63,7 @@ export function createRunReadHandlers({
       const run = loadRun(req, res);
       if (!run) return;
       res.json(runDetailPayload({
+        approvalHold: runApprovalHold(run),
         artifacts: linkedRunArtifacts(run),
         decorateSingleRun,
         events: runEvents(run),
@@ -129,6 +131,7 @@ export function createRunReadHandlers({
 }
 
 export function runDetailPayload({
+  approvalHold = false,
   artifacts,
   decorateSingleRun,
   events,
@@ -141,6 +144,10 @@ export function runDetailPayload({
   const responseEndpoints = listRunResponseEndpointsForRun(run.id).map(presentRunResponseEndpoint);
   return {
     run: decorateSingleRun(run),
+    // True while a human decision is pending on this run (its own approval card
+    // or a supervised child in waiting_approval). Runners use this to defer
+    // their execution deadline instead of timing the run out under the human.
+    approvalHold: Boolean(approvalHold),
     events,
     artifacts,
     responseEndpoints,

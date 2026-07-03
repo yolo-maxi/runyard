@@ -136,4 +136,50 @@ describe("run query record helpers", () => {
       nowMs
     }).reason, "max_runtime");
   });
+
+  it("never reaps an approval-held run for age: pending approvals block stall and max_runtime", () => {
+    const nowMs = Date.parse("2026-01-01T00:10:00.000Z");
+    const staleRunningRow = {
+      id: "run_1",
+      status: "running",
+      created_at: "2026-01-01T00:00:00.000Z",
+      started_at: "2026-01-01T00:00:00.000Z",
+      last_event_at: "2026-01-01T00:00:00.000Z"
+    };
+
+    // A run with its own unresolved approval card is neither stalled nor timed out.
+    assert.equal(runReapReason(staleRunningRow, {
+      stallMs: 5 * 60_000,
+      maxMs: 5 * 60_000,
+      nowMs,
+      hasPendingApproval: () => true
+    }), null);
+
+    // A run-smithers parent whose child waits for approval is exempt from the
+    // max-runtime backstop too, not just the stall window.
+    assert.equal(runReapReason({ ...staleRunningRow, capability_slug: "run-smithers" }, {
+      maxMs: 5 * 60_000,
+      nowMs,
+      hasWaitingApprovalSupervisedChild: () => true
+    }), null);
+
+    // Once the approval is resolved (no longer pending), age-based reaping resumes.
+    assert.equal(runReapReason(staleRunningRow, {
+      stallMs: 5 * 60_000,
+      nowMs,
+      hasPendingApproval: () => false
+    }).reason, "run_stalled");
+
+    // A dead runner still wins over an approval hold: heartbeat expiry is an
+    // infra fact the supervisor adjudicates (resume/requeue), not a timeout.
+    assert.equal(runReapReason({
+      ...staleRunningRow,
+      runner_id: "runner_1",
+      last_heartbeat_at: "2026-01-01T00:00:00.000Z"
+    }, {
+      runnerOfflineMs: 5 * 60_000,
+      nowMs,
+      hasPendingApproval: () => true
+    }).reason, "runner_offline");
+  });
 });

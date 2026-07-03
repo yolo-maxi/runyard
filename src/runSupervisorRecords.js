@@ -73,6 +73,13 @@ export function waitingApprovalInputsQuery() {
   };
 }
 
+export function pendingRunApprovalQuery(runId) {
+  return {
+    sql: "SELECT id FROM approvals WHERE run_id = ? AND status = 'pending' LIMIT 1",
+    params: [String(runId)]
+  };
+}
+
 export function waitingApprovalBelongsToParent(row, parentRunId) {
   if (!parentRunId) return false;
   const input = parseMaybeJson(row?.input, {});

@@ -46,7 +46,11 @@ describe("supervision decision (pure)", () => {
   it("does not carry an independent default supervisor poll deadline", () => {
     const source = readFileSync(path.join(process.cwd(), "workflow-templates", "workflows", "run-smithers.tsx"), "utf8");
     assert.match(source, /process\.env\.SMITHERS_RUN_DEADLINE_MS/);
-    assert.match(source, /POLL_DEADLINE_MS > 0 \? POLL_DEADLINE_MS \+ 60_000 : undefined/);
+    // The supervise task carries no timeoutMs at all: it may legitimately block
+    // for as long as a human approval stays pending, so any local task deadline
+    // would turn a late approver into a failed run. Containment lives in hub
+    // liveness plus the approval-aware runner deadline.
+    assert.doesNotMatch(source, /<Task id="supervise"[^>]*timeoutMs/);
     assert.doesNotMatch(source, /60 \* 60 \* 1000/);
   });
 

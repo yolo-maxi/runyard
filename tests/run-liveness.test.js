@@ -15,12 +15,15 @@ process.env.SMITHERS_OBSTRUCTION_ANALYSIS_ENABLED = "0";
 const {
   addRunEvent,
   claimNextRun,
+  createApproval,
   createRun,
   db,
   getCapability,
   getRun,
   reapStuckRunIds,
   registerRunner,
+  resolveApproval,
+  runApprovalHold,
   transitionRun,
   updateRun
 } = await import("../src/db.js");
@@ -152,6 +155,84 @@ describe("heartbeat-based run liveness", () => {
       );
 
       assert.deepEqual(reapStuckRunIds(0), []);
+      assert.equal(getRun(parentRunId).status, "running");
+      assert.equal(getRun(child.id).status, "waiting_approval");
+    } finally {
+      env.runnerOfflineMs = previousOffline;
+      env.runStallMs = previousStall;
+    }
+  });
+
+  // Regression: "workflow asks for approval → human does not reply in time →
+  // run times out and fails". A missed approval must never be a terminal
+  // failure reason: blocking approvals wait indefinitely.
+  it("never stall-fails a running run whose own approval goes unanswered, and resumes reaping once resolved", () => {
+    const previousOffline = env.runnerOfflineMs;
+    const previousStall = env.runStallMs;
+    env.runnerOfflineMs = 30_000;
+    env.runStallMs = 1_000;
+    try {
+      const { runId } = startRun({ heartbeatMsAgo: 100, startedMsAgo: 60_000 });
+      updateRun(runId, {
+        assigned_at: oldIso(60_000),
+        started_at: oldIso(60_000)
+      });
+      const approval = createApproval({
+        runId,
+        title: "Approve checkpoint",
+        description: "workflow paused for a human decision",
+        requestedBy: "workflow: test"
+      });
+      // Backdate every event (including approval.requested) so only the pending
+      // approval — not event freshness — can be holding the run open.
+      db.prepare("UPDATE run_events SET created_at = ? WHERE run_id = ?").run(oldIso(60_000), runId);
+
+      assert.equal(runApprovalHold(getRun(runId)), true);
+      assert.deepEqual(reapStuckRunIds(0), []);
+      assert.equal(getRun(runId).status, "running");
+
+      // The hold releases with the human decision; a genuinely quiet run is
+      // reaped again afterwards.
+      resolveApproval(approval.id, "approved", "test");
+      db.prepare("UPDATE run_events SET created_at = ? WHERE run_id = ?").run(oldIso(60_000), runId);
+      assert.equal(runApprovalHold(getRun(runId)), false);
+      assert.deepEqual(reapStuckRunIds(0), [runId]);
+      assert.equal(getRun(runId).status, "failed");
+    } finally {
+      env.runnerOfflineMs = previousOffline;
+      env.runStallMs = previousStall;
+    }
+  });
+
+  it("never max-runtime-fails a run-smithers parent while its child waits for approval", () => {
+    const previousOffline = env.runnerOfflineMs;
+    const previousStall = env.runStallMs;
+    env.runnerOfflineMs = 30_000;
+    env.runStallMs = 60 * 60_000;
+    try {
+      const { runId: parentRunId } = startRun({
+        heartbeatMsAgo: 100,
+        startedMsAgo: 60 * 60_000,
+        capabilitySlug: "run-smithers",
+        input: { wrappedCapability: "hello", wrappedInput: { topic: "slow approver" } }
+      });
+      updateRun(parentRunId, {
+        assigned_at: oldIso(60 * 60_000),
+        started_at: oldIso(60 * 60_000)
+      });
+
+      const child = createRun(getCapability("hello"), { topic: "slow approver" });
+      updateRun(child.id, { status: "waiting_approval", current_step: "skin:approval" });
+      db.prepare("UPDATE runs SET input = ? WHERE id = ?").run(
+        JSON.stringify({ topic: "slow approver", __origin: { type: "run-smithers-child", parentRunId } }),
+        child.id
+      );
+
+      // Backstop of 5 minutes, run started an hour ago: without the approval
+      // hold this parent would fail as max_runtime. (Other tests' leftover runs
+      // may legitimately trip the backstop, so assert on this parent only.)
+      const reaped = reapStuckRunIds(5 * 60_000);
+      assert.ok(!reaped.includes(parentRunId), `parent ${parentRunId} must not be reaped (reaped: ${reaped.join(", ")})`);
       assert.equal(getRun(parentRunId).status, "running");
       assert.equal(getRun(child.id).status, "waiting_approval");
     } finally {

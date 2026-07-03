@@ -7,6 +7,7 @@ import {
   activeReapCandidatesQuery,
   failedRecoverableCandidatesQuery,
   normalizeRunLineage,
+  pendingRunApprovalQuery,
   repairDispatchedUpdateQuery,
   resumeCheckpointEventQuery,
   resumeCheckpointFromEvent,
@@ -53,6 +54,23 @@ export function createRunSupervisorStore({
     if (!parentRunId) return false;
     const query = waitingApprovalInputsQuery();
     return all(query.sql, query.params).some((row) => waitingApprovalBelongsToParent(row, parentRunId));
+  }
+
+  function hasPendingRunApproval(runId) {
+    if (!runId) return false;
+    const query = pendingRunApprovalQuery(runId);
+    return Boolean(one(query.sql, query.params));
+  }
+
+  // A run is "approval-held" while a human decision is pending: either an
+  // unresolved approval card on the run itself, or (run-smithers) a supervised
+  // child parked in waiting_approval. Held runs are exempt from age-based
+  // reaping and runner deadlines — approvals block indefinitely by contract.
+  function runApprovalHold(run) {
+    if (!run || !run.id) return false;
+    if (hasPendingRunApproval(run.id)) return true;
+    const slug = run.capability_slug ?? run.capabilitySlug ?? "";
+    return slug === "run-smithers" && hasWaitingApprovalSupervisedChild(run.id);
   }
 
   function runResumeCheckpoint(runId) {
@@ -292,6 +310,7 @@ export function createRunSupervisorStore({
         stallMs: env.runStallMs,
         runnerOfflineMs: env.runnerOfflineMs,
         nowMs,
+        hasPendingApproval: hasPendingRunApproval,
         hasWaitingApprovalSupervisedChild
       });
       if (!reason) continue;
@@ -347,6 +366,7 @@ export function createRunSupervisorStore({
     reconcileSupervisedChildTerminals,
     reapStuckRunIds,
     reapStuckRuns: (maxMs) => reapStuckRunIds(maxMs).length,
-    reconcileFailedRecoverable
+    reconcileFailedRecoverable,
+    runApprovalHold
   };
 }

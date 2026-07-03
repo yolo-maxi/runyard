@@ -386,6 +386,19 @@ describe("run-smithers workflow-code self-correction", () => {
     assert.match(src, /ctx\.outputMaybe\("supervise"/);
   });
 
+  it("run-smithers.tsx approval waits are blocking: no poll deadline and no supervise task timeout", () => {
+    const src = readFileSync(path.join(process.cwd(), "workflow-templates", "workflows", "run-smithers.tsx"), "utf8");
+    // A late human approver must never fail the wrapper. The approval wait
+    // loops until the child leaves waiting_approval, ignoring POLL_DEADLINE_MS…
+    const waitFn = src.slice(src.indexOf("async function waitForChildApprovalDecision"), src.indexOf("// Resolve the wrapped capability"));
+    assert.match(waitFn, /while \(true\)/);
+    assert.doesNotMatch(waitFn, /POLL_DEADLINE_MS/);
+    // …and the supervise task carries no timeoutMs that could expire under a
+    // pending approval (runaway supervision is contained by hub liveness and
+    // the approval-aware runner deadline instead).
+    assert.doesNotMatch(src, /<Task id="supervise"[^>]*timeoutMs/);
+  });
+
   it("succeeds normally after a repair fixes the workflow code", () => {
     const state = createWatcherState({ capabilitySlug: "product-workflow" });
     recordChildAttempt(state, { runId: "run_a", status: "failed", failedStep: "dispatch", error: "TypeError: x is not a function at wf.tsx:1:1" });
