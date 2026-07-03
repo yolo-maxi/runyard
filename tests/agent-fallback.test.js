@@ -94,7 +94,8 @@ describe("workflow agent fallback", () => {
     const env = {
       RUNYARD_PI_PROVIDER: "venice",
       RUNYARD_PI_MODEL: "llama-3.3-70b",
-      RUNYARD_PI_API_KEY_ENV: "VENICE_API_KEY"
+      RUNYARD_PI_API_KEY_ENV: "VENICE_API_KEY",
+      VENICE_API_KEY: "vk-secret"
     };
     const agent = createAgentFallbackPair({
       ClaudeCodeAgent: FakeClaude,
@@ -109,6 +110,25 @@ describe("workflow agent fallback", () => {
     });
     assert.match(agent.cliEngine, /^pi\+fallback:/);
     assert.deepEqual(await agent.generate({}), { text: "FakePi" });
+  });
+
+  it("degrades to the CLI pair when the selected endpoint key was never delivered", async () => {
+    const stderr = [];
+    const agent = createAgentFallbackPair({
+      ClaudeCodeAgent: FakeClaude,
+      CodexAgent: FakeCodex,
+      PiAgent: FakePi,
+      primaryCli: "pi",
+      workflow: "IMPROVE",
+      env: {
+        RUNYARD_PI_PROVIDER: "venice",
+        RUNYARD_PI_MODEL: "llama-3.3-70b",
+        RUNYARD_PI_API_KEY_ENV: "VENICE_API_KEY"
+        // VENICE_API_KEY missing: not in workflow.secrets / secretNames / selection.
+      }
+    });
+    assert.deepEqual(await agent.generate({ onStderr: (line) => stderr.push(line) }), { text: "FakeClaude" });
+    assert.equal(stderr.join("").includes("VENICE_API_KEY"), true, "degradation reason names the key env");
   });
 
   it("falls back from a failing pi endpoint to the CLI pair", async () => {

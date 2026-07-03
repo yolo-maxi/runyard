@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -54,6 +54,29 @@ describe("runner runtime helpers", () => {
       env: {},
       gitBin: "false"
     })[0], /improve repo preflight failed/);
+  });
+
+  it("fails preflight closed on a malformed harness selection, without echoing the value", () => {
+    const temp = mkdtempSync(path.join(os.tmpdir(), "runner-runtime-"));
+    const entry = path.join(temp, "wf.tsx");
+    writeFileSync(entry, "// wf");
+    const failures = preflightAssignment(
+      { input: { piApiKeyEnv: "vk-live-pasted-key" } },
+      { slug: "implement", workflow: { entry: "wf.tsx" } },
+      entry,
+      { workspace: temp, health: {} }
+    );
+    assert.equal(failures.length, 1);
+    assert.match(failures[0], /"piApiKeyEnv"/);
+    assert.equal(failures[0].includes("vk-live-pasted-key"), false);
+
+    const clean = preflightAssignment(
+      { input: { agentHarness: "pi", piProvider: "venice", piModel: "llama-3.3-70b", piApiKeyEnv: "VENICE_API_KEY" } },
+      { slug: "implement", workflow: { entry: "wf.tsx" } },
+      entry,
+      { workspace: temp, health: {} }
+    );
+    assert.deepEqual(clean, []);
   });
 
   it("materializes runtime packs to a private file and compact env summary", () => {

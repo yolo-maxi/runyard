@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { workflowBundleSha256 } from "./workflowBundleRecords.js";
 import { workflowBundleReference } from "./workflowSource.js";
+import { resolveHarnessSelection } from "./runHarnessSelection.js";
 import { resolveImproveRepo } from "../workflow-templates/workflows/improve-repo.js";
 
 export function isSupervisorCapability(capability) {
@@ -60,6 +61,10 @@ export function preflightAssignment(run, capability, entry, { workspace, health,
   if (!existsSync(workflowPath)) failures.push(`workflow file not found: ${workflowPath}`);
   failures.push(...preflightImproveRepo(run, capability, { workspace, env, gitBin, gitEnv }));
   failures.push(...authOkFor(capability, health));
+  // Malformed harness selection (bad harness name, key VALUE pasted where a
+  // key NAME belongs, ...) is a config error — fail closed before launch. The
+  // issue strings never contain the rejected value.
+  failures.push(...resolveHarnessSelection({ capability, input: run?.input || {} }).issues);
   return failures;
 }
 

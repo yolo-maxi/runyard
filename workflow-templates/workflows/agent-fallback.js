@@ -48,7 +48,10 @@ export function shouldFallbackAgent(error) {
     "refusal",
     // Spawn failures (missing CLI binary) — lets a runner without the selected
     // harness on PATH degrade to the fallback CLI instead of failing the run.
-    "enoent"
+    "enoent",
+    // A pi endpoint whose named key env was never delivered (pi-harness.js
+    // missingPiApiKeyMessage) — degrade instead of failing the run.
+    "selects api key env"
   ].some((needle) => text.includes(needle));
 }
 
@@ -65,7 +68,8 @@ export function withAgentFallback(primary, fallback, { label = "agent" } = {}) {
         return await primary.generate(options);
       } catch (error) {
         if (!shouldFallbackAgent(error)) throw error;
-        const message = `[runyard] ${label}: ${agentName(primary)} failed; retrying with ${agentName(fallback)}.\n`;
+        const reason = String(error?.message || error || "").split("\n")[0].slice(0, 300);
+        const message = `[runyard] ${label}: ${agentName(primary)} failed (${reason}); retrying with ${agentName(fallback)}.\n`;
         try {
           options.onStderr?.(message);
         } catch {

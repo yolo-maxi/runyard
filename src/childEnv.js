@@ -53,6 +53,12 @@ export const CHILD_ENV_ALLOWLIST = new Set([
 // key's variable name, and the key itself still only reaches the child through
 // the Hub's encrypted per-run secretEnv channel. Anything ending in API_KEY,
 // TOKEN, or SECRET deliberately matches none of these patterns.
+//
+// The run-scoped names (RUNYARD_RUN_AGENT_CLI, RUNYARD_RUN_PI_*) are normally
+// injected per launch via the runner's runEnv channel (src/runHarnessSelection.js),
+// not read from the runner host env; they match the workflow-scoped patterns
+// below ("RUN" as the workflow segment), which is why "RUN" is a reserved
+// workflow key.
 export const CHILD_ENV_ALLOWLIST_PATTERNS = [
   /^RUNYARD_(?:[A-Z0-9]+(?:_[A-Z0-9]+)*_)?AGENT_CLI$/,
   /^RUNYARD_(?:[A-Z0-9]+(?:_[A-Z0-9]+)*_)?(?:AGENT|CLAUDE|CODEX|PI)_MODEL$/,

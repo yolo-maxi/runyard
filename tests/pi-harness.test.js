@@ -55,6 +55,24 @@ describe("pi harness endpoint config", () => {
     assert.equal(otherEndpoint.provider, "venice");
   });
 
+  it("ranks per-run selection above per-workflow and global env", () => {
+    const env = {
+      RUNYARD_PI_PROVIDER: "fugu",
+      RUNYARD_PI_MODEL: "fugu-large",
+      RUNYARD_PI_API_KEY_ENV: "FUGU_API_KEY",
+      RUNYARD_IMPLEMENT_PI_PROVIDER: "glm",
+      RUNYARD_IMPLEMENT_PI_MODEL: "glm-4.7",
+      RUNYARD_IMPLEMENT_PI_API_KEY_ENV: "ZAI_API_KEY",
+      RUNYARD_RUN_PI_PROVIDER: "venice",
+      RUNYARD_RUN_PI_MODEL: "llama-3.3-70b",
+      RUNYARD_RUN_PI_API_KEY_ENV: "VENICE_API_KEY"
+    };
+    const endpoint = resolvePiEndpoint(env, { workflow: "IMPLEMENT" });
+    assert.equal(endpoint.provider, "venice");
+    assert.equal(endpoint.model, "llama-3.3-70b");
+    assert.equal(endpoint.apiKeyEnv, "VENICE_API_KEY");
+  });
+
   it("normalizes workflow keys from slugs and labels", () => {
     assert.equal(normalizeWorkflowKey("gobbler-comic"), "GOBBLER_COMIC");
     assert.equal(normalizeWorkflowKey(" App Skinner "), "APP_SKINNER");
@@ -82,6 +100,16 @@ describe("pi harness selection", () => {
     };
     assert.equal(resolveAgentCli(env, { workflow: "IMPLEMENT", fallback: "codex" }), "claude");
     assert.equal(resolveAgentCli(env, { workflow: "IMPROVE" }), "pi");
+  });
+
+  it("ranks the per-run harness selection above workflow and global env", () => {
+    const env = {
+      RUNYARD_AGENT_CLI: "pi",
+      RUNYARD_IMPLEMENT_AGENT_CLI: "claude",
+      RUNYARD_RUN_AGENT_CLI: "codex"
+    };
+    assert.equal(resolveAgentCli(env, { workflow: "IMPLEMENT" }), "codex");
+    assert.equal(resolveAgentCli(env, { workflow: "IMPROVE" }), "codex");
   });
 });
 
@@ -125,7 +153,8 @@ describe("pi agent construction", () => {
       env: {
         RUNYARD_PI_PROVIDER: "venice",
         RUNYARD_PI_MODEL: "llama-3.3-70b",
-        RUNYARD_PI_API_KEY_ENV: "VENICE_API_KEY"
+        RUNYARD_PI_API_KEY_ENV: "VENICE_API_KEY",
+        VENICE_API_KEY: "vk-secret"
       },
       workflow: "IMPROVE",
       cwd: "/repo",
@@ -135,5 +164,54 @@ describe("pi agent construction", () => {
     assert.equal(agent.opts.model, "llama-3.3-70b");
     assert.equal(agent.opts.cwd, "/repo");
     assert.equal(agent.opts.timeoutMs, 5000);
+  });
+
+  it("reports a named-but-undelivered key cleanly at generate() time, values never included", async () => {
+    class FakePiAgent {
+      constructor() {
+        this.cliEngine = "pi";
+      }
+
+      async generate() {
+        throw new Error("should never reach the endpoint without its key");
+      }
+    }
+    const agent = createPiAgentFromEnv({
+      PiAgent: FakePiAgent,
+      env: {
+        RUNYARD_PI_PROVIDER: "venice",
+        RUNYARD_PI_MODEL: "llama-3.3-70b",
+        RUNYARD_PI_API_KEY_ENV: "VENICE_API_KEY"
+        // VENICE_API_KEY itself was never delivered.
+      },
+      workflow: "IMPLEMENT"
+    });
+    await assert.rejects(
+      () => agent.generate({}),
+      (error) => {
+        assert.match(error.message, /VENICE_API_KEY/);
+        assert.match(error.message, /Hub secret/);
+        assert.match(error.message, /piApiKeyEnv/);
+        return true;
+      }
+    );
+  });
+
+  it("generates normally when the named key IS delivered", async () => {
+    class FakePiAgent {
+      async generate() {
+        return { text: "pi-ok" };
+      }
+    }
+    const agent = createPiAgentFromEnv({
+      PiAgent: FakePiAgent,
+      env: {
+        RUNYARD_PI_PROVIDER: "venice",
+        RUNYARD_PI_MODEL: "llama-3.3-70b",
+        RUNYARD_PI_API_KEY_ENV: "VENICE_API_KEY",
+        VENICE_API_KEY: "vk-secret"
+      }
+    });
+    assert.deepEqual(await agent.generate({}), { text: "pi-ok" });
   });
 });
