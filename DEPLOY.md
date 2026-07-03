@@ -42,7 +42,7 @@ docker build -f Dockerfile.hub    -t runyard-hub:local .
 docker build -f Dockerfile.runner -t runyard-runner:local .
 ```
 
-Pinned build ARGs (override if needed): `SMITHERS_VERSION=0.25.1`,
+Pinned build ARGs (override if needed): `SMITHERS_VERSION=0.22.0`,
 `BUN_VERSION=1.3.14`, `DOCKER_CLI_VERSION=29.6.0`, `NODE_VERSION=22`,
 `PNPM_VERSION=10.33.0`.
 

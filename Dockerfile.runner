@@ -22,7 +22,7 @@
 ARG NODE_VERSION=22
 ARG PNPM_VERSION=10.33.0
 # Pinned, explicit, reproducible engine + tool versions.
-ARG SMITHERS_VERSION=0.25.1
+ARG SMITHERS_VERSION=0.22.0
 ARG BUN_VERSION=1.3.14
 ARG DOCKER_CLI_VERSION=29.6.0
 # Agent CLIs the runner shells out to (codex/claude). Pinned + overridable.
