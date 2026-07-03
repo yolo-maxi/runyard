@@ -27,6 +27,7 @@
 import { spawn as nodeSpawn } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
+import { allowlistedBaseEnv } from "./childEnv.js";
 import { extractClaudeOauthToken, writeClaudeOauthToken } from "./claudeOauthToken.js";
 import { parseBool } from "./configParsing.js";
 import { collectAuthHealth } from "./runnerAuthHealth.js";
@@ -109,7 +110,7 @@ function deriveHealth(provider, deps) {
 // Injectable deps (for tests — NEVER run a live login in tests):
 //   spawnFn(bin, args, opts) -> child with stdout/stderr streams + on('exit')/kill
 //   onVerification({ provider, verificationUrl, userCode, expiresInSec? })
-//   timeoutMs, now(), home
+//   timeoutMs, now(), home, baseEnv
 export function runReauth(input = {}, deps = {}) {
   const provider = String(input.provider || "").toLowerCase();
   const cmd = commandFor(provider);
@@ -143,9 +144,13 @@ export function runReauth(input = {}, deps = {}) {
 
     let child;
     try {
+      // The login child gets the OS/toolchain baseline only (childEnv.js) — the
+      // reauth runner's hub tokens and secrets must never reach a CLI login
+      // flow. HOME is pinned to the resolved `home` so the auth files the flow
+      // writes land where deriveHealth (and future runs) read them.
       child = spawnFn(cmd.bin, cmd.args, {
         cwd: home,
-        env: process.env,
+        env: { ...allowlistedBaseEnv(deps.baseEnv || process.env), HOME: home },
         stdio: ["ignore", "pipe", "pipe"]
       });
     } catch (error) {

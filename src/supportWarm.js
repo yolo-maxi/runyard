@@ -13,6 +13,7 @@
 // on the dedicated support-runner, so the general runner pool is untouched.
 
 import { execFile } from "node:child_process";
+import { allowlistedBaseEnv } from "./childEnv.js";
 import { readClaudeOauthToken } from "./claudeOauthToken.js";
 import { parseBool } from "./configParsing.js";
 import { resolveHubUrl } from "./hubConnection.js";
@@ -128,13 +129,22 @@ function buildPrompt({ messages, context }) {
   return parts.join("\n\n");
 }
 
+// Env for the headless `claude` child — same allowlist discipline as the
+// Smithers launch path (childEnv.js). The support runner carries hub tokens
+// (RUNYARD_READ_TOKEN) and other secrets a spawned CLI has no business
+// inheriting; the child gets the OS/toolchain baseline plus exactly one
+// credential: the Claude OAuth token (ambient env first, runner-local token
+// file as fallback — same precedence the full-env spread had).
+export function supportWarmChildEnv({ baseEnv = process.env, readToken = readClaudeOauthToken } = {}) {
+  const env = allowlistedBaseEnv(baseEnv);
+  const token = baseEnv.CLAUDE_CODE_OAUTH_TOKEN || readToken();
+  if (token) env.CLAUDE_CODE_OAUTH_TOKEN = token;
+  return env;
+}
+
 function runClaude(args, { timeoutMs }) {
   return new Promise((resolve, reject) => {
-    const env = { ...process.env };
-    if (!env.CLAUDE_CODE_OAUTH_TOKEN) {
-      const token = readClaudeOauthToken();
-      if (token) env.CLAUDE_CODE_OAUTH_TOKEN = token;
-    }
+    const env = supportWarmChildEnv();
     execFile(
       CLAUDE_BIN,
       args,
