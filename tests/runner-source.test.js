@@ -17,6 +17,16 @@ describe("Smithers runner deadline containment", () => {
     assert.match(source, /runner\.deadline_exceeded/);
   });
 
+  it("defers the deadline instead of timing out while the hub reports an approval hold", () => {
+    // A run blocked on a pending human approval must never become timed_out:
+    // the runner reads the hub-computed approvalHold from the run detail and
+    // pushes its deadline forward while the decision is pending.
+    assert.match(source, /approvalHold: Boolean\(detail\?\.approvalHold\)/);
+    assert.match(source, /hubRun\.approvalHold/);
+    assert.match(source, /deadline = Date\.now\(\) \+ maxRunMs/);
+    assert.match(source, /runner\.deadline_deferred/);
+  });
+
   it("does not mark run-smithers needs_recovery as successful", () => {
     assert.match(source, /smithersRunOutcome/);
     assert.match(smithersOutcomeSource, /runSmithersSupervisionFailure/);

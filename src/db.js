@@ -520,6 +520,10 @@ export function reapStuckRuns(maxMs) {
   return runSupervisorStore.reapStuckRuns(maxMs);
 }
 
+export function runApprovalHold(run) {
+  return runSupervisorStore.runApprovalHold(run);
+}
+
 export { normalizeRun };
 
 export function updateRun(runId, updates) {

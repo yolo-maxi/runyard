@@ -273,11 +273,18 @@ const smithersRegistry = createSmithersRunRegistry({
   logError: console.error
 });
 
-async function observedHubRunStatus(runId) {
+async function observedHubRun(runId) {
   try {
-    return (await client.get(`/api/runs/${runId}`))?.run?.status || "";
+    const detail = await client.get(`/api/runs/${runId}`);
+    return {
+      status: detail?.run?.status || "",
+      // Hub-computed: a human decision is pending on this run (its own approval
+      // card or a supervised child in waiting_approval). While true, the runner
+      // defers its execution deadline instead of timing the run out.
+      approvalHold: Boolean(detail?.approvalHold)
+    };
   } catch {
-    return "";
+    return { status: "", approvalHold: false };
   }
 }
 
@@ -448,7 +455,7 @@ async function executeAssignment(assignment) {
     // Stream Smithers events to the Hub until the run reaches a terminal state.
     let posted = 0;
     let state = "running";
-    const deadline = Date.now() + maxRunMs;
+    let deadline = Date.now() + maxRunMs;
     let deadlineExceeded = false;
     let hubTerminalStatus = "";
     while (Date.now() < deadline) {
@@ -463,7 +470,8 @@ async function executeAssignment(assignment) {
       } catch {
         /* keep polling */
       }
-      hubTerminalStatus = await observedHubRunStatus(run.id);
+      const hubRun = await observedHubRun(run.id);
+      hubTerminalStatus = hubRun.status;
       if (isHubTerminalStatus(hubTerminalStatus)) {
         await event(
           run.id,
@@ -476,6 +484,21 @@ async function executeAssignment(assignment) {
         break;
       }
       if (TERMINAL.has(state)) break;
+      // An approval-held run is blocked on a pending human decision. Approvals
+      // are blocking by contract: a late human must never turn into a timed_out
+      // failure, so the deadline is pushed out instead of expiring under them.
+      // The margin is several polls wide so a slow iteration near the boundary
+      // cannot slip past the hold check, and the deferral event doubles as
+      // liveness so the Hub's stall reaper sees the run is deliberately parked.
+      if (hubRun.approvalHold && Date.now() + 10 * pollMs >= deadline) {
+        deadline = Date.now() + maxRunMs;
+        await event(
+          run.id,
+          "runner.deadline_deferred",
+          `Run is blocked on a pending human approval; deferring the runner deadline by ${maxRunMs}ms instead of timing out.`,
+          { smithersRunId: sid, maxRunMs }
+        );
+      }
       await sleep(pollMs);
     }
 

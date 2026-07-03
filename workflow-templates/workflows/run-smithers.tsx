@@ -123,15 +123,19 @@ async function pollChildRun(runId: string) {
   return { run: null, classification: classifyChildState(null) };
 }
 
+// Approval waits are blocking by contract: an elapsed timer must never abandon
+// a pending human decision (the hub approval card stays the visible blocker,
+// and hub liveness + the runner deadline both hold approval-blocked runs open).
+// POLL_DEADLINE_MS deliberately does NOT apply here — it only bounds
+// non-approval child polling. There is no autopilot fallback yet; until one
+// exists, a late human means "keep waiting", not "fail the run".
 async function waitForChildApprovalDecision(runId: string) {
-  const deadline = POLL_DEADLINE_MS > 0 ? Date.now() + POLL_DEADLINE_MS : 0;
-  while (!deadline || Date.now() < deadline) {
+  while (true) {
     const detail = await hubJson(`/api/runs/${encodeURIComponent(runId)}`);
     const run = detail?.run;
     if (!run || run.status !== "waiting_approval") return run || null;
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
   }
-  return null;
 }
 
 // Resolve the wrapped capability's workflow file + the repo that ships its
@@ -321,7 +325,12 @@ export default smithers((ctx) => {
   return (
   <Workflow name="run-smithers">
     <Sequence>
-      <Task id="supervise" output={outputs.supervise} retries={0} timeoutMs={POLL_DEADLINE_MS > 0 ? POLL_DEADLINE_MS + 60_000 : undefined}>
+      {/* No timeoutMs: the supervise loop may legitimately block for as long
+          as a human approval stays pending, and a task timeout here would turn
+          a late approver into a failed run. Runaway supervision is contained
+          by hub liveness on the child plus the (approval-aware) runner
+          deadline, not by a local timer. */}
+      <Task id="supervise" output={outputs.supervise} retries={0}>
         {async () => {
           const state = createWatcherState({
             goal: ctx.input.goal,
