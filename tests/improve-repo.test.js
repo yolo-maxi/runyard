@@ -30,6 +30,14 @@ describe("improve repo resolution", () => {
     assert.equal(resolve({}, {}, defaultRepo), defaultRepo);
   });
 
+  it("prefers an explicit RunYard repo env over the Smithers workspace cwd", () => {
+    const runyardRepo = initRepo("runyard-default");
+    const workspace = path.join(temp, "smithers-workspace");
+    mkdirSync(workspace, { recursive: true });
+
+    assert.equal(resolve({}, { RUNYARD_REPO_DIR: runyardRepo, SMITHERS_WORKSPACE: workspace }, workspace), runyardRepo);
+  });
+
   it("uses an absolute allowlisted repoDir for another runner-local repo", () => {
     const defaultRepo = initRepo("default-for-repodir");
     const reposRoot = path.join(temp, "repos");

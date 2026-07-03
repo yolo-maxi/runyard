@@ -1,7 +1,16 @@
 # Design Brief: Hub-as-Supervisor (decouple supervision from the supervised run)
 
-**Status:** proposed · **Date:** 2026-06-26 · **Host:** single box (Hetzner, 77.42.89.161)
+**Status:** active v0.11 direction · **Date:** 2026-06-26 · **Host:** single box (Hetzner, 77.42.89.161)
 **Author:** Ocean (for Fran) · **Implements:** the "supervisor is too tightly coupled to its run" problem.
+
+Current execution brief: `specs/v0.11-hub-native-supervision.md`.
+
+July 2026 correction: do **not** keep expanding default `run-smithers`
+wrapping for ordinary UI/API-created runs. That older direction is superseded
+because live failures showed the wrapper can amplify child failures and drift
+from Hub state. Hub-native supervision is the source-of-truth direction; direct
+workflow execution is the default until Hub supervision owns retry/resume/repair
+policy.
 
 ---
 

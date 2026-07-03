@@ -335,6 +335,10 @@ export const seedProductCapabilities = [
           type: "string",
           description: "What to improve — a feature, UI, workflow slug, file path, or short description the PM should inspect."
         },
+        request: {
+          type: "string",
+          description: "Back-compat alias for target used by older Hub/UI rerun payloads."
+        },
         context: {
           type: "string",
           description: "Optional product context, user complaints, links, screenshots, or constraints."
