@@ -34,6 +34,8 @@ describe("run record helpers", () => {
       error: "",
       capability_sha: "",
       parent_run_id: null,
+      attempt: 2,
+      repair_count: 1,
       created_at: "2026-01-01T00:00:00.000Z",
       assigned_at: "2026-01-01T00:01:00.000Z",
       started_at: "2026-01-01T00:02:00.000Z",
@@ -47,6 +49,14 @@ describe("run record helpers", () => {
     assert.deepEqual(run.output, { ok: true });
     assert.equal(run.capabilitySha, null);
     assert.equal(run.parentRunId, null);
+    assert.equal(run.attempt, 2);
+    assert.equal(run.repairCount, 1);
+  });
+
+  it("defaults supervisor self-heal counters to zero on untouched runs", () => {
+    const run = normalizeRun({ id: "run_2", status: "queued" });
+    assert.equal(run.attempt, 0);
+    assert.equal(run.repairCount, 0);
   });
 
   it("builds whitelisted run update params and serializes object values", () => {

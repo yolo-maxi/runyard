@@ -83,6 +83,43 @@ export function RunMetaStrip({ run }) {
   return <ul className="run-meta-strip" aria-label="Run metadata">{items}</ul>;
 }
 
+// Hub-supervisor self-heal history (run_lineage rows): one row per resume /
+// repair / escalate / give_up decision the hub reconcile loop took on this
+// run, oldest first. The parent view only renders this when entries exist.
+const LINEAGE_ACTION_LABELS = {
+  resume: "Resumed from checkpoint",
+  rerun: "Re-run after repair",
+  repair: "Code repair dispatched",
+  escalate: "Escalated to operator",
+  give_up: "Gave up"
+};
+
+export function RunSelfHeal({ lineage = [] }) {
+  if (!lineage.length) return null;
+  return (
+    <table className="table run-self-heal-table">
+      <thead>
+        <tr><th>When</th><th>Action</th><th>Attempt</th><th>Why</th><th>Details</th></tr>
+      </thead>
+      <tbody>
+        {lineage.map((entry) => (
+          <tr key={entry.id}>
+            <td className="muted" title={entry.createdAt || ""}>{relativeTime(entry.createdAt)}</td>
+            <td data-lineage-action={entry.action}>{LINEAGE_ACTION_LABELS[entry.action] || entry.action}</td>
+            <td>{entry.attempt || 0}</td>
+            <td title={entry.reason || ""}>{truncate(entry.reason || "", 160) || "—"}</td>
+            <td className="muted run-self-heal-details">
+              {entry.prevRunnerId ? <span title="Runner that held the run before this decision">runner {entry.prevRunnerId}</span> : null}
+              {entry.fingerprint ? <span title={`Error fingerprint: ${entry.fingerprint}`}> · fp {truncate(entry.fingerprint, 24)}</span> : null}
+              {entry.checkpoint ? <span title={`Resume checkpoint: ${entry.checkpoint}`}> · ckpt {truncate(entry.checkpoint, 32)}</span> : null}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 export function RunOutcomeSummary({ summary }) {
   if (!summary) return null;
   const files = Array.isArray(summary.files) ? summary.files : [];

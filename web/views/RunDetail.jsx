@@ -7,7 +7,7 @@ import {
   runTitle, runDescription, runProject, runBranch, runExecutionLabel, isActiveRun, formatBytes
 } from "../lib/runHelpers.js";
 import { Breadcrumbs, Icon, ShareButton } from "../components/ui.jsx";
-import { RunBanner, RunMetaStrip, RunOutcomeSummary, RunDiagnostics, RunIO, RunArtifacts, payloadBytes } from "../components/RunDetailParts.jsx";
+import { RunBanner, RunMetaStrip, RunOutcomeSummary, RunDiagnostics, RunIO, RunArtifacts, RunSelfHeal, payloadBytes } from "../components/RunDetailParts.jsx";
 import { RunLog } from "../components/RunLog.jsx";
 import { LiveConsole } from "../components/LiveConsole.jsx";
 
@@ -16,6 +16,9 @@ const FAILURE = new Set(["failed", "error", "cancelled", "rejected"]);
 
 function sectionDefaultOpen(name, status) {
   if (name === "io") return true;
+  // Self-heal history only renders when the supervisor actually acted, so
+  // when present it is load-bearing context — lead with it open.
+  if (name === "self-heal") return true;
   if (FAILURE.has(status)) return name === "log" || name === "diagnostics";
   if (SUCCESS.has(status)) return name === "artifacts";
   // Active / queued / unknown: lead with the live console so the operator sees
@@ -82,6 +85,7 @@ export function RunDetail({ runId, focus = "" }) {
   const execution = runExecutionLabel(run);
   const statusKey = String(run.status || "").toLowerCase();
   const artifacts = data.artifacts || [];
+  const lineage = data.lineage || [];
   const ioBytes = payloadBytes({ input: run.input ?? null, output: run.output ?? null });
   const active = isActiveRun(run);
 
@@ -122,6 +126,16 @@ export function RunDetail({ runId, focus = "" }) {
       {focus === "logs" ? <p className="muted">Linked directly to this run's log.</p> : null}
       {focus === "artifacts" ? <p className="muted">Linked directly to this run's artifacts.</p> : null}
       <RunDiagnostics diagnostics={diagnostics} />
+
+      {lineage.length ? (
+        <RunSection
+          runId={run.id} name="self-heal" status={statusKey} title="Self-heal history"
+          meta={`${lineage.length} action${lineage.length === 1 ? "" : "s"} · attempt ${run.attempt || 0}`}
+        >
+          <p className="muted">The hub supervisor acted on this run: each row is a resume, repair, escalation, or give-up decision from the reconcile loop.</p>
+          <RunSelfHeal lineage={lineage} />
+        </RunSection>
+      ) : null}
 
       {active ? (
         <RunSection
