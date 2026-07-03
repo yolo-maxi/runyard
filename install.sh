@@ -27,11 +27,12 @@
 #   RUNYARD_BASE_URL     public base URL            (default http://<host>:<port>)
 #   RUNYARD_SERVICE_USER unix user to run as         (default current/sudo user)
 #   RUNYARD_INSTALL_RUNNER  1 to install the runner unit too (default 1)
-#   RUNYARD_INSTALL_AGENTS  1 to also install codex/claude/smithers on a runner
+#   RUNYARD_INSTALL_AGENTS  1 to also install codex/claude/pi/smithers on a runner
 #                           (default 0 — opt-in; the UI manages agents, and a
 #                           forced global install can stall headless installs)
 #   RUNYARD_CODEX_VERSION   pinned @openai/codex version          (default 0.142.2)
 #   RUNYARD_CLAUDE_VERSION  pinned @anthropic-ai/claude-code ver  (default 2.1.195)
+#   RUNYARD_PI_VERSION      pinned @mariozechner/pi-coding-agent  (default 0.73.1)
 #   RUNYARD_SMITHERS_VERSION pinned smithers-orchestrator version (default 0.22.0)
 #   REAUTH_ENABLED       set to 1 on a dedicated reauth runner host (default empty)
 #   UPDATE_CHECK_ENABLED passive update check        (default 1)
@@ -46,11 +47,12 @@ PORT="${RUNYARD_PORT:-43117}"
 INSTALL_RUNNER="${RUNYARD_INSTALL_RUNNER:-1}"
 UPDATE_CHECK_ENABLED="${UPDATE_CHECK_ENABLED:-1}"
 REAUTH_ENABLED_VAL="${REAUTH_ENABLED:-}"
-# Agent CLIs the runner shells out to. A runner host needs codex/claude/smithers
+# Agent CLIs the runner shells out to. A runner host needs codex/claude/pi/smithers
 # on PATH; the hub does not. Pinned for reproducibility; override or set to 0 to skip.
 INSTALL_AGENTS="${RUNYARD_INSTALL_AGENTS:-0}"
 CODEX_PKG="@openai/codex@${RUNYARD_CODEX_VERSION:-0.142.2}"
 CLAUDE_PKG="@anthropic-ai/claude-code@${RUNYARD_CLAUDE_VERSION:-2.1.195}"
+PI_PKG="@mariozechner/pi-coding-agent@${RUNYARD_PI_VERSION:-0.73.1}"
 SMITHERS_PKG="smithers-orchestrator@${RUNYARD_SMITHERS_VERSION:-0.22.0}"
 
 log()  { printf '\033[1;36m[runyard-install]\033[0m %s\n' "$*"; }
@@ -150,13 +152,13 @@ install_agent_clis() {
     return 0
   fi
   if ! command -v npm >/dev/null 2>&1; then
-    warn "npm not found — cannot install agent CLIs. Install manually: npm i -g $CODEX_PKG $CLAUDE_PKG $SMITHERS_PKG"
+    warn "npm not found — cannot install agent CLIs. Install manually: npm i -g $CODEX_PKG $CLAUDE_PKG $PI_PKG $SMITHERS_PKG"
     return 0
   fi
-  log "installing runner agent CLIs (pinned): codex, claude, smithers…"
-  asroot npm install -g "$CODEX_PKG" "$CLAUDE_PKG" "$SMITHERS_PKG" \
-    || warn "agent CLI install failed — install manually: npm i -g $CODEX_PKG $CLAUDE_PKG $SMITHERS_PKG"
-  for b in codex claude smithers; do
+  log "installing runner agent CLIs (pinned): codex, claude, pi, smithers…"
+  asroot npm install -g "$CODEX_PKG" "$CLAUDE_PKG" "$PI_PKG" "$SMITHERS_PKG" \
+    || warn "agent CLI install failed — install manually: npm i -g $CODEX_PKG $CLAUDE_PKG $PI_PKG $SMITHERS_PKG"
+  for b in codex claude pi smithers; do
     if command -v "$b" >/dev/null 2>&1; then
       log "  ✓ $b -> $(command -v "$b")"
     else

@@ -35,14 +35,16 @@ the default harness**.
 
 ## Setup
 
-### 1. Install Pi on the runner host
+### 1. Ensure Pi is installed on the runner host
 
 ```bash
 npm install -g @mariozechner/pi-coding-agent   # provides `pi` on PATH
 pi --version
 ```
 
-`runyard runner setup` reports `pi` in its prerequisites line.
+RunYard's runner image and optional installer-managed agent CLI install include
+Pi alongside Claude and Codex. For hand-managed hosts, install the pinned Pi
+package yourself. `runyard runner setup` reports `pi` in its prerequisites line.
 
 ### 2. Define the endpoint as a Pi provider
 

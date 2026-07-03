@@ -9,8 +9,8 @@
 #   - git                   (workflows clone/operate on repos)
 #   - docker CLI            (talks to the *guest* dockerd inside the CVM)
 #
-# Agent CLIs (`claude` / `codex`) ARE baked in (pinned, npm global) so a runner
-# image is self-sufficient — without them a fresh runner can't execute agent work
+# Agent CLIs (`claude` / `codex` / `pi`) ARE baked in (pinned, npm global) so a
+# runner image is self-sufficient — without them a fresh runner can't execute agent work
 # or re-auth. Only the BINARIES are in the image; auth (subscription login /
 # creds) is still provided at runtime via mounted creds / encrypted env. No
 # secrets in the image. See DEPLOY-DSTACK.md.
@@ -25,9 +25,10 @@ ARG PNPM_VERSION=10.33.0
 ARG SMITHERS_VERSION=0.22.0
 ARG BUN_VERSION=1.3.14
 ARG DOCKER_CLI_VERSION=29.6.0
-# Agent CLIs the runner shells out to (codex/claude). Pinned + overridable.
+# Agent CLIs the runner shells out to (codex/claude/pi). Pinned + overridable.
 ARG CODEX_VERSION=0.142.2
 ARG CLAUDE_VERSION=2.1.195
+ARG PI_VERSION=0.73.1
 
 FROM node:${NODE_VERSION}-bookworm-slim AS runtime
 ARG PNPM_VERSION
@@ -36,6 +37,7 @@ ARG BUN_VERSION
 ARG DOCKER_CLI_VERSION
 ARG CODEX_VERSION
 ARG CLAUDE_VERSION
+ARG PI_VERSION
 WORKDIR /app
 
 # Bun installs here; global packages link their binaries into $BUN_INSTALL/bin,
@@ -84,9 +86,11 @@ RUN set -eux; \
 RUN set -eux; \
     npm install -g --no-fund --no-audit \
         "@openai/codex@${CODEX_VERSION}" \
-        "@anthropic-ai/claude-code@${CLAUDE_VERSION}"; \
+        "@anthropic-ai/claude-code@${CLAUDE_VERSION}" \
+        "@mariozechner/pi-coding-agent@${PI_VERSION}"; \
     codex --version; \
-    claude --version
+    claude --version; \
+    pi --version
 
 # App dependencies (frozen lockfile) then source.
 COPY package.json pnpm-lock.yaml ./
