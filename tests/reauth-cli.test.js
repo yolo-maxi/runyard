@@ -55,14 +55,23 @@ describe("reauth output parsers", () => {
 });
 
 describe("reauthEnabled gating", () => {
-  it("is off by default and on only with REAUTH_ENABLED=1", () => {
+  it("is off by default, on for truthy values, off for falsy words", () => {
     const prev = process.env.REAUTH_ENABLED;
-    delete process.env.REAUTH_ENABLED;
-    assert.equal(reauthEnabled(), false);
-    process.env.REAUTH_ENABLED = "1";
-    assert.equal(reauthEnabled(), true);
-    if (prev === undefined) delete process.env.REAUTH_ENABLED;
-    else process.env.REAUTH_ENABLED = prev;
+    try {
+      delete process.env.REAUTH_ENABLED;
+      assert.equal(reauthEnabled(), false);
+      for (const on of ["1", "true", "yes"]) {
+        process.env.REAUTH_ENABLED = on;
+        assert.equal(reauthEnabled(), true, `expected REAUTH_ENABLED=${on} to enable`);
+      }
+      for (const off of ["0", "false", "off", "no", ""]) {
+        process.env.REAUTH_ENABLED = off;
+        assert.equal(reauthEnabled(), false, `expected REAUTH_ENABLED=${JSON.stringify(off)} to disable`);
+      }
+    } finally {
+      if (prev === undefined) delete process.env.REAUTH_ENABLED;
+      else process.env.REAUTH_ENABLED = prev;
+    }
   });
 
   it("ships dstack runner settings needed for persistent CLI reauth", () => {
