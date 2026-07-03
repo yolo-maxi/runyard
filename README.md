@@ -20,14 +20,22 @@ The full concepts overview, setup, API, and the in-app **Assistant** (the contex
 
 ## run-smithers (supervising wrapper)
 
-`run-smithers` is the core Orchestration capability that wraps any other capability/workflow request inside a Smithers-managed supervising run. The watcher:
+`run-smithers` is an explicit Orchestration capability that can wrap another
+capability/workflow request inside a Smithers-managed supervising run. The
+watcher:
 
 - Records child lineage: child run id, capability, current/failed step, checkpoint when present, recovery attempts, and normalized error fingerprint counts.
 - Retries recoverable failures and re-queues child runs whose state was interrupted.
 - Pauses autonomous retry and requests an approval (with concrete options: retry as-is, approve a revised input, or abandon) once the same normalized error fingerprint repeats three times.
 - Never marks the supervising run a success unless the child workflow reaches a terminal `succeeded` state.
 
-Existing user-facing workflows are migrating to run behind `run-smithers` so every long-running goal carries the same lineage and recovery semantics. The pure watcher decision logic lives in `src/runSmithersWatcher.js` and is covered by `tests/run-smithers-watcher.test.js`.
+Normal user-facing workflows should not be wrapped by `run-smithers` by
+default. Hub-native supervision is the v0.11 direction: the Hub scheduler/reaper
+owns retry, resume, repair, approval, and escalation policy, while workflows run
+directly unless an operator explicitly starts `run-smithers`. See
+`specs/v0.11-hub-native-supervision.md` and `docs/design/hub-supervisor.md`.
+The pure watcher decision logic lives in `src/runSmithersWatcher.js` and is
+covered by `tests/run-smithers-watcher.test.js`.
 
 ## Workflow hardening
 
