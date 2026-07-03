@@ -121,6 +121,11 @@ Without it (and without the broader `sysctl` fallback) launches fail with
 `setting up uid map: Permission denied`; the runner logs this remediation at
 startup.
 
+This whole path — `apt install bubblewrap`, the AppArmor install script, and a
+real sandboxed launch probe — is gated in CI on every PR and release tag (the
+`sandbox-smoke` job; see `deploy/apparmor/README.md`), so a release cannot ship
+with the documented sandbox setup broken.
+
 ### Local development
 
 ```bash

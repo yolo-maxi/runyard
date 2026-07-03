@@ -5,8 +5,9 @@ name: Build & Push Container Images (GHCR)
 # dstack docker-compose for an UpgradeApp. dstack measures the compose text, so
 # images MUST be referenced by digest — this workflow is where digests are minted.
 #
-# The existing test gate lives in release.yml (job `test`). This workflow runs
-# its own identical test gate as `needs:` so a red run never publishes an image.
+# The existing gates live in release.yml (jobs `test` + `sandbox-smoke`). This
+# workflow runs its own identical gates as `needs:` so a red run never
+# publishes an image.
 on:
   push:
     tags: ["v*"]
@@ -36,9 +37,26 @@ jobs:
       - run: pnpm test
       - run: pnpm build
 
+  # Re-assert the real-bubblewrap gate too (mirror of release.yml
+  # `sandbox-smoke` — see the full rationale there): the runner image ships the
+  # RUNNER_SANDBOX=bubblewrap path, so an image must never publish while that
+  # path is broken on a real kernel.
+  sandbox-smoke:
+    name: Sandbox smoke (bwrap + userns + AppArmor)
+    # Pinned: deploy/apparmor/bwrap targets abi <abi/4.0> (AppArmor >= 4).
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      - run: sudo ./deploy/apparmor/install.sh
+      - run: RUNYARD_REQUIRE_BWRAP=1 node --test tests/runner-sandbox.test.js tests/apparmor-profile.test.js
+
   build-push:
     name: Build & push ${{ matrix.name }}
-    needs: test
+    needs: [test, sandbox-smoke]
     # Only publish for pushed v* tags (workflow_dispatch builds without pushing).
     runs-on: ubuntu-latest
     permissions:

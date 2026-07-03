@@ -196,16 +196,41 @@ describe("resolveRunnerExecWrapper (preset + literal precedence)", () => {
 // test exercises: bwrap present, user namespaces permitted (AppArmor/sysctl can
 // block uid_map even when bwrap is installed), and a dynamically-linked binary
 // actually runnable inside the mount set (needs /usr + /lib* , not just /usr).
-const HAVE_BWRAP = (() => {
+const BWRAP_PROBE = (() => {
   try {
     const probeWs = mkdtempSync(nodePath.join(os.tmpdir(), "runyard-bwrap-probe-"));
     const argv = bubblewrapArgv({ workspace: probeWs });
-    execFileSync(argv[0], [...argv.slice(1), "/bin/sh", "-c", "true"], { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
+    execFileSync(argv[0], [...argv.slice(1), "/bin/sh", "-c", "true"], {
+      stdio: ["ignore", "ignore", "pipe"]
+    });
+    return { ok: true };
+  } catch (err) {
+    const stderr = err?.stderr?.toString().trim();
+    return { ok: false, reason: stderr || err?.message || String(err) };
   }
 })();
+const HAVE_BWRAP = BWRAP_PROBE.ok;
+
+// CI enforcement: with RUNYARD_REQUIRE_BWRAP set (any value but off/0/false),
+// a host where the probe fails is a test FAILURE, not a skip. This is what
+// keeps the real-bwrap smoke below from rotting into always-skipped on the one
+// place that exists to run it (the sandbox-smoke CI job). Unset by default so
+// dev boxes without bwrap/userns keep the graceful skip.
+const REQUIRE_BWRAP = !["", "0", "false", "off", "no"].includes(
+  String(process.env.RUNYARD_REQUIRE_BWRAP ?? "").trim().toLowerCase()
+);
+
+test(
+  "RUNYARD_REQUIRE_BWRAP: real-bwrap userns smoke must be runnable, not skipped",
+  { skip: !REQUIRE_BWRAP && "opt in with RUNYARD_REQUIRE_BWRAP=1" },
+  () => {
+    assert.ok(
+      BWRAP_PROBE.ok,
+      "RUNYARD_REQUIRE_BWRAP is set but the bwrap userns probe failed:\n" +
+        `${BWRAP_PROBE.reason}\n\n${usernsRemediation()}`
+    );
+  }
+);
 
 test("real bwrap: sandbox HOME is writable and host paths are invisible", { skip: !HAVE_BWRAP && "bwrap unavailable" }, () => {
   const workspace = mkdtempSync(nodePath.join(os.tmpdir(), "runyard-bwrap-ws-"));

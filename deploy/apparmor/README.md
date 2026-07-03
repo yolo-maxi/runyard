@@ -54,3 +54,13 @@ aa-status | grep bwrap        # profile should be listed
 
 If bwrap is not installed at `/usr/bin/bwrap`, install it first
 (`apt install bubblewrap`); the profile attaches to that path.
+
+## CI coverage
+
+This exact path is exercised on every PR, push to main, and release tag: the
+`sandbox-smoke` job (`.github/workflows/release.yml`, mirrored in `images.yml`)
+installs bubblewrap on a stock Ubuntu 24.04 runner, runs `install.sh` as an
+operator would, and then runs the sandbox test suites with
+`RUNYARD_REQUIRE_BWRAP=1` — which turns the real-bwrap userns smoke from
+skip-if-unavailable into fail-if-unavailable. A change that breaks the profile,
+the installer, or the generated `bwrap` argv turns CI red instead of skipping.
