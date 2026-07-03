@@ -87,7 +87,14 @@ const pushOut = z.object({ pushed: z.boolean(), branch: z.string(), detail: z.st
 const deployOut = z.object({ deployed: z.boolean(), wouldDeploy: z.boolean().default(false), target: z.string().default(""), verify: z.string().default("") });
 
 const inputSchema = z.object({
-  target: z.string().describe("What to improve — a feature, UI, workflow slug, file path, or short description the PM should inspect."),
+  target: z
+    .string()
+    .default("")
+    .describe("What to improve — a feature, UI, workflow slug, file path, or short description the PM should inspect."),
+  request: z
+    .string()
+    .default("")
+    .describe("Back-compat alias for target used by older Hub/UI rerun payloads."),
   context: z.string().default("").describe("Optional product context, user complaints, links, or constraints."),
   repoDir: z
     .string()
@@ -184,7 +191,7 @@ function createBuilder(repoDir) {
 }
 
 function improveScopeContract(input) {
-  const target = String(input?.target || "").trim();
+  const target = String(input?.target || input?.request || "").trim();
   const context = String(input?.context || "").trim();
   return [
     "HARD SCOPE CONTRACT:",
@@ -199,6 +206,10 @@ function improveScopeContract(input) {
 }
 
 export default smithers((ctx) => {
+  const effectiveInput = {
+    ...ctx.input,
+    target: String(ctx.input?.target || ctx.input?.request || "").trim()
+  };
   // Resolve the target repo. This must be explicit/configured, not guessed from
   // nearby directories: a green Improve run is only trustworthy when it edited
   // the repo the operator intended.
@@ -206,7 +217,7 @@ export default smithers((ctx) => {
   let repoResolveError = null;
   const repoOptions = { env: process.env, cwd: process.cwd(), gitBin: GIT, gitEnv: TOOL_ENV };
   try {
-    repoDir = resolveImproveRepo(ctx.input, repoOptions);
+    repoDir = resolveImproveRepo(effectiveInput, repoOptions);
   } catch (err) {
     repoResolveError = err;
     repoDir = String(ctx.input?.repoDir || "").trim() || process.cwd();
@@ -228,14 +239,17 @@ export default smithers((ctx) => {
         <Task id="baseline" output={outputs.baseline} retries={0}>
           {async () => {
             if (repoResolveError) throw repoResolveError;
-            if ((ctx.input.mutationMode || "sequential") === "parallel" && ctx.input.deploy) {
+            if (!effectiveInput.target) {
+              throw new Error("Improve requires target (or legacy request) to describe what should change.");
+            }
+            if ((effectiveInput.mutationMode || "sequential") === "parallel" && effectiveInput.deploy) {
               throw new Error("PARALLEL MODE BLOCKED: deploy=true is not allowed from an isolated worktree.");
             }
             const lease = prepareMutatingRepo({
               repoDir,
-              targetBranch: ctx.input.targetBranch || "main",
+              targetBranch: effectiveInput.targetBranch || "main",
               workflow: "improve",
-              mode: ctx.input.mutationMode || "sequential",
+              mode: effectiveInput.mutationMode || "sequential",
               gitBin: GIT,
               gitEnv: TOOL_ENV,
               env: process.env
@@ -248,10 +262,10 @@ export default smithers((ctx) => {
         {baseline && (
           <Task id="review" output={outputs.review} agent={productManager} timeoutMs={20 * 60 * 1000}>
             {`You are inspecting an existing feature inside the repository at ${repoDir}.\n\n` +
-              `${improveScopeContract(ctx.input)}\n\n` +
-              `=== WHAT TO REVIEW ===\n${ctx.input.target}\n=== END ===\n\n` +
-              (ctx.input.context ? `=== PRODUCT CONTEXT / USER NOTES ===\n${ctx.input.context}\n=== END ===\n\n` : "") +
-              `Propose at most ${ctx.input.maxImprovements} prioritized improvements. Rank by user impact, then effort. ` +
+              `${improveScopeContract(effectiveInput)}\n\n` +
+              `=== WHAT TO REVIEW ===\n${effectiveInput.target}\n=== END ===\n\n` +
+              (effectiveInput.context ? `=== PRODUCT CONTEXT / USER NOTES ===\n${effectiveInput.context}\n=== END ===\n\n` : "") +
+              `Propose at most ${effectiveInput.maxImprovements} prioritized improvements. Rank by user impact, then effort. ` +
               `Every improvement must explicitly name how it stays inside the hard scope contract. ` +
               `Reject tempting adjacent work unless the target/context asks for it. ` +
               `For each improvement include: title, rationale, change (concrete builder instruction), priority (must-fix | should-fix | polish), acceptanceCheck.\n\n` +
@@ -265,9 +279,9 @@ export default smithers((ctx) => {
         {review && (
           <Task id="implement" output={outputs.implement} agent={builder} timeoutMs={45 * 60 * 1000}>
             {`Apply these prioritized improvements to the repository at ${workRepoDir}. Edit files only — do not commit, push, deploy, or run tests.\n\n` +
-              `RUN LEASE: mode=${baseline.lease?.mode || "sequential"} runId=${baseline.lease?.runId || "unknown"} targetBranch=${baseline.targetBranch || ctx.input.targetBranch || "main"}. ` +
+              `RUN LEASE: mode=${baseline.lease?.mode || "sequential"} runId=${baseline.lease?.runId || "unknown"} targetBranch=${baseline.targetBranch || effectiveInput.targetBranch || "main"}. ` +
               `If the checkout is dirty before you edit, HEAD changes unexpectedly, or another lease appears to own this repo, stop and report the operator action instead of working around it.\n\n` +
-              `${improveScopeContract(ctx.input)}\n\n` +
+              `${improveScopeContract(effectiveInput)}\n\n` +
               `=== PM SUMMARY ===\n${review.summary || "(no summary)"}\n\n` +
               `=== USER PAIN ===\n${(review.userPain || []).map((line, i) => `${i + 1}. ${line}`).join("\n") || "(none)"}\n\n` +
               `=== IMPROVEMENTS TO IMPLEMENT ===\n${
@@ -314,7 +328,7 @@ export default smithers((ctx) => {
               run(["add", "-A"]);
               const staged = run(["diff", "--cached", "--name-only"]).split("\n").map((s) => s.trim()).filter(Boolean);
               const stat = run(["diff", "--cached", "--stat"]).trim();
-              const headline = (review?.improvements?.[0]?.title || ctx.input.target || "improve").slice(0, 60);
+              const headline = (review?.improvements?.[0]?.title || effectiveInput.target || "improve").slice(0, 60);
               const msg = `improve: ${headline}`;
               let commitHash;
               if (staged.length > 0) {
@@ -346,8 +360,8 @@ export default smithers((ctx) => {
           <Task id="push" output={outputs.push} retries={1}>
             {async () => {
               const { execFileSync } = await import("node:child_process");
-              const branch = baseline.targetBranch || ctx.input.targetBranch || "main";
-              if (baseline.lease?.mode === "parallel" && branch === (ctx.input.targetBranch || "main")) {
+              const branch = baseline.targetBranch || effectiveInput.targetBranch || "main";
+              if (baseline.lease?.mode === "parallel" && branch === (effectiveInput.targetBranch || "main")) {
                 throw new Error("PARALLEL MODE BLOCKED: isolated workers may only push their unique work branch.");
               }
               validateBeforePush(baseline.lease, commit.commit, { gitBin: GIT, gitEnv: TOOL_ENV });
@@ -368,11 +382,11 @@ export default smithers((ctx) => {
           <Task id="deploy" output={outputs.deploy} retries={0}>
             {async () => {
               const { execFileSync } = await import("node:child_process");
-              if (baseline.lease?.mode === "parallel" && ctx.input.deploy) {
+              if (baseline.lease?.mode === "parallel" && effectiveInput.deploy) {
                 throw new Error("PARALLEL MODE BLOCKED: deploy=true is not allowed from an isolated worktree.");
               }
               const target = PROD_HOST && PROD_DIR ? `${PROD_REMOTE} (${PROD_HOST}:${PROD_DIR})` : `${PROD_REMOTE} (not configured)`;
-              if (!ctx.input.deploy) {
+              if (!effectiveInput.deploy) {
                 releaseRepoLease(baseline.lease, { env: process.env });
                 return { deployed: false, wouldDeploy: true, target, verify: `deploy=false — would push ${commit.commit} to ${target}, reset main, and restart the hub.` };
               }

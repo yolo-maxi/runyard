@@ -3,7 +3,7 @@ import { existsSync, realpathSync } from "node:fs";
 import path from "node:path";
 
 export function defaultImproveRepo(env = process.env, cwd = process.cwd()) {
-  return env.IMPROVE_REPO_DIR || env.GATED_REPO_DIR || cwd;
+  return env.IMPROVE_REPO_DIR || env.GATED_REPO_DIR || env.RUNYARD_REPO_DIR || cwd;
 }
 
 function cleanString(value) {
