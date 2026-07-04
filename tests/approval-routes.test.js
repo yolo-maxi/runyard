@@ -58,6 +58,34 @@ describe("approval route helpers", () => {
     assert.deepEqual(input.payload, { ok: true });
   });
 
+  it("passes timed-approval fields through, body-level winning over payload-level", () => {
+    const blocking = approvalCreateInput({ title: "t" }, {}, { getRun: () => null });
+    assert.equal(blocking.timeoutMs, null);
+    assert.equal(blocking.timeoutAt, null);
+    assert.equal(blocking.fallback, null);
+
+    const fromPayload = approvalCreateInput(
+      { title: "t", payload: { timeoutMs: 60_000, fallback: { decision: "approved" } } },
+      {},
+      { getRun: () => null }
+    );
+    assert.equal(fromPayload.timeoutMs, 60_000);
+    assert.deepEqual(fromPayload.fallback, { decision: "approved" });
+
+    const bodyWins = approvalCreateInput(
+      {
+        title: "t",
+        timeoutMs: 5_000,
+        fallback: "rejected",
+        payload: { timeoutMs: 60_000, fallback: { decision: "approved" } }
+      },
+      {},
+      { getRun: () => null }
+    );
+    assert.equal(bodyWins.timeoutMs, 5_000);
+    assert.equal(bodyWins.fallback, "rejected");
+  });
+
   it("centralizes approval resolution comments and terminal delivery decisions", () => {
     assert.equal(defaultApprovalComment("approved"), "Approved from Web/API");
     assert.equal(defaultApprovalComment("changes_requested"), "Changes requested from Web/API");

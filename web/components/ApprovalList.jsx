@@ -22,6 +22,11 @@ export function ApprovalList({ approvals = [] }) {
         <article className="item approval-card" id={`approval-${approval.id}`} key={approval.id}>
           <header className="approval-card-head">
             <StatusBadge value={approval.status} />
+            {approval.timerState === "fallback_required" ? (
+              <span className="chip chip-version" title="The approval timer elapsed with no configured fallback. The run is held (not failed) until a human decides.">
+                ⏳ needs fallback decision
+              </span>
+            ) : null}
             <span className="muted">{approvalWorkflowLabel(approval)}</span>
             <ShareButton hash={deepLinks.approval(approval.id)} label="Copy share link to this approval" />
           </header>

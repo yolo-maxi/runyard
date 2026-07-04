@@ -19,6 +19,15 @@ import {
   pendingWorkflowStartApprovalsQuery
 } from "./operatorRecords.js";
 import {
+  APPROVAL_TIMER_FALLBACK_APPLIED,
+  APPROVAL_TIMER_FALLBACK_REQUIRED,
+  approvalTimeoutAtIso,
+  approvalTimerElapsedMs,
+  approvalTimerElapsedUpdateQuery,
+  elapsedTimedApprovalsQuery,
+  normalizeApprovalFallback
+} from "./approvalTimerRecords.js";
+import {
   artifactInsertQuery,
   artifactListQuery,
   artifactLookupQuery,
@@ -86,12 +95,110 @@ export function createOperatorStore({ all, one, run, id, now, addRunEvent, getRu
     return all(query.sql, query.params).map(normalizeArtifact);
   }
 
-  function createApproval({ runId = null, title, description = "", requestedBy = "workflow", payload = {} }) {
-    const approval = approvalRecord({ id: id("appr"), runId, title, description, requestedBy, payload, createdAt: now() });
+  function createApproval({
+    runId = null,
+    title,
+    description = "",
+    requestedBy = "workflow",
+    payload = {},
+    timeoutMs = null,
+    timeoutAt = null,
+    fallback = null
+  }) {
+    const createdAt = now();
+    // A fallback without a timer is inert, and a timer without an explicit,
+    // well-formed fallback resolves to the safe fallback_required path.
+    const expiresAt = approvalTimeoutAtIso({ timeoutMs, timeoutAt, nowMs: Date.parse(createdAt) });
+    const configuredFallback = expiresAt ? normalizeApprovalFallback(fallback) : null;
+    const approval = approvalRecord({
+      id: id("appr"),
+      runId,
+      title,
+      description,
+      requestedBy,
+      payload,
+      createdAt,
+      timeoutAt: expiresAt,
+      fallback: configuredFallback
+    });
     const query = approvalInsertQuery();
     run(query.sql, approval);
-    if (runId) addRunEvent(runId, "approval.requested", title, { approvalId: approval.id });
+    if (runId) {
+      addRunEvent(runId, "approval.requested", title, {
+        approvalId: approval.id,
+        ...(expiresAt ? { timeoutAt: expiresAt, fallbackDecision: configuredFallback?.decision || null } : {})
+      });
+    }
     return getApproval(approval.id);
+  }
+
+  // Timed-approval sweep, run from the hub maintenance loop. An elapsed timer
+  // is never a terminal failure: with an explicitly configured fallback the
+  // decision is applied on the human's behalf (through the exact same
+  // resolveApproval path a human uses, so run transitions/audit/events hold);
+  // without one the still-pending card is surfaced as fallback_required and
+  // keeps waiting — the approval hold continues to protect the run.
+  function sweepTimedApprovals() {
+    const sweptAt = now();
+    const nowMs = Date.parse(sweptAt);
+    const query = elapsedTimedApprovalsQuery(sweptAt);
+    const acted = [];
+    for (const row of all(query.sql, query.params)) {
+      const approval = normalizeApproval(row);
+      const fallback = normalizeApprovalFallback(approval.fallback);
+      const timerState = fallback ? APPROVAL_TIMER_FALLBACK_APPLIED : APPROVAL_TIMER_FALLBACK_REQUIRED;
+      const update = approvalTimerElapsedUpdateQuery({
+        approvalId: approval.id,
+        timerState,
+        timerElapsedAt: sweptAt
+      });
+      // CAS: skip if a human resolved it or another sweep handled it first.
+      if (!run(update.sql, update.params).changes) continue;
+
+      const elapsedMs = approvalTimerElapsedMs(approval, nowMs);
+      const detail = {
+        runId: approval.runId,
+        timeoutAt: approval.timeoutAt,
+        elapsedMs,
+        fallbackDecision: fallback?.decision || null
+      };
+      if (fallback) {
+        recordAudit("system:approval-timer", "approval.timer_elapsed", approval.id, detail);
+        if (approval.runId) {
+          addRunEvent(approval.runId, "approval.timer_elapsed", approval.title, {
+            approvalId: approval.id,
+            elapsedMs,
+            fallbackDecision: fallback.decision
+          });
+        }
+        resolveApproval(
+          approval.id,
+          fallback.decision,
+          "system:approval-timer",
+          fallback.comment || `Approval timer elapsed after ${elapsedMs}ms; applied the configured fallback decision (${fallback.decision}).`
+        );
+        acted.push({ id: approval.id, action: timerState, decision: fallback.decision });
+      } else {
+        recordAudit("system:approval-timer", "approval.fallback_required", approval.id, detail);
+        if (approval.runId) {
+          addRunEvent(approval.runId, "approval.fallback_required", approval.title, {
+            approvalId: approval.id,
+            elapsedMs
+          });
+        }
+        recordAlert({
+          kind: "approval_fallback_required",
+          level: "warn",
+          title: `Approval timer elapsed with no fallback: ${approval.title}`,
+          message:
+            "The approval's timer elapsed but no fallback decision is configured. " +
+            "The card stays pending (the run is held, not failed) until a human decides.",
+          data: { approvalId: approval.id, ...detail }
+        });
+        acted.push({ id: approval.id, action: timerState });
+      }
+    }
+    return acted;
   }
 
   function getApproval(approvalId) {
@@ -177,6 +284,7 @@ export function createOperatorStore({ all, one, run, id, now, addRunEvent, getRu
     listAudit,
     recordAlert,
     recordAudit,
-    resolveApproval
+    resolveApproval,
+    sweepTimedApprovals
   };
 }

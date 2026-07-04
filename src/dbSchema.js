@@ -159,6 +159,11 @@ export const DB_SCHEMA_SQL = `
     created_at TEXT NOT NULL
   );
 
+  -- timeout_at/fallback/timer_state/timer_elapsed_at: timed-approval support.
+  -- NULL timeout_at = blocking approval (waits for a human forever). When the
+  -- timer elapses the hub applies the explicitly configured fallback decision,
+  -- or — with no fallback — marks the still-pending card fallback_required.
+  -- An elapsed timer is never a terminal failure for the linked run.
   CREATE TABLE IF NOT EXISTS approvals (
     id TEXT PRIMARY KEY,
     run_id TEXT REFERENCES runs(id) ON DELETE CASCADE,
@@ -171,7 +176,11 @@ export const DB_SCHEMA_SQL = `
     resolved_at TEXT,
     resolved_by TEXT,
     decision TEXT,
-    comment TEXT
+    comment TEXT,
+    timeout_at TEXT,
+    fallback TEXT,
+    timer_state TEXT NOT NULL DEFAULT '',
+    timer_elapsed_at TEXT
   );
 
   CREATE TABLE IF NOT EXISTS audit_log (

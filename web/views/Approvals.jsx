@@ -148,7 +148,19 @@ export function ApprovalDetail({ id }) {
             ) : null}
             <ApprovalFact label="Approval ID"><span className="run-id-mono">{approval.id}</span></ApprovalFact>
             <ApprovalFact label="Run">{runLink}</ApprovalFact>
+            <ApprovalFact label="Timer">
+              {approval.timeoutAt
+                ? `Elapses ${approval.timeoutAt}` +
+                  (approval.fallback?.decision ? `, then falls back to "${approval.fallback.decision}"` : ", no fallback configured")
+                : ""}
+            </ApprovalFact>
           </div>
+          {approval.timerState === "fallback_required" ? (
+            <p className="notice">
+              ⏳ The approval timer elapsed {approval.timerElapsedAt ? `at ${approval.timerElapsedAt} ` : ""}with no configured
+              fallback. The linked run is held open (not failed) until you decide.
+            </p>
+          ) : null}
           {context.proposedChange ? (
             <>
               <h3>Proposed change</h3>

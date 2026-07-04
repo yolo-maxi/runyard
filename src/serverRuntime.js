@@ -22,9 +22,25 @@ export function startRunMaintenance({
   reconcileFailedRecoverable,
   reconcileSupervisedChildTerminals,
   reconcileRunnerActiveRuns,
-  setIntervalFn = setInterval
+  setIntervalFn = setInterval,
+  sweepTimedApprovals
 } = {}) {
   const reaper = setIntervalFn(() => {
+    try {
+      // Timed approvals run before the reaper so a fallback decision that
+      // unblocks a run (e.g. waiting_approval -> queued) lands in the same
+      // tick. Blocking approvals (no timer) are never touched: they hold the
+      // run open until a human decides, per the approval-hold contract.
+      const swept = sweepTimedApprovals ? sweepTimedApprovals() : [];
+      if (swept.length) {
+        logInfo(
+          `Timed approvals swept: ` +
+            swept.map((entry) => `${entry.id} ${entry.action}${entry.decision ? `:${entry.decision}` : ""}`).join(", ")
+        );
+      }
+    } catch (error) {
+      logError("Timed-approval sweep failed:", error.message);
+    }
     try {
       reapStuckRunsWithRetrospectives(env.runDeadlineMs);
     } catch (error) {
@@ -127,6 +143,7 @@ export function startServerRuntime({
   reconcileRunnerActiveRuns,
   setIntervalFn = setInterval,
   setTimeoutFn = setTimeout,
+  sweepTimedApprovals,
   updateChecker
 } = {}) {
   installProcessSafetyHandlers({ processObj, logError });
@@ -143,7 +160,8 @@ export function startServerRuntime({
     reconcileFailedRecoverable,
     reconcileSupervisedChildTerminals,
     reconcileRunnerActiveRuns,
-    setIntervalFn
+    setIntervalFn,
+    sweepTimedApprovals
   });
   const scheduler = startScheduleTicker({ fireDueSchedules, logError, setIntervalFn });
   const updatePolling = startUpdatePolling({ env, setIntervalFn, setTimeoutFn, updateChecker });

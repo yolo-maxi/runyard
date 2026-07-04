@@ -122,7 +122,14 @@ export function approvalContext(approval, deps = {}) {
   return {
     approval: {
       id: approval?.id || "",
-      status: approval?.status || ""
+      status: approval?.status || "",
+      // Timed-approval surface: timeoutAt is when the timer elapses (null =
+      // blocking approval), timerState is '' | 'fallback_applied' |
+      // 'fallback_required'. fallback_required = the timer elapsed with no
+      // configured fallback; the card stays pending and needs a human.
+      timeoutAt: approval?.timeoutAt || null,
+      timerState: approval?.timerState || "",
+      fallbackDecision: approval?.fallback?.decision || null
     },
     requestedBy: approvalRequestedBy(approval, input),
     workflow: workflowName

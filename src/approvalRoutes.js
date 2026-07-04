@@ -29,7 +29,14 @@ export function approvalCreateInput(body = {}, token = {}, { getRun } = {}) {
     title: String(body.title || "Approval requested").slice(0, 240),
     description: String(body.description || "").slice(0, 2000),
     requestedBy: String(body.requestedBy || token.name || "workflow").slice(0, 120),
-    payload
+    payload,
+    // Timed-approval opt-in. Raw values pass through; the store validates them
+    // (normalizeApprovalFallback / approvalTimeoutAtIso), so malformed input
+    // degrades to a blocking approval or the fallback_required path — never to
+    // an invented decision. Body-level fields win over payload-level ones.
+    timeoutMs: body.timeoutMs ?? payload.timeoutMs ?? null,
+    timeoutAt: body.timeoutAt ?? payload.timeoutAt ?? null,
+    fallback: body.fallback ?? payload.fallback ?? null
   };
 }
 

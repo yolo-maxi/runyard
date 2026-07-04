@@ -69,6 +69,7 @@ if (process.argv[1]?.endsWith("server.js")) {
     reapStuckRunsWithRetrospectives: composition.reapStuckRunsWithRetrospectives,
     reconcileFailedRecoverable: composition.reconcileFailedRecoverable,
     reconcileRunnerActiveRuns: composition.reconcileRunnerActiveRuns,
+    sweepTimedApprovals: composition.sweepTimedApprovals,
     updateChecker
   });
 }
