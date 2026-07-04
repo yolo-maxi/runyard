@@ -384,7 +384,7 @@ program.command("knowledge").description("List knowledge resources").option("-q,
 program
   .command("token-create <name>")
   .description("Create a new access token")
-  .option("--scopes <scopes>", "comma-separated scopes", "api,mcp,runner")
+  .option("--scopes <scopes>", "comma-separated scopes (api, mcp, runner, admin, approvals)", "api,mcp")
   .option("--expires-in-days <days>", "expiry in days (0 = never)", "0")
   .action(async (name, opts) => {
     const scopes = opts.scopes.split(",").map((scope) => scope.trim()).filter(Boolean);

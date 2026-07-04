@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { createAuthHandlers, sessionCookieOptions, setupPayload } from "../src/authRoutes.js";
+import { createAuthHandlers, publicSetupPayload, sessionCookieOptions, setupPayload } from "../src/authRoutes.js";
 import { unsign } from "../src/security.js";
 
 function response() {
@@ -59,6 +59,32 @@ function authHandlers(overrides = {}) {
 }
 
 describe("auth route helpers", () => {
+  it("keeps the anonymous setup payload down to instance identity", () => {
+    assert.deepEqual(publicSetupPayload({
+      dataDir: "/data",
+      environment: "prod",
+      hostname: "host",
+      instanceName: "Runyard",
+      telegramBotToken: "secret-token"
+    }), { instanceName: "Runyard", auth: "access-token" });
+  });
+
+  it("serves the sanitized setup payload to anonymous requests and the full one to sessions", () => {
+    const handlers = authHandlers({ authFromRequest: (req) => req.authed ? { id: "tok_1" } : null });
+
+    const anonymous = response();
+    handlers.setup({ authed: false }, anonymous);
+    assert.deepEqual(anonymous.body, { instanceName: "Runyard", auth: "access-token" });
+    assert.equal(anonymous.body.dataDir, undefined);
+    assert.equal(anonymous.body.hostname, undefined);
+
+    const authed = response();
+    handlers.setup({ authed: true }, authed);
+    assert.equal(authed.body.dataDir, "/tmp/runyard");
+    assert.equal(authed.body.hostname, "host");
+    assert.equal(authed.body.telegramConfigured, true);
+  });
+
   it("builds setup payload without leaking secrets", () => {
     assert.deepEqual(setupPayload({
       baseUrl: "https://hub.example",

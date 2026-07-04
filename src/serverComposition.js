@@ -394,18 +394,6 @@ export function createServerComposition({
     listAudit
   });
 
-  const authHandlers = createAuthHandlers({
-    authenticateToken,
-    baseUrl: env.baseUrl,
-    createTelegramWebAppSession,
-    env,
-    recordAudit,
-    telegramApprovalTarget,
-    telegramUserLabel,
-    timingSafeEqualStr,
-    verifyTelegramWebAppInitData
-  });
-
   const {
     authFromRequest,
     requireAuth,
@@ -418,6 +406,19 @@ export function createServerComposition({
     getRun,
     runOwnerTokenId,
     telegramSessionCanAccess
+  });
+
+  const authHandlers = createAuthHandlers({
+    authFromRequest,
+    authenticateToken,
+    baseUrl: env.baseUrl,
+    createTelegramWebAppSession,
+    env,
+    recordAudit,
+    telegramApprovalTarget,
+    telegramUserLabel,
+    timingSafeEqualStr,
+    verifyTelegramWebAppInitData
   });
 
   const publicHandlers = createPublicHandlers({

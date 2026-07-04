@@ -1,3 +1,18 @@
+// Tool names shared by the authenticated menu payload and the public llms.txt.
+// These are the same for every deployment; only the capability catalog is private.
+const HUB_TOOL_NAMES = [
+  "get_menu",
+  "list_capabilities",
+  "describe_capability",
+  "run_capability",
+  "get_run_status",
+  "get_run_logs",
+  "get_run_artifacts",
+  "list_runners",
+  "list_pending_approvals",
+  "list_hooks"
+];
+
 export function hubMenuPayload({ baseUrl, capabilities = [], pool = null } = {}) {
   const linkedCapabilities = capabilities.map((linked) => ({
     slug: linked.slug,
@@ -44,26 +59,19 @@ export function hubMenuPayload({ baseUrl, capabilities = [], pool = null } = {})
         result: "A remote runner executes the workflow; outputs and artifacts are fetched from the Hub."
       }
     ],
-    tools: [
-      "get_menu",
-      "list_capabilities",
-      "describe_capability",
-      "run_capability",
-      "get_run_status",
-      "get_run_logs",
-      "get_run_artifacts",
-      "list_runners",
-      "list_pending_approvals",
-      "list_hooks"
-    ],
+    tools: [...HUB_TOOL_NAMES],
     capabilities: linkedCapabilities,
     pool
   };
 }
 
-export function renderLlmsTxt(menu, baseUrl) {
+// The public llms.txt is deliberately static and generic. Each deployment is a
+// private company Hub, so the live capability catalog, secret-file locations,
+// and operator configuration stay behind auth (GET /api/menu) and in the
+// operator docs — never in an unauthenticated discovery document.
+export function renderLlmsTxt(baseUrl) {
   const lines = [];
-  lines.push(`# ${menu.product || "Runyard"} (codebase: ${menu.codebase || "runyard"})`);
+  lines.push("# Runyard (codebase: runyard)");
   lines.push("");
   lines.push("Self-hosted control plane for agent runs. Agents discover capabilities");
   lines.push("over MCP/CLI/HTTP, runners execute them, and the Hub stores the durable");
@@ -74,26 +82,25 @@ export function renderLlmsTxt(menu, baseUrl) {
   lines.push("- MCP server: runyard-mcp");
   lines.push(`- HTTP API: ${baseUrl}/api`);
   lines.push(`- OpenAPI: ${baseUrl}/openapi.json`);
-  lines.push(`- Menu: ${baseUrl}/api/menu`);
-  lines.push(`- Capability catalog: ${baseUrl}/api/capabilities`);
+  lines.push(`- Menu (authenticated): ${baseUrl}/api/menu`);
+  lines.push(`- Capability catalog (authenticated): ${baseUrl}/api/capabilities`);
   lines.push(`- Setup docs: ${baseUrl}/docs/quickstart`);
   lines.push("");
   lines.push("Tools (mirrors get_menu):");
-  for (const tool of menu.tools || []) lines.push(`- ${tool}`);
+  for (const tool of HUB_TOOL_NAMES) lines.push(`- ${tool}`);
   lines.push("");
-  lines.push("Capabilities (mirrors get_menu):");
-  for (const cap of menu.capabilities || []) {
-    const desc = cap.description ? ` -- ${cap.description}` : "";
-    lines.push(`- ${cap.slug}: ${cap.name}${desc}`);
-  }
+  lines.push("Capabilities:");
+  lines.push("- This deployment's catalog is private. Authenticate, then call");
+  lines.push("  get_menu / list_capabilities (MCP), `runyard menu` (CLI), or");
+  lines.push(`  GET ${baseUrl}/api/menu (HTTP) for the live list.`);
   lines.push("");
   lines.push("Execution modes:");
-  for (const mode of menu.executionModes || []) lines.push(`- ${mode.id} -> runners tagged ${mode.runnerLocation}`);
+  lines.push("- local -> runners tagged local");
+  lines.push("- remote -> runners tagged vps or remote");
   lines.push("");
   lines.push("Authenticate with a Hub access token using Bearer auth. Tokens carry");
-  lines.push("scopes (api, mcp, runner, admin); the first one is written to");
-  lines.push("data/bootstrap-token.txt on the server's machine on first boot and is");
-  lines.push("full admin.");
+  lines.push("scopes (api, mcp, runner, admin). Ask this Hub's administrator for a");
+  lines.push("token; admins issue them from the Connect tab in the web app.");
   lines.push("");
   lines.push("Run path:");
   lines.push("1. Discover with get_menu / list_capabilities.");
@@ -110,11 +117,10 @@ export function renderLlmsTxt(menu, baseUrl) {
   lines.push("  back in API responses, events, or audit log entries.");
   lines.push("- When the run reaches a terminal state (succeeded/failed/cancelled)");
   lines.push("  the Hub posts a sanitized payload to http endpoints and a concise");
-  lines.push("  message to telegram endpoints; telegram delivery requires");
-  lines.push("  TELEGRAM_BOT_TOKEN (or SMITHERS_TELEGRAM_BOT_TOKEN) to be set on");
-  lines.push("  the Hub. Delivery state (status / attempts / last_error /");
-  lines.push("  delivered_at) is visible on GET /api/runs/:id under");
-  lines.push("  responseEndpoints[].");
+  lines.push("  message to telegram endpoints; telegram delivery requires the Hub's");
+  lines.push("  Telegram integration to be configured. Delivery state (status /");
+  lines.push("  attempts / last_error / delivered_at) is visible on GET /api/runs/:id");
+  lines.push("  under responseEndpoints[].");
   lines.push("");
   lines.push("Post-run hooks (optional):");
   lines.push("- Side effects after a run's gates pass (static publish, git push,");

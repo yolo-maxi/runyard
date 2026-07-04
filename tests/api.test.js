@@ -1228,6 +1228,34 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
     assert.equal(res.data.status, "ok");
   });
 
+  it("keeps the anonymous discovery surface generic (llms.txt + /api/setup)", async () => {
+    // llms.txt is unauthenticated: no live catalog, no secret-file locations.
+    const llms = await raw("/llms.txt", {}, null);
+    assert.equal(llms.status, 200);
+    assert.match(llms.data, /# Runyard/);
+    assert.match(llms.data, /catalog is private/i);
+    assert.doesNotMatch(llms.data, /- hello:/);
+    assert.doesNotMatch(llms.data, /bootstrap-token/);
+    assert.doesNotMatch(llms.data, /TELEGRAM_BOT_TOKEN/);
+
+    // Anonymous /api/setup: instance identity only — no hostname/dataDir.
+    const anonymous = await raw("/api/setup", {}, null);
+    assert.equal(anonymous.status, 200);
+    assert.deepEqual(Object.keys(anonymous.data).sort(), ["auth", "instanceName"]);
+
+    // An authenticated session still gets the full deployment payload.
+    const authed = await raw("/api/setup");
+    assert.equal(authed.status, 200);
+    assert.ok(authed.data.dataDir, "authenticated setup includes dataDir");
+    assert.ok("hostname" in authed.data, "authenticated setup includes hostname");
+  });
+
+  it("rejects unknown token scopes at mint time", async () => {
+    const res = await raw("/api/tokens", { method: "POST", body: { name: "typo", scopes: ["api", "read"] } });
+    assert.equal(res.status, 400);
+    assert.deepEqual(res.data.unknown, ["read"]);
+  });
+
   it("enforces token scopes", async () => {
     // A read/run-only token (mcp) must not be able to mint tokens or edit the catalog.
     const created = await api("/api/tokens", { method: "POST", body: { name: "mcp-only", scopes: ["mcp"] } });

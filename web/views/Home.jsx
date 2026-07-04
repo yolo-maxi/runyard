@@ -13,6 +13,7 @@ import { groupRunsByEndedDate } from "../lib/runGrouping.js";
 import { peekRerunDraft, clearRerunDraft } from "../lib/runActions.js";
 import { RunCard } from "../components/RunCard.jsx";
 import { relativeTime } from "../lib/format.js";
+import { humanizeStatus } from "../lib/statusLabels.js";
 
 // Workflow slugs that are operationally internal — support agents, reauth helpers,
 // etc. They're real runs but they bury the actual operator workload, so the #runs
@@ -145,7 +146,7 @@ function HomeFilterBar({ filters, capabilities = [], matchingCount = 0, statusCo
   }
   const activeChips = [];
   if (filters.q) activeChips.push({ kind: "q", label: `“${truncate(filters.q, 24)}”` });
-  if (filters.status) activeChips.push({ kind: "status", label: `status: ${filters.status}` });
+  if (filters.status) activeChips.push({ kind: "status", label: `status: ${humanizeStatus(filters.status)}` });
   if (filters.range) {
     const rl = (TIME_RANGE_OPTIONS.find((o) => o.value === filters.range) || {}).label || filters.range;
     activeChips.push({ kind: "range", label: rl });

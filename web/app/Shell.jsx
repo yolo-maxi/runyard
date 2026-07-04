@@ -132,9 +132,13 @@ export function Shell({ me }) {
           </a>
           <UpdateBadge me={me} />
           <ApprovalNotificationLink count={badges.approvals} active={route.view === "approvals"} />
-          <details className="admin-menu" id="admin-menu">
+          {/* Admin pages are for admin-scoped sessions only (the API enforces
+              this; the menu just stops advertising levers that would 403).
+              Non-admins keep a mobile-only "More" menu for the Docs links the
+              phone topbar hides. */}
+          <details className={admin ? "admin-menu" : "admin-menu mobile-menu-only"} id="admin-menu">
             <summary className="button" aria-haspopup="true">
-              <span className="admin-label-full">Admin</span>
+              <span className="admin-label-full">{admin ? "Admin" : "More"}</span>
               <span className="admin-label-short">More</span> <span aria-hidden="true">▾</span>
             </summary>
             <div className="admin-menu-list" role="menu">
@@ -144,7 +148,7 @@ export function Shell({ me }) {
               <a className="mobile-menu-only" href="/llms.txt" role="menuitem">
                 llms.txt
               </a>
-              {ADMIN_LINKS.map(([view, label]) => (
+              {(admin ? ADMIN_LINKS : []).map(([view, label]) => (
                 <button
                   key={view}
                   type="button"

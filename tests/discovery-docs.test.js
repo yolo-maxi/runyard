@@ -30,18 +30,27 @@ describe("discovery docs", () => {
     assert.equal(menu.pool.online, 1);
   });
 
-  it("renders llms.txt from the same menu payload", () => {
-    const menu = hubMenuPayload({
-      baseUrl: "https://hub.example",
-      capabilities: [{ slug: "hello", name: "Hello", description: "Says hi" }]
-    });
-    const text = renderLlmsTxt(menu, "https://hub.example");
+  it("renders a static llms.txt that points agents at the authenticated menu", () => {
+    const text = renderLlmsTxt("https://hub.example");
 
     assert.match(text, /^# Runyard \(codebase: runyard\)/);
     assert.match(text, /- OpenAPI: https:\/\/hub\.example\/openapi\.json/);
-    assert.match(text, /- hello: Hello -- Says hi/);
+    assert.match(text, /Menu \(authenticated\): https:\/\/hub\.example\/api\/menu/);
     assert.match(text, /- local -> runners tagged local/);
+    assert.match(text, /- get_menu/);
     assert.ok(text.endsWith("\n"));
+  });
+
+  it("keeps deployment-private details out of the unauthenticated llms.txt", () => {
+    const text = renderLlmsTxt("https://hub.example");
+
+    // The live capability catalog is private per-deployment: authenticate first.
+    assert.match(text, /catalog is private/i);
+    assert.doesNotMatch(text, /Capabilities \(mirrors get_menu\)/);
+    // No secret-file locations or operator env-var names for anonymous visitors.
+    assert.doesNotMatch(text, /bootstrap-token/);
+    assert.doesNotMatch(text, /TELEGRAM_BOT_TOKEN/);
+    assert.doesNotMatch(text, /SMITHERS_/);
   });
 
   it("builds the OpenAPI document with version and route summaries", () => {

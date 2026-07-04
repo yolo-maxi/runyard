@@ -98,7 +98,7 @@ open http://127.0.0.1:43117/app</pre>
           <li><strong>Private org.</strong> Hub on a small VPS with TLS reverse proxy, SQLite/artifacts on local disk, runners on separate machines.</li>
           <li><strong>Dedicated runner pool.</strong> One or more worker VPSes advertise tags and capacity. The Hub queue stays centralized; runners do not access SQLite directly.</li>
           <li><strong>Public docs + private Hub.</strong> Serve setup docs as a static public site, while `/app`, API, MCP, runner tokens, SQLite, and artifacts stay on the private Hub.</li>
-          <li><strong>Our deployment.</strong> <code>runyard.repo.box</code> is one Hub serving everything: the public landing and docs, and the token-protected app at <code>/app</code>. Build/agent work runs on a separate worker host, not on the serving box.</li>
+          <li><strong>All-in-one Hub.</strong> One Hub (e.g. <code>hub.example.com</code>) serving everything: the public landing and docs, and the token-protected app at <code>/app</code>. Keep build/agent work on a separate worker host, not on the serving box.</li>
         </ul>
 
         <h2 id="deploy">Deploy</h2>

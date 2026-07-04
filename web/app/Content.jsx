@@ -1,4 +1,5 @@
 import { useHashRoute } from "../lib/router.js";
+import { meIsAdmin } from "../lib/me.js";
 import { Placeholder } from "../views/Placeholder.jsx";
 import { Home } from "../views/Home.jsx";
 import { RunDetail } from "../views/RunDetail.jsx";
@@ -14,6 +15,24 @@ import { Workflows } from "../views/Workflows.jsx";
 import { WorkflowDetail } from "../views/WorkflowDetail.jsx";
 import { Brand } from "../views/Brand.jsx";
 
+// Views reachable only with an admin-scoped session. Deep links still resolve
+// for non-admins, but to an honest notice instead of forms that would 403.
+const ADMIN_VIEWS = new Set(["connect", "tokens", "runners", "audit", "secrets", "settings", "brand"]);
+
+function AdminOnly() {
+  return (
+    <section className="panel">
+      <div className="empty">
+        <p>Admin only.</p>
+        <p className="muted">
+          This page manages the deployment. Sign in with an admin-scoped token
+          to use it.
+        </p>
+      </div>
+    </section>
+  );
+}
+
 // Route → view dispatch, mirroring the legacy render() switch in app.js. Views
 // are swapped from Placeholder to their real React component as each migration
 // phase lands. Keeping the full route table here from day one means every
@@ -21,6 +40,8 @@ import { Brand } from "../views/Brand.jsx";
 export function Content({ me }) {
   const route = useHashRoute();
   const { view, segments } = route;
+
+  if (ADMIN_VIEWS.has(view) && !meIsAdmin(me)) return <AdminOnly />;
 
   if (view === "runs" && segments[1]) {
     const focus = segments[2] || ""; // "logs" | "artifacts" | ""

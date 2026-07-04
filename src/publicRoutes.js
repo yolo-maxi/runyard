@@ -92,8 +92,10 @@ export function createPublicHandlers({
       res.sendFile(path.join(publicDir, "docs.html"));
     },
 
+    // Unauthenticated discovery copy is static/generic: the live capability
+    // catalog stays behind auth on /api/menu (see renderLlmsTxt).
     llmsTxt(req, res) {
-      res.type("text/plain").send(renderLlmsTxt(hubMenuPayload(req), publicUrl(req)));
+      res.type("text/plain").send(renderLlmsTxt(publicUrl(req)));
     },
 
     openApi(req, res) {

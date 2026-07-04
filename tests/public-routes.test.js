@@ -154,6 +154,9 @@ describe("public route helpers", () => {
     assert.match(install.sent, /https:\/\/hub\.example/);
     assert.equal(llms.typeValue, "text/plain");
     assert.match(llms.sent, /https:\/\/hub\.example\/api\/menu/);
+    // llms.txt is unauthenticated: the live catalog must not leak into it.
+    assert.doesNotMatch(llms.sent, /demo/);
+    assert.doesNotMatch(llms.sent, /bootstrap-token/);
     assert.equal(openApi.body.info.version, "1.2.3");
     assert.equal(openApi.body.servers[0].url, "https://hub.example/api");
     assert.equal(menu.body.hub.status, "https://hub.example/api/runs/{runId}");

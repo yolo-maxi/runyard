@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api.js";
 import { deepLinks, navigate } from "../lib/router.js";
 import { toast } from "../lib/toast.js";
+import { useMe, meIsAdmin } from "../lib/me.js";
 import { relativeTime, isActiveRun } from "../lib/runHelpers.js";
 import { refreshCollection } from "../lib/collections.js";
 import { Toolbar, ShareButton, OverflowMenu } from "../components/ui.jsx";
@@ -138,7 +139,7 @@ function OnboardingCard() {
   );
 }
 
-function WorkflowCard({ cap, stats }) {
+function WorkflowCard({ cap, stats, canEdit = false }) {
   const skills = (cap.requiredSkills || []).slice(0, 4);
   const agents = (cap.requiredAgents || []).slice(0, 4);
   const tags = (cap.requiredRunnerTags || []).slice(0, 4);
@@ -169,7 +170,7 @@ function WorkflowCard({ cap, stats }) {
           label={`More actions for ${cap.name}`}
           items={[
             { label: "Open", href: deepLinks.workflow(cap.slug) },
-            { label: "Edit", onSelect: () => navigate(deepLinks.workflowEdit(cap.slug)) }
+            ...(canEdit ? [{ label: "Edit", onSelect: () => navigate(deepLinks.workflowEdit(cap.slug)) }] : [])
           ]}
         />
       </div>
@@ -182,6 +183,9 @@ function WorkflowCard({ cap, stats }) {
 // when empty, and the "New Workflow" editor.
 export function Workflows() {
   const [editing, setEditing] = useState(null); // null | { slug } for the New-workflow editor
+  const { data: me } = useMe();
+  // Workflow create/edit is admin-only server-side; hide the levers that 403.
+  const canEdit = meIsAdmin(me);
 
   const capsQuery = useQuery({
     queryKey: ["capabilities"],
@@ -239,12 +243,12 @@ export function Workflows() {
   return (
     <>
       <Toolbar title="Workflows" shareHash={deepLinks.workflows()}>
-        <button id="new-cap" onClick={() => setEditing({ slug: "" })}>New Workflow</button>
+        {canEdit ? <button id="new-cap" onClick={() => setEditing({ slug: "" })}>New Workflow</button> : null}
       </Toolbar>
       <p className="muted">A workflow is a capability your agents can invoke. They appear as MCP tools and as launchable buttons here. Each workflow has a shareable link — open 🔗 to copy.</p>
       {capabilities.length ? (
         <div className="grid">
-          {capabilities.map((cap) => <WorkflowCard key={cap.slug} cap={cap} stats={statsFor(cap.slug)} />)}
+          {capabilities.map((cap) => <WorkflowCard key={cap.slug} cap={cap} stats={statsFor(cap.slug)} canEdit={canEdit} />)}
         </div>
       ) : (
         <>
@@ -257,7 +261,7 @@ export function Workflows() {
           </div>
         </>
       )}
-      {editing ? (
+      {editing && canEdit ? (
         <WorkflowEditor slug={editing.slug} onClose={() => setEditing(null)} onSaved={() => setEditing(null)} />
       ) : (
         <section id="editor" className="panel hidden" />

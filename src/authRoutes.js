@@ -3,6 +3,13 @@ import { TELEGRAM_WEBAPP_SESSION_MAX_AGE_MS } from "./telegramWebAppAuth.js";
 
 export const ACCESS_TOKEN_SESSION_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 365;
 
+// What an anonymous visitor may learn about this deployment: enough to label
+// the login screen, nothing about the operator's machine (hostname, dataDir)
+// or integration wiring.
+export function publicSetupPayload({ instanceName } = {}) {
+  return { instanceName, auth: "access-token" };
+}
+
 export function setupPayload({
   dataDir,
   environment,
@@ -44,6 +51,7 @@ export function publicToken(token) {
 }
 
 export function createAuthHandlers({
+  authFromRequest,
   authenticateToken,
   baseUrl,
   createTelegramWebAppSession,
@@ -59,7 +67,11 @@ export function createAuthHandlers({
   }
 
   return {
-    setup(_req, res) {
+    // The route stays reachable without auth so the login screen can label
+    // itself, but hostname/dataDir/telegram wiring require a session.
+    setup(req, res) {
+      const authenticated = authFromRequest ? Boolean(authFromRequest(req)) : false;
+      if (!authenticated) return res.json(publicSetupPayload(env));
       res.json(setupPayload({ ...env, telegramApprovalTarget }));
     },
 

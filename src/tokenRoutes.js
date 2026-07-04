@@ -1,7 +1,16 @@
 import { actorName } from "./routeActors.js";
 
+// The full scope vocabulary the server enforces (see authMiddleware/serverRoutes).
+// Token creation validates against this list so a typo'd or invented scope can
+// never be minted into a long-lived credential.
+export const KNOWN_TOKEN_SCOPES = ["api", "mcp", "runner", "admin", "approvals"];
+
 export function tokenCreateInput(body = {}, nowMs = Date.now()) {
   const scopes = Array.isArray(body.scopes) && body.scopes.length ? body.scopes : ["api", "mcp"];
+  const unknown = scopes.filter((scope) => !KNOWN_TOKEN_SCOPES.includes(scope));
+  if (unknown.length) {
+    return { error: { status: 400, body: { error: "unknown scopes", unknown, known: KNOWN_TOKEN_SCOPES } } };
+  }
   const days = Number(body.expiresInDays || 0);
   return {
     name: body.name || "access token",
@@ -33,6 +42,7 @@ export function createTokenHandlers({
 
     createToken(req, res) {
       const input = tokenCreateInput(req.body || {});
+      if (input.error) return res.status(input.error.status).json(input.error.body);
       const token = createAccessToken(input.name, undefined, input.scopes, { expiresAt: input.expiresAt });
       recordAudit(actorName(req.token), "token.created", token.id, {
         scopes: input.scopes,
