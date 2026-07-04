@@ -24,6 +24,12 @@ describe("server route registration", () => {
       deps.scopes["api,mcp"]
     ]);
     assertRoute(app, "post", "/api/workflow-bundles", [deps.requireAuth, deps.scopes.admin, deps.workflowBundleHandlers.publishWorkflowBundle]);
+    // Hook profiles: discovery is authenticated; mutations + readiness are admin-only.
+    assertRoute(app, "get", "/api/hooks", [deps.requireAuth, deps.hookProfileHandlers.listHookProfiles]);
+    assertRoute(app, "get", "/api/hooks/:slug", [deps.requireAuth, deps.hookProfileHandlers.getHookProfile]);
+    assertRoute(app, "post", "/api/hooks", [deps.requireAuth, deps.scopes.admin, deps.hookProfileHandlers.upsertHookProfile]);
+    assertRoute(app, "patch", "/api/hooks/:slug", [deps.requireAuth, deps.scopes.admin, deps.hookProfileHandlers.upsertHookProfile]);
+    assertRoute(app, "post", "/api/hooks/:slug/validate", [deps.requireAuth, deps.scopes.admin, deps.hookProfileHandlers.validateHookProfile]);
     assertRoute(app, "get", "/api/workflow-bundles/:id", [deps.requireAuth, deps.workflowBundleHandlers.getWorkflowBundle]);
     assertRoute(app, "post", "/api/runners/register", [deps.requireAuth, deps.scopes.runner]);
     assertRoute(app, "post", "/api/chat", [deps.requireAuth, deps.rateLimits["support-chat"]]);
@@ -59,6 +65,7 @@ function routeDeps() {
       skills: handlers(["list", "create", "update"], "skills"),
       knowledge: handlers(["list", "create", "update"], "knowledge")
     },
+    hookProfileHandlers: handlers(["listHookProfiles", "getHookProfile", "upsertHookProfile", "validateHookProfile"]),
     operatorReadHandlers: handlers(["dashboard", "repoOptions"]),
     publicHandlers: {
       ...handlers(["healthz", "readyz", "apiVersion", "version", "cliTarball", "installScript", "landing", "app", "docs", "llmsTxt", "openApi", "menu"]),

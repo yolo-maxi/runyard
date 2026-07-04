@@ -2670,7 +2670,10 @@ describe("Improve capability", () => {
     assert.match(src, /id="test"/);
     assert.match(src, /id="commit"/);
     assert.match(src, /id="push"/);
-    assert.match(src, /id="deploy"/);
+    // Post-run side effects are an explicit hooks reporting node now; the old
+    // inline prod deploy task is gone.
+    assert.match(src, /id="hooks"/);
+    assert.doesNotMatch(src, /id="deploy"/);
     assert.match(src, /improvements/);
     assert.match(src, /acceptanceCheck/);
     assert.match(src, /resolveImproveRepo\(effectiveInput/);

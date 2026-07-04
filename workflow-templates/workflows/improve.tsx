@@ -1,6 +1,6 @@
 // smithers-source: authored
 // smithers-display-name: Improve
-// smithers-description: Inspects an existing feature, UI, or workflow with a taste-led Product Manager, prioritizes improvements with acceptance checks, then dispatches a builder to apply them through the gated test/commit/push/deploy pipeline. PM analysis runs first; builder consumes that brief and the same gates as implement-change-gated run after.
+// smithers-description: Inspects an existing feature, UI, or workflow with a taste-led Product Manager, prioritizes improvements with acceptance checks, then dispatches a builder to apply them through the gated test/commit/push pipeline. PM analysis runs first; builder consumes that brief and the same gates as implement-change-gated run after. Production deploys are admin-configured post-run hooks, never an implicit workflow step.
 /** @jsxImportSource smithers-orchestrator */
 import { createSmithers, Sequence, ClaudeCodeAgent, CodexAgent, PiAgent } from "smithers-orchestrator";
 import { existsSync } from "node:fs";
@@ -10,13 +10,9 @@ import { createAgentFallbackPair, resolveAgentCli } from "./agent-fallback.js";
 import { runyardAgentSystemPrompt } from "./runyard-runtime.js";
 import { prepareMutatingRepo, releaseRepoLease, validateBeforeCommit, validateBeforePush } from "./repo-mutation-lease.js";
 
-// Repo + deploy target are deployment-specific; set env vars on your runner.
-const PROD_REMOTE = process.env.GATED_PROD_REMOTE || "prod";
-const PROD_HOST = process.env.GATED_PROD_HOST || "";
-const PROD_DIR = process.env.GATED_PROD_DIR || "";
-const DEPLOY_KEY = process.env.GATED_DEPLOY_KEY || "";
-const HEALTH_BASE = process.env.GATED_HEALTH_URL || process.env.BASE_URL || "http://127.0.0.1:43117";
-
+// Repo is deployment-specific; set env vars on your runner. The old
+// GATED_PROD_* deploy target moved behind admin-configured post-run hook
+// profiles (see docs/design/post-run-hooks.md).
 function resolveTool(envName, fallback, candidates) {
   const configured = process.env[envName];
   if (configured) return configured;
@@ -27,8 +23,6 @@ const PNPM = resolveTool("GATED_PNPM_BIN", "pnpm", [
   "/usr/local/bin/pnpm",
   "/usr/bin/pnpm"
 ]);
-const SSH = resolveTool("GATED_SSH_BIN", "ssh", ["/usr/bin/ssh", "/usr/local/bin/ssh"]);
-const CURL = resolveTool("GATED_CURL_BIN", "curl", ["/usr/bin/curl", "/usr/local/bin/curl"]);
 const TOOL_PATH = [
   process.env.PATH || "",
   "/usr/local/bin",
@@ -84,7 +78,10 @@ const implementOut = z.object({ summary: z.string().default(""), notes: z.string
 const testOut = z.object({ passed: z.boolean(), tail: z.string().default("") });
 const commitOut = z.object({ commit: z.string(), message: z.string(), stat: z.string().default(""), files: z.array(z.string()).default([]) });
 const pushOut = z.object({ pushed: z.boolean(), branch: z.string(), detail: z.string().default("") });
-const deployOut = z.object({ deployed: z.boolean(), wouldDeploy: z.boolean().default(false), target: z.string().default(""), verify: z.string().default("") });
+// Post-run hook reporting node: status uses the shared hook vocabulary
+// (skipped / hook_config_required / ...). Hook problems are reported, never
+// thrown — they must not fail a run whose build/tests/push succeeded.
+const hooksOut = z.object({ status: z.string().default("skipped"), detail: z.string().default(""), verify: z.string().default("") });
 
 const inputSchema = z.object({
   target: z
@@ -109,7 +106,7 @@ const inputSchema = z.object({
     .default("")
     .describe("Optional friendly project key resolved from IMPROVE_PROJECT_MAP or IMPROVE_REPO_MAP."),
   maxImprovements: z.number().int().min(1).max(6).default(3),
-  deploy: z.boolean().default(false).describe("If true, deploy to prod after gates pass."),
+  deploy: z.boolean().optional().describe("Deprecated; production deploys moved to admin-configured post-run hook profiles. deploy=true no longer deploys — it is reported as hook_config_required."),
   targetBranch: z.string().default("main"),
   mutationMode: z
     .enum(["sequential", "parallel"])
@@ -125,7 +122,7 @@ const { Workflow, Task, smithers, outputs } = createSmithers({
   test: testOut,
   commit: commitOut,
   push: pushOut,
-  deploy: deployOut
+  hooks: hooksOut
 });
 
 function createProductManager(repoDir) {
@@ -245,9 +242,6 @@ export default smithers((ctx) => {
             if (repoResolveError) throw repoResolveError;
             if (!effectiveInput.target) {
               throw new Error("Improve requires target (or legacy request) to describe what should change.");
-            }
-            if ((effectiveInput.mutationMode || "sequential") === "parallel" && effectiveInput.deploy) {
-              throw new Error("PARALLEL MODE BLOCKED: deploy=true is not allowed from an isolated worktree.");
             }
             const lease = prepareMutatingRepo({
               repoDir,
@@ -381,37 +375,22 @@ export default smithers((ctx) => {
           </Task>
         )}
 
-        {/* 6. Deploy (or report what would deploy). */}
+        {/* 6. Post-run hooks. The run is complete once the branch is pushed;
+            production deploys are admin-configured hook profiles, not an
+            implicit workflow step. Legacy deploy=true is reported as
+            hook_config_required — never executed, never a run failure. */}
         {push && (
-          <Task id="deploy" output={outputs.deploy} retries={0}>
+          <Task id="hooks" output={outputs.hooks} retries={0}>
             {async () => {
-              const { execFileSync } = await import("node:child_process");
-              if (baseline.lease?.mode === "parallel" && effectiveInput.deploy) {
-                throw new Error("PARALLEL MODE BLOCKED: deploy=true is not allowed from an isolated worktree.");
-              }
-              const target = PROD_HOST && PROD_DIR ? `${PROD_REMOTE} (${PROD_HOST}:${PROD_DIR})` : `${PROD_REMOTE} (not configured)`;
-              if (!effectiveInput.deploy) {
-                releaseRepoLease(baseline.lease, { env: process.env });
-                return { deployed: false, wouldDeploy: true, target, verify: `deploy=false — would push ${commit.commit} to ${target}, reset main, and restart the hub.` };
-              }
-              if (!PROD_HOST || !PROD_DIR || !DEPLOY_KEY) {
-                throw new Error("GATE FAILED: deploy=true requires GATED_PROD_HOST, GATED_PROD_DIR, and GATED_DEPLOY_KEY on the runner.");
-              }
-              const env = { ...TOOL_ENV, GIT_SSH_COMMAND: `${SSH} -i ${DEPLOY_KEY} -o BatchMode=yes -o StrictHostKeyChecking=accept-new` };
-              execFileSync(GIT, ["push", PROD_REMOTE, `${commit.commit}:refs/heads/sync-tmp`], { cwd: workRepoDir, encoding: "utf8", env });
-              const remoteCmd = `cd ${PROD_DIR} && git checkout -q main && git reset --hard sync-tmp && git branch -D sync-tmp; rm -f data/cli.tgz && systemctl --user restart smithers-hub.service && sleep 2 && git log --oneline -1`;
-              const remoteOut = execFileSync(
-                SSH,
-                ["-i", DEPLOY_KEY, "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", PROD_HOST, remoteCmd],
-                { encoding: "utf8", env: TOOL_ENV }
-              );
-              let verify = "";
-              for (const p of ["/healthz", "/", "/docs", "/app"]) {
-                const code = execFileSync(CURL, ["-s", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "15", `${HEALTH_BASE}${p}`], { encoding: "utf8", env: TOOL_ENV });
-                verify += `${p}:${code} `;
-              }
               releaseRepoLease(baseline.lease, { env: process.env });
-              return { deployed: true, wouldDeploy: false, target, verify: `remote HEAD: ${remoteOut.trim().split("\n").pop()} | routes: ${verify.trim()}` };
+              if (effectiveInput.deploy === true) {
+                return {
+                  status: "hook_config_required",
+                  detail: `deploy=true is deprecated and no longer deploys. Commit ${commit.commit} is pushed; promote/deploy explicitly, or ask an admin to configure a post-run hook profile (runyard hooks).`,
+                  verify: "post-run hook configuration required (legacy deploy=true)"
+                };
+              }
+              return { status: "skipped", detail: "no post-run hooks requested", verify: "" };
             }}
           </Task>
         )}

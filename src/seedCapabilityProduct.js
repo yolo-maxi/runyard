@@ -5,13 +5,12 @@ export const seedProductCapabilities = [
     description:
       "Runs an implementation agent for a change request in an isolated worktree by default, gates it, commits and pushes a Runyard branch, then waits for explicit merge-to-main promotion.",
     category: "Engineering",
-    keywords: ["implement", "build", "test", "git", "deploy", "gate", "smithers"],
+    keywords: ["implement", "build", "test", "git", "gate", "hooks", "smithers"],
     inputSchema: {
       type: "object",
       required: ["workPrompt"],
       properties: {
         workPrompt: { type: "string", description: "The change request / implementation prompt." },
-        deploy: { type: "boolean", description: "Deploy to prod after gates pass (default false)." },
         targetBranch: { type: "string", description: "Branch to push (default main)." },
         commitMessage: { type: "string", description: "Optional commit message." },
         repoDir: {
@@ -35,7 +34,7 @@ export const seedProductCapabilities = [
     },
     outputSchema: {
       type: "object",
-      properties: { commit: { type: "string" }, push: { type: "object" }, deploy: { type: "object" } }
+      properties: { commit: { type: "string" }, push: { type: "object" }, hooks: { type: "object" } }
     },
     requiredRunnerTags: ["smithers"],
     requiredSkills: ["implementation"],
@@ -47,9 +46,9 @@ export const seedProductCapabilities = [
     slug: "idea-to-product",
     name: "Idea to Product",
     description:
-      "Turns a raw product idea into a scoped MVP spec, builds it with an implementation agent, runs a copywriter/localization pass, verifies the basics (including mobile-first checks at 360px), guards the live-app slot, deploys it to a configured static host, and returns the URL plus a Locale / In scope / Out of scope summary. Private by default; public access is explicit.",
+      "Turns a raw product idea into a scoped MVP spec, builds it with an implementation agent, runs a copywriter/localization pass, and verifies the basics (including mobile-first checks at 360px). The core run produces verified build output; publishing is an explicit post-run hook (postRunHooks: [\"static-publish\"]) that guards the live-app slot and returns the URL plus a Locale / In scope / Out of scope summary. Private by default; public access is explicit.",
     category: "Product",
-    keywords: ["idea", "product", "mvp", "build", "test", "deploy", "static-site", "smithers", "locale", "copywriter", "localization"],
+    keywords: ["idea", "product", "mvp", "build", "test", "hooks", "static-publish", "static-site", "smithers", "locale", "copywriter", "localization"],
     inputSchema: {
       type: "object",
       required: ["idea"],
@@ -58,9 +57,13 @@ export const seedProductCapabilities = [
         preferredSubdomain: { type: "string", description: "Optional preferred static-site subdomain prefix." },
         constraints: { type: "string", description: "Optional product, design, stack, or business constraints." },
         locale: { type: "string", description: "Optional BCP-47 locale override (e.g. en-US, it-IT). Strategist infers from the ask and falls back to en-US when empty." },
-        deploy: { type: "boolean", description: "Deploy after gates pass (default true)." },
-        publicAccess: { type: "boolean", description: "Deploy without auth if true. Default false." },
-        replaceLive: { type: "boolean", description: "Live-app replacement guard: required to overwrite a STATIC_ROOT slot that already hosts a live app. Equivalent to --replace-live." }
+        postRunHooks: {
+          type: "array",
+          items: { type: "string" },
+          description: "Post-run hook profile slugs to invoke after gates pass (e.g. [\"static-publish\"]). Default none: the run builds and verifies only. Discover eligible profiles via GET /api/hooks?capability=idea-to-product."
+        },
+        publicAccess: { type: "boolean", description: "static-publish hook param: publish without auth if true. Default false." },
+        replaceLive: { type: "boolean", description: "static-publish hook param: required to overwrite a STATIC_ROOT slot that already hosts a live app. Equivalent to --replace-live." }
       }
     },
     outputSchema: {
@@ -72,7 +75,7 @@ export const seedProductCapabilities = [
         build: { type: "object" },
         copy: { type: "object" },
         verify: { type: "object" },
-        deploy: { type: "object" }
+        hooks: { type: "object" }
       }
     },
     requiredRunnerTags: ["smithers", "vps"],
@@ -80,13 +83,20 @@ export const seedProductCapabilities = [
     requiredAgents: ["spec-writer", "implementation-agent"],
     approvalPolicy: {
       required: true,
-      reason: "Runs coding agents and can deploy a new static site."
+      reason: "Runs coding agents; the static-publish post-run hook can publish a new static site when explicitly requested."
     },
     // Default supervision envelope: user-triggered runs are wrapped by
     // run-smithers so a silent runner death or mid-run failure is captured and
     // recovered instead of reading as a green success.
     supervision: { default: true },
-    workflow: { engine: "smithers", entry: ".smithers/workflows/idea-to-product.tsx" }
+    workflow: {
+      engine: "smithers",
+      entry: ".smithers/workflows/idea-to-product.tsx",
+      // Capability-side hook opt-in: callers may only select these profiles
+      // via input.postRunHooks, and only when an admin has created + enabled
+      // a matching hook profile (see /api/hooks).
+      hooks: { allowedProfiles: ["static-publish"] }
+    }
   },
   {
     slug: "app-skinner",
@@ -359,10 +369,6 @@ export const seedProductCapabilities = [
           type: "number",
           description: "Cap on improvements the PM should propose (1-6, default 3)."
         },
-        deploy: {
-          type: "boolean",
-          description: "If true, deploy after gates pass (default false)."
-        },
         targetBranch: {
           type: "string",
           description: "Branch to push (default main)."
@@ -382,7 +388,7 @@ export const seedProductCapabilities = [
         test: { type: "object" },
         commit: { type: "object" },
         push: { type: "object" },
-        deploy: { type: "object" }
+        hooks: { type: "object" }
       }
     },
     requiredRunnerTags: ["smithers"],
@@ -428,10 +434,6 @@ export const seedProductCapabilities = [
           type: "boolean",
           description: "If true, queue real gated implementation runs sequentially. If false (default), plan and report the runs that would be created."
         },
-        deploy: {
-          type: "boolean",
-          description: "Forwarded to each implementation run: deploy to prod after its gates pass (default false)."
-        },
         targetBranch: {
           type: "string",
           description: "Branch each implementation pushes to (default main)."
@@ -464,7 +466,7 @@ export const seedProductCapabilities = [
     requiredAgents: ["researcher", "product-manager", "implementation-agent"],
     approvalPolicy: {
       required: true,
-      reason: "Runs research and PM agents, then can queue gated implementation runs that commit, push to main, and may deploy."
+      reason: "Runs research and PM agents, then can queue gated implementation runs that commit and push to main."
     },
     // Default supervision envelope: a user starting `product-workflow` gets a
     // visible run-smithers supervising run that wraps it, so a failure surfaces

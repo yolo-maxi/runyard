@@ -45,7 +45,8 @@ describe("run outcome presentation helpers", () => {
       churn: null,
       digest: "In this run, we updated a.js and b.js.",
       workProduct: "2 changed files",
-      classification: "succeeded"
+      classification: "succeeded",
+      hooks: null
     });
 
     assert.equal(runOutcomeSummary({
@@ -111,7 +112,8 @@ describe("run outcome presentation helpers", () => {
         churn: null,
         digest: "In this run, we updated a.js and b.js.",
         workProduct: "2 changed files",
-        classification: "succeeded"
+        classification: "succeeded",
+        hooks: null
       }
     );
   });

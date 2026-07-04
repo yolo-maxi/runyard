@@ -59,7 +59,8 @@ describe("Product Workflow capability", () => {
     assert.equal(props.maxCompetitors.type, "number");
     assert.equal(props.maxFeatures.type, "number");
     assert.equal(props.execute.type, "boolean");
-    assert.equal(props.deploy.type, "boolean");
+    // deploy is deprecated and no longer advertised; deploys are post-run hooks.
+    assert.equal(props.deploy, undefined);
     assert.equal(props.targetBranch.type, "string");
     // Repo selector contract matches improve / implement-change-gated.
     assert.equal(props.repo.type, "string");

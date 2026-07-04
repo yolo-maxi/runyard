@@ -50,13 +50,17 @@ describe("Workflow source + code viewer", () => {
     assert.match(improveSource, /noChangeEvidence/);
   });
 
-  it("ships server-backed idea product deployment instead of static-only publishing", () => {
+  it("ships server-backed idea product publishing behind the explicit static-publish hook", () => {
     assert.match(ideaToProductSource, /function deployServerBackedProduct/);
     assert.match(ideaToProductSource, /server\/index\.mjs/);
     assert.match(ideaToProductSource, /REPOBOX_SERVICE_PORT_START/);
     assert.match(ideaToProductSource, /reverse_proxy 127\.0\.0\.1:\$\{port\}/);
     assert.match(ideaToProductSource, /command -v bun/);
-    assert.match(ideaToProductSource, /deployKind: serverBacked \? "service" : "static"/);
+    assert.match(ideaToProductSource, /publishKind: serverBacked \? "service" : "static"/);
+    // Publishing is an explicit post-run hook, never an implicit deploy step.
+    assert.match(ideaToProductSource, /id="hooks"/);
+    assert.doesNotMatch(ideaToProductSource, /id="deploy"/);
+    assert.match(ideaToProductSource, /postRunHooks/);
   });
 
   it("returns source, parsed metadata, sections, and a graph for a real workflow", async () => {
@@ -67,7 +71,9 @@ describe("Workflow source + code viewer", () => {
     assert.equal(data.language, "tsx");
     assert.ok(data.code.includes("smithers-display-name"));
     assert.ok(data.code.includes("<Workflow"));
-    assert.ok(data.code.includes("deploy=true is disabled for RunYard self-mutation runs"));
+    // Legacy deploy=true is a deprecated no-op reported as hook_config_required,
+    // never an inline prod deploy (and never a preflight run failure).
+    assert.ok(data.code.includes("deploy=true is deprecated and no longer deploys"));
     assert.equal(data.metadata.displayName, "Implement Change (gated)");
     assert.ok(typeof data.metadata.description === "string" && data.metadata.description.length > 5);
 
