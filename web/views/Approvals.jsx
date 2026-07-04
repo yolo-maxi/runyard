@@ -14,10 +14,11 @@ function approvalContext(approval) {
 }
 
 function approvalDecisionLabel(approval) {
-  const decision = approval?.decision || approval?.status || "";
+  const decision = approval?.resolution || approval?.decision || approval?.status || "";
   if (decision === "approved") return "Approved";
   if (decision === "changes_requested") return "Changes requested";
   if (decision === "rejected") return "Rejected";
+  if (decision === "superseded") return "Superseded (run ended)";
   return decision || "Pending";
 }
 
@@ -124,7 +125,7 @@ export function ApprovalDetail({ id }) {
         {run ? <a className="button" href={run.deepLink}>Open run</a> : null}
       </Toolbar>
       <p className="approval-detail-sub">
-        <StatusBadge value={approval.status} />
+        <StatusBadge value={approval.resolution || approval.status} />
         <span className="run-id-mono">{approval.id}</span>
         <span className="muted">{approval.createdAt || ""}</span>
       </p>

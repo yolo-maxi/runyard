@@ -16,8 +16,10 @@ import {
   legacyWorkflowStartApprovalUpdate,
   legacyWorkflowStartRunUpdate,
   normalizeApproval,
+  pendingApprovalsOnTerminalRunsQuery,
   pendingWorkflowStartApprovalsQuery
 } from "./operatorRecords.js";
+import { RUN_TERMINAL } from "./runLifecyclePolicy.js";
 import {
   APPROVAL_TIMER_FALLBACK_APPLIED,
   APPROVAL_TIMER_FALLBACK_REQUIRED,
@@ -175,7 +177,8 @@ export function createOperatorStore({ all, one, run, id, now, addRunEvent, getRu
           approval.id,
           fallback.decision,
           "system:approval-timer",
-          fallback.comment || `Approval timer elapsed after ${elapsedMs}ms; applied the configured fallback decision (${fallback.decision}).`
+          fallback.comment || `Approval timer elapsed after ${elapsedMs}ms; applied the configured fallback decision (${fallback.decision}).`,
+          "fallback_timer"
         );
         acted.push({ id: approval.id, action: timerState, decision: fallback.decision });
       } else {
@@ -223,25 +226,32 @@ export function createOperatorStore({ all, one, run, id, now, addRunEvent, getRu
     return all(query.sql, query.params).map(normalizeAudit);
   }
 
-  function resolveApproval(approvalId, decision, resolvedBy = "api", comment = "") {
+  // resolvedVia says which mechanism decided: 'human' (default — web, API,
+  // CLI, MCP, Telegram all carry a human's decision), 'fallback_timer'
+  // (autopilot), 'engine' (decision observed engine-side and mirrored),
+  // 'policy' (auto-approval by standing policy), 'system' (housekeeping, e.g.
+  // superseded cards on terminal runs).
+  function resolveApproval(approvalId, decision, resolvedBy = "api", comment = "", resolvedVia = "human") {
     const resolvedAt = now();
     const resolution = approvalResolution(decision, resolvedAt);
-    const query = approvalResolutionUpdateQuery({ approvalId, resolution, resolvedBy, comment, resolvedAt });
+    const query = approvalResolutionUpdateQuery({ approvalId, resolution, resolvedBy, resolvedVia, comment, resolvedAt });
     run(query.sql, query.params);
     const approval = getApproval(approvalId);
     if (approval) recordAudit(resolvedBy, resolution.auditAction, approvalId, {
       runId: approval.runId,
       decision: resolution.normalizedDecision,
+      resolvedVia,
       comment
     });
     if (approval?.runId) {
       addRunEvent(approval.runId, resolution.eventType, approval.title, {
         approvalId,
         decision: resolution.normalizedDecision,
+        resolvedVia,
         comment
       });
       const runRecord = getRun(approval.runId);
-      if (runRecord?.status === "waiting_approval") {
+      if (runRecord?.status === "waiting_approval" && resolution.runStatus) {
         updateRun(approval.runId, {
           status: resolution.runStatus,
           current_step: resolution.currentStep,
@@ -250,6 +260,29 @@ export function createOperatorStore({ all, one, run, id, now, addRunEvent, getRu
       }
     }
     return approval;
+  }
+
+  // Terminal-run card hygiene, run from the hub maintenance loop. A pending
+  // card whose run already reached a terminal state asks a question nobody
+  // can act on anymore; resolve it as `superseded` so the approval inbox only
+  // ever contains decisions that still matter. Never touches run state, and
+  // never touches run-less cards or cards on active/held runs (including
+  // waiting_approval, which is not terminal).
+  function sweepSupersededApprovals() {
+    const query = pendingApprovalsOnTerminalRunsQuery([...RUN_TERMINAL]);
+    const swept = [];
+    for (const row of all(query.sql, query.params)) {
+      const approval = normalizeApproval(row);
+      resolveApproval(
+        approval.id,
+        "superseded",
+        "system:run-terminal",
+        `Run ${approval.runId} ended (${row.run_status}) while this approval was still pending; the card is superseded.`,
+        "system"
+      );
+      swept.push({ id: approval.id, runId: approval.runId, runStatus: row.run_status });
+    }
+    return swept;
   }
 
   // When an engine-level approval gate is decided directly on the runner box
@@ -276,7 +309,8 @@ export function createOperatorStore({ all, one, run, id, now, addRunEvent, getRu
         approval.id,
         decision,
         "engine:cli",
-        `Engine-side decision observed for approval node '${nodeId || "approval"}' (${decision}); card auto-resolved to match.`
+        `Engine-side decision observed for approval node '${nodeId || "approval"}' (${decision}); card auto-resolved to match.`,
+        "engine"
       );
       resolved.push(approval.id);
     }
@@ -317,6 +351,7 @@ export function createOperatorStore({ all, one, run, id, now, addRunEvent, getRu
     recordAudit,
     resolveApproval,
     resolveEngineApprovalOnResume,
+    sweepSupersededApprovals,
     sweepTimedApprovals
   };
 }

@@ -152,7 +152,9 @@ describe("operator store", () => {
   it("resolves approvals with audit, event, and waiting-run updates", () => {
     const approved = {
       ...approvalRow,
-      status: "approved",
+      status: "resolved",
+      resolution: "approved",
+      resolved_via: "human",
       decision: "approved",
       resolved_by: "alice",
       resolved_at: "2026-07-01T00:00:00.000Z"
@@ -164,12 +166,14 @@ describe("operator store", () => {
 
     const approval = store.resolveApproval("appr_1", "approved", "alice", "ship it");
 
-    assert.equal(approval.status, "approved");
+    assert.equal(approval.status, "resolved");
+    assert.equal(approval.resolution, "approved");
+    assert.equal(approval.resolvedVia, "human");
     assert.deepEqual(events[0], [
       "run_1",
       "approval.approved",
       "Deploy?",
-      { approvalId: "appr_1", decision: "approved", comment: "ship it" }
+      { approvalId: "appr_1", decision: "approved", resolvedVia: "human", comment: "ship it" }
     ]);
     assert.deepEqual(runUpdates[0], [
       "run_1",

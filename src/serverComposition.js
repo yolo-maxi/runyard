@@ -127,6 +127,7 @@ export function createServerComposition({
     recordAlert,
     listAlerts,
     latestAlert,
+    sweepSupersededApprovals,
     sweepTimedApprovals
   } = db;
 
@@ -449,6 +450,7 @@ export function createServerComposition({
     reconcileFailedRecoverable,
     reconcileSupervisedChildTerminals,
     reconcileRunnerActiveRuns,
+    sweepSupersededApprovals,
     sweepTimedApprovals,
     routes: {
       adminReadHandlers,

@@ -154,7 +154,7 @@ export function createApprovalHandlers({
         return res.status(issue.status).json(issue.body);
       }
       if (issue?.status === 409) {
-        await answerTelegramCallbackQuery(callback.id, `Approval is already ${approval.status}.`);
+        await answerTelegramCallbackQuery(callback.id, `Approval is already ${approval.resolution || approval.status}.`);
         await clearTelegramApprovalButtons(callback);
         return res.status(issue.status).json(issue.body);
       }
