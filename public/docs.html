@@ -6,6 +6,16 @@
     <title>Runyard Setup &amp; Docs</title>
     <meta name="description" content="Install, run, deploy, and operate Runyard. CLI, MCP, runner pool, security model, environment variables, and open-source readiness." />
     <link rel="stylesheet" href="/public/styles.css" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28'%3E%3Crect width='28' height='28' rx='7' fill='%2315191f'/%3E%3Crect x='4' y='11' width='20' height='5' fill='%231f6f4a'/%3E%3Crect x='4' y='19' width='20' height='4.5' fill='%23b45309'/%3E%3C/svg%3E" />
+    <style>
+      /* Long env-var and identifier tokens must wrap on narrow phones. */
+      .band-docs code { overflow-wrap: anywhere; }
+      .band-docs pre { overflow-x: auto; }
+      /* Keep the phone topbar to the two links that matter. */
+      @media (max-width: 640px) {
+        .docs-nav-gh { display: none; }
+      }
+    </style>
   </head>
   <body>
     <header class="topbar">
@@ -15,9 +25,9 @@
         <span class="brand-pill">Setup</span>
       </div>
       <nav class="nav">
-        <a class="button" href="/">Landing</a>
-        <a class="button" href="/llms.txt">llms.txt</a>
-        <a class="button primary back-to-app" href="/app" title="Open the Runyard app — runs dashboard">Open RunYard →</a>
+        <a class="button" href="/">Home</a>
+        <a class="button docs-nav-gh" href="https://github.com/yolo-maxi/runyard" rel="noopener">GitHub</a>
+        <a class="button primary back-to-app" href="/app" title="Open the Runyard app — runs dashboard">Open the hub →</a>
       </nav>
     </header>
     <main class="band band-docs">
@@ -48,7 +58,7 @@
 
         <h1 id="quickstart">Quickstart</h1>
         <p>This page is the canonical Runyard quickstart — install, run, topology, CLI, MCP, runner pool, security, env vars, and verification, all in one place. The README points here so docs and code never drift.</p>
-        <p>If you just want to see Runyard work, open <a href="/">the landing page</a> and hit <strong>Try it: run <code>hello</code></strong>. Come back here when you want to wire MCP, CLI, API, or a runner pool to a real deployment.</p>
+        <p>If you just want to see Runyard work, open <a href="/app">the hub</a> and run the <code>hello</code> capability. Come back here when you want to wire MCP, CLI, API, or a runner pool to a real deployment.</p>
 
         <h1 id="what">What is Runyard</h1>
         <p>Runyard is a self-hosted control plane for agent runs. It exposes a capability catalog over MCP, CLI, HTTP API, and a Web Hub; dispatches work to local or remote runners; and stores logs, events, artifacts, approvals, skills, agents, and knowledge centrally. The codebase ships as the <code>runyard</code> package; the legacy <code>SMITHERS_HUB_*</code> environment variables are still honored as fallbacks so existing deployments keep working.</p>
@@ -88,7 +98,7 @@ open http://127.0.0.1:43117/app</pre>
           <li><strong>Private org.</strong> Hub on a small VPS with TLS reverse proxy, SQLite/artifacts on local disk, runners on separate machines.</li>
           <li><strong>Dedicated runner pool.</strong> One or more worker VPSes advertise tags and capacity. The Hub queue stays centralized; runners do not access SQLite directly.</li>
           <li><strong>Public docs + private Hub.</strong> Serve setup docs as a static public site, while `/app`, API, MCP, runner tokens, SQLite, and artifacts stay on the private Hub.</li>
-          <li><strong>Our deployment.</strong> <code>runyard.repo.box</code> is static docs. <code>hub.repo.box</code> is the live token-protected Hub. Build/agent work runs on a separate worker host, not on the serving box.</li>
+          <li><strong>Our deployment.</strong> <code>runyard.repo.box</code> is one Hub serving everything: the public landing and docs, and the token-protected app at <code>/app</code>. Build/agent work runs on a separate worker host, not on the serving box.</li>
         </ul>
 
         <h2 id="deploy">Deploy</h2>

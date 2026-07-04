@@ -3,27 +3,48 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>RunYard — Self-hosted control plane for AI agent runs</title>
+    <title>Runyard — self-hosted control plane for agent runs</title>
     <meta
       name="description"
-      content="RunYard is a self-hosted control plane for AI agent and workflow runs. Orchestrate long-running coding and automation workflows on your own machines, with durable state, live streaming logs, and human-in-the-loop approvals."
+      content="Runyard is a self-hosted control plane for long-running AI agent work. Queue runs from MCP, CLI, HTTP API, or the web hub; execute on your own runners; gate risky steps behind human approvals that never time out by accident."
     />
+    <meta property="og:title" content="Runyard — self-hosted control plane for agent runs" />
+    <meta
+      property="og:description"
+      content="Durable agent runs on your own machines. MCP, CLI, API, and web over one token. Approvals that hold runs instead of failing them."
+    />
+    <meta property="og:type" content="website" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 28'%3E%3Crect width='28' height='28' rx='7' fill='%2315191f'/%3E%3Crect x='4' y='11' width='20' height='5' fill='%231f6f4a'/%3E%3Crect x='4' y='19' width='20' height='4.5' fill='%23b45309'/%3E%3C/svg%3E" />
     <link rel="stylesheet" href="/public/styles.css" />
     <style>
       /* ====================================================================
        * Landing page — scoped styles.
-       * Everything here resolves to the brand design tokens defined in
-       * styles.css (--fs-*, --space-*, --accent, --ink, --surface, …) and
-       * reuses the shared .button / .brand primitives, so the page is the
-       * same product as the app. No ad-hoc font sizes or raw palette hex.
+       * Everything resolves to the shared design tokens in styles.css
+       * (--fs-*, --space-*, --accent, --warn-*, --info-*, --console-*) and
+       * reuses the shared .topbar / .brand / .button / .status primitives,
+       * so the page is visibly the same product as the app.
+       *
+       * Palette intent: off-white paper + ink, with the three product signal
+       * hues doing real work — green for the hub/runs, amber for approvals,
+       * blue for the machine surfaces (MCP/API). Dark panels are the app's
+       * own console color. No decorative gradients.
        * ================================================================== */
 
       .lp main { display: block; }
 
-      /* Generic centered content rail. */
+      .lp {
+        /* Console chrome (matches the app's run console) */
+        --lp-console-line: #22303f;
+        --lp-console-dim: #64798e;
+        --lp-console-head: #0b1218;
+        /* Local heading scale for marketing sections only */
+        --lp-fs-h2: clamp(26px, 3.4vw, 36px);
+        --lp-lh-h2: 1.15;
+      }
+
       .lp-wrap {
         width: 100%;
-        max-width: 1120px;
+        max-width: 1140px;
         margin: 0 auto;
         padding: 0 var(--space-6);
       }
@@ -35,62 +56,75 @@
         align-items: center;
         gap: var(--space-2);
         margin: 0 0 var(--space-5);
-        padding: var(--space-1) var(--space-3);
-        border-radius: var(--radius-pill);
-        background: var(--accent-tint);
-        border: var(--border-width) solid var(--accent-border);
-        color: var(--accent);
         font-size: var(--fs-xs);
         font-weight: var(--fw-semibold);
         letter-spacing: var(--tracking-label);
         text-transform: uppercase;
+        color: var(--accent);
       }
-      .lp-eyebrow .dot {
-        width: 7px;
-        height: 7px;
-        border-radius: 50%;
-        background: var(--accent);
+      .lp-eyebrow::before {
+        content: "";
+        width: 18px;
+        height: 2px;
+        background: currentColor;
         flex: 0 0 auto;
       }
+      .lp-eyebrow.amber { color: var(--warn-fg); }
+      .lp-eyebrow.blue { color: var(--info-fg); }
 
       /* ---- Hero ---------------------------------------------------------- */
       .lp-hero {
-        padding: clamp(var(--space-12), 8vw, 96px) 0 var(--space-16);
-        background:
-          radial-gradient(1100px 520px at 78% -8%, var(--accent-tint), transparent 60%),
-          radial-gradient(820px 420px at -5% 0%, var(--info-bg), transparent 55%);
+        position: relative;
+        padding: clamp(var(--space-12), 8vw, 104px) 0 clamp(var(--space-12), 7vw, 88px);
         border-bottom: var(--border-width) solid var(--border);
+        overflow: hidden;
       }
+      /* Engineer's dot grid, fading out — structure, not decoration. */
+      .lp-hero::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background-image: radial-gradient(var(--border-strong) 1px, transparent 1.6px);
+        background-size: 26px 26px;
+        opacity: 0.38;
+        -webkit-mask-image: linear-gradient(180deg, #000, transparent 82%);
+        mask-image: linear-gradient(180deg, #000, transparent 82%);
+        pointer-events: none;
+      }
+      .lp-hero .lp-wrap { position: relative; }
       .lp-hero-grid {
         display: grid;
-        grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+        grid-template-columns: minmax(0, 1.02fr) minmax(0, 0.98fr);
         gap: clamp(var(--space-8), 5vw, var(--space-16));
         align-items: center;
       }
       .lp-hero h1 {
-        font-size: var(--fs-display);
-        line-height: 1.02;
+        font-size: clamp(34px, 4.6vw, 56px);
+        line-height: 1.04;
         letter-spacing: -0.02em;
         font-weight: var(--fw-display);
         margin: 0 0 var(--space-5);
         color: var(--text-strong);
         text-wrap: balance;
       }
-      .lp-hero h1 .accent { color: var(--accent); }
+      .lp-hero h1 .mark {
+        color: var(--accent);
+      }
       .lp-lede {
         font-size: var(--fs-lg);
         line-height: var(--lh-lg);
         color: var(--text-secondary);
-        max-width: 38ch;
+        max-width: 46ch;
         margin: 0 0 var(--space-8);
       }
+      .lp-lede strong { color: var(--text); font-weight: var(--fw-semibold); }
       .lp-cta-row {
         display: flex;
         flex-wrap: wrap;
         gap: var(--space-3);
         align-items: center;
       }
-      .lp-cta-row .button { min-height: 44px; padding: 0 var(--space-5); }
+      .lp-cta-row .button { min-height: 44px; padding: 0 var(--space-5); font-size: var(--fs-base); }
       .lp-cta-note {
         margin: var(--space-5) 0 0;
         color: var(--text-muted);
@@ -99,23 +133,24 @@
       .lp-cta-note a { color: var(--link); text-decoration: none; }
       .lp-cta-note a:hover { text-decoration: underline; }
 
-      /* ---- Console card (the "watch your runs" proof) ------------------- */
+      /* ---- Run console (the product, not a mockup of something else) ---- */
       .lp-console {
         background: var(--console-bg);
         color: var(--console-fg);
         border-radius: var(--radius-lg);
-        border: var(--border-width) solid #1f2c3a;
+        border: var(--border-width) solid var(--lp-console-line);
         box-shadow: var(--shadow-lg);
         overflow: hidden;
         min-width: 0;
+        margin: 0;
       }
       .lp-console-bar {
         display: flex;
         align-items: center;
         gap: var(--space-2);
         padding: var(--space-3) var(--space-4);
-        border-bottom: var(--border-width) solid #1f2c3a;
-        background: #0b1218;
+        border-bottom: var(--border-width) solid var(--lp-console-line);
+        background: var(--lp-console-head);
       }
       .lp-console-bar .tl {
         width: 11px; height: 11px; border-radius: 50%;
@@ -133,13 +168,15 @@
         text-overflow: ellipsis;
         white-space: nowrap;
         min-width: 0;
+        flex: 1 1 auto;
       }
+      .lp-console-bar .status { flex: 0 0 auto; }
       .lp-console pre {
         margin: 0;
         padding: var(--space-4) var(--space-4) var(--space-5);
         font-family: var(--font-mono);
         font-size: var(--fs-sm);
-        line-height: 1.7;
+        line-height: 1.75;
         white-space: pre-wrap;
         overflow-wrap: anywhere;
       }
@@ -147,7 +184,26 @@
       .lp-console .c-ok { color: #6fcf97; }
       .lp-console .c-warn { color: #f0c674; }
       .lp-console .c-info { color: #82aaff; }
-      .lp-console .c-dim { color: #607387; }
+      .lp-console .c-dim { color: var(--lp-console-dim); }
+      /* The overnight hold — a labelled rule, because this is the point. */
+      .lp-console .c-hold {
+        display: flex;
+        align-items: center;
+        gap: var(--space-3);
+        margin: var(--space-2) 0;
+        color: #f0c674;
+        font-size: var(--fs-xs);
+        letter-spacing: 0.02em;
+        white-space: normal;
+      }
+      .lp-console .c-hold::before,
+      .lp-console .c-hold::after {
+        content: "";
+        height: 1px;
+        background: #3d3823;
+        flex: 1 1 0;
+        min-width: var(--space-4);
+      }
       .lp-console .cursor {
         display: inline-block;
         width: 8px;
@@ -157,47 +213,51 @@
         animation: lp-blink 1.1s steps(1) infinite;
       }
       @keyframes lp-blink { 0%, 50% { opacity: 1; } 50.01%, 100% { opacity: 0; } }
+      @media (prefers-reduced-motion: reduce) {
+        .lp-console .cursor { animation: none; }
+      }
 
-      /* ---- Logos / trust strip ----------------------------------------- */
+      /* ---- Fact strip ---------------------------------------------------- */
       .lp-strip {
         border-bottom: var(--border-width) solid var(--border);
         background: var(--surface);
       }
       .lp-strip .lp-wrap {
-        display: flex;
-        flex-wrap: wrap;
-        gap: var(--space-4) var(--space-8);
-        align-items: center;
-        justify-content: center;
-        padding-top: var(--space-5);
-        padding-bottom: var(--space-5);
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: var(--space-4) var(--space-6);
+        padding-top: var(--space-6);
+        padding-bottom: var(--space-6);
       }
-      .lp-strip span {
-        display: inline-flex;
-        align-items: center;
-        gap: var(--space-2);
-        color: var(--text-muted);
+      .lp-strip-item {
+        display: grid;
+        gap: 2px;
+        min-width: 0;
+      }
+      .lp-strip-item .k {
+        font-family: var(--font-mono);
         font-size: var(--fs-sm);
-        font-weight: var(--fw-medium);
+        font-weight: var(--fw-semibold);
+        color: var(--text-strong);
+        overflow-wrap: anywhere;
       }
-      .lp-strip span::before {
-        content: "";
-        width: 6px; height: 6px; border-radius: 50%;
-        background: var(--accent);
-        flex: 0 0 auto;
+      .lp-strip-item .v {
+        font-size: var(--fs-xs);
+        line-height: var(--lh-xs);
+        color: var(--text-muted);
       }
 
-      /* ---- Generic section header --------------------------------------- */
-      .lp-block { padding: clamp(var(--space-12), 7vw, 88px) 0; }
-      .lp-block.alt { background: var(--surface); border-block: var(--border-width) solid var(--border); }
-      .lp-head { max-width: 60ch; margin: 0 0 var(--space-10); }
-      .lp-head .lp-eyebrow { margin-bottom: var(--space-4); }
+      /* ---- Section scaffold ---------------------------------------------- */
+      .lp-block { padding: clamp(var(--space-12), 7vw, 92px) 0; }
+      .lp-head { max-width: 62ch; margin: 0 0 var(--space-10); }
       .lp-head h2 {
-        font-size: var(--fs-2xl);
-        line-height: var(--lh-2xl);
-        letter-spacing: -0.01em;
-        margin: 0 0 var(--space-3);
+        font-size: var(--lp-fs-h2);
+        line-height: var(--lp-lh-h2);
+        letter-spacing: -0.015em;
+        font-weight: var(--fw-bold);
+        margin: 0 0 var(--space-4);
         color: var(--text-strong);
+        text-wrap: balance;
       }
       .lp-head p {
         margin: 0;
@@ -205,8 +265,210 @@
         line-height: var(--lh-md);
         color: var(--text-secondary);
       }
+      .lp-head p code,
+      .lp-points code {
+        font-size: var(--fs-sm);
+        background: var(--surface-2);
+        border: var(--border-width) solid var(--border);
+        border-radius: var(--radius-sm);
+        padding: 0 5px;
+      }
 
-      /* ---- How it works: hub + runners flow ----------------------------- */
+      /* ---- Surfaces: MCP / CLI / API ------------------------------------- */
+      .lp-surfaces {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: var(--space-5);
+        align-items: start;
+      }
+      .lp-panel {
+        border: var(--border-width) solid var(--border);
+        border-radius: var(--radius-lg);
+        background: var(--surface);
+        overflow: hidden;
+        min-width: 0;
+        box-shadow: var(--shadow-xs);
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+      }
+      .lp-panel-head {
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
+        padding: var(--space-2-5) var(--space-4);
+        border-bottom: var(--border-width) solid var(--border);
+        background: var(--surface-2);
+      }
+      .lp-panel-head .dot {
+        width: 8px; height: 8px; border-radius: 50%;
+        background: var(--info-fg);
+        flex: 0 0 auto;
+      }
+      .lp-panel-head strong {
+        font-size: var(--fs-sm);
+        font-weight: var(--fw-semibold);
+        color: var(--text-strong);
+      }
+      .lp-panel-head .tag {
+        margin-left: auto;
+        font-family: var(--font-mono);
+        font-size: var(--fs-2xs);
+        color: var(--text-muted);
+        border: var(--border-width) solid var(--border);
+        border-radius: var(--radius-pill);
+        padding: 1px 8px;
+        background: var(--surface);
+        white-space: nowrap;
+      }
+      .lp-panel pre {
+        margin: 0;
+        padding: var(--space-4);
+        background: var(--console-bg);
+        color: var(--console-fg);
+        font-family: var(--font-mono);
+        font-size: var(--fs-xs);
+        line-height: 1.8;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        flex: 1 1 auto;
+      }
+      .lp-panel pre .c-prompt { color: #8da2b5; }
+      .lp-panel pre .c-ok { color: #6fcf97; }
+      .lp-panel pre .c-info { color: #82aaff; }
+      .lp-panel pre .c-warn { color: #f0c674; }
+      .lp-panel pre .c-dim { color: var(--lp-console-dim); }
+      .lp-panel-foot {
+        padding: var(--space-3) var(--space-4);
+        border-top: var(--border-width) solid var(--border);
+        font-size: var(--fs-xs);
+        line-height: var(--lh-xs);
+        color: var(--text-muted);
+      }
+      .lp-panel-foot code {
+        font-size: var(--fs-2xs);
+        background: var(--surface-2);
+        border: var(--border-width) solid var(--border);
+        border-radius: var(--radius-sm);
+        padding: 0 4px;
+      }
+      .lp-surfaces-foot {
+        margin: var(--space-6) 0 0;
+        font-size: var(--fs-sm);
+        color: var(--text-muted);
+      }
+      .lp-surfaces-foot a { color: var(--link); text-decoration: none; }
+      .lp-surfaces-foot a:hover { text-decoration: underline; }
+
+      /* ---- Approvals ------------------------------------------------------ */
+      .lp-approvals {
+        background: var(--warn-bg);
+        border-block: var(--border-width) solid var(--warn-border);
+      }
+      .lp-approvals-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 460px);
+        gap: clamp(var(--space-8), 4vw, var(--space-16));
+        align-items: center;
+      }
+      .lp-points {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: var(--space-5);
+      }
+      .lp-points li {
+        position: relative;
+        padding-left: var(--space-6);
+        font-size: var(--fs-md);
+        line-height: var(--lh-md);
+        color: var(--text-secondary);
+      }
+      .lp-points li::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 9px;
+        width: 10px;
+        height: 10px;
+        border-radius: 3px;
+        background: var(--warn-fg);
+      }
+      .lp-points li strong {
+        display: block;
+        color: var(--text-strong);
+        font-weight: var(--fw-semibold);
+      }
+
+      /* Approval card — drawn with the app's own card grammar. */
+      .lp-approval {
+        margin: 0;
+        background: var(--surface);
+        border: var(--border-width) solid var(--border);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-md);
+        padding: var(--space-5) var(--space-5) var(--space-4);
+        display: grid;
+        gap: var(--space-3);
+        min-width: 0;
+      }
+      .lp-approval-head {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: var(--space-2);
+      }
+      .lp-approval-head .rid {
+        font-family: var(--font-mono);
+        font-size: var(--fs-xs);
+        color: var(--text-muted);
+      }
+      .lp-approval h3 {
+        margin: 0;
+        font-size: var(--fs-lg);
+        line-height: var(--lh-lg);
+        color: var(--text-strong);
+      }
+      .lp-approval-desc {
+        margin: 0;
+        font-size: var(--fs-sm);
+        line-height: var(--lh-sm);
+        color: var(--text-secondary);
+      }
+      .lp-approval-facts {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: var(--space-2) var(--space-4);
+        padding: var(--space-3) 0;
+        border-block: var(--border-width) solid var(--border);
+      }
+      .lp-approval-facts div { min-width: 0; }
+      .lp-approval-facts dt {
+        font-size: var(--fs-2xs);
+        font-weight: var(--fw-semibold);
+        letter-spacing: var(--tracking-label);
+        text-transform: uppercase;
+        color: var(--text-muted);
+        margin: 0;
+      }
+      .lp-approval-facts dd {
+        margin: 2px 0 0;
+        font-size: var(--fs-sm);
+        color: var(--text);
+        font-family: var(--font-mono);
+        overflow-wrap: anywhere;
+      }
+      .lp-approval-facts dd.hold { color: var(--warn-fg); font-weight: var(--fw-semibold); }
+      .lp-approval-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--space-2);
+      }
+      /* Visual-only buttons inside the composition. */
+      .lp-approval-actions .button { pointer-events: none; }
+
+      /* ---- Architecture ---------------------------------------------------- */
       .lp-flow {
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -226,7 +488,7 @@
       }
       .lp-node.hub {
         border-color: var(--accent-border);
-        background: linear-gradient(180deg, var(--accent-tint), var(--surface) 72%);
+        background: var(--accent-tint);
         box-shadow: var(--shadow-sm);
       }
       .lp-node-kicker {
@@ -237,7 +499,7 @@
         color: var(--text-muted);
       }
       .lp-node.hub .lp-node-kicker { color: var(--accent); }
-      .lp-node h3 { margin: 0; font-size: var(--fs-md); }
+      .lp-node h3 { margin: 0; font-size: var(--fs-md); color: var(--text-strong); }
       .lp-node ul {
         list-style: none;
         margin: 0;
@@ -262,7 +524,6 @@
         background: var(--border-strong);
       }
       .lp-node.hub li::before { background: var(--accent); }
-      /* Connector arrows between the three columns. */
       .lp-flow .lp-node:not(:last-child)::after {
         content: "→";
         position: absolute;
@@ -278,7 +539,9 @@
       .lp-flow-foot {
         margin: var(--space-6) 0 0;
         font-size: var(--fs-sm);
+        line-height: var(--lh-sm);
         color: var(--text-muted);
+        max-width: 74ch;
       }
       .lp-flow-foot code {
         background: var(--surface-2);
@@ -288,14 +551,18 @@
         font-size: var(--fs-xs);
       }
 
-      /* ---- Features grid ------------------------------------------------- */
+      /* ---- Features -------------------------------------------------------- */
+      .lp-features-block {
+        background: var(--surface);
+        border-block: var(--border-width) solid var(--border);
+      }
       .lp-features {
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: var(--space-4);
       }
       .lp-feature {
-        background: var(--surface);
+        background: var(--bg);
         border: var(--border-width) solid var(--border);
         border-radius: var(--radius-lg);
         padding: var(--space-6);
@@ -303,13 +570,11 @@
         flex-direction: column;
         gap: var(--space-2);
         min-width: 0;
-        transition: border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
+        transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
       }
-      .lp-block.alt .lp-feature { background: var(--bg); }
       .lp-feature:hover {
         border-color: var(--border-strong);
         box-shadow: var(--shadow-sm);
-        transform: translateY(-2px);
       }
       .lp-feature-icon {
         width: 38px; height: 38px;
@@ -323,8 +588,18 @@
         margin-bottom: var(--space-2);
         flex: 0 0 auto;
       }
+      .lp-feature-icon.blue {
+        background: var(--info-bg);
+        border-color: var(--info-border);
+        color: var(--info-fg);
+      }
+      .lp-feature-icon.amber {
+        background: var(--warn-bg);
+        border-color: var(--warn-border);
+        color: var(--warn-fg);
+      }
       .lp-feature-icon svg { width: 19px; height: 19px; display: block; }
-      .lp-feature h3 { margin: 0; font-size: var(--fs-md); }
+      .lp-feature h3 { margin: 0; font-size: var(--fs-md); color: var(--text-strong); }
       .lp-feature p {
         margin: 0;
         font-size: var(--fs-sm);
@@ -340,30 +615,86 @@
         padding: 0 4px;
       }
 
-      /* ---- Final CTA ---------------------------------------------------- */
-      .lp-final {
-        text-align: center;
-        background:
-          radial-gradient(900px 360px at 50% 120%, var(--accent-tint), transparent 60%);
+      /* ---- Quickstart (dark close) ----------------------------------------- */
+      .lp-quick {
+        background: var(--console-bg);
+        color: var(--console-fg);
+        border-top: var(--border-width) solid var(--lp-console-line);
       }
-      .lp-final h2 {
-        font-size: var(--fs-2xl);
-        line-height: var(--lh-2xl);
-        letter-spacing: -0.01em;
-        margin: 0 auto var(--space-3);
-        max-width: 22ch;
-        color: var(--text-strong);
+      .lp-quick-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+        gap: clamp(var(--space-8), 4vw, var(--space-16));
+        align-items: center;
       }
-      .lp-final p {
-        margin: 0 auto var(--space-8);
-        max-width: 52ch;
-        color: var(--text-secondary);
+      .lp-quick h2 {
+        font-size: var(--lp-fs-h2);
+        line-height: var(--lp-lh-h2);
+        letter-spacing: -0.015em;
+        font-weight: var(--fw-bold);
+        margin: 0 0 var(--space-4);
+        color: #f2f7fc;
+        text-wrap: balance;
+      }
+      .lp-quick p {
+        margin: 0 0 var(--space-6);
         font-size: var(--fs-md);
         line-height: var(--lh-md);
+        color: #9fb2c4;
+        max-width: 46ch;
       }
-      .lp-final .lp-cta-row { justify-content: center; }
+      .lp-quick .lp-cta-row .button {
+        border-color: #33424f;
+        background: transparent;
+        color: #dbeafe;
+      }
+      .lp-quick .lp-cta-row .button:hover {
+        border-color: #4a5d70;
+        background: rgba(255, 255, 255, 0.05);
+        color: #ffffff;
+      }
+      .lp-quick .lp-cta-row .button.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: var(--text-on-accent);
+      }
+      .lp-quick .lp-cta-row .button.primary:hover {
+        background: var(--accent-hover);
+        border-color: var(--accent-hover);
+      }
+      .lp-quick-code {
+        margin: 0;
+        border: var(--border-width) solid var(--lp-console-line);
+        border-radius: var(--radius-lg);
+        background: var(--lp-console-head);
+        overflow: hidden;
+      }
+      .lp-quick-code pre {
+        margin: 0;
+        padding: var(--space-5);
+        font-family: var(--font-mono);
+        font-size: var(--fs-sm);
+        line-height: 1.9;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+      .lp-quick-code .c-prompt { color: #8da2b5; }
+      .lp-quick-code .c-cmd { color: #dbeafe; }
+      .lp-quick-code .c-dim { color: var(--lp-console-dim); }
+      .lp-quick-note {
+        margin: var(--space-4) 0 0;
+        font-size: var(--fs-xs);
+        line-height: var(--lh-xs);
+        color: var(--lp-console-dim);
+      }
+      .lp-quick-note code {
+        background: rgba(255, 255, 255, 0.06);
+        border-radius: var(--radius-sm);
+        padding: 0 4px;
+        font-size: var(--fs-2xs);
+      }
 
-      /* ---- Footer ------------------------------------------------------- */
+      /* ---- Footer ---------------------------------------------------------- */
       .lp-footer {
         border-top: var(--border-width) solid var(--border);
         background: var(--surface);
@@ -381,7 +712,7 @@
         margin: var(--space-3) 0 0;
         color: var(--text-muted);
         font-size: var(--fs-sm);
-        max-width: 36ch;
+        max-width: 40ch;
       }
       .lp-footer-links {
         display: flex;
@@ -412,16 +743,22 @@
       .lp-footer-note a { color: var(--link); text-decoration: none; }
       .lp-footer-note a:hover { text-decoration: underline; }
 
-      /* ---- Responsive --------------------------------------------------- */
+      /* ---- Responsive ------------------------------------------------------ */
+      @media (max-width: 1020px) {
+        .lp-surfaces { grid-template-columns: 1fr; }
+        .lp-features { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      }
+
       @media (max-width: 960px) {
         .lp-hero-grid { grid-template-columns: 1fr; gap: var(--space-10); }
-        .lp-lede { max-width: 52ch; }
-        .lp-features { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .lp-lede { max-width: 56ch; }
+        .lp-approvals-grid { grid-template-columns: 1fr; gap: var(--space-8); }
+        .lp-quick-grid { grid-template-columns: 1fr; gap: var(--space-8); }
+        .lp-strip .lp-wrap { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       }
 
       @media (max-width: 760px) {
         .lp-flow { grid-template-columns: 1fr; }
-        /* Arrows point down when the flow stacks. */
         .lp-flow .lp-node:not(:last-child)::after {
           content: "↓";
           right: auto;
@@ -439,12 +776,15 @@
         .lp-features { grid-template-columns: 1fr; }
         .lp-cta-row .button { width: 100%; }
         .lp-footer-top { flex-direction: column; }
+        .lp-console pre { font-size: var(--fs-xs); }
+        .lp-approval-facts { grid-template-columns: 1fr 1fr; }
+        /* Keep the topbar to the two links that matter on a phone. */
+        .lp .nav .lp-nav-gh { display: none; }
       }
 
-      @media (max-width: 380px) {
-        /* Display clamp already shrinks the H1; nudge the lede tighter so
-         * nothing crowds the edge on a 360px viewport. */
+      @media (max-width: 400px) {
         .lp-lede { font-size: var(--fs-md); line-height: var(--lh-md); }
+        .lp-strip .lp-wrap { grid-template-columns: 1fr; }
       }
     </style>
   </head>
@@ -456,8 +796,8 @@
       </a>
       <nav class="nav" aria-label="Primary">
         <a class="button" href="/docs">Docs</a>
-        <a class="button" href="https://github.com/yolo-maxi/runyard" rel="noopener">GitHub</a>
-        <a class="button primary" href="/app" title="Sign in and open the RunYard hub">Open the hub →</a>
+        <a class="button lp-nav-gh" href="https://github.com/yolo-maxi/runyard" rel="noopener">GitHub</a>
+        <a class="button primary" href="/app" title="Sign in and open the Runyard hub">Open the hub →</a>
       </nav>
     </header>
 
@@ -466,13 +806,14 @@
       <section class="lp-hero">
         <div class="lp-wrap">
           <div class="lp-hero-grid">
-            <div class="lp-hero-copy">
-              <p class="lp-eyebrow"><span class="dot" aria-hidden="true"></span>Self-hosted · open · runs on your infra</p>
-              <h1>A control plane for AI agent runs — on <span class="accent">your own machines</span>.</h1>
+            <div>
+              <p class="lp-eyebrow">Self-hosted · MIT · agent-operable</p>
+              <h1><span class="mark">Runyard</span> is the control plane for long-running agent work.</h1>
               <p class="lp-lede">
-                RunYard orchestrates long-running coding and automation workflows across your own
-                runners — with durable state, live streaming logs, and human-in-the-loop approvals.
-                Crash-safe, private by default, deploy anywhere.
+                Queue runs from MCP, CLI, API, or the web hub and execute them on machines you
+                control. <strong>Crash a runner and the run resumes.</strong> Put a human gate on
+                the risky step — and if that human answers tomorrow, the run is still there:
+                <strong>held, not failed.</strong>
               </p>
               <div class="lp-cta-row">
                 <a class="button primary" href="/app">Open the hub →</a>
@@ -481,52 +822,223 @@
               <p class="lp-cta-note">
                 Free &amp; open source ·
                 <a href="https://github.com/yolo-maxi/runyard" rel="noopener">GitHub</a> ·
-                <a href="/llms.txt">llms.txt</a>
+                <a href="/llms.txt">llms.txt</a> ·
+                <a href="/openapi.json">openapi.json</a>
               </p>
             </div>
 
-            <div class="lp-console" role="img" aria-label="Example RunYard run console: a workflow streams logs, pauses for approval, then succeeds">
+            <figure class="lp-console" role="img"
+              aria-label="A Runyard run timeline: the run starts at night, pauses for human approval, is held overnight without failing, then is approved in the morning and succeeds.">
               <div class="lp-console-bar">
                 <span class="tl r" aria-hidden="true"></span>
                 <span class="tl a" aria-hidden="true"></span>
                 <span class="tl g" aria-hidden="true"></span>
-                <span class="title">runyard logs -f run_01J8C</span>
+                <span class="title">runyard tail run_01JDQ8</span>
+                <span class="status succeeded">succeeded</span>
               </div>
-              <pre aria-hidden="true"><span class="c-prompt">$ runyard logs -f run_01J8C</span>
-<span class="c-dim">[12:04:01]</span> <span class="c-info">▶</span> run started   workflow=nightly-audit
-<span class="c-dim">[12:04:01]</span>            runner=hetzner-1  tags=linux,git
-<span class="c-dim">[12:04:09]</span> <span class="c-ok">✓</span> workspace ready @ a1b2c3d
-<span class="c-dim">[12:04:11]</span> <span class="c-info">→</span> agent scanning 482 files…
-<span class="c-dim">[12:06:40]</span> <span class="c-warn">⏸</span> approval required: open PR to main
-<span class="c-dim">[12:07:02]</span> <span class="c-ok">✓</span> approved by ocean
-<span class="c-dim">[12:07:18]</span> <span class="c-ok">★</span> run succeeded · 2 artifacts
+              <pre aria-hidden="true"><span class="c-prompt">$ runyard tail run_01JDQ8</span>
+<span class="c-dim">[22:41:07]</span> <span class="c-info">▶</span> queued          capability=improve
+<span class="c-dim">[22:41:09]</span> <span class="c-info">●</span> claimed         runner=hetzner-1
+<span class="c-dim">[22:41:14]</span> <span class="c-ok">✓</span> workspace ready @ 3f9c2ab
+<span class="c-dim">[22:43:52]</span> <span class="c-info">→</span> 214 files scanned · patch drafted
+<span class="c-dim">[22:44:01]</span> <span class="c-warn">⏸</span> approval requested — “push fix to main”
+<span class="c-hold">waiting_approval · 10 h 13 m · run held, nothing lost</span><span class="c-dim">[08:57:33]</span> <span class="c-ok">✓</span> approved by fran · via telegram
+<span class="c-dim">[08:57:35]</span> <span class="c-info">▶</span> resumed at step 4/5
+<span class="c-dim">[08:58:20]</span> <span class="c-ok">★</span> succeeded · 2 artifacts · timeline kept
 <span class="c-prompt">$ </span><span class="cursor" aria-hidden="true"></span></pre>
-            </div>
+            </figure>
           </div>
         </div>
       </section>
 
-      <!-- ===================== TRUST / VALUE STRIP ==================== -->
+      <!-- ========================= FACT STRIP ========================= -->
       <section class="lp-strip" aria-label="At a glance">
         <div class="lp-wrap">
-          <span>Durable &amp; crash-safe runs</span>
-          <span>Live streaming console</span>
-          <span>Your infra, your data</span>
-          <span>Docker &amp; confidential VMs</span>
-          <span>Built on Smithers</span>
+          <div class="lp-strip-item">
+            <span class="k">One token, four surfaces</span>
+            <span class="v">Web, CLI, HTTP API, and MCP authenticate the same way</span>
+          </div>
+          <div class="lp-strip-item">
+            <span class="k">Node + SQLite</span>
+            <span class="v">Single-process hub, no external database to babysit</span>
+          </div>
+          <div class="lp-strip-item">
+            <span class="k">Runners dial out</span>
+            <span class="v">Workers poll over HTTPS — no inbound ports on your machines</span>
+          </div>
+          <div class="lp-strip-item">
+            <span class="k">MIT licensed</span>
+            <span class="v">Self-hosted by design; your code and data stay yours</span>
+          </div>
         </div>
       </section>
 
-      <!-- ========================= HOW IT WORKS ====================== -->
+      <!-- ==================== SURFACES: MCP / CLI / API ================ -->
+      <section class="lp-block" id="surfaces">
+        <div class="lp-wrap">
+          <div class="lp-head">
+            <p class="lp-eyebrow blue">MCP · CLI · HTTP API · Web</p>
+            <h2>Built for agents to drive — and for you to inspect.</h2>
+            <p>
+              Runyard treats AI agents as first-class operators. The capability catalog, runs,
+              logs, artifacts, and approvals are one product exposed over four surfaces — same
+              data, same token, no drift between what your agent sees and what you see.
+            </p>
+          </div>
+
+          <div class="lp-surfaces">
+            <figure class="lp-panel">
+              <div class="lp-panel-head">
+                <span class="dot" aria-hidden="true"></span>
+                <strong>MCP</strong>
+                <span class="tag">runyard-mcp</span>
+              </div>
+              <pre><span class="c-info">▸</span> run_capability <span class="c-dim">{ id: "improve",
+    executionMode: "remote" }</span>
+<span class="c-ok">✓</span> run_01JDQ8 queued
+  <span class="c-dim">deepLink /app#runs/run_01JDQ8</span>
+<span class="c-info">▸</span> get_run_status <span class="c-dim">run_01JDQ8</span>
+<span class="c-ok">✓</span> running · step 2/5 · hetzner-1
+<span class="c-info">▸</span> list_pending_approvals
+<span class="c-warn">⏸</span> appr_7F2K · “push fix to main”</pre>
+              <figcaption class="lp-panel-foot">
+                <code>runyard mcp install --all</code> writes the server config into every
+                detected client — Claude Code, Codex, Cursor, Windsurf, and friends.
+              </figcaption>
+            </figure>
+
+            <figure class="lp-panel">
+              <div class="lp-panel-head">
+                <span class="dot" aria-hidden="true"></span>
+                <strong>CLI</strong>
+                <span class="tag">runyard</span>
+              </div>
+              <pre><span class="c-prompt">$</span> runyard run improve <span class="c-dim">--where remote \
+    --input '{"target":"flaky spec"}'</span>
+run_01JDQ8 · queued → hetzner-1
+<span class="c-prompt">$</span> runyard tail run_01JDQ8
+<span class="c-prompt">$</span> runyard approvals
+appr_7F2K · improve · pending
+<span class="c-prompt">$</span> runyard approve appr_7F2K
+<span class="c-ok">✓</span> approved · run resumed</pre>
+              <figcaption class="lp-panel-foot">
+                Log in once with <code>runyard login</code>; multiple hubs work like git
+                remotes. <code>tail</code> streams the run timeline as NDJSON.
+              </figcaption>
+            </figure>
+
+            <figure class="lp-panel">
+              <div class="lp-panel-head">
+                <span class="dot" aria-hidden="true"></span>
+                <strong>HTTP API</strong>
+                <span class="tag">/api</span>
+              </div>
+              <pre><span class="c-prompt">$</span> curl -s -X POST \
+  <span class="c-dim">-H "authorization: Bearer $TOKEN"</span> \
+  $HUB/api/capabilities/improve/run
+<span class="c-dim">{</span>
+  "id": <span class="c-ok">"run_01JDQ8"</span>,
+  "status": <span class="c-warn">"queued"</span>,
+  "deepLink": "/app#runs/run_01JDQ8"
+<span class="c-dim">}</span></pre>
+              <figcaption class="lp-panel-foot">
+                Everything the web hub does goes through the same JSON API. Responses carry
+                <code>deepLink</code> URLs you can hand straight to an operator.
+              </figcaption>
+            </figure>
+          </div>
+
+          <p class="lp-surfaces-foot">
+            The whole surface is machine-readable: <a href="/openapi.json">openapi.json</a> and
+            <a href="/llms.txt">llms.txt</a> are generated from the live hub, so they never drift
+            from the code.
+          </p>
+        </div>
+      </section>
+
+      <!-- ========================== APPROVALS ========================= -->
+      <section class="lp-block lp-approvals" id="approvals">
+        <div class="lp-wrap">
+          <div class="lp-approvals-grid">
+            <div>
+              <p class="lp-eyebrow amber">Human-in-the-loop</p>
+              <div class="lp-head" style="margin-bottom: var(--space-8)">
+                <h2>Humans are slow. Runs should wait, not die.</h2>
+                <p>
+                  Gate the step that matters — pushing to main, spending money, touching prod —
+                  and let everything before it run unattended.
+                </p>
+              </div>
+              <ul class="lp-points">
+                <li>
+                  <strong>Held means held.</strong>
+                  A run waiting on a person is parked in <code>waiting_approval</code> — it is
+                  never age-reaped or deadline-failed while it waits. Approve ten hours later and
+                  it resumes at the exact step it paused on.
+                </li>
+                <li>
+                  <strong>Deadlines are explicit, never implicit.</strong>
+                  Want a time limit? Attach a timer with a fallback decision and the hub applies
+                  it on your behalf, fully audited. A timer without a fallback only escalates —
+                  it never decides for you.
+                </li>
+                <li>
+                  <strong>Answer from wherever you are.</strong>
+                  Web, CLI, API, MCP, or a Telegram DM — one decision, recorded once, with the
+                  who/when/where in the run's permanent timeline.
+                </li>
+              </ul>
+            </div>
+
+            <figure class="lp-approval" role="img"
+              aria-label="A Runyard approval card: the improve run asks to push a fix to main, has waited ten hours in the held state, and offers approve, request-changes, and reject actions.">
+              <div class="lp-approval-head">
+                <span class="status waiting_approval">waiting_approval</span>
+                <span class="rid">appr_7F2K · run_01JDQ8</span>
+              </div>
+              <h3>Push fix to main</h3>
+              <p class="lp-approval-desc">
+                Patch touches checkout retry logic — 2 files, +18 −6. Tests green on
+                runner hetzner-1.
+              </p>
+              <dl class="lp-approval-facts">
+                <div>
+                  <dt>Requested</dt>
+                  <dd>22:44 · by improve</dd>
+                </div>
+                <div>
+                  <dt>Waiting</dt>
+                  <dd class="hold">10 h 13 m · held</dd>
+                </div>
+                <div>
+                  <dt>Capability</dt>
+                  <dd>improve</dd>
+                </div>
+                <div>
+                  <dt>Fallback</dt>
+                  <dd>none · waits for you</dd>
+                </div>
+              </dl>
+              <div class="lp-approval-actions" aria-hidden="true">
+                <span class="button primary">Approve</span>
+                <span class="button">Request changes</span>
+                <span class="button danger">Reject</span>
+              </div>
+            </figure>
+          </div>
+        </div>
+      </section>
+
+      <!-- ========================= ARCHITECTURE ======================= -->
       <section class="lp-block" id="how">
         <div class="lp-wrap">
           <div class="lp-head">
-            <p class="lp-eyebrow"><span class="dot" aria-hidden="true"></span>How it works</p>
-            <h2>One hub. A pool of runners. Full visibility end to end.</h2>
+            <p class="lp-eyebrow">How it works</p>
+            <h2>One hub. Any number of runners. All of it yours.</h2>
             <p>
-              RunYard is a hub — the control plane: API, web UI, durable datastore, and run
-              queue — plus one or more delegated runners that execute the actual work. Runners
-              can live anywhere: a VPS, your laptop, Kubernetes, or a confidential VM.
+              The hub is the control plane — API, web UI, run queue, and a durable datastore.
+              Runners are disposable workers that claim matching work and stream everything
+              back. Kill any of them; the record survives.
             </p>
           </div>
 
@@ -536,8 +1048,8 @@
               <h3>Agents &amp; people</h3>
               <ul>
                 <li>MCP server for AI clients</li>
-                <li>CLI, HTTP API &amp; web UI</li>
-                <li>Approve from Web, CLI, API, Telegram</li>
+                <li>CLI, HTTP API &amp; web hub</li>
+                <li>Approvals from web, CLI, API, MCP, Telegram</li>
               </ul>
             </article>
 
@@ -545,9 +1057,9 @@
               <span class="lp-node-kicker">Control plane</span>
               <h3>The hub</h3>
               <ul>
-                <li>Durable datastore &amp; run queue</li>
+                <li>Durable run queue &amp; datastore</li>
                 <li>Live event tail &amp; streaming logs</li>
-                <li>Approval gates &amp; full run history</li>
+                <li>Approval holds, artifacts, audit history</li>
               </ul>
             </article>
 
@@ -556,24 +1068,25 @@
               <h3>Delegated runners</h3>
               <ul>
                 <li>VPS, laptop, k8s, or confidential VM</li>
-                <li>One pool, route work by tags</li>
-                <li>Disposable workers, durable record</li>
+                <li>Route work by tags — <code>linux</code>, <code>gpu</code>, <code>git</code></li>
+                <li>Poll out over HTTPS; no inbound ports</li>
               </ul>
             </article>
           </div>
           <p class="lp-flow-foot">
-            Under the hood the execution engine is <strong>Smithers</strong>
-            (<code>smithers-orchestrator</code>) — RunYard is the control plane around it.
+            The execution engine is <strong>Smithers</strong> (<code>smithers-orchestrator</code>);
+            Runyard is the control plane around it — queueing, visibility, approvals, artifacts,
+            and the pool of machines that do the work.
           </p>
         </div>
       </section>
 
-      <!-- ========================== FEATURES ========================= -->
-      <section class="lp-block alt" id="features">
+      <!-- ========================== FEATURES ========================== -->
+      <section class="lp-block lp-features-block" id="features">
         <div class="lp-wrap">
           <div class="lp-head">
-            <p class="lp-eyebrow"><span class="dot" aria-hidden="true"></span>Why RunYard</p>
-            <h2>Everything you need to run agents in production — that you actually control.</h2>
+            <p class="lp-eyebrow">Why Runyard</p>
+            <h2>Production manners for agent workloads.</h2>
           </div>
 
           <div class="lp-features">
@@ -582,60 +1095,80 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 4 21 10 15 10"/></svg>
               </span>
               <h3>Durable &amp; crash-safe</h3>
-              <p>Runs are persisted as they progress. Restart the hub or a runner and work resumes from where it left off — no lost progress, no orphaned jobs.</p>
+              <p>Runs persist as they progress. Restart the hub or a runner and work resumes where it left off — no lost progress, no orphaned jobs.</p>
             </article>
 
             <article class="lp-feature">
-              <span class="lp-feature-icon" aria-hidden="true">
+              <span class="lp-feature-icon blue" aria-hidden="true">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z"/><circle cx="12" cy="12" r="3"/></svg>
               </span>
-              <h3>Full visibility</h3>
-              <p>A live streaming console and event tail for every run — like <code>docker logs -f</code> for an agent. See each step, tool call, and artifact as it happens.</p>
+              <h3>Watch every step</h3>
+              <p>A live streaming console and unified timeline for every run — each step, tool call, log line, and artifact as it happens, kept forever.</p>
             </article>
 
             <article class="lp-feature">
-              <span class="lp-feature-icon" aria-hidden="true">
+              <span class="lp-feature-icon amber" aria-hidden="true">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
               </span>
-              <h3>Human-in-the-loop</h3>
-              <p>Gate sensitive steps behind approvals. Review and approve or reject from the Web UI, CLI, API, MCP, or Telegram — without re-implementing gates per surface.</p>
+              <h3>Approvals that hold</h3>
+              <p>Sensitive steps pause the run and wait for a human — from any surface. Late answers resume work; they don't restart it.</p>
             </article>
 
             <article class="lp-feature">
               <span class="lp-feature-icon" aria-hidden="true">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M7 20h10M9 16v4m6-4v4"/></svg>
               </span>
-              <h3>Runs on your infra</h3>
-              <p>Self-hosted by design. Code, data, and credentials stay on machines you control — bearer-token auth, per-deployment data dir, no SaaS dependency.</p>
+              <h3>Your infra, your data</h3>
+              <p>Self-hosted by design: bearer-token auth with scopes, per-deployment data directory, artifacts on your disk. No SaaS in the loop.</p>
             </article>
 
             <article class="lp-feature">
-              <span class="lp-feature-icon" aria-hidden="true">
+              <span class="lp-feature-icon blue" aria-hidden="true">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8m-4-4v4"/><path d="M6 7h.01M10 7h.01M6 11h6"/></svg>
               </span>
               <h3>One pool, many machines</h3>
-              <p>Bring more capacity online with one process per host. Runners join a single pool and you route work by tags — <code>linux</code>, <code>gpu</code>, <code>git</code>, your call.</p>
+              <p>One process per host joins the pool and advertises tags and capacity. The hub routes work to matching runners and never double-assigns a run.</p>
             </article>
 
             <article class="lp-feature">
-              <span class="lp-feature-icon" aria-hidden="true">
+              <span class="lp-feature-icon amber" aria-hidden="true">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 3 7v10l9 5 9-5V7l-9-5Z"/><path d="m12 22V12M3 7l9 5 9-5"/></svg>
               </span>
               <h3>Deploy anywhere</h3>
-              <p>Ships as Docker images (GHCR) plus docker-compose — a portable base with per-target overlays, including confidential VMs (dstack / Intel TDX) for hardware-attested isolation.</p>
+              <p>Docker images on GHCR plus a portable compose base with per-target overlays — including confidential VMs (dstack / Intel TDX) for hardware-attested isolation.</p>
             </article>
           </div>
         </div>
       </section>
 
-      <!-- ========================== FINAL CTA ======================== -->
-      <section class="lp-block lp-final">
+      <!-- ========================== QUICKSTART ======================== -->
+      <section class="lp-block lp-quick" id="quickstart">
         <div class="lp-wrap">
-          <h2>Put your agents to work — where you can watch them.</h2>
-          <p>Sign in to the hub to trigger your first run, or read the quickstart to bring up RunYard on your own infrastructure.</p>
-          <div class="lp-cta-row">
-            <a class="button primary" href="/app">Open the hub →</a>
-            <a class="button" href="/docs">Quickstart &amp; docs</a>
+          <div class="lp-quick-grid">
+            <div>
+              <h2>A hub of your own, before the coffee's done.</h2>
+              <p>
+                Clone, build, start. First boot writes your operator token; from there the web
+                hub, CLI, API, and MCP server are all live on your machine.
+              </p>
+              <div class="lp-cta-row">
+                <a class="button primary" href="/app">Open the hub →</a>
+                <a class="button" href="/docs">Quickstart &amp; docs</a>
+              </div>
+            </div>
+            <div>
+              <figure class="lp-quick-code">
+                <pre><span class="c-prompt">$</span> <span class="c-cmd">git clone https://github.com/yolo-maxi/runyard</span>
+<span class="c-prompt">$</span> <span class="c-cmd">cd runyard &amp;&amp; pnpm install &amp;&amp; pnpm build</span>
+<span class="c-prompt">$</span> <span class="c-cmd">pnpm start</span>
+<span class="c-dim">hub listening on :43117
+operator token → data/bootstrap-token.txt</span></pre>
+              </figure>
+              <p class="lp-quick-note">
+                Node 22.5+ and <code>pnpm</code>. Runs behind any TLS reverse proxy;
+                Docker images and a compose stack ship too.
+              </p>
+            </div>
           </div>
         </div>
       </section>
@@ -650,21 +1183,25 @@
               <span class="brand-mark" aria-hidden="true"></span>
               <span class="brand-name">runyard</span>
             </span>
-            <p class="lp-footer-tag">Self-hosted control plane for AI agent runs. Built on Smithers.</p>
+            <p class="lp-footer-tag">
+              Self-hosted control plane for long-running agent work. Durable runs, patient
+              approvals, your machines.
+            </p>
           </div>
           <nav class="lp-footer-links" aria-label="Footer">
             <a href="/app">Open the hub</a>
             <a href="/docs">Docs</a>
             <a href="/llms.txt">llms.txt</a>
+            <a href="/openapi.json">openapi.json</a>
             <a href="https://github.com/yolo-maxi/runyard" rel="noopener">GitHub</a>
           </nav>
         </div>
         <p class="lp-footer-note">
-          RunYard was formerly called Smithers Hub. The legacy <code>SMITHERS_HUB_*</code>
-          environment variables are still honored as fallbacks, so existing deployments and tokens
-          keep working. The execution engine is
+          Runyard was formerly called Smithers Hub — the legacy <code>SMITHERS_HUB_*</code>
+          environment variables are still honored as fallbacks, so existing deployments and
+          tokens keep working. The execution engine is
           <a href="https://github.com/yolo-maxi/runyard" rel="noopener">Smithers</a>
-          (<code>smithers-orchestrator</code>); RunYard is the control plane around it.
+          (<code>smithers-orchestrator</code>); Runyard is the control plane around it.
         </p>
       </div>
     </footer>
