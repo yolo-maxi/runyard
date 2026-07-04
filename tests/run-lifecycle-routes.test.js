@@ -14,7 +14,12 @@ function harness(overrides = {}) {
   const failureAlerts = [];
   const updates = [];
   const transitions = [];
+  const engineResumes = [];
   const handlers = createRunLifecycleHandlers({
+    resolveEngineApprovalOnResume: (runId, data) => {
+      engineResumes.push({ runId, data });
+      return [];
+    },
     addRunEvent: (runId, type, message, detail) => {
       const event = { id: `event_${events.length + 1}`, runId, type, message, detail };
       events.push(event);
@@ -36,7 +41,7 @@ function harness(overrides = {}) {
     updateRun: (runId, patch) => updates.push({ runId, patch }),
     withRunLinks: (run) => ({ ...run, deepLink: `#/runs/${run.id}` })
   });
-  return { createdRuns, events, failureAlerts, handlers, terminalArtifacts, transitions, updates };
+  return { createdRuns, engineResumes, events, failureAlerts, handlers, terminalArtifacts, transitions, updates };
 }
 
 function req(body = {}, params = { id: "run_1" }) {
@@ -71,6 +76,23 @@ describe("run lifecycle route handlers", () => {
     assert.equal(res.body.event.message, "use [redacted]");
     assert.equal(events[0].type, "workflow.step");
     assert.deepEqual(updates, [{ runId: "run_1", patch: { current_step: "use [redacted]" } }]);
+  });
+
+  it("mirrors engine-side approval decisions onto cards only for engine.approval.resumed events", () => {
+    const { engineResumes, handlers } = harness();
+
+    handlers.recordRunEvent(req({
+      type: "engine.approval.resumed",
+      message: "gate decided",
+      data: { smithersRunId: "run_sm1", nodeId: "gate", engineDecision: "approved" }
+    }), response());
+    assert.equal(engineResumes.length, 1);
+    assert.equal(engineResumes[0].runId, "run_1");
+    assert.equal(engineResumes[0].data.engineDecision, "approved");
+
+    handlers.recordRunEvent(req({ type: "engine.approval.waiting", message: "paused", data: {} }), response());
+    handlers.recordRunEvent(req({ type: "log", message: "hello", data: {} }), response());
+    assert.equal(engineResumes.length, 1);
   });
 
   it("starts runs idempotently without duplicate started events", () => {

@@ -2,7 +2,8 @@ import {
   approvalCreateInput,
   decisionTriggersTerminalDelivery,
   defaultApprovalComment,
-  findExistingChildRunApproval
+  findExistingChildRunApproval,
+  findExistingEngineApproval
 } from "./approvalRoutes.js";
 import {
   approvalDecisionLabel,
@@ -97,7 +98,8 @@ export function createApprovalHandlers({
     async createApproval(req, res) {
       try {
         const payload = req.body?.payload && typeof req.body.payload === "object" ? req.body.payload : {};
-        const existing = findExistingChildRunApproval(listApprovals("pending"), payload);
+        const pending = listApprovals("pending");
+        const existing = findExistingChildRunApproval(pending, payload) || findExistingEngineApproval(pending, payload);
         if (existing) return res.status(200).json({ approval: withApprovalLinks(existing), idempotent: true });
 
         // Only link to a run row that actually exists; child approvals may

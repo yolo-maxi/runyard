@@ -540,6 +540,10 @@ export function runApprovalHold(run) {
   return runSupervisorStore.runApprovalHold(run);
 }
 
+export function hasEngineApprovalWait(runId) {
+  return runSupervisorStore.hasEngineApprovalWait(runId);
+}
+
 export { normalizeRun };
 
 export function updateRun(runId, updates) {
@@ -737,6 +741,10 @@ export function listApprovals(status = "") {
 
 export function resolveApproval(approvalId, decision, resolvedBy = "api", comment = "") {
   return operatorStore.resolveApproval(approvalId, decision, resolvedBy, comment);
+}
+
+export function resolveEngineApprovalOnResume(runId, data = {}) {
+  return operatorStore.resolveEngineApprovalOnResume(runId, data);
 }
 
 export function recordAudit(actor, action, target = null, detail = {}) {

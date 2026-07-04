@@ -169,6 +169,39 @@ describe("approval HTTP route helpers", () => {
     assert.equal(created.length, 0);
   });
 
+  it("dedupes repeated engine approval requests from the runner bridge", async () => {
+    const engineCardId = "appr_33333333333333333333";
+    const { created, handlers } = harness({
+      approvals: [{
+        id: engineCardId,
+        status: "pending",
+        runId: "run_1",
+        title: "Engine approval: improve · ship-gate",
+        payload: { kind: "engine_approval", smithersRunId: "run_sm1", nodeId: "ship-gate" }
+      }]
+    });
+
+    const dupRes = response();
+    await handlers.createApproval(req({
+      body: { runId: "run_1", payload: { kind: "engine_approval", smithersRunId: "run_sm1", nodeId: "ship-gate" } },
+      tokenName: "runner"
+    }), dupRes);
+    assert.equal(dupRes.statusCode, 200);
+    assert.equal(dupRes.body.idempotent, true);
+    assert.equal(dupRes.body.approval.id, engineCardId);
+    assert.equal(created.length, 0);
+
+    // A different gate on the same engine run is a fresh card.
+    const freshRes = response();
+    await handlers.createApproval(req({
+      body: { runId: "run_1", payload: { kind: "engine_approval", smithersRunId: "run_sm1", nodeId: "other-gate" } },
+      tokenName: "runner"
+    }), freshRes);
+    assert.equal(freshRes.statusCode, 201);
+    assert.equal(freshRes.body.idempotent, false);
+    assert.equal(created.length, 1);
+  });
+
   it("resolves web approvals and triggers terminal delivery only for terminal decisions", () => {
     const { deliveries, handlers, resolved } = harness();
 

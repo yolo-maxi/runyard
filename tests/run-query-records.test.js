@@ -182,4 +182,33 @@ describe("run query record helpers", () => {
       hasPendingApproval: () => true
     }).reason, "runner_offline");
   });
+
+  it("never stall- or deadline-reaps a run held by an engine-level approval wait", () => {
+    const nowMs = Date.parse("2026-01-01T01:00:00.000Z");
+    const engineHeldRow = {
+      id: "run_engine",
+      status: "running",
+      created_at: "2026-01-01T00:00:00.000Z",
+      started_at: "2026-01-01T00:00:00.000Z",
+      last_event_at: "2026-01-01T00:00:00.000Z"
+    };
+    const holds = { hasEngineApprovalWait: (id) => id === "run_engine" };
+
+    assert.equal(runReapReason(engineHeldRow, { stallMs: 5 * 60_000, nowMs, ...holds }), null);
+    assert.equal(runReapReason(engineHeldRow, { maxMs: 5 * 60_000, nowMs, ...holds }), null);
+
+    // Without the hold the same quiet run is reaped — the exemption is the only difference.
+    assert.equal(runReapReason(engineHeldRow, { stallMs: 5 * 60_000, nowMs }).reason, "run_stalled");
+
+    // A dead runner still wins over an engine approval hold too.
+    assert.equal(runReapReason({
+      ...engineHeldRow,
+      runner_id: "runner_1",
+      last_heartbeat_at: "2026-01-01T00:00:00.000Z"
+    }, {
+      runnerOfflineMs: 5 * 60_000,
+      nowMs,
+      ...holds
+    }).reason, "runner_offline");
+  });
 });
