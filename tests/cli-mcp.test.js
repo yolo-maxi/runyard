@@ -185,4 +185,90 @@ describe("CLI/MCP discovery and execution intent", () => {
       mcp.stop();
     }
   });
+
+  // Engine-approval bridge cards are ordinary approval rows: prove the whole
+  // human loop is reachable through CLI and MCP, not just the web UI, and that
+  // resolving the card never disturbs the running run (the runner applies the
+  // decision to the engine; the Hub only records it).
+  it("surfaces and resolves engine-approval cards through CLI and MCP", async () => {
+    const created = await api("/api/capabilities/hello/run", {
+      method: "POST",
+      body: { input: { topic: "engine gate" }, origin: { type: "api-test", label: "engine approval surface test" } }
+    });
+    const runner = await api("/api/runners/register", {
+      method: "POST",
+      body: { name: "engine runner", hostname: "engine", tags: ["smithers", "vps"] }
+    });
+    const claim = await api(`/api/runners/${runner.runner.id}/next-run`);
+    assert.equal(claim.run.id, created.run.id);
+    await api(`/api/runs/${created.run.id}/start`, { method: "POST", body: {} });
+
+    // Simulate the runner bridge surfacing an engine-level <Approval> pause.
+    await api(`/api/runs/${created.run.id}/events`, {
+      method: "POST",
+      body: {
+        type: "engine.approval.waiting",
+        message: "paused at engine approval",
+        data: { smithersRunId: "run_sm_surface", nodeId: "ship-gate" }
+      }
+    });
+    const card = await api("/api/approvals", {
+      method: "POST",
+      body: {
+        runId: created.run.id,
+        title: "Engine approval: hello · ship-gate",
+        requestedBy: "runner: engine runner",
+        payload: { kind: "engine_approval", smithersRunId: "run_sm_surface", nodeId: "ship-gate" }
+      }
+    });
+    assert.equal(card.approval.status, "pending");
+
+    // The hold is visible on the run detail (this is what defers the runner deadline).
+    const detail = await api(`/api/runs/${created.run.id}`);
+    assert.equal(detail.approvalHold, true);
+
+    // CLI surface: the pending engine card is listed.
+    const common = ["src/cli.js", "--url", baseUrl, "--token", token, "--json"];
+    const cliList = await execFileAsync(process.execPath, [...common, "approvals"], {
+      cwd: process.cwd(),
+      maxBuffer: 1024 * 1024
+    });
+    const cliApprovals = JSON.parse(cliList.stdout);
+    assert.ok(cliApprovals.find((approval) => approval.id === card.approval.id));
+
+    // MCP surface: listed pending, then approved through the MCP tool.
+    const mcp = startMcp();
+    try {
+      await mcp.call("initialize", { protocolVersion: "2024-11-05" });
+      const pending = parseToolText(await mcp.call("tools/call", { name: "list_pending_approvals", arguments: {} }));
+      assert.ok(pending.approvals.find((approval) => approval.id === card.approval.id));
+
+      const resolved = parseToolText(await mcp.call("tools/call", {
+        name: "approve_run",
+        arguments: { approvalId: card.approval.id, comment: "ship it" }
+      }));
+      assert.equal(resolved.approval.status, "approved");
+    } finally {
+      mcp.stop();
+    }
+
+    // The running run is untouched by card resolution, and the event-based
+    // engine hold still protects it until the engine actually resumes.
+    const afterResolve = await api(`/api/runs/${created.run.id}`);
+    assert.equal(afterResolve.run.status, "running");
+    assert.equal(afterResolve.approvalHold, true);
+
+    // Engine resumes (runner bridge posts the resumed event): hold releases.
+    await api(`/api/runs/${created.run.id}/events`, {
+      method: "POST",
+      body: {
+        type: "engine.approval.resumed",
+        message: "gate decided",
+        data: { smithersRunId: "run_sm_surface", nodeId: "ship-gate", engineDecision: "approved" }
+      }
+    });
+    const afterResume = await api(`/api/runs/${created.run.id}`);
+    assert.equal(afterResume.approvalHold, false);
+    assert.equal(afterResume.run.status, "running");
+  });
 });

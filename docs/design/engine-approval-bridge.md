@@ -96,6 +96,10 @@ surface resolved it.
   engine card idempotency key + handler dedupe.
 - `tests/run-lifecycle-routes.test.js` — resumed-event hook fires only for
   `engine.approval.resumed`.
+- `tests/cli-mcp.test.js` — live-server surface proof: an engine card is
+  listed via the `runyard approvals` CLI and MCP `list_pending_approvals`,
+  approved via MCP `approve_run`, the running run stays running with the
+  event-based hold intact, and the hold releases on `engine.approval.resumed`.
 
 ## Known gaps / follow-ups (readiness blockers to track)
 
@@ -115,6 +119,8 @@ surface resolved it.
    goes terminal is not auto-resolved (holds only affect active runs; the
    card remains as operator noise). Same pre-existing behavior as run-smithers
    checkpoint cards.
-4. **MCP/CLI dogfood of the full loop** (card → MCP approve → engine resume)
-   requires a live runner; covered by handler-level tests here, flagged for a
-   staging dogfood pass.
+4. **Live-runner dogfood of the CLI apply step** (`smithers approve` executed
+   by a real runner against a real paused engine): the Hub-side loop is proven
+   end-to-end in `tests/cli-mcp.test.js`; the runner-side apply is covered by
+   unit tests with a fake CLI. A staging run with a workflow containing a real
+   `<Approval>` node remains the final proof.
