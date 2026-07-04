@@ -37,6 +37,11 @@ const tools = [
   { name: "get_run_artifacts", description: "List artifacts for a run.", inputSchema: { type: "object", required: ["runId"], properties: { runId: { type: "string" } } } },
   { name: "list_runners", description: "List registered runners, heartbeat state, capacity, active slots, and pool summary.", inputSchema: { type: "object", properties: {} } },
   { name: "list_pending_approvals", description: "List pending approvals.", inputSchema: { type: "object", properties: {} } },
+  {
+    name: "list_hooks",
+    description: "List post-run hook profiles (optional side effects like static publish or git push, run after a capability's gates pass). Pass capability to see which profiles that capability may select via input.postRunHooks.",
+    inputSchema: { type: "object", properties: { capability: { type: "string" } } }
+  },
   { name: "approve_run", description: "Approve a Hub approval request.", inputSchema: { type: "object", required: ["approvalId"], properties: { approvalId: { type: "string" }, comment: { type: "string" } } } },
   { name: "reject_run", description: "Reject a Hub approval request.", inputSchema: { type: "object", required: ["approvalId"], properties: { approvalId: { type: "string" }, comment: { type: "string" } } } },
   { name: "request_changes_run", description: "Request changes for a Hub approval request.", inputSchema: { type: "object", required: ["approvalId"], properties: { approvalId: { type: "string" }, comment: { type: "string" } } } },
@@ -76,6 +81,9 @@ async function callTool(name, args = {}) {
   if (name === "get_run_artifacts") return result(await client.get(`/api/runs/${encodeURIComponent(args.runId)}/artifacts`));
   if (name === "list_runners") return result(await client.get("/api/runners"));
   if (name === "list_pending_approvals") return result(await client.get("/api/approvals?status=pending"));
+  if (name === "list_hooks") {
+    return result(await client.get(`/api/hooks${args.capability ? `?capability=${encodeURIComponent(args.capability)}` : ""}`));
+  }
   if (name === "approve_run") return result(await client.post(`/api/approvals/${encodeURIComponent(args.approvalId)}/approve`, { comment: args.comment || "Approved through MCP" }));
   if (name === "reject_run") return result(await client.post(`/api/approvals/${encodeURIComponent(args.approvalId)}/reject`, { comment: args.comment || "Rejected through MCP" }));
   if (name === "request_changes_run") return result(await client.post(`/api/approvals/${encodeURIComponent(args.approvalId)}/request-changes`, { comment: args.comment || "Changes requested through MCP" }));

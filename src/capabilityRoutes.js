@@ -16,6 +16,7 @@ import {
   workflowBundleSizeError
 } from "./workflowSource.js";
 import { normalizeCapabilityDefinition } from "./capabilityRecords.js";
+import { eligibleHookProfiles } from "./hookProfileRecords.js";
 import { requireBodySlug } from "./requestContext.js";
 import {
   capabilityRunResponse,
@@ -37,6 +38,7 @@ export function createCapabilityHandlers({
   listApprovals,
   listCapabilities,
   listCapabilityVersionsFromRuns,
+  listHookProfiles = () => [],
   notifyTelegram,
   recordAudit,
   root,
@@ -166,6 +168,28 @@ export function createCapabilityHandlers({
 
       const responseEndpointResult = parseResponseEndpoint(req.body.responseEndpoint);
       if (!responseEndpointResult.ok) return res.status(400).json({ error: responseEndpointResult.error });
+
+      // Post-run hooks are opt-in twice over: the capability must permit the
+      // profile (workflow.hooks.allowedProfiles) AND the admin-authored
+      // profile must be enabled and allow the capability. Reject ineligible
+      // selections at dispatch so a run never starts with a hook it is not
+      // allowed to invoke.
+      const requestedHooks = Array.isArray(req.body?.input?.postRunHooks)
+        ? req.body.input.postRunHooks.map((slug) => String(slug || "").trim()).filter(Boolean)
+        : [];
+      if (requestedHooks.length) {
+        const eligible = eligibleHookProfiles({ capability, profiles: listHookProfiles({ includeDisabled: false }) });
+        const eligibleSlugs = new Set(eligible.map((profile) => profile.slug));
+        const blocked = requestedHooks.filter((slug) => !eligibleSlugs.has(slug));
+        if (blocked.length) {
+          return res.status(400).json({
+            error: "hook_blocked",
+            blocked,
+            eligible: [...eligibleSlugs],
+            message: "Requested post-run hook profiles are not enabled/allowed for this capability. An admin manages hook profiles via /api/hooks."
+          });
+        }
+      }
 
       const { dispatchOptions, input, origin } = prepareCapabilityRunRequest({ req, capability, env });
       const dispatched = dispatchRun(capability, input, dispatchOptions);

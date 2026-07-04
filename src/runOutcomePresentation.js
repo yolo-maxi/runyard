@@ -1,3 +1,5 @@
+import { collectHookOutcomes } from "./hookOutcomes.js";
+
 export function outputNode(output, name) {
   if (!output || typeof output !== "object" || Array.isArray(output)) return null;
   const nodes = output.outputs && typeof output.outputs === "object" && !Array.isArray(output.outputs)
@@ -268,6 +270,10 @@ export function runOutcomeSummary(run) {
   else if (noChangeRationale) workProduct = "explicit no-change review";
   else if (output) workProduct = "output only";
   const digest = runOutcomeDigest(output, files);
+  // Post-run hook outcomes ride alongside the run classification, never
+  // inside it: a green build with a failed publish hook stays a green build
+  // with hooks.status === "hook_failed". Null for runs that predate hooks.
+  const hooks = collectHookOutcomes(output);
   return {
     repo: String(baseline?.repoDir || run?.project || "").trim() || "unresolved",
     changedFiles: files.length,
@@ -275,6 +281,7 @@ export function runOutcomeSummary(run) {
     churn,
     digest,
     workProduct,
-    classification: run?.status || "unknown"
+    classification: run?.status || "unknown",
+    hooks
   };
 }

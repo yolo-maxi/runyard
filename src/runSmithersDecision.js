@@ -70,7 +70,7 @@ const MAX_ATTEMPTS_OPTIONS = [
   }
 ];
 
-const NON_RESUMABLE_CHILD_STEPS = new Set(["commit", "push", "deploy", "stalled", "timed out"]);
+const NON_RESUMABLE_CHILD_STEPS = new Set(["commit", "push", "deploy", "hooks", "stalled", "timed out"]);
 
 function latestAttemptContext(state, classification) {
   const last = state.attempts[state.attempts.length - 1] || null;

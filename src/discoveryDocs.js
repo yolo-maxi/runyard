@@ -53,7 +53,8 @@ export function hubMenuPayload({ baseUrl, capabilities = [], pool = null } = {})
       "get_run_logs",
       "get_run_artifacts",
       "list_runners",
-      "list_pending_approvals"
+      "list_pending_approvals",
+      "list_hooks"
     ],
     capabilities: linkedCapabilities,
     pool
@@ -114,6 +115,16 @@ export function renderLlmsTxt(menu, baseUrl) {
   lines.push("  the Hub. Delivery state (status / attempts / last_error /");
   lines.push("  delivered_at) is visible on GET /api/runs/:id under");
   lines.push("  responseEndpoints[].");
+  lines.push("");
+  lines.push("Post-run hooks (optional):");
+  lines.push("- Side effects after a run's gates pass (static publish, git push,");
+  lines.push("  webhook) are explicit hook invocations, never implicit workflow magic.");
+  lines.push("- Admins define bounded hook profiles at POST /api/hooks; callers");
+  lines.push("  discover eligible profiles at GET /api/hooks?capability=<slug> and");
+  lines.push('  select them per run via input.postRunHooks: ["<profile>"].');
+  lines.push("- Hook outcomes surface as hook_failed / hook_config_required /");
+  lines.push("  hook_blocked alongside the run result; a failed hook never turns a");
+  lines.push("  green build into a failed run.");
   return `${lines.join("\n")}\n`;
 }
 
@@ -159,6 +170,12 @@ export function openApiDocument({ baseUrl, version }) {
       "/audit": { get: { summary: "Read the audit log (admin)" } },
       "/chat/status": { get: { summary: "In-app Assistant status: resolved provider (runner|anthropic|openai) and whether it is configured" } },
       "/chat": { post: { summary: "Ask the in-app Assistant. Body: {messages, context}. Answers first; any app-changing action is returned as a confirmation button, never executed server-side." } },
+      "/hooks": {
+        get: { summary: "List post-run hook profiles. Non-admin callers see enabled profiles in a caller-safe shape; ?capability=<slug> narrows to profiles that capability may select via input.postRunHooks. Admins with ?all=1 see every profile with config + readiness." },
+        post: { summary: "Create/update a post-run hook profile (admin). Bounded per-kind config; secrets referenced by name only." }
+      },
+      "/hooks/{slug}": { get: { summary: "Describe a hook profile" }, patch: { summary: "Update a hook profile (admin)" } },
+      "/hooks/{slug}/validate": { post: { summary: "Dry-run readiness check for a hook profile (admin): reports hook_config_required with missing secret names only" } },
       "/workflow-endpoints": { get: { summary: "List configured authenticated workflow endpoints (admin)" }, post: { summary: "Create/update an authenticated workflow endpoint (admin)" } },
       "/workflow-endpoints/{slug}": { get: { summary: "Describe a workflow endpoint (admin)" }, post: { summary: "Submit data to a fixed authenticated workflow endpoint (per-endpoint secret, rate-limited, deduped)" } },
       "/schedules": {

@@ -9,6 +9,7 @@ export function registerServerRoutes(app, {
   authHandlers,
   capabilityHandlers,
   catalogHandlers,
+  hookProfileHandlers,
   operatorReadHandlers,
   publicHandlers,
   rateLimit,
@@ -76,6 +77,15 @@ export function registerServerRoutes(app, {
 
   app.get("/api/dashboard", requireAuth, operatorReadHandlers.dashboard);
   app.get("/api/repo-options", requireAuth, operatorReadHandlers.repoOptions);
+
+  // Post-run hook profiles: discovery is authenticated (non-admins see only
+  // enabled profiles in a caller-safe shape); every mutation and readiness
+  // probe is admin-only, like workflow endpoints and secrets.
+  app.get("/api/hooks", requireAuth, hookProfileHandlers.listHookProfiles);
+  app.get("/api/hooks/:slug", requireAuth, hookProfileHandlers.getHookProfile);
+  app.post("/api/hooks", requireAuth, requireScopes("admin"), hookProfileHandlers.upsertHookProfile);
+  app.patch("/api/hooks/:slug", requireAuth, requireScopes("admin"), hookProfileHandlers.upsertHookProfile);
+  app.post("/api/hooks/:slug/validate", requireAuth, requireScopes("admin"), hookProfileHandlers.validateHookProfile);
 
   app.get("/api/capabilities", requireAuth, capabilityHandlers.listCapabilities);
   app.post("/api/capabilities", requireAuth, requireScopes("admin"), capabilityHandlers.createCapability);

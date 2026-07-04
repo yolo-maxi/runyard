@@ -20,6 +20,7 @@ import { createSecretHandlers } from "./secretsRoutes.js";
 import { createTokenHandlers } from "./tokenRoutes.js";
 import { maybeRecordFailureClassAlert as maybeRecordFailureAlert } from "./failureAlerts.js";
 import { createWorkflowEndpointHandlers } from "./workflowEndpointRoutes.js";
+import { createHookProfileHandlers } from "./hookProfileRoutes.js";
 import { createWorkflowBundleHandlers } from "./workflowBundleRoutes.js";
 import { createRunLifecycleHandlers } from "./runLifecycleRoutes.js";
 import { createRunReadHandlers } from "./runReadRoutes.js";
@@ -77,6 +78,9 @@ export function createServerComposition({
     claimScheduleFire,
     recordScheduleFireResult,
     getRun,
+    getHookProfile,
+    listHookProfiles,
+    upsertHookProfile,
     listRunResponseEndpointsForRun,
     listAccessTokens,
     listAgents,
@@ -278,6 +282,7 @@ export function createServerComposition({
     listApprovals,
     listCapabilities,
     listCapabilityVersionsFromRuns,
+    listHookProfiles,
     notifyTelegram,
     recordAudit,
     root: env.root,
@@ -346,6 +351,16 @@ export function createServerComposition({
     chatWithSupportAgent,
     recordAudit,
     supportAgentInfo
+  });
+
+  const hookProfileHandlers = createHookProfileHandlers({
+    getCapability,
+    getHookProfile,
+    listHookProfiles,
+    recordAudit,
+    secretExists,
+    secretsEnabled,
+    upsertHookProfile
   });
 
   const secretHandlers = createSecretHandlers({
@@ -442,6 +457,7 @@ export function createServerComposition({
       authHandlers,
       capabilityHandlers,
       catalogHandlers,
+      hookProfileHandlers,
       operatorReadHandlers,
       publicHandlers,
       requireAuth,

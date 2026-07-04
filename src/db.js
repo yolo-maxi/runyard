@@ -12,6 +12,7 @@ import {
 import { normalizeCapability } from "./capabilityRecords.js";
 import { createCapabilityStore } from "./capabilityStore.js";
 import { createWorkflowEndpointStore } from "./workflowEndpointStore.js";
+import { createHookProfileStore } from "./hookProfileStore.js";
 import { createWorkflowBundleStore } from "./workflowBundleStore.js";
 import { createRunResponseEndpointStore } from "./runResponseEndpointStore.js";
 import { createAccessTokenStore } from "./accessTokenStore.js";
@@ -128,6 +129,7 @@ const runnerStore = createRunnerStore({
 const operatorStore = createOperatorStore({ all, one, run, id, now, addRunEvent, getRun, updateRun });
 const scheduleStore = createScheduleStore({ all, one, run, id, now });
 const workflowEndpointStore = createWorkflowEndpointStore({ all, one, run, id, now, hashToken });
+const hookProfileStore = createHookProfileStore({ all, one, run, id, now });
 const workflowBundleStore = createWorkflowBundleStore({ all, one, run, id, now });
 const secretStore = createSecretStore({
   all,
@@ -308,6 +310,22 @@ export function getCapability(slugOrId) {
 
 export function upsertCapability(input) {
   return capabilityStore.upsertCapability(input);
+}
+
+// --- Post-run hook profiles ---------------------------------------------
+// Admin-authored recipes for optional post-run side effects. Mutations are
+// admin-gated at the route layer; discovery filters to enabled profiles.
+
+export function listHookProfiles({ includeDisabled = false } = {}) {
+  return hookProfileStore.listHookProfiles({ includeDisabled });
+}
+
+export function getHookProfile(slugOrId) {
+  return hookProfileStore.getHookProfile(slugOrId);
+}
+
+export function upsertHookProfile(input) {
+  return hookProfileStore.upsertHookProfile(input);
 }
 
 // --- Encrypted reusable secrets ---------------------------------------------

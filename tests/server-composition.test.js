@@ -50,6 +50,7 @@ describe("server composition", () => {
       "authHandlers",
       "capabilityHandlers",
       "catalogHandlers",
+      "hookProfileHandlers",
       "operatorReadHandlers",
       "publicHandlers",
       "requireAuth",

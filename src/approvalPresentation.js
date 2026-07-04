@@ -99,12 +99,15 @@ function approvalProposedChange(input, run, approval, deriveRunDescription) {
   return truncate(approval?.description || "", 700);
 }
 
-function approvalProposedAction(input, run, workflowName, deploy, targetBranch) {
+function approvalProposedAction(input, run, workflowName, deploy, targetBranch, postRunHooks = []) {
   const fromInput = firstContextString(input, ACTION_INPUT_KEYS);
   if (fromInput) return truncate(fromInput, 320);
   if (!run) return "Mark this approval approved.";
   const parts = [`Queue ${workflowName || "this workflow"} for runner execution`];
-  if (deploy != null) parts.push(deploy ? "with deploy enabled" : "with deploy disabled");
+  if (postRunHooks.length) parts.push(`with post-run hooks ${postRunHooks.join(", ")}`);
+  // Legacy inputs only: `deploy` is deprecated and no longer deploys, but old
+  // approval cards should still describe what the caller asked for.
+  else if (deploy != null) parts.push(deploy ? "with deploy enabled" : "with deploy disabled");
   if (targetBranch) parts.push(`targeting ${targetBranch}`);
   return `${parts.join(", ")}.`;
 }
@@ -155,7 +158,14 @@ export function approvalContext(approval, deps = {}) {
         }
       : null,
     inputTitle: firstContextString(input, TITLE_INPUT_KEYS),
-    proposedAction: approvalProposedAction(input, run, workflowName, deploy, project.targetBranch),
+    proposedAction: approvalProposedAction(
+      input,
+      run,
+      workflowName,
+      deploy,
+      project.targetBranch,
+      Array.isArray(input?.postRunHooks) ? input.postRunHooks.map((slug) => String(slug || "")).filter(Boolean) : []
+    ),
     proposedChange,
     whatHappensIfApproved: run
       ? "The run will move from waiting_approval to queued, then a matching runner can execute it."

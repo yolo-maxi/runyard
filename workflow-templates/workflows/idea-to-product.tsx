@@ -1,6 +1,6 @@
 // smithers-source: authored
 // smithers-display-name: Idea to Product
-// smithers-description: Turns a raw idea into a scoped product spec, builds it, tests it, deploys it to a configured static or server-backed host, and returns the URL. Private-by-default, with an explicit publicAccess escape hatch.
+// smithers-description: Turns a raw idea into a scoped product spec, builds it, tests it, and verifies it. Publishing to the configured static or server-backed host is an explicit post-run hook (postRunHooks: ["static-publish"]) that returns the URL. Private-by-default, with an explicit publicAccess escape hatch.
 /** @jsxImportSource smithers-orchestrator */
 import { createHash, randomBytes } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -37,9 +37,12 @@ const ideaSchema = z.object({
   preferredSubdomain: z.string().default("").describe("Optional static-site subdomain prefix."),
   constraints: z.string().default("").describe("Optional product, design, stack, or business constraints."),
   locale: z.string().default("").describe("Optional BCP-47 locale override (e.g. en-US, it-IT). If empty, the strategist infers from the ask and falls back to en-US."),
-  deploy: z.boolean().default(true).describe("Deploy to the configured static host after gates pass."),
-  publicAccess: z.boolean().default(false).describe("If true, deploy without auth. Default false."),
-  replaceLive: z.boolean().default(false).describe("Live-app replacement guard: required to overwrite a slot that already hosts a live app. Equivalent to passing --replace-live.")
+  postRunHooks: z.array(z.string()).default([]).describe('Post-run hook profile slugs to invoke after gates pass (e.g. ["static-publish"]). Default none: build and verify only.'),
+  publicAccess: z.boolean().default(false).describe("static-publish hook param: publish without auth if true. Default false."),
+  replaceLive: z.boolean().default(false).describe("static-publish hook param: required to overwrite a slot that already hosts a live app. Equivalent to passing --replace-live."),
+  // Deprecated: deploy=true is a legacy alias that no longer publishes — the
+  // hooks task reports hook_config_required and points at postRunHooks.
+  deploy: z.boolean().optional().describe("Deprecated; use postRunHooks. deploy=true does not publish anymore.")
 });
 
 const expansionSchema = z.looseObject({
@@ -93,15 +96,26 @@ const verifySchema = z.looseObject({
   tail: z.string().default("")
 });
 
-const deploySchema = z.looseObject({
-  deployed: z.boolean(),
-  url: z.string(),
-  magicLink: z.string(),
+// Post-run hook outcomes. `status` uses the shared hook vocabulary
+// (succeeded / hook_failed / hook_config_required / hook_blocked / skipped);
+// a hook problem is reported here and NEVER thrown, so the build/verify run
+// stays green when only the side effect misbehaved.
+const hookResultSchema = z.looseObject({
+  profile: z.string(),
+  status: z.string(),
+  detail: z.string().default("")
+});
+
+const hooksSchema = z.looseObject({
+  status: z.string(),
+  results: z.array(hookResultSchema).default([]),
+  url: z.string().default(""),
+  magicLink: z.string().default(""),
   publicAccess: z.boolean().default(false),
-  subdomain: z.string(),
-  target: z.string(),
-  verify: z.string(),
-  deployKind: z.string().default("static"),
+  subdomain: z.string().default(""),
+  target: z.string().default(""),
+  verify: z.string().default(""),
+  publishKind: z.string().default(""),
   port: z.number().optional(),
   locale: z.string().default("en-US"),
   inScope: z.array(z.string()).default([]),
@@ -117,7 +131,7 @@ const { Workflow, Task, smithers, outputs } = createSmithers({
   build: buildSchema,
   copy: copySchema,
   verify: verifySchema,
-  deploy: deploySchema
+  hooks: hooksSchema
 });
 
 const strategist = createAgentFallbackPair({
@@ -426,6 +440,24 @@ function deployServerBackedProduct(productDir: string, dist: string, subdomain: 
   return { target: remoteDir, port };
 }
 
+const STATIC_PUBLISH_HOOK = "static-publish";
+
+function requestedHooks(input: any): string[] {
+  return Array.isArray(input?.postRunHooks)
+    ? input.postRunHooks.map((slug: any) => String(slug || "").trim()).filter(Boolean)
+    : [];
+}
+
+function staticPublishRequested(input: any) {
+  return requestedHooks(input).includes(STATIC_PUBLISH_HOOK);
+}
+
+// Legacy deploy=true without an explicit hook selection: deprecated. It never
+// publishes — the hooks task reports hook_config_required instead.
+function legacyDeployRequested(input: any) {
+  return input?.deploy === true && !staticPublishRequested(input);
+}
+
 function isReplaceLiveRequested(input: any) {
   if (input?.replaceLive === true) return true;
   const raw = String(process.env.IDEA_TO_PRODUCT_FLAGS || process.env.REPLACE_LIVE_FLAG || "");
@@ -502,11 +534,11 @@ export default smithers((ctx) => {
               const subdomain = slugify(spec.subdomain || ctx.input.preferredSubdomain || spec.appName);
               const target = path.join(STATIC_ROOT, subdomain);
               const replaceLive = isReplaceLiveRequested(ctx.input);
-              // Skip the guard entirely when the run was launched with deploy=false —
-              // there is no live slot to clobber and gating local-only builds on
-              // remote ssh credentials is wrong.
-              if (ctx.input.deploy === false) {
-                return { proceed: true, target, reason: "deploy=false; live-app guard skipped", replaceLive };
+              // Skip the guard entirely when no static-publish hook was
+              // requested — there is no live slot to clobber and gating
+              // local-only builds on remote ssh credentials is wrong.
+              if (!staticPublishRequested(ctx.input)) {
+                return { proceed: true, target, reason: "no static-publish hook requested; live-app guard skipped", replaceLive };
               }
               const occupant = checkLiveAppSlot(target);
               if (occupant && !replaceLive) {
@@ -642,96 +674,155 @@ export default smithers((ctx) => {
           </Task>
         )}
 
+        {/* Post-run hooks: explicit, opt-in side effects after the verify
+            gate. Hook problems are reported as per-hook statuses
+            (hook_failed / hook_config_required / hook_blocked) and never
+            thrown — a broken publish must not turn a verified build into a
+            failed run. */}
         {spec && verified && (
-          <Task id="deploy" output={outputs.deploy} retries={0}>
+          <Task id="hooks" output={outputs.hooks} retries={0}>
             {async () => {
               const subdomain = slugify(spec.subdomain || ctx.input.preferredSubdomain || spec.appName);
-              if (!/^[a-z0-9][a-z0-9-]{1,42}[a-z0-9]$/.test(subdomain)) throw new Error(`Invalid subdomain: ${subdomain}`);
               const productDir = path.resolve(spec.productDir || path.join(PRODUCTS_ROOT, subdomain));
               const dist = ["dist", "build", "out"].map((d) => path.join(productDir, d)).find((d) => existsSync(d));
-              if (!dist) throw new Error("No build output to deploy.");
               const target = path.join(STATIC_ROOT, subdomain);
               const token = randomBytes(32).toString("hex");
               const cookie = `repo_box_${createHash("sha256").update(subdomain).digest("hex").slice(0, 16)}`;
-              const serverBacked = productUsesApi(productDir, dist);
+              const serverBacked = dist ? productUsesApi(productDir, dist) : false;
               const locale = spec.locale || "en-US";
               const inScope = Array.isArray(spec.inScope) ? spec.inScope : [];
               const outOfScope = Array.isArray(spec.outOfScope) ? spec.outOfScope : [];
-              const summaryLines = (url: string) =>
-                [
-                  `Locale: ${locale}`,
-                  `In scope: ${inScope.length ? inScope.join("; ") : "(unspecified)"}`,
-                  `Out of scope: ${outOfScope.length ? outOfScope.join("; ") : "(unspecified)"}`,
-                  `URL: ${url}`
-                ].join("\n");
-              if (ctx.input.deploy === false) {
-                const url = `https://${subdomain}.${PUBLIC_SUFFIX}`;
-                return {
-                  deployed: false,
-                  url,
-                  magicLink: ctx.input.publicAccess ? "" : `${url}/?token=${token}`,
-                  publicAccess: Boolean(ctx.input.publicAccess),
-                  subdomain,
-                  target,
-                  verify: "deploy=false",
-                  deployKind: serverBacked ? "service" : "static",
-                  locale,
-                  inScope,
-                  outOfScope,
-                  summary: summaryLines(url)
-                };
-              }
-              if (REPOBOX_DEPLOY_MODE !== "local" && (!REPOBOX_HOST || !REPOBOX_SSH_KEY)) {
-                throw new Error("GATE FAILED: deploy=true requires REPOBOX_HOST/STATIC_SITE_HOST and REPOBOX_SSH_KEY/STATIC_SITE_SSH_KEY on the runner, or REPOBOX_DEPLOY_MODE=local.");
-              }
-              // Final re-check of the live-app guard right before we touch the
-              // remote slot — the slot could have been populated between the
-              // narrow-time guard and now.
-              const lateOccupant = checkLiveAppSlot(target);
-              if (lateOccupant && !isReplaceLiveRequested(ctx.input)) {
-                throw new Error(
-                  `GATE FAILED: ${target} already hosts a live app at deploy time (entries: ${lateOccupant.replace(/\s+/g, " ").slice(0, 200)}). Re-run with replaceLive=true (or --replace-live).`
-                );
-              }
-              let finalTarget = target;
-              let port: number | undefined;
-              let deployKind = "static";
-              if (serverBacked) {
-                const service = deployServerBackedProduct(productDir, dist, subdomain, token, cookie, Boolean(ctx.input.publicAccess));
-                finalTarget = service.target;
-                port = service.port;
-                deployKind = "service";
-              } else {
-                copyDist(dist, target);
-                rmSync(path.join(target, ".git"), { recursive: true, force: true });
-                rmSync(path.join(target, "node_modules"), { recursive: true, force: true });
-                installCaddyBlock(caddyBlock(subdomain, target, Boolean(ctx.input.publicAccess), cookie, token), subdomain, target);
-              }
               const url = `https://${subdomain}.${PUBLIC_SUFFIX}`;
-              const unauth = shell(`curl -s -o /dev/null -w "%{http_code}" --max-time 15 ${JSON.stringify(url)}`).trim();
-              const auth = ctx.input.publicAccess
-                ? unauth
-                : shell(`curl -L -s -o /dev/null -w "%{http_code}" --max-time 20 ${JSON.stringify(`${url}/?token=${token}`)}`).trim();
-              if (ctx.input.publicAccess) {
-                if (unauth !== "200") throw new Error(`Expected public ${url} to return 200, got ${unauth}`);
-              } else {
-                if (unauth !== "401") throw new Error(`Expected unauthenticated ${url} to return 401, got ${unauth}`);
-                if (auth !== "200") throw new Error(`Expected magic link ${url} to return 200, got ${auth}`);
-              }
-              return {
-                deployed: true,
-                url,
-                magicLink: ctx.input.publicAccess ? "" : `${url}/?token=${token}`,
+              const summaryLines = [
+                `Locale: ${locale}`,
+                `In scope: ${inScope.length ? inScope.join("; ") : "(unspecified)"}`,
+                `Out of scope: ${outOfScope.length ? outOfScope.join("; ") : "(unspecified)"}`,
+                `URL: ${url}`
+              ].join("\n");
+              const base = {
+                url: "",
+                magicLink: "",
                 publicAccess: Boolean(ctx.input.publicAccess),
                 subdomain,
-                target: finalTarget,
-                verify: ctx.input.publicAccess ? `public:${unauth}` : `unauth:${unauth} magic:${auth}`,
-                deployKind,
-                port,
+                target,
+                verify: "",
+                publishKind: serverBacked ? "service" : "static",
                 locale,
                 inScope,
                 outOfScope,
-                summary: summaryLines(url)
+                summary: summaryLines
+              };
+
+              const hooks = requestedHooks(ctx.input);
+              const results: any[] = [];
+              // Severity order shared with the Hub (src/hookOutcomes.js).
+              const aggregate = () => {
+                const precedence = ["hook_failed", "hook_config_required", "hook_blocked", "succeeded", "skipped"];
+                return precedence.find((status) => results.some((r) => r.status === status)) || "skipped";
+              };
+
+              if (legacyDeployRequested(ctx.input)) {
+                results.push({
+                  profile: "legacy:deploy",
+                  status: "hook_config_required",
+                  detail: 'deploy=true is deprecated and no longer publishes. Pass postRunHooks: ["static-publish"] (requires an admin-enabled static-publish hook profile; see runyard hooks).'
+                });
+              }
+              for (const profile of hooks) {
+                if (profile !== STATIC_PUBLISH_HOOK) {
+                  results.push({
+                    profile,
+                    status: "hook_blocked",
+                    detail: "This workflow only supports the static-publish hook profile in this release."
+                  });
+                }
+              }
+
+              if (!staticPublishRequested(ctx.input)) {
+                return {
+                  ...base,
+                  status: aggregate(),
+                  results,
+                  verify: results.length ? results.map((r) => `${r.profile}: ${r.status}`).join("; ") : ""
+                };
+              }
+
+              // --- static-publish hook -----------------------------------
+              const publish = async () => {
+                if (!/^[a-z0-9][a-z0-9-]{1,42}[a-z0-9]$/.test(subdomain)) {
+                  return { status: "hook_failed", detail: `Invalid subdomain: ${subdomain}` };
+                }
+                if (!dist) return { status: "hook_failed", detail: "No build output to publish." };
+                if (REPOBOX_DEPLOY_MODE !== "local" && (!REPOBOX_HOST || !REPOBOX_SSH_KEY)) {
+                  return {
+                    status: "hook_config_required",
+                    detail: "static-publish requires REPOBOX_HOST/STATIC_SITE_HOST and REPOBOX_SSH_KEY/STATIC_SITE_SSH_KEY on the runner, or REPOBOX_DEPLOY_MODE=local."
+                  };
+                }
+                // Final re-check of the live-app guard right before we touch
+                // the remote slot — it could have been populated between the
+                // narrow-time guard and now.
+                const lateOccupant = checkLiveAppSlot(target);
+                if (lateOccupant && !isReplaceLiveRequested(ctx.input)) {
+                  return {
+                    status: "hook_blocked",
+                    detail: `${target} already hosts a live app at publish time (entries: ${lateOccupant.replace(/\s+/g, " ").slice(0, 200)}). Re-run with replaceLive=true (or --replace-live).`
+                  };
+                }
+                let finalTarget = target;
+                let port: number | undefined;
+                let publishKind = "static";
+                if (serverBacked) {
+                  const service = deployServerBackedProduct(productDir, dist, subdomain, token, cookie, Boolean(ctx.input.publicAccess));
+                  finalTarget = service.target;
+                  port = service.port;
+                  publishKind = "service";
+                } else {
+                  copyDist(dist, target);
+                  rmSync(path.join(target, ".git"), { recursive: true, force: true });
+                  rmSync(path.join(target, "node_modules"), { recursive: true, force: true });
+                  installCaddyBlock(caddyBlock(subdomain, target, Boolean(ctx.input.publicAccess), cookie, token), subdomain, target);
+                }
+                const unauth = shell(`curl -s -o /dev/null -w "%{http_code}" --max-time 15 ${JSON.stringify(url)}`).trim();
+                const auth = ctx.input.publicAccess
+                  ? unauth
+                  : shell(`curl -L -s -o /dev/null -w "%{http_code}" --max-time 20 ${JSON.stringify(`${url}/?token=${token}`)}`).trim();
+                if (ctx.input.publicAccess) {
+                  if (unauth !== "200") return { status: "hook_failed", detail: `Expected public ${url} to return 200, got ${unauth}` };
+                } else {
+                  if (unauth !== "401") return { status: "hook_failed", detail: `Expected unauthenticated ${url} to return 401, got ${unauth}` };
+                  if (auth !== "200") return { status: "hook_failed", detail: `Expected magic link ${url} to return 200, got ${auth}` };
+                }
+                return {
+                  status: "succeeded",
+                  detail: ctx.input.publicAccess ? `public:${unauth}` : `unauth:${unauth} magic:${auth}`,
+                  finalTarget,
+                  port,
+                  publishKind
+                };
+              };
+
+              let published: any;
+              try {
+                published = await publish();
+              } catch (error: any) {
+                published = { status: "hook_failed", detail: String(error?.message || error).slice(0, 1200) };
+              }
+              results.push({ profile: STATIC_PUBLISH_HOOK, status: published.status, detail: published.detail || "" });
+              return {
+                ...base,
+                status: aggregate(),
+                results,
+                ...(published.status === "succeeded"
+                  ? {
+                      url,
+                      magicLink: ctx.input.publicAccess ? "" : `${url}/?token=${token}`,
+                      target: published.finalTarget,
+                      publishKind: published.publishKind,
+                      port: published.port
+                    }
+                  : {}),
+                verify: published.status === "succeeded" ? "" : `static-publish: ${published.status} — ${published.detail || ""}`.slice(0, 400)
               };
             }}
           </Task>

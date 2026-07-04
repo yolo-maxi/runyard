@@ -117,7 +117,7 @@ const inputSchema = z.object({
     .boolean()
     .default(false)
     .describe("If true, queue real gated implementation runs sequentially. If false (default), plan and report the runs that would be created."),
-  deploy: z.boolean().default(false).describe("Forwarded to each implementation run: deploy to prod after its gates pass."),
+  deploy: z.boolean().optional().describe("Deprecated and no longer forwarded; production deploys moved to admin-configured post-run hook profiles."),
   targetBranch: z.string().default("main").describe("Branch each implementation pushes to. Defaults to main per the product request."),
   repoDir: z
     .string()
@@ -241,7 +241,6 @@ async function pollRunToTerminal(runId) {
 function buildChildPayload(feature, input) {
   const payload = {
     workPrompt: feature.workPrompt || `Implement: ${feature.title}\n\nAcceptance: ${feature.acceptanceCheck || "(none provided)"}`,
-    deploy: Boolean(input.deploy),
     targetBranch: input.targetBranch || "main",
     commitMessage: feature.commitMessage || `feat: ${String(feature.title || "feature").slice(0, 60)}`
   };

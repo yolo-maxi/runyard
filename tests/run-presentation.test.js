@@ -83,7 +83,8 @@ describe("run presentation helpers", () => {
         churn: { additions: 4, deletions: 1 },
         digest: "In this run, we updated a.js and b.js.",
         workProduct: "2 changed files",
-        classification: "succeeded"
+        classification: "succeeded",
+        hooks: null
       }
     );
   });

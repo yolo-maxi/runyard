@@ -165,6 +165,34 @@ program
     printMenu(await client(program.opts()).get("/api/menu"), program.opts().json, { all: Boolean(opts.all) });
   });
 
+program
+  .command("hooks")
+  .description("List post-run hook profiles (optional side effects run after a capability's gates pass)")
+  .option("--capability <slug>", "show only profiles this capability may select via input.postRunHooks")
+  .option("--all", "include disabled profiles (admin)")
+  .action(async (opts) => {
+    const query = new URLSearchParams();
+    if (opts.capability) query.set("capability", opts.capability);
+    if (opts.all) query.set("all", "1");
+    const qs = query.toString();
+    const data = await client(program.opts()).get(`/api/hooks${qs ? `?${qs}` : ""}`);
+    print(data.hookProfiles, program.opts().json);
+  });
+
+const hookCommand = program.command("hook").description("Post-run hook profile commands");
+hookCommand
+  .command("describe <slug>")
+  .description("Describe a hook profile (admins see config + readiness)")
+  .action(async (slug) => {
+    print(await client(program.opts()).get(`/api/hooks/${encodeURIComponent(slug)}`), program.opts().json);
+  });
+hookCommand
+  .command("validate <slug>")
+  .description("Check whether a hook profile is executable now (admin; reports missing secret names only)")
+  .action(async (slug) => {
+    print(await client(program.opts()).post(`/api/hooks/${encodeURIComponent(slug)}/validate`, {}), program.opts().json);
+  });
+
 program.command("capabilities").description("List capabilities").option("-q, --query <query>").action(async (opts) => {
   const data = await client(program.opts()).get(`/api/capabilities${opts.query ? `?q=${encodeURIComponent(opts.query)}` : ""}`);
   print(data.capabilities, program.opts().json);

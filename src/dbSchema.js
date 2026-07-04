@@ -276,6 +276,28 @@ export const DB_SCHEMA_SQL = `
     updated_at TEXT NOT NULL
   );
 
+  -- Admin-authored post-run hook profiles: optional side effects (static
+  -- publish, git push, webhook, ...) invoked explicitly after a run's gates
+  -- pass. Definitions are bounded JSON; secrets are referenced by NAME only
+  -- (see secrets table) and never stored here. Additive: older code never
+  -- reads this table, so rollbacks boot cleanly against a migrated DB.
+  CREATE TABLE IF NOT EXISTS hook_profiles (
+    id TEXT PRIMARY KEY,
+    slug TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    kind TEXT NOT NULL,
+    config TEXT NOT NULL DEFAULT '{}',
+    params TEXT NOT NULL DEFAULT '[]',
+    secret_names TEXT NOT NULL DEFAULT '[]',
+    allowed_capabilities TEXT NOT NULL DEFAULT '[]',
+    definition_hash TEXT NOT NULL DEFAULT '',
+    version INTEGER NOT NULL DEFAULT 1,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS secrets (
     key TEXT PRIMARY KEY,
     value_encrypted BLOB NOT NULL,
