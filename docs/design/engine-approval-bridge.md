@@ -123,4 +123,29 @@ surface resolved it.
    by a real runner against a real paused engine): the Hub-side loop is proven
    end-to-end in `tests/cli-mcp.test.js`; the runner-side apply is covered by
    unit tests with a fake CLI. A staging run with a workflow containing a real
-   `<Approval>` node remains the final proof.
+   `<Approval>` node remains the final proof **after this branch is deployed to
+   the runner** (the live runner still executes the pre-bridge runner.js).
+
+## Dogfood evidence (2026-07-04, live hub via MCP)
+
+- `idea-to-product` × "Driftline" (premium sleep-sounds microsite):
+  - Attempt 1 `run_dbf494f9d0be42f53c02` (child `run_38b1a22aac630a05fcdd`):
+    built + verified, then failed at the `deploy` node — the runner has no
+    `REPOBOX_HOST`/`STATIC_SITE_*` credentials. run-smithers escalated a
+    checkpoint card (`appr_3f7b0b14158ebdf97dc9`), resolved through **MCP
+    reject_run** with a documented decision. Organic proof of the checkpoint
+    approval loop through MCP.
+  - Attempt 2 `run_104311071a7b24311667` (`deploy: false`): **succeeded**
+    end-to-end in 278s (spec → build → copy → verify → summary; supervision
+    outcome `succeeded`; artifacts on the Hub). Product:
+    `/home/xiko/idea-products/driftline/dist/index.html` — 53KB self-contained,
+    semantic landmarks + 74 aria attributes, `prefers-reduced-motion`
+    honored, Web Audio oscillator sound preview, zero external references.
+- **Follow-up blocker (deploy surface)**: static-site deploys are not
+  judgeable until the runner gets `REPOBOX_HOST`/`REPOBOX_SSH_KEY` (or
+  `REPOBOX_DEPLOY_MODE=local`). Until then `idea-to-product` must be run with
+  `deploy: false`.
+- **Operator-noise observation**: ~60 stale pending approval cards (mostly
+  `supervisor_escalation` / scheduled `run-knowledge-builder` checkpoints)
+  accumulate in the pending list. Not this branch's scope; consider a
+  supersede/expiry policy for escalation cards.
