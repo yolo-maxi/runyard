@@ -252,6 +252,37 @@ export function createOperatorStore({ all, one, run, id, now, addRunEvent, getRu
     return approval;
   }
 
+  // When an engine-level approval gate is decided directly on the runner box
+  // (smithers approve/deny) rather than through the Hub card, the runner posts
+  // engine.approval.resumed with the observed decision. Mirror that decision
+  // onto the still-pending engine_approval card so it does not linger as a
+  // phantom hold. Only recognized decisions are mirrored — an unknown decision
+  // leaves the card pending for a human (never invent an approval outcome).
+  function resolveEngineApprovalOnResume(runId, data = {}) {
+    if (!runId) return [];
+    const engineDecision = String(data?.engineDecision || "").trim().toLowerCase();
+    const decision = engineDecision === "approved" ? "approved" : engineDecision === "rejected" ? "rejected" : "";
+    if (!decision) return [];
+    const smithersRunId = String(data?.smithersRunId || "").trim();
+    const nodeId = String(data?.nodeId ?? "").trim();
+    const resolved = [];
+    for (const approval of listApprovals("pending")) {
+      if (approval.runId !== runId) continue;
+      const payload = approval.payload || {};
+      if (String(payload.kind || "") !== "engine_approval") continue;
+      if (smithersRunId && String(payload.smithersRunId || "") !== smithersRunId) continue;
+      if (String(payload.nodeId ?? "") !== nodeId) continue;
+      resolveApproval(
+        approval.id,
+        decision,
+        "engine:cli",
+        `Engine-side decision observed for approval node '${nodeId || "approval"}' (${decision}); card auto-resolved to match.`
+      );
+      resolved.push(approval.id);
+    }
+    return resolved;
+  }
+
   function autoQueueLegacyRunStartApprovals() {
     const query = pendingWorkflowStartApprovalsQuery();
     let queued = 0;
@@ -285,6 +316,7 @@ export function createOperatorStore({ all, one, run, id, now, addRunEvent, getRu
     recordAlert,
     recordAudit,
     resolveApproval,
+    resolveEngineApprovalOnResume,
     sweepTimedApprovals
   };
 }

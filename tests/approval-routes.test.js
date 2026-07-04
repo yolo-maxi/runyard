@@ -5,7 +5,9 @@ import {
   childApprovalKey,
   decisionTriggersTerminalDelivery,
   defaultApprovalComment,
+  engineApprovalKey,
   findExistingChildRunApproval,
+  findExistingEngineApproval,
   linkedApprovalRunId,
   requestedApprovalRunId
 } from "../src/approvalRoutes.js";
@@ -30,6 +32,39 @@ describe("approval route helpers", () => {
     ];
     assert.equal(findExistingChildRunApproval(approvals, { childRunId: "run_2", approvalNode: "two" }).id, "b");
     assert.equal(findExistingChildRunApproval(approvals, { childRunId: "run_3", nodeId: "x" }), null);
+  });
+
+  it("keys engine approvals by engine run + node, only for engine_approval payloads", () => {
+    assert.deepEqual(engineApprovalKey({ kind: "engine_approval", smithersRunId: " run_sm1 ", nodeId: " gate " }), {
+      smithersRunId: "run_sm1",
+      nodeId: "gate"
+    });
+    // A synthetic wait (engine reported waiting-approval without node detail)
+    // still keys on the engine run alone.
+    assert.deepEqual(engineApprovalKey({ kind: "engine_approval", smithersRunId: "run_sm1" }), {
+      smithersRunId: "run_sm1",
+      nodeId: ""
+    });
+    assert.equal(engineApprovalKey({ kind: "child_run_approval", smithersRunId: "run_sm1", nodeId: "gate" }), null);
+    assert.equal(engineApprovalKey({ kind: "engine_approval" }), null);
+  });
+
+  it("finds pending engine approvals idempotently", () => {
+    const approvals = [
+      { id: "a", payload: { kind: "engine_approval", smithersRunId: "run_sm1", nodeId: "gate-a" } },
+      { id: "b", payload: { kind: "engine_approval", smithersRunId: "run_sm1", nodeId: "gate-b" } },
+      { id: "c", payload: { childRunId: "run_sm1", nodeId: "gate-a" } }
+    ];
+    assert.equal(
+      findExistingEngineApproval(approvals, { kind: "engine_approval", smithersRunId: "run_sm1", nodeId: "gate-b" }).id,
+      "b"
+    );
+    assert.equal(
+      findExistingEngineApproval(approvals, { kind: "engine_approval", smithersRunId: "run_sm2", nodeId: "gate-a" }),
+      null
+    );
+    // Non-engine payloads never match the engine key path.
+    assert.equal(findExistingEngineApproval(approvals, { childRunId: "run_sm1", nodeId: "gate-a" }), null);
   });
 
   it("links approvals only to visible run rows", () => {

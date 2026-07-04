@@ -2,6 +2,8 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   activeReapCandidatesQuery,
+  engineApprovalHoldEventsQuery,
+  engineApprovalHoldFromEvents,
   failedRecoverableCandidatesQuery,
   freshRerunUpdateQuery,
   normalizeRunLineage,
@@ -246,5 +248,26 @@ describe("run supervisor record helpers", () => {
       LIMIT ?`,
       params: ["run-smithers", 7]
     });
+  });
+
+  it("computes the engine-approval hold per node from newest-first lifecycle events", () => {
+    const waiting = (nodeId) => ({ type: "engine.approval.waiting", data: JSON.stringify({ nodeId }) });
+    const resumed = (nodeId) => ({ type: "engine.approval.resumed", data: JSON.stringify({ nodeId }) });
+
+    assert.equal(engineApprovalHoldFromEvents([]), false);
+    // Rows arrive newest first (matching the query's ORDER BY ... DESC).
+    assert.equal(engineApprovalHoldFromEvents([waiting("gate")]), true);
+    assert.equal(engineApprovalHoldFromEvents([resumed("gate"), waiting("gate")]), false);
+    // A gate that resumed and later re-waited (loop iteration) holds again.
+    assert.equal(engineApprovalHoldFromEvents([waiting("gate"), resumed("gate"), waiting("gate")]), true);
+    // One node resuming must not release another node's hold (Panel-style gates).
+    assert.equal(engineApprovalHoldFromEvents([resumed("gate-a"), waiting("gate-b"), waiting("gate-a")]), true);
+    // Synthetic waits with no node detail participate under the "" key.
+    assert.equal(engineApprovalHoldFromEvents([{ type: "engine.approval.waiting", data: null }]), true);
+
+    const query = engineApprovalHoldEventsQuery("run_1");
+    assert.match(query.sql, /type IN \('engine\.approval\.waiting', 'engine\.approval\.resumed'\)/);
+    assert.match(query.sql, /ORDER BY created_at DESC, rowid DESC/);
+    assert.deepEqual(query.params, ["run_1"]);
   });
 });

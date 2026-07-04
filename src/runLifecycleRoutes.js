@@ -15,6 +15,7 @@ export function createRunLifecycleHandlers({
   getCapability,
   maybeRecordFailureClassAlert,
   recordRunTerminalArtifacts,
+  resolveEngineApprovalOnResume = () => [],
   scrubStoredSecrets,
   transitionRun,
   updateRun,
@@ -62,6 +63,10 @@ export function createRunLifecycleHandlers({
       const data = scrubStoredSecrets(req.body.data || {});
       const event = addRunEvent(req.params.id, req.body.type || "log", message, data);
       if (req.body.type === "workflow.step") updateRun(req.params.id, { current_step: message });
+      // An engine-level approval gate decided directly on the runner box: mirror
+      // the observed decision onto any still-pending engine_approval card so the
+      // card does not linger as a phantom hold after the workflow resumed.
+      if (req.body.type === "engine.approval.resumed") resolveEngineApprovalOnResume(req.params.id, data);
       res.json({ event });
     },
 

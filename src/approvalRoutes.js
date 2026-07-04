@@ -13,6 +13,25 @@ export function findExistingChildRunApproval(approvals = [], payload = {}) {
   }) || null;
 }
 
+// Engine-approval cards (runner bridge for engine-level Smithers <Approval>
+// waits) are keyed by the engine run + node so a runner restart or repeated
+// poll tick can never mint duplicate cards for one gate.
+export function engineApprovalKey(payload = {}) {
+  if (String(payload.kind || "") !== "engine_approval") return null;
+  const smithersRunId = String(payload.smithersRunId || "").trim();
+  const nodeId = String(payload.nodeId || "").trim();
+  return smithersRunId ? { smithersRunId, nodeId } : null;
+}
+
+export function findExistingEngineApproval(approvals = [], payload = {}) {
+  const expected = engineApprovalKey(payload);
+  if (!expected) return null;
+  return approvals.find((approval) => {
+    const actual = engineApprovalKey(approval.payload || {});
+    return actual?.smithersRunId === expected.smithersRunId && actual?.nodeId === expected.nodeId;
+  }) || null;
+}
+
 export function requestedApprovalRunId(body = {}, payload = {}) {
   return body.runId || payload.childRunId || null;
 }

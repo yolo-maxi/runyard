@@ -86,6 +86,33 @@ export function waitingApprovalBelongsToParent(row, parentRunId) {
   return input?.__origin?.parentRunId === parentRunId;
 }
 
+// Engine-approval lifecycle events for a run, newest first. The runner posts
+// engine.approval.waiting when a Smithers engine-level <Approval> node parks
+// the workflow and engine.approval.resumed when that gate is decided. rowid
+// breaks same-timestamp ties (both events can land in one poll tick).
+export function engineApprovalHoldEventsQuery(runId) {
+  return {
+    sql: `SELECT type, data FROM run_events
+      WHERE run_id = ? AND type IN ('engine.approval.waiting', 'engine.approval.resumed')
+      ORDER BY created_at DESC, rowid DESC LIMIT 200`,
+    params: [String(runId)]
+  };
+}
+
+// A run is engine-approval-held while ANY engine approval node's most recent
+// lifecycle event is `waiting` — a workflow can gate on several nodes at once
+// (e.g. a Panel), and one node resuming must not release the others' hold.
+export function engineApprovalHoldFromEvents(rows = []) {
+  const seen = new Set();
+  for (const row of rows) {
+    const nodeId = String(parseMaybeJson(row?.data, {})?.nodeId ?? "");
+    if (seen.has(nodeId)) continue;
+    seen.add(nodeId);
+    if (row?.type === "engine.approval.waiting") return true;
+  }
+  return false;
+}
+
 export function resumeCheckpointEventQuery(runId) {
   return {
     sql: `SELECT data FROM run_events

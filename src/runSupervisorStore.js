@@ -5,6 +5,8 @@ import { decideReconcile, buildEscalationApproval, HUB_DEFAULT_CAPS } from "./hu
 import { RUN_TERMINAL } from "./runLifecyclePolicy.js";
 import {
   activeReapCandidatesQuery,
+  engineApprovalHoldEventsQuery,
+  engineApprovalHoldFromEvents,
   failedRecoverableCandidatesQuery,
   normalizeRunLineage,
   pendingRunApprovalQuery,
@@ -62,15 +64,27 @@ export function createRunSupervisorStore({
     return Boolean(one(query.sql, query.params));
   }
 
-  // A run is "approval-held" while a human decision is pending: either an
-  // unresolved approval card on the run itself, or (run-smithers) a supervised
-  // child parked in waiting_approval. Held runs are exempt from age-based
-  // reaping and runner deadlines — approvals block indefinitely by contract.
+  // Engine-level approval pause, as reported by the runner's approval bridge
+  // (engine.approval.waiting / engine.approval.resumed run events). This is the
+  // conservative belt under the bridge's Hub approval card: even when card
+  // creation failed, the waiting event alone keeps the run from being reaped.
+  function hasEngineApprovalWait(runId) {
+    if (!runId) return false;
+    const query = engineApprovalHoldEventsQuery(runId);
+    return engineApprovalHoldFromEvents(all(query.sql, query.params));
+  }
+
+  // A run is "approval-held" while a human decision is pending: an unresolved
+  // approval card on the run itself, (run-smithers) a supervised child parked
+  // in waiting_approval, or an engine-level Smithers <Approval> pause surfaced
+  // by the runner. Held runs are exempt from age-based reaping and runner
+  // deadlines — approvals block indefinitely by contract.
   function runApprovalHold(run) {
     if (!run || !run.id) return false;
     if (hasPendingRunApproval(run.id)) return true;
     const slug = run.capability_slug ?? run.capabilitySlug ?? "";
-    return slug === "run-smithers" && hasWaitingApprovalSupervisedChild(run.id);
+    if (slug === "run-smithers" && hasWaitingApprovalSupervisedChild(run.id)) return true;
+    return hasEngineApprovalWait(run.id);
   }
 
   function runResumeCheckpoint(runId) {
@@ -311,7 +325,8 @@ export function createRunSupervisorStore({
         runnerOfflineMs: env.runnerOfflineMs,
         nowMs,
         hasPendingApproval: hasPendingRunApproval,
-        hasWaitingApprovalSupervisedChild
+        hasWaitingApprovalSupervisedChild,
+        hasEngineApprovalWait
       });
       if (!reason) continue;
       if (reason.reason === "runner_offline") {
@@ -367,6 +382,7 @@ export function createRunSupervisorStore({
     reapStuckRunIds,
     reapStuckRuns: (maxMs) => reapStuckRunIds(maxMs).length,
     reconcileFailedRecoverable,
+    hasEngineApprovalWait,
     runApprovalHold
   };
 }

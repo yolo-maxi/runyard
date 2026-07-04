@@ -17,6 +17,7 @@ import { collectAuthHealth } from "./runnerAuthHealth.js";
 import { classifyFailureStatus, RUN_FAILURE_CLASSES } from "./runFailureClass.js";
 import { DEFAULT_MAX_INLINE_INPUT_BYTES } from "./runnerPolicy.js";
 import { smithersEventMessage } from "./runnerSmithersEvents.js";
+import { createEngineApprovalBridge } from "./runnerEngineApprovals.js";
 import { readClaudeOauthToken } from "./claudeOauthToken.js";
 import { isDraining, resolveDataDir } from "./drain.js";
 import { resolveHubUrl, resolveHubToken } from "./hubConnection.js";
@@ -452,6 +453,21 @@ async function executeAssignment(assignment) {
     }
     await event(run.id, "smithers.dispatched", `Smithers run ${sid} started`, { smithersRunId: sid });
 
+    // Bridge engine-level <Approval> pauses to the Hub: without it those waits
+    // emit no run events and create no approval card, so the stall reaper would
+    // fail a run that is deliberately parked on a human decision.
+    const engineApprovals = createEngineApprovalBridge({
+      hubRunId: run.id,
+      smithersRunId: sid,
+      capabilitySlug: capability.slug,
+      runnerName: name,
+      postEvent: (type, message, data) => event(run.id, type, message, data),
+      hubGet: (pathname) => client.get(pathname),
+      hubPost: (pathname, body) => client.post(pathname, body),
+      runSmithers: smithers,
+      logError: console.error
+    });
+
     // Stream Smithers events to the Hub until the run reaches a terminal state.
     let posted = 0;
     let state = "running";
@@ -461,12 +477,14 @@ async function executeAssignment(assignment) {
     while (Date.now() < deadline) {
       const lines = await fetchEvents(sid);
       for (let i = posted; i < lines.length; i++) {
+        engineApprovals.observeEventLine(lines[i]);
         await event(run.id, "smithers.event", smithersEventMessage(lines[i]));
       }
       posted = lines.length;
       try {
         const st = await getState(sid);
         state = st.runState?.state || st.run?.status || "running";
+        await engineApprovals.tick(st);
       } catch {
         /* keep polling */
       }

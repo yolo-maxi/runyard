@@ -2,6 +2,7 @@ const FOCUS_EVENT_PATTERNS = [
   /^run\.(?:failed|cancelled|errored|started|succeeded|created)$/i,
   /^(?:node|task|step|workflow)\.(?:started|finished|completed|failed|errored|cancelled)$/i,
   /^approval\.(?:requested|resolved|approved|rejected|changes_requested|auto_queued)$/i,
+  /^engine\.approval\.(?:waiting|resumed|applied|apply_failed)$/i,
   /^Node(?:Started|Finished|Failed|Cancelled)$/,
   /^Run(?:Started|Cancelled|Failed|Succeeded)$/,
   /^Approval(?:Requested|Resolved|Approved|Rejected|ChangesRequested)$/
@@ -26,7 +27,7 @@ const NOISY_EVENT_TYPES = new Set([
   "agent.delta"
 ]);
 
-const APPROVAL_EVENT_RE = /^approval\./i;
+const APPROVAL_EVENT_RE = /^(?:engine\.)?approval\./i;
 const NODE_EVENT_RE = /^(?:node|task|step)\.(?:started|finished|completed|failed|errored|cancelled|skipped)$/i;
 const RUN_EVENT_RE = /^run\.(?:created|started|succeeded|failed|cancelled|errored|chain\..*|rerun_.*)$/i;
 const STEP_MARKER_RE = /^workflow\.step$/i;
