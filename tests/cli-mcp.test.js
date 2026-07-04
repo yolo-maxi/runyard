@@ -247,7 +247,9 @@ describe("CLI/MCP discovery and execution intent", () => {
         name: "approve_run",
         arguments: { approvalId: card.approval.id, comment: "ship it" }
       }));
-      assert.equal(resolved.approval.status, "approved");
+      assert.equal(resolved.approval.status, "resolved");
+      assert.equal(resolved.approval.resolution, "approved");
+      assert.equal(resolved.approval.resolvedVia, "human");
     } finally {
       mcp.stop();
     }

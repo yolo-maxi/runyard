@@ -126,6 +126,13 @@ export function approvalContext(approval, deps = {}) {
     approval: {
       id: approval?.id || "",
       status: approval?.status || "",
+      // Explicit taxonomy: kind classifies the question (workflow_gate,
+      // escalation, side_effect, custom); resolution is what was decided
+      // (approved/rejected/changes_requested/superseded); resolvedVia is which
+      // mechanism decided (human/fallback_timer/engine/policy/system).
+      kind: approval?.kind || "custom",
+      resolution: approval?.resolution || null,
+      resolvedVia: approval?.resolvedVia || null,
       // Timed-approval surface: timeoutAt is when the timer elapses (null =
       // blocking approval), timerState is '' | 'fallback_applied' |
       // 'fallback_required'. fallback_required = the timer elapsed with no

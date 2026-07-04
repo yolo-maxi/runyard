@@ -36,6 +36,7 @@ describe("operator record helpers", () => {
       id: "appr_1",
       runId: "run_1",
       status: "pending",
+      kind: "workflow_gate",
       title: "Approve deploy",
       description: "Ship it?",
       requestedBy: "workflow",
@@ -43,6 +44,8 @@ describe("operator record helpers", () => {
       createdAt: "2026-01-01T00:00:00.000Z",
       resolvedAt: null,
       resolvedBy: null,
+      resolution: null,
+      resolvedVia: null,
       decision: null,
       comment: null,
       timeoutAt: null,
@@ -77,25 +80,39 @@ describe("operator record helpers", () => {
   it("normalizes approval decisions into run/audit side-effect metadata", () => {
     assert.deepEqual(approvalResolution("approved", "ignored"), {
       normalizedDecision: "approved",
-      status: "approved",
+      resolution: "approved",
+      legacyDecision: "approved",
       auditAction: "approval.approved",
       eventType: "approval.approved",
       runStatus: "queued",
       currentStep: "approval granted; queued",
+      terminalRun: false,
       completedAt: null
     });
 
+    // changes_requested no longer collapses into a rejected status: the row
+    // stays honest (status resolved, resolution changes_requested).
     assert.deepEqual(approvalResolution("changes_requested", "2026-01-01T00:00:00.000Z"), {
       normalizedDecision: "changes_requested",
-      status: "rejected",
+      resolution: "changes_requested",
+      legacyDecision: "changes_requested",
       auditAction: "approval.changes_requested",
       eventType: "approval.changes_requested",
       runStatus: "cancelled",
       currentStep: "changes requested; run cancelled",
+      terminalRun: true,
       completedAt: "2026-01-01T00:00:00.000Z"
     });
 
-    assert.equal(approvalResolution("anything_else", "done").normalizedDecision, "rejected");
+    // superseded never transitions the run — the run is already terminal.
+    const superseded = approvalResolution("superseded", "2026-01-01T00:00:00.000Z");
+    assert.equal(superseded.resolution, "superseded");
+    assert.equal(superseded.legacyDecision, null);
+    assert.equal(superseded.runStatus, null);
+    assert.equal(superseded.completedAt, null);
+
+    // An unknown decision is an error, never a silent reject.
+    assert.throws(() => approvalResolution("anything_else", "done"), /Unknown approval decision/);
   });
 
   it("detects Telegram approval notification policy variants", () => {
@@ -123,7 +140,7 @@ describe("operator record helpers", () => {
       params: []
     });
     assert.deepEqual(legacyWorkflowStartApprovalUpdate({ approvalId: "appr_1", timestamp: "2026-01-01T00:00:00.000Z" }), {
-      sql: "UPDATE approvals SET status='approved', decision='approved', resolved_by='system:auto-queue', comment=?, resolved_at=? WHERE id=? AND status='pending'",
+      sql: "UPDATE approvals SET status='resolved', resolution='approved', resolved_via='policy', decision='approved', resolved_by='system:auto-queue', comment=?, resolved_at=? WHERE id=? AND status='pending'",
       params: ["Workflow-start approvals no longer block runs by default.", "2026-01-01T00:00:00.000Z", "appr_1"]
     });
     assert.deepEqual(legacyWorkflowStartRunUpdate({ runId: "run_1", timestamp: "2026-01-01T00:00:00.000Z" }), {
@@ -147,8 +164,8 @@ describe("operator record helpers", () => {
     const resolution = approvalResolution("approved", "ignored");
 
     assert.deepEqual(approvalInsertQuery(), {
-      sql: `INSERT INTO approvals (id, run_id, status, title, description, requested_by, payload, created_at, timeout_at, fallback)
-     VALUES ($id, $run_id, $status, $title, $description, $requested_by, $payload, $created_at, $timeout_at, $fallback)`
+      sql: `INSERT INTO approvals (id, run_id, status, kind, title, description, requested_by, payload, created_at, timeout_at, fallback)
+     VALUES ($id, $run_id, $status, $kind, $title, $description, $requested_by, $payload, $created_at, $timeout_at, $fallback)`
     });
     assert.deepEqual(approvalLookupQuery("appr_1"), {
       sql: "SELECT * FROM approvals WHERE id = ?",
@@ -159,12 +176,13 @@ describe("operator record helpers", () => {
         approvalId: "appr_1",
         resolution,
         resolvedBy: "operator",
+        resolvedVia: "human",
         comment: "ok",
         resolvedAt: "2026-01-01T00:00:00.000Z"
       }),
       {
-        sql: "UPDATE approvals SET status=?, decision=?, resolved_by=?, comment=?, resolved_at=? WHERE id=? AND status='pending'",
-        params: ["approved", "approved", "operator", "ok", "2026-01-01T00:00:00.000Z", "appr_1"]
+        sql: "UPDATE approvals SET status='resolved', resolution=?, resolved_via=?, decision=?, resolved_by=?, comment=?, resolved_at=? WHERE id=? AND status='pending'",
+        params: ["approved", "human", "approved", "operator", "ok", "2026-01-01T00:00:00.000Z", "appr_1"]
       }
     );
   });

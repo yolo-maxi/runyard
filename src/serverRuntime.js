@@ -23,6 +23,7 @@ export function startRunMaintenance({
   reconcileSupervisedChildTerminals,
   reconcileRunnerActiveRuns,
   setIntervalFn = setInterval,
+  sweepSupersededApprovals,
   sweepTimedApprovals
 } = {}) {
   const reaper = setIntervalFn(() => {
@@ -40,6 +41,21 @@ export function startRunMaintenance({
       }
     } catch (error) {
       logError("Timed-approval sweep failed:", error.message);
+    }
+    try {
+      // Terminal-run card hygiene: pending cards whose run already ended are
+      // resolved as superseded so the approval inbox only holds live
+      // questions. Runs in waiting_approval are not terminal and are never
+      // touched — blocking approvals keep holding their runs.
+      const superseded = sweepSupersededApprovals ? sweepSupersededApprovals() : [];
+      if (superseded.length) {
+        logInfo(
+          `Superseded approvals swept: ` +
+            superseded.map((entry) => `${entry.id} (run ${entry.runId} ${entry.runStatus})`).join(", ")
+        );
+      }
+    } catch (error) {
+      logError("Superseded-approval sweep failed:", error.message);
     }
     try {
       reapStuckRunsWithRetrospectives(env.runDeadlineMs);
@@ -143,6 +159,7 @@ export function startServerRuntime({
   reconcileRunnerActiveRuns,
   setIntervalFn = setInterval,
   setTimeoutFn = setTimeout,
+  sweepSupersededApprovals,
   sweepTimedApprovals,
   updateChecker
 } = {}) {
@@ -161,6 +178,7 @@ export function startServerRuntime({
     reconcileSupervisedChildTerminals,
     reconcileRunnerActiveRuns,
     setIntervalFn,
+    sweepSupersededApprovals,
     sweepTimedApprovals
   });
   const scheduler = startScheduleTicker({ fireDueSchedules, logError, setIntervalFn });

@@ -1501,7 +1501,9 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
     assert.equal(detail.run.status, "queued");
     assert.equal(detail.run.currentStep, "queued");
     const approval = (await api("/api/approvals")).approvals.find((item) => item.runId === created.run.id);
-    assert.equal(approval.status, "approved");
+    assert.equal(approval.status, "resolved");
+    assert.equal(approval.resolution, "approved");
+    assert.equal(approval.resolvedVia, "policy");
     assert.equal(approval.resolvedBy, "system:auto-queue");
   });
 
@@ -1583,7 +1585,9 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
         null
       );
       assert.equal(approved.status, 200);
-      assert.equal(approved.data.approval.status, "approved");
+      assert.equal(approved.data.approval.status, "resolved");
+      assert.equal(approved.data.approval.resolution, "approved");
+      assert.equal(approved.data.approval.resolvedVia, "human");
       assert.equal(approved.data.approval.decision, "approved");
       const ack = calls.find((call) => call.url.endsWith("/answerCallbackQuery") && call.body.callback_query_id === "cb-checkpoint-approve");
       assert.ok(ack);
@@ -1717,7 +1721,8 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
         null
       );
       assert.equal(approved.status, 200);
-      assert.equal(approved.data.approval.status, "approved");
+      assert.equal(approved.data.approval.status, "resolved");
+      assert.equal(approved.data.approval.resolution, "approved");
       assert.equal(approved.data.approval.decision, "approved");
       assert.equal((await api(`/api/runs/${approveRun.run.id}`)).run.status, "queued");
       const ack = calls.find((call) => call.url.endsWith("/answerCallbackQuery") && call.body.callback_query_id === "cb-approve");
@@ -1766,7 +1771,8 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
         null
       );
       assert.equal(rejected.status, 200);
-      assert.equal(rejected.data.approval.status, "rejected");
+      assert.equal(rejected.data.approval.status, "resolved");
+      assert.equal(rejected.data.approval.resolution, "rejected");
       assert.equal(rejected.data.approval.decision, "rejected");
       assert.equal((await api(`/api/runs/${rejectRun.run.id}`)).run.status, "cancelled");
       const ack = calls.find((call) => call.url.endsWith("/answerCallbackQuery") && call.body.callback_query_id === "cb-reject");
@@ -1814,7 +1820,8 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
         null
       );
       assert.equal(changed.status, 200);
-      assert.equal(changed.data.approval.status, "rejected");
+      assert.equal(changed.data.approval.status, "resolved");
+      assert.equal(changed.data.approval.resolution, "changes_requested");
       assert.equal(changed.data.approval.decision, "changes_requested");
       assert.equal(changed.data.approval.comment, "Changes requested from Telegram");
       const run = (await api(`/api/runs/${changesRun.run.id}`)).run;
@@ -1886,7 +1893,9 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
       method: "POST",
       body: { comment: "Please include the target branch and rollout plan." }
     });
-    assert.equal(resolved.approval.status, "rejected");
+    assert.equal(resolved.approval.status, "resolved");
+    assert.equal(resolved.approval.resolution, "changes_requested");
+    assert.equal(resolved.approval.resolvedVia, "human");
     assert.equal(resolved.approval.decision, "changes_requested");
     assert.equal(resolved.approval.comment, "Please include the target branch and rollout plan.");
     const run = (await api(`/api/runs/${created.run.id}`)).run;

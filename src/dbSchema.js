@@ -164,10 +164,20 @@ export const DB_SCHEMA_SQL = `
   -- timer elapses the hub applies the explicitly configured fallback decision,
   -- or — with no fallback — marks the still-pending card fallback_required.
   -- An elapsed timer is never a terminal failure for the linked run.
+  --
+  -- kind/resolution/resolved_via: the honest approval lifecycle. status is
+  -- only pending|resolved; what was decided lives in resolution
+  -- (approved|rejected|changes_requested|superseded|option:*) and who/what
+  -- decided lives in resolved_via (human|fallback_timer|engine|policy|
+  -- system). decision is retained as the legacy field and mirrors resolution
+  -- for human-vocabulary decisions. The CHECKs bind fresh installs only;
+  -- existing installs are backfilled by
+  -- migrateApprovalsKindResolutionColumns (ALTER cannot add constraints).
   CREATE TABLE IF NOT EXISTS approvals (
     id TEXT PRIMARY KEY,
     run_id TEXT REFERENCES runs(id) ON DELETE CASCADE,
-    status TEXT NOT NULL DEFAULT 'pending',
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'resolved')),
+    kind TEXT NOT NULL DEFAULT 'custom' CHECK (kind IN ('workflow_gate', 'escalation', 'side_effect', 'custom')),
     title TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
     requested_by TEXT NOT NULL DEFAULT 'workflow',
@@ -175,6 +185,14 @@ export const DB_SCHEMA_SQL = `
     created_at TEXT NOT NULL,
     resolved_at TEXT,
     resolved_by TEXT,
+    resolution TEXT CHECK (
+      resolution IS NULL
+      OR resolution IN ('approved', 'rejected', 'changes_requested', 'superseded')
+      OR resolution LIKE 'option:%'
+    ),
+    resolved_via TEXT CHECK (
+      resolved_via IS NULL OR resolved_via IN ('human', 'fallback_timer', 'engine', 'policy', 'system')
+    ),
     decision TEXT,
     comment TEXT,
     timeout_at TEXT,

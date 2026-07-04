@@ -86,6 +86,9 @@ export function approvalSummaryForDiagnostics(approval) {
   return {
     id: approval.id,
     status: approval.status,
+    kind: approval.kind || "",
+    resolution: approval.resolution || "",
+    resolvedVia: approval.resolvedVia || "",
     decision: approval.decision || "",
     title: approval.title || "",
     comment: approval.comment ? truncate(approval.comment, 600) : "",
@@ -107,9 +110,7 @@ export function runDiagnostics(run, events = [], artifacts = [], deps = {}) {
   // event/error so unrelated approval comments do not become the headline.
   const approvalCausedCancel = Boolean(
     approval
-    && (approval.decision === "changes_requested"
-      || approval.decision === "rejected"
-      || approval.status === "rejected")
+    && ["changes_requested", "rejected"].includes(approval.resolution || approval.decision)
   );
   let headline;
   if (run.status === "failed" || run.status === "error") {

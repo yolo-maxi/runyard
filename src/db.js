@@ -29,6 +29,7 @@ import {
   runnerPoolStatusQueries,
   runnerPoolSummary
 } from "./runnerPoolRecords.js";
+import { approvalKindFromPayload, approvalResolvedViaFromActor } from "./operatorRecords.js";
 import { createOperatorStore } from "./operatorStore.js";
 import { createRunSupervisorStore } from "./runSupervisorStore.js";
 import {
@@ -180,10 +181,10 @@ export function initDb() {
   migrateRunnerAuthHealthColumn();
   migrateRunsSupervisorColumns();
   migrateApprovalsTimerColumns();
+  migrateApprovalsKindResolutionColumns();
   dbBootstrap.setSettingDefault("instance_name", env.instanceName);
   dbBootstrap.seedCatalog();
   dbBootstrap.seedWorkflowEndpoints();
-  autoQueueLegacyRunStartApprovals();
   dbBootstrap.ensureBootstrapToken();
 }
 
@@ -276,6 +277,49 @@ function migrateApprovalsTimerColumns() {
     { name: "timer_state", definition: "timer_state TEXT NOT NULL DEFAULT ''" },
     { name: "timer_elapsed_at", definition: "timer_elapsed_at TEXT" }
   ]);
+}
+
+// The honest approval lifecycle (kind + resolution + resolved_via). Runs the
+// backfill exactly once per existing install — only when the ALTERs actually
+// add the columns (fresh installs get them, with CHECK constraints, from the
+// CREATE TABLE and never enter the backfill branch):
+// - kind is inferred from the payload conventions creators already used
+//   (engine_approval/checkpoint/child_run_approval -> workflow_gate,
+//   supervisor_escalation -> escalation, anything else -> custom).
+// - Historical resolved rows move to status='resolved' with resolution taken
+//   from the old decision column (falling back to the old status), and
+//   resolved_via inferred from the resolver actor string.
+// - Legacy pending run_start/workflow_start cards are auto-queued one final
+//   time; the standing per-boot auto-queue is retired with this migration
+//   (run-start approvals are a retired concept — nothing creates them).
+function migrateApprovalsKindResolutionColumns() {
+  const query = tableColumnsQuery("approvals");
+  const existingColumns = all(query.sql, query.params).map((row) => row.name);
+  if (existingColumns.includes("kind")) return;
+
+  migrateMissingColumns("approvals", [
+    { name: "kind", definition: "kind TEXT NOT NULL DEFAULT 'custom'" },
+    { name: "resolution", definition: "resolution TEXT" },
+    { name: "resolved_via", definition: "resolved_via TEXT" }
+  ]);
+
+  for (const row of all("SELECT id, payload FROM approvals")) {
+    const kind = approvalKindFromPayload(parseJson(row.payload, {}));
+    if (kind !== "custom") run("UPDATE approvals SET kind=? WHERE id=?", [kind, row.id]);
+  }
+
+  const legacyResolved = all("SELECT id, status, decision, resolved_by FROM approvals WHERE status NOT IN ('pending', 'resolved')");
+  for (const row of legacyResolved) {
+    const decision = ["approved", "rejected", "changes_requested"].includes(row.decision) ? row.decision : null;
+    const resolution = decision || (row.status === "approved" ? "approved" : "rejected");
+    run("UPDATE approvals SET status='resolved', resolution=?, resolved_via=? WHERE id=?", [
+      resolution,
+      approvalResolvedViaFromActor(row.resolved_by),
+      row.id
+    ]);
+  }
+
+  operatorStore.autoQueueLegacyRunStartApprovals();
 }
 
 export function createAccessToken(name, token = randomToken(), scopes = ["api"], options = {}) {
@@ -747,6 +791,10 @@ export function createApproval({
 
 export function sweepTimedApprovals() {
   return operatorStore.sweepTimedApprovals();
+}
+
+export function sweepSupersededApprovals() {
+  return operatorStore.sweepSupersededApprovals();
 }
 
 export function getApproval(approvalId) {

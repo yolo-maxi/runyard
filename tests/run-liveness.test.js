@@ -361,7 +361,9 @@ describe("heartbeat-based run liveness", () => {
       [approval.id]
     );
     const resolved = getApproval(approval.id);
-    assert.equal(resolved.status, "approved");
+    assert.equal(resolved.status, "resolved");
+    assert.equal(resolved.resolution, "approved");
+    assert.equal(resolved.resolvedVia, "engine");
     assert.equal(resolved.resolvedBy, "engine:cli");
     assert.equal(getRun(runId).status, "running");
   });
@@ -380,6 +382,8 @@ describe("heartbeat-based run liveness", () => {
     // The run stays running — the runner applies the decision to the engine;
     // the Hub must not requeue or complete anything on card resolution.
     assert.equal(getRun(runId).status, "running");
-    assert.equal(getApproval(approval.id).status, "approved");
+    assert.equal(getApproval(approval.id).status, "resolved");
+    assert.equal(getApproval(approval.id).resolution, "approved");
+    assert.equal(getApproval(approval.id).resolvedVia, "human");
   });
 });

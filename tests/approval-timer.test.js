@@ -157,7 +157,9 @@ describe("timed-approval sweep", () => {
     assert.deepEqual(entry, { id: approval.id, action: "fallback_applied", decision: "approved" });
 
     const resolved = getApproval(approval.id);
-    assert.equal(resolved.status, "approved");
+    assert.equal(resolved.status, "resolved");
+    assert.equal(resolved.resolution, "approved");
+    assert.equal(resolved.resolvedVia, "fallback_timer");
     assert.equal(resolved.decision, "approved");
     assert.equal(resolved.resolvedBy, "system:approval-timer");
     assert.equal(resolved.timerState, "fallback_applied");
@@ -193,7 +195,9 @@ describe("timed-approval sweep", () => {
 
     sweepTimedApprovals();
     const resolved = getApproval(approval.id);
-    assert.equal(resolved.status, "rejected");
+    assert.equal(resolved.status, "resolved");
+    assert.equal(resolved.resolution, "rejected");
+    assert.equal(resolved.resolvedVia, "fallback_timer");
     assert.equal(resolved.resolvedBy, "system:approval-timer");
     assert.equal(getRun(run.id).status, "cancelled");
   });
@@ -251,7 +255,8 @@ describe("timed-approval sweep", () => {
 
       // A late human can still decide; the hold then releases normally.
       resolveApproval(approval.id, "approved", "operator");
-      assert.equal(getApproval(approval.id).status, "approved");
+      assert.equal(getApproval(approval.id).status, "resolved");
+      assert.equal(getApproval(approval.id).resolution, "approved");
     } finally {
       env.runnerOfflineMs = previousOffline;
       env.runStallMs = previousStall;
@@ -271,7 +276,9 @@ describe("timed-approval sweep", () => {
 
     assert.ok(!sweepTimedApprovals().some((item) => item.id === approval.id));
     const resolved = getApproval(approval.id);
-    assert.equal(resolved.status, "approved");
+    assert.equal(resolved.status, "resolved");
+    assert.equal(resolved.resolution, "approved");
+    assert.equal(resolved.resolvedVia, "human");
     assert.equal(resolved.resolvedBy, "operator");
     assert.equal(resolved.timerState, "");
     assert.equal(getRun(run.id).status, "queued");

@@ -38,7 +38,8 @@ export function Icon({ name, cls = "", size = "1em" }) {
 const STATUS_ICONS = {
   succeeded: "✅", failed: "❌", error: "❌", cancelled: "🛑", recovered: "↩",
   superseded: "↪", rejected: "⛔", running: "▶", assigned: "🧭", queued: "⏳",
-  pending: "⏳", waiting_approval: "✋", approved: "✅", online: "●", offline: "○"
+  pending: "⏳", waiting_approval: "✋", approved: "✅", online: "●", offline: "○",
+  changes_requested: "📝", resolved: "☑"
 };
 
 // Status pill — mirrors legacy status() markup/classes for styles.css.
