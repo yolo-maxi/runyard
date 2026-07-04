@@ -6,6 +6,7 @@ import {
 import {
   answerTelegramCallbackQuery as sendTelegramCallbackAnswer,
   clearTelegramApprovalButtons as clearTelegramApprovalMarkup,
+  editTelegramApprovalMessage as editTelegramApprovalMessageText,
   sendTelegramApprovalNotification
 } from "./telegramBotClient.js";
 
@@ -16,7 +17,8 @@ export function createTelegramApprovalNotifier({
   getRun,
   sendApprovalNotification = sendTelegramApprovalNotification,
   sendCallbackAnswer = sendTelegramCallbackAnswer,
-  clearApprovalMarkup = clearTelegramApprovalMarkup
+  clearApprovalMarkup = clearTelegramApprovalMarkup,
+  editApprovalMessage = editTelegramApprovalMessageText
 } = {}) {
   function telegramApprovalTarget() {
     return resolveTelegramApprovalTarget({
@@ -53,11 +55,27 @@ export function createTelegramApprovalNotifier({
     return clearApprovalMarkup({ botToken: env.telegramBotToken, callback });
   }
 
+  // Post-decision follow-up: rewrite the original message to name the outcome
+  // and actor. Falls back to clearing the buttons so a failed edit never
+  // leaves live decision buttons on a decided card.
+  async function updateTelegramApprovalMessage(callback, approval) {
+    const edited = await editApprovalMessage({
+      botToken: env.telegramBotToken,
+      callback,
+      approval,
+      approvalContext,
+      instanceName: env.instanceName
+    });
+    if (!edited) return clearTelegramApprovalButtons(callback);
+    return true;
+  }
+
   return {
     answerTelegramCallbackQuery,
     clearTelegramApprovalButtons,
     notifyTelegram,
     shouldNotifyTelegram,
-    telegramApprovalTarget
+    telegramApprovalTarget,
+    updateTelegramApprovalMessage
   };
 }

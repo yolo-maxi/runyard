@@ -94,6 +94,12 @@ describe("run create store", () => {
       title: "Approve Deploy",
       description: "Production deploy",
       requestedBy: "alice",
+      // The declared ask: run-start cards gate a run held in waiting_approval.
+      ask: {
+        audience: "operators",
+        action: "Release this Deploy run to the queue for runner execution (reject to cancel it before it starts).",
+        reason: "Production deploy"
+      },
       payload: {
         kind: "run_start",
         approvalKind: "run_start",

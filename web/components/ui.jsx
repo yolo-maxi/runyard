@@ -44,14 +44,14 @@ const STATUS_ICONS = {
 };
 
 // Status pill — mirrors legacy status() markup/classes for styles.css.
-// Shows the human label; the raw enum survives as the CSS class and tooltip.
-export function StatusBadge({ value }) {
+// Shows a human label; `value` stays the raw enum for color/glyph classes.
+export function StatusBadge({ value, label }) {
   const key = String(value || "").toLowerCase();
   const glyph = STATUS_ICONS[key] || "•";
-  const label = humanizeStatus(value);
+  const displayLabel = label || humanizeStatus(value);
   return (
-    <span className={`status ${key}`} title={key !== label.toLowerCase() ? key : undefined}>
-      <span aria-hidden="true">{glyph}</span> {label}
+    <span className={`status ${key}`} title={key !== String(displayLabel).toLowerCase() ? key : undefined}>
+      <span aria-hidden="true">{glyph}</span> {displayLabel}
     </span>
   );
 }

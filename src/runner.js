@@ -461,6 +461,10 @@ async function executeAssignment(assignment) {
       smithersRunId: sid,
       capabilitySlug: capability.slug,
       runnerName: name,
+      // Seed-registered asks for the workflow's <Approval> gates, so the Hub
+      // card carries the author's question even on engines whose inspect
+      // doesn't expose the request (0.22).
+      gateAsks: capability.approvalPolicy?.gates || {},
       postEvent: (type, message, data) => event(run.id, type, message, data),
       hubGet: (pathname) => client.get(pathname),
       hubPost: (pathname, body) => client.post(pathname, body),

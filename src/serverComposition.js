@@ -187,7 +187,8 @@ export function createServerComposition({
     answerTelegramCallbackQuery,
     clearTelegramApprovalButtons,
     notifyTelegram,
-    telegramApprovalTarget
+    telegramApprovalTarget,
+    updateTelegramApprovalMessage
   } = createTelegramApprovalNotifier({
     approvalContext,
     env,
@@ -325,6 +326,7 @@ export function createServerComposition({
   const approvalHandlers = createApprovalHandlers({
     answerTelegramCallbackQuery,
     clearTelegramApprovalButtons,
+    updateTelegramApprovalMessage,
     createApproval,
     dispatchRunResponseEndpointDelivery,
     getApproval,

@@ -129,7 +129,21 @@ export const seedProductCapabilities = [
     requiredAgents: ["taste-agent", "design-director"],
     approvalPolicy: {
       required: true,
-      reason: "Pauses for human approval before turning a proposed visual skin into an implementation brief."
+      reason: "Pauses for human approval before turning a proposed visual skin into an implementation brief.",
+      // Declared asks for the workflow's engine-level <Approval> gates, keyed
+      // by node id. The runner bridge attaches these to the Hub card so the
+      // approver reads the author's question, not generic bridge boilerplate
+      // (0.22 `smithers inspect` does not expose the gate's own request).
+      gates: {
+        "skin:approval": {
+          title: "Approve app skin direction",
+          action: "Pick the proposed visual skin direction so the workflow can turn it into a production skin brief.",
+          reason:
+            "The skin direction shapes all downstream design and implementation work; the workflow author requires a human to choose it.",
+          summary:
+            "The workflow proposed several distinct visual skin concepts and is paused until a human approves a direction (deny lets it finish without a brief)."
+        }
+      }
     },
     workflow: { engine: "smithers", entry: ".smithers/workflows/app-skinner.tsx" }
   },

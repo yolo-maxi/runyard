@@ -1,7 +1,7 @@
 import { deepLinks } from "../lib/router.js";
 import {
   isActiveRun, isDiagnosticRun, runTitle, runDescription, runProject, runBranch,
-  runExecutionLabel, runDurationMs, formatDuration, relativeTime, truncate,
+  runExecutionLabel, runDurationMs, formatDuration, relativeTime, truncate, runStatusLabel,
   artifactDisplayName, formatBytes, runChangedFiles, runChurn, runDigest
 } from "../lib/runHelpers.js";
 import { rerunRun, editRerunById } from "../lib/runActions.js";
@@ -98,7 +98,7 @@ export function RunCard({ run, artifacts = [], now = Date.now(), variant = "card
       >
         <div className="run-history-status">
           {active ? <span className="run-pulse run-pulse-row" aria-hidden="true" /> : null}
-          <StatusBadge value={run.status} />
+          <StatusBadge value={run.status} label={runStatusLabel(run.status)} />
         </div>
         <div className="run-history-main">
           <h3 className="run-history-title">
@@ -143,7 +143,7 @@ export function RunCard({ run, artifacts = [], now = Date.now(), variant = "card
       <header className="run-card-head">
         <div className="run-card-status">
           {active ? <span className="run-pulse" aria-hidden="true" /> : null}
-          <StatusBadge value={run.status} />
+          <StatusBadge value={run.status} label={runStatusLabel(run.status)} />
         </div>
         <ShareButton hash={deepLinks.run(run.id)} label="Copy share link to this run" />
       </header>

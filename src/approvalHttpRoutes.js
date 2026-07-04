@@ -49,6 +49,7 @@ export function approvalResolutionIssue(approval, { includeOk = false, withAppro
 export function createApprovalHandlers({
   answerTelegramCallbackQuery,
   clearTelegramApprovalButtons,
+  updateTelegramApprovalMessage = null,
   createApproval,
   dispatchRunResponseEndpointDelivery,
   getApproval,
@@ -154,8 +155,15 @@ export function createApprovalHandlers({
         return res.status(issue.status).json(issue.body);
       }
       if (issue?.status === 409) {
-        await answerTelegramCallbackQuery(callback.id, `Approval is already ${approval.resolution || approval.status}.`);
-        await clearTelegramApprovalButtons(callback);
+        await answerTelegramCallbackQuery(
+          callback.id,
+          `Approval is already resolved: ${approvalDecisionLabel(approval.resolution || approval.decision || approval.status)}.`
+        );
+        // Sync the stale message with the truth: name the outcome, drop the
+        // buttons ("Use the buttons below to decide." must never survive a
+        // decision).
+        if (updateTelegramApprovalMessage) await updateTelegramApprovalMessage(callback, approval);
+        else await clearTelegramApprovalButtons(callback);
         return res.status(issue.status).json(issue.body);
       }
 
@@ -166,7 +174,8 @@ export function createApprovalHandlers({
         comment: telegramApprovalComment(parsed.decision)
       });
       await answerTelegramCallbackQuery(callback.id, `${approvalDecisionLabel(parsed.decision)}.`);
-      await clearTelegramApprovalButtons(callback);
+      if (updateTelegramApprovalMessage && resolved) await updateTelegramApprovalMessage(callback, resolved);
+      else await clearTelegramApprovalButtons(callback);
       return res.json({ ok: true, approval: withApprovalLinks(resolved) });
     }
   };

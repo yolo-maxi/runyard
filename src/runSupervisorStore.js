@@ -237,7 +237,7 @@ export function createRunSupervisorStore({
 
     if (escalate) {
       const card = buildEscalationApproval(row, decision);
-      createApproval({ runId: row.id, title: card.title, description: card.description, requestedBy: "system:hub-supervisor", payload: card.payload });
+      createApproval({ runId: row.id, title: card.title, description: card.description, requestedBy: "system:hub-supervisor", ask: card.ask, payload: card.payload });
       addRunEvent(row.id, "run.supervisor.escalated", card.description, { escalation: decision.escalation, fingerprint: decision.fingerprint });
     }
     return endedTerminal;

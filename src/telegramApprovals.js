@@ -36,40 +36,85 @@ export function telegramLabeledLine(label, value) {
   return `<b>${htmlEscape(label)}:</b> ${htmlEscape(value)}`;
 }
 
+// Per-kind lead line: the first thing an approver reads must say what class
+// of question this is, not a generic "approval requested".
+const TELEGRAM_KIND_LEADS = {
+  workflow_gate: "Workflow paused for your sign-off",
+  escalation: "A run needs a recovery decision",
+  side_effect: "A run wants to perform a gated side effect",
+  custom: "Approval requested"
+};
+
+export function telegramApprovalKindLead(kind) {
+  return TELEGRAM_KIND_LEADS[kind] || TELEGRAM_KIND_LEADS.custom;
+}
+
+// What silence does, stated on every card: a timed card names its deadline and
+// fallback; a blocking card says it waits. Never leave "ignoring this" with an
+// unstated meaning.
+export function telegramApprovalIfIgnoredLine(approval, context) {
+  const fromContext = String(context?.whatHappensIfIgnored || "").trim();
+  if (fromContext) return fromContext;
+  if (approval?.timeoutAt) {
+    const fallback = context?.approval?.fallbackDecisionLabel || approval?.fallback?.decision;
+    return fallback
+      ? `If nobody decides by ${approval.timeoutAt}, “${fallback}” is applied automatically.`
+      : `The timer elapses at ${approval.timeoutAt}; the card then flags itself for a human and keeps waiting.`;
+  }
+  return "This waits until someone decides — the run is held, never failed by waiting.";
+}
+
+// One resolved-state line for message edits: "✅ Approved by @fran at 17:42".
+export function telegramApprovalResolvedLine(approval, context) {
+  const resolution = context?.approval?.resolutionLabel || approvalDecisionLabel(approval?.resolution || approval?.decision);
+  const glyph = (approval?.resolution || approval?.decision) === "approved" ? "✅" : "🚫";
+  const via = context?.approval?.resolvedViaLabel || "";
+  const by = approval?.resolvedBy ? ` by ${approval.resolvedBy}` : "";
+  const at = approval?.resolvedAt ? ` at ${approval.resolvedAt}` : "";
+  const viaSuffix = via && via !== "decided by a human" ? ` (${via})` : "";
+  return `${glyph} ${resolution}${by}${at}${viaSuffix}`;
+}
+
 export function telegramApprovalText(approval, { approvalContext, instanceName = "Runyard" } = {}) {
   const context = approvalContext(approval);
+  const kind = context.approval?.kind || approval?.kind || "custom";
+  const pending = (approval?.status || "pending") === "pending";
   const workflow = context.workflow?.name
     ? `${context.workflow.name}${context.workflow.slug ? ` (${context.workflow.slug})` : ""}`
     : "Unknown workflow";
-  const proposedChange = truncate(context.proposedChange || approval?.title || approval?.description || "Approval request", 900);
-  const proposedAction = truncate(context.proposedAction || "Resolve this approval.", 320);
+  const ask = context.ask || {};
+  const action = truncate(ask.action || context.proposedAction || "Resolve this approval.", 320);
+  const reason = truncate(ask.reason || approval?.description || "", 500);
+  const details = truncate(context.proposedChange || "", 900);
   const branchLine = context.targetBranch ? telegramLabeledLine("Target branch", context.targetBranch) : telegramLabeledLine("Branch", context.branch);
   const runLine = approval.runId
-    ? `${telegramCode(approval.runId)}${context.run?.status ? ` (${htmlEscape(context.run.status)})` : ""}`
+    ? `${telegramCode(approval.runId)}${context.run?.statusLabel ? ` (${htmlEscape(context.run.statusLabel)})` : ""}`
     : "No run attached";
+  const options = Array.isArray(ask.options) ? ask.options : [];
   return [
-    `<b>${htmlEscape(instanceName)} approval requested</b>`,
-    "",
-    "<b>Thing being approved</b>",
-    "<b>Proposed change</b>",
-    `<pre>${htmlEscape(proposedChange)}</pre>`,
-    "",
-    "<b>Decision / action</b>",
-    htmlEscape(proposedAction),
-    "",
+    `<b>${htmlEscape(instanceName)}: ${htmlEscape(telegramApprovalKindLead(kind))}</b>`,
+    `<b>${htmlEscape(truncate(approval?.title || "Approval", 240))}</b>`,
+    "<b>What happens if you approve</b>",
+    htmlEscape(action),
+    reason && reason !== action ? "<b>Why a human is needed</b>" : "",
+    reason && reason !== action ? htmlEscape(reason) : "",
+    details && details !== reason ? "<b>Details</b>" : "",
+    details && details !== reason ? `<pre>${htmlEscape(details)}</pre>` : "",
+    ...(options.length
+      ? ["<b>Options</b>", ...options.map((option) => htmlEscape(`• ${option.label}${option.effect ? ` — ${option.effect}` : ""}`))]
+      : []),
     "<b>Workflow</b>",
     htmlEscape(workflow),
-    "",
     telegramLabeledLine("Originator", context.requestedBy || "unknown"),
     context.project?.display ? telegramLabeledLine("Project / repo / path", truncate(context.project.display, 180)) : "",
     branchLine,
     context.deploy == null ? "" : telegramLabeledLine("Deploy", context.deploy ? "yes" : "no"),
-    "",
     "<b>Run</b>",
     runLine,
     telegramLabeledLine("Approval", approval.id),
-    "",
-    "Use the buttons below to decide."
+    pending ? "<b>If nobody decides</b>" : "",
+    pending ? htmlEscape(telegramApprovalIfIgnoredLine(approval, context)) : "",
+    pending ? "Use the buttons below to decide." : htmlEscape(telegramApprovalResolvedLine(approval, context))
   ]
     .filter(Boolean)
     .join("\n");
@@ -148,6 +193,20 @@ export function parseTelegramApprovalCallback(data) {
   };
 }
 
+// Rebuild the approval message for a decided card: the body ends with
+// "✅ Approved by … at …" instead of "Use the buttons below to decide.", and
+// the decision buttons are gone. Returns null when the callback carries no
+// editable message reference.
+export function telegramApprovalMessageEditPayload({ callback, approval, approvalContext, instanceName } = {}) {
+  const target = telegramApprovalButtonClearPayload(callback || {});
+  if (!target || !approval) return null;
+  return {
+    ...target,
+    text: telegramApprovalText(approval, { approvalContext, instanceName }),
+    parse_mode: "HTML"
+  };
+}
+
 export function telegramApprovalButtonClearPayload(callback) {
   if (callback.inline_message_id) {
     return { inline_message_id: callback.inline_message_id, reply_markup: { inline_keyboard: [] } };
@@ -165,5 +224,8 @@ export function telegramApprovalButtonClearPayload(callback) {
 export function approvalDecisionLabel(decision) {
   if (decision === "approved") return "Approved";
   if (decision === "changes_requested") return "Changes requested";
-  return "Rejected";
+  if (decision === "superseded") return "Superseded";
+  if (decision === "rejected" || !decision) return "Rejected";
+  // Never default an unknown value to "Rejected" — humanize it instead.
+  return String(decision).replace(/_/g, " ");
 }

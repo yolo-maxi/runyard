@@ -182,6 +182,7 @@ export function initDb() {
   migrateRunsSupervisorColumns();
   migrateApprovalsTimerColumns();
   migrateApprovalsKindResolutionColumns();
+  migrateApprovalsAskColumn();
   dbBootstrap.setSettingDefault("instance_name", env.instanceName);
   dbBootstrap.seedCatalog();
   dbBootstrap.seedWorkflowEndpoints();
@@ -277,6 +278,14 @@ function migrateApprovalsTimerColumns() {
     { name: "timer_state", definition: "timer_state TEXT NOT NULL DEFAULT ''" },
     { name: "timer_elapsed_at", definition: "timer_elapsed_at TEXT" }
   ]);
+}
+
+// The ask contract (audience/action/reason/options, JSON). Nullable and never
+// backfilled: a historical card whose creator never declared a question keeps
+// ask=NULL and is presented with an explicitly-derived fallback ask — we do
+// not invent asks after the fact.
+function migrateApprovalsAskColumn() {
+  migrateMissingColumns("approvals", [{ name: "ask", definition: "ask TEXT" }]);
 }
 
 // The honest approval lifecycle (kind + resolution + resolved_via). Runs the
@@ -781,12 +790,13 @@ export function createApproval({
   title,
   description = "",
   requestedBy = "workflow",
+  ask = null,
   payload = {},
   timeoutMs = null,
   timeoutAt = null,
   fallback = null
 }) {
-  return operatorStore.createApproval({ runId, title, description, requestedBy, payload, timeoutMs, timeoutAt, fallback });
+  return operatorStore.createApproval({ runId, title, description, requestedBy, ask, payload, timeoutMs, timeoutAt, fallback });
 }
 
 export function sweepTimedApprovals() {
@@ -805,8 +815,8 @@ export function listApprovals(status = "") {
   return operatorStore.listApprovals(status);
 }
 
-export function resolveApproval(approvalId, decision, resolvedBy = "api", comment = "") {
-  return operatorStore.resolveApproval(approvalId, decision, resolvedBy, comment);
+export function resolveApproval(approvalId, decision, resolvedBy = "api", comment = "", resolvedVia = "human") {
+  return operatorStore.resolveApproval(approvalId, decision, resolvedBy, comment, resolvedVia);
 }
 
 export function resolveEngineApprovalOnResume(runId, data = {}) {

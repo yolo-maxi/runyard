@@ -38,41 +38,82 @@ export const ENGINE_APPROVAL_MAX_APPLY_ATTEMPTS = 3;
 // status, requestedAt}] } — `approvals` lists pending gates only. When the
 // engine reports `waiting-approval` but the approvals array is missing (older
 // engine, transient lag), a synthetic empty-node wait keeps the run held.
+//
+// The workflow author's <Approval request={{title, summary, metadata}}> is
+// stored by the engine but NOT exposed by 0.22 inspect. We read those fields
+// defensively (request.title / title, request.summary / summary, metadata) so
+// an engine upgrade that exposes them (≥0.25) makes the Hub card carry the
+// authored question with no runner change.
 export function engineApprovalWaits(inspect = null) {
   if (!inspect || typeof inspect !== "object") return [];
   const status = String(inspect.runState?.state || inspect.run?.status || "");
   const approvals = Array.isArray(inspect.approvals) ? inspect.approvals : [];
   const waits = approvals
     .filter((approval) => String(approval?.status || "pending") === "pending")
-    .map((approval) => ({
-      nodeId: String(approval?.nodeId || ""),
-      requestedAt: String(approval?.requestedAt || "")
-    }))
+    .map((approval) => {
+      const request = approval?.request && typeof approval.request === "object" ? approval.request : {};
+      const metadata = request.metadata ?? approval?.metadata;
+      return {
+        nodeId: String(approval?.nodeId || ""),
+        requestedAt: String(approval?.requestedAt || ""),
+        title: String(request.title || approval?.title || ""),
+        summary: String(request.summary || approval?.summary || ""),
+        metadata: metadata && typeof metadata === "object" ? metadata : null
+      };
+    })
     .filter((wait) => wait.nodeId);
   if (waits.length) return waits;
-  if (status === "waiting-approval") return [{ nodeId: "", requestedAt: "" }];
+  if (status === "waiting-approval") return [{ nodeId: "", requestedAt: "", title: "", summary: "", metadata: null }];
   return [];
 }
 
 // Hub approval-card request body for one engine-level wait. No timeoutMs:
 // engine approvals are blocking by contract (timed approvals are a Hub-native
 // concept); the card stays pending until a human or the engine decides.
+//
+// The card's title/summary/ask come, in preference order, from:
+//  1. the gate's own authored request (when the engine exposes it — see
+//     engineApprovalWaits),
+//  2. the per-workflow gate ask registered at seed time
+//     (capability.approvalPolicy.gates[nodeId]),
+//  3. honest generic copy naming the workflow and gate.
+// The smithers CLI equivalence rides in the payload (ops detail), not in the
+// human-facing description.
 export function engineApprovalCardRequest({
   hubRunId = "",
   smithersRunId = "",
   nodeId = "",
   capabilitySlug = "",
-  runnerName = ""
+  runnerName = "",
+  wait = {},
+  gateAsk = null
 } = {}) {
   const nodeLabel = nodeId || "approval";
+  const authoredTitle = String(wait?.title || "").trim();
+  const authoredSummary = String(wait?.summary || "").trim();
+  const registered = gateAsk && typeof gateAsk === "object" ? gateAsk : {};
+  const title =
+    authoredTitle || String(registered.title || "").trim() || `Workflow gate: ${capabilitySlug || "workflow"} · ${nodeLabel}`;
+  const description =
+    authoredSummary ||
+    String(registered.summary || "").trim() ||
+    `The '${capabilitySlug || "workflow"}' workflow paused at its '${nodeLabel}' gate and is waiting for a human decision.`;
+  const ask = {
+    audience: "operators",
+    action:
+      String(registered.action || "").trim() ||
+      `Resume the '${capabilitySlug || "workflow"}' workflow past its '${nodeLabel}' gate (or send it down the gate's deny path).`,
+    reason:
+      String(registered.reason || "").trim() ||
+      authoredSummary ||
+      "The workflow's author marked this step as requiring human sign-off before continuing."
+  };
   return {
     runId: hubRunId,
-    title: `Engine approval: ${capabilitySlug || "workflow"} · ${nodeLabel}`,
-    description:
-      `Smithers run ${smithersRunId} paused at engine-level approval node '${nodeLabel}' on runner ${runnerName}. ` +
-      `Approving or rejecting this card applies the decision to the engine via the runner ` +
-      `(equivalent to \`smithers approve|deny ${smithersRunId}${nodeId ? ` --node ${nodeId}` : ""}\`).`,
+    title: title.slice(0, 240),
+    description: description.slice(0, 2000),
     requestedBy: `runner: ${runnerName}`,
+    ask,
     payload: {
       kind: ENGINE_APPROVAL_PAYLOAD_KIND,
       approvalKind: "engine_gate",
@@ -81,7 +122,21 @@ export function engineApprovalCardRequest({
       smithersRunId,
       nodeId,
       runnerName,
-      notifyTelegram: true
+      notifyTelegram: true,
+      // Authored request context (when the engine exposed it) so the Hub can
+      // render the gate's own words even if title/description get edited.
+      ...(authoredTitle || authoredSummary || wait?.metadata
+        ? {
+            request: {
+              ...(authoredTitle ? { title: authoredTitle } : {}),
+              ...(authoredSummary ? { summary: authoredSummary } : {}),
+              ...(wait?.metadata ? { metadata: wait.metadata } : {})
+            }
+          }
+        : {}),
+      // Ops remediation detail (kept out of the human-facing description):
+      // deciding engine-side on the runner is always possible.
+      engineCli: `smithers approve|deny ${smithersRunId}${nodeId ? ` --node ${nodeId}` : ""}`
     }
   };
 }
@@ -126,6 +181,10 @@ export function createEngineApprovalBridge({
   smithersRunId,
   capabilitySlug = "",
   runnerName = "",
+  // Seed-time gate asks, keyed by <Approval> node id — the workflow's declared
+  // question for each gate (capability.approvalPolicy.gates). Used whenever
+  // the engine's inspect does not expose the authored request (0.22 doesn't).
+  gateAsks = {},
   postEvent,
   hubGet,
   hubPost,
@@ -142,7 +201,8 @@ export function createEngineApprovalBridge({
     if (observed) engineDecisions.set(observed.nodeId, observed.decision);
   }
 
-  async function surfaceWait(nodeId) {
+  async function surfaceWait(wait) {
+    const nodeId = wait.nodeId;
     const state = { approvalId: "", applied: false, appliedDecision: "", applyAttempts: 0, applyGaveUp: false };
     waits.set(nodeId, state);
     await postEvent(
@@ -153,7 +213,15 @@ export function createEngineApprovalBridge({
     try {
       const created = await hubPost(
         "/api/approvals",
-        engineApprovalCardRequest({ hubRunId, smithersRunId, nodeId, capabilitySlug, runnerName })
+        engineApprovalCardRequest({
+          hubRunId,
+          smithersRunId,
+          nodeId,
+          capabilitySlug,
+          runnerName,
+          wait,
+          gateAsk: (gateAsks && typeof gateAsks === "object" ? gateAsks[nodeId] : null) || null
+        })
       );
       state.approvalId = created?.approval?.id || "";
     } catch (error) {
@@ -216,7 +284,7 @@ export function createEngineApprovalBridge({
       const current = engineApprovalWaits(inspect);
       const currentIds = new Set(current.map((wait) => wait.nodeId));
       for (const wait of current) {
-        if (!waits.has(wait.nodeId)) await surfaceWait(wait.nodeId);
+        if (!waits.has(wait.nodeId)) await surfaceWait(wait);
       }
       for (const [nodeId, state] of waits) {
         if (!currentIds.has(nodeId)) continue;

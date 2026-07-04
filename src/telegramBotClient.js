@@ -1,6 +1,7 @@
 import { truncate } from "./presentation.js";
 import {
   telegramApprovalButtonClearPayload,
+  telegramApprovalMessageEditPayload,
   telegramApprovalMessagePayload
 } from "./telegramApprovals.js";
 
@@ -55,6 +56,24 @@ export async function answerTelegramCallbackQuery({ botToken, callbackQueryId, t
     fetchImpl,
     logError,
     errorLabel: "Telegram callback acknowledgement"
+  });
+}
+
+// After a decision, rewrite the original approval message so it names the
+// outcome and actor instead of still saying "Use the buttons below to
+// decide.". Falls back to false (caller then clears just the buttons) when the
+// callback has no editable message.
+export async function editTelegramApprovalMessage({ botToken, callback, approval, approvalContext, instanceName, fetchImpl, logError } = {}) {
+  if (!botToken) return false;
+  const payload = telegramApprovalMessageEditPayload({ callback, approval, approvalContext, instanceName });
+  if (!payload) return false;
+  return callTelegramBot({
+    botToken,
+    method: "editMessageText",
+    payload,
+    fetchImpl,
+    logError,
+    errorLabel: "Telegram approval message update"
   });
 }
 

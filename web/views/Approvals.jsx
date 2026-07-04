@@ -13,13 +13,29 @@ function approvalContext(approval) {
   return approval?.context || {};
 }
 
+// Humanized labels come from the server-side context (one shared vocabulary
+// for web, Telegram, and diagnostics); these fall back gracefully for rows
+// that predate it.
 function approvalDecisionLabel(approval) {
+  const fromContext = approval?.context?.approval?.resolutionSentence;
+  if (fromContext) return fromContext;
   const decision = approval?.resolution || approval?.decision || approval?.status || "";
   if (decision === "approved") return "Approved";
   if (decision === "changes_requested") return "Changes requested";
   if (decision === "rejected") return "Rejected";
-  if (decision === "superseded") return "Superseded (run ended)";
-  return decision || "Pending";
+  if (decision === "superseded") return "Superseded — the run ended first";
+  return decision ? "Resolved" : "Pending";
+}
+
+function approvalStatusBadgeProps(approval) {
+  const context = approval?.context?.approval || {};
+  return {
+    value: approval?.resolution || approval?.status,
+    label:
+      approval?.status === "pending"
+        ? context.statusLabel || "Pending decision"
+        : context.resolutionLabel || approvalDecisionLabel(approval)
+  };
 }
 
 // Single labeled fact row. Ported from legacy approvalFact(); renders nothing
@@ -125,7 +141,8 @@ export function ApprovalDetail({ id }) {
         {run ? <a className="button" href={run.deepLink}>Open run</a> : null}
       </Toolbar>
       <p className="approval-detail-sub">
-        <StatusBadge value={approval.resolution || approval.status} />
+        <StatusBadge {...approvalStatusBadgeProps(approval)} />
+        {context.approval?.kindLabel ? <span className="chip">{context.approval.kindLabel}</span> : null}
         <span className="run-id-mono">{approval.id}</span>
         <span className="muted">{approval.createdAt || ""}</span>
       </p>
@@ -135,6 +152,7 @@ export function ApprovalDetail({ id }) {
           <p className="approval-description">{approval.description || "No description provided."}</p>
           <div className="approval-facts">
             <ApprovalFact label="Requested by">{context.requestedBy || approval.requestedBy || "workflow"}</ApprovalFact>
+            <ApprovalFact label="Who is asked">{context.ask?.audienceLabel}</ApprovalFact>
             <ApprovalFact label="Workflow">
               {workflow?.deepLink ? <a href={workflow.deepLink}>{workflowLabel}</a> : workflowLabel}
             </ApprovalFact>
@@ -149,38 +167,50 @@ export function ApprovalDetail({ id }) {
             ) : null}
             <ApprovalFact label="Approval ID"><span className="run-id-mono">{approval.id}</span></ApprovalFact>
             <ApprovalFact label="Run">{runLink}</ApprovalFact>
-            <ApprovalFact label="Timer">
+            <ApprovalFact label="Deadline">
               {approval.timeoutAt
-                ? `Elapses ${approval.timeoutAt}` +
-                  (approval.fallback?.decision ? `, then falls back to "${approval.fallback.decision}"` : ", no fallback configured")
+                ? `Decides itself at ${approval.timeoutAt}` +
+                  (context.approval?.fallbackDecisionLabel
+                    ? ` → ${context.approval.fallbackDecisionLabel}`
+                    : " — no automatic decision configured; it will flag itself for a human")
                 : ""}
             </ApprovalFact>
           </div>
           {approval.timerState === "fallback_required" ? (
             <p className="notice">
-              ⏳ The approval timer elapsed {approval.timerElapsedAt ? `at ${approval.timerElapsedAt} ` : ""}with no configured
-              fallback. The linked run is held open (not failed) until you decide.
+              ⏳ The timer elapsed {approval.timerElapsedAt ? `at ${approval.timerElapsedAt} ` : ""}with no automatic
+              decision configured. The linked run is held open (not failed) until you decide.
             </p>
           ) : null}
           {context.proposedChange ? (
             <>
-              <h3>Proposed change</h3>
+              <h3>What's being approved</h3>
               <p className="approval-proposed-change">{context.proposedChange}</p>
             </>
           ) : null}
           {run ? (
             <>
               <h3>Linked run</h3>
-              <p><strong>{run.title || approval.runId}</strong> <StatusBadge value={run.status} /></p>
+              <p><strong>{run.title || approval.runId}</strong> <StatusBadge value={run.status} label={run.statusLabel} /></p>
               <p className="muted">{run.description || run.currentStep || ""}</p>
             </>
           ) : null}
-          <h3>Proposed action</h3>
-          <p className="notice">{context.proposedAction || context.whatHappensIfApproved || "Approving marks this approval approved."}</p>
+          <h3>What happens</h3>
+          <p className="notice">
+            {context.ask?.action || context.whatHappensIfApproved || "Approving marks this approval approved."}
+            {context.ask?.derived ? <span className="muted"> (derived from the run's input — the requester declared no ask)</span> : null}
+          </p>
+          {context.ask?.reason ? (
+            <>
+              <h3>Why a human is needed</h3>
+              <p className="muted">{context.ask.reason}</p>
+            </>
+          ) : null}
           <h3>Decision outcomes</h3>
-          <p className="muted">{context.whatHappensIfApproved || "Approving marks this approval approved."}</p>
-          <p className="muted">{context.whatHappensIfChangesRequested || "Requesting changes records changes_requested."}</p>
-          <p className="muted">{context.whatHappensIfRejected || "Rejecting marks this approval rejected."}</p>
+          <p className="muted"><strong>Approve:</strong> {context.whatHappensIfApproved || "This approval is marked approved."}</p>
+          <p className="muted"><strong>Request changes:</strong> {context.whatHappensIfChangesRequested || "Your note records what should change."}</p>
+          <p className="muted"><strong>Reject:</strong> {context.whatHappensIfRejected || "This approval is marked rejected."}</p>
+          <p className="muted"><strong>If nobody decides:</strong> {context.whatHappensIfIgnored || "The card waits until someone decides."}</p>
           {canResolve ? (
             <div className="approval-decision">
               <label>
@@ -202,7 +232,7 @@ export function ApprovalDetail({ id }) {
               <strong>{approvalDecisionLabel(approval)}</strong>
               <br />
               <span className="muted">
-                Resolved by {approval.resolvedBy || "unknown"} at {approval.resolvedAt || "unknown"}
+                By {approval.resolvedBy || "unknown"} at {approval.resolvedAt || "unknown"}
                 {approval.comment ? `: ${approval.comment}` : ""}
               </span>
             </p>

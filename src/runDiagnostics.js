@@ -1,3 +1,10 @@
+import {
+  approvalIfIgnored,
+  approvalKindLabel,
+  approvalResolutionLabel,
+  approvalResolutionSentence,
+  approvalResolvedViaLabel
+} from "./approvalPresentation.js";
 import { deepLinks } from "./deepLinks.js";
 import { truncate } from "./presentation.js";
 import {
@@ -81,20 +88,31 @@ export function relevantApproval(runId, { listApprovals = () => [] } = {}) {
   );
 }
 
-export function approvalSummaryForDiagnostics(approval) {
+export function approvalSummaryForDiagnostics(approval, run = null) {
   if (!approval) return null;
   return {
     id: approval.id,
     status: approval.status,
     kind: approval.kind || "",
+    // Humanized labels for the run page — the raw enums stay machine fields.
+    kindLabel: approvalKindLabel(approval.kind),
+    statusLabel: approval.status === "pending" ? "Pending decision" : "Resolved",
     resolution: approval.resolution || "",
+    resolutionLabel: approvalResolutionLabel(approval.resolution) || "",
     resolvedVia: approval.resolvedVia || "",
+    resolvedViaLabel: approvalResolvedViaLabel(approval.resolvedVia) || "",
+    resolutionSentence: approvalResolutionSentence(approval) || "",
     decision: approval.decision || "",
     title: approval.title || "",
     comment: approval.comment ? truncate(approval.comment, 600) : "",
     requestedBy: approval.requestedBy || "",
     resolvedBy: approval.resolvedBy || "",
     resolvedAt: approval.resolvedAt || "",
+    // Timer truth for the run page: the deadline and what silence does.
+    timeoutAt: approval.timeoutAt || null,
+    timerState: approval.timerState || "",
+    fallbackDecision: approval.fallback?.decision || null,
+    ifIgnored: approval.status === "pending" ? approvalIfIgnored(approval, run) : "",
     deepLink: deepLinks.approval(approval.id)
   };
 }
@@ -143,7 +161,7 @@ export function runDiagnostics(run, events = [], artifacts = [], deps = {}) {
         ? approval?.resolvedBy
           || (cancelEvent?.data && (cancelEvent.data.cancelledBy || cancelEvent.data.actor)) || ""
         : "",
-    approval: approvalSummaryForDiagnostics(approval),
+    approval: approvalSummaryForDiagnostics(approval, run),
     timeline: focusedTimeline(sortedEvents, failureEvent || cancelEvent || null, deps),
     logExcerpts: logExcerpts(sortedEvents, failureEvent || cancelEvent || null),
     artifacts: diagnosticArtifacts(artifacts, deps),

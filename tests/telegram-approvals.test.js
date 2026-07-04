@@ -8,11 +8,17 @@ import {
   parseTelegramApprovalCallback,
   shouldNotifyTelegram,
   telegramApprovalButtonClearPayload,
+  telegramApprovalIfIgnoredLine,
+  telegramApprovalKindLead,
+  telegramApprovalMessageEditPayload,
   telegramApprovalMessagePayload,
-  telegramApprovalTarget
+  telegramApprovalTarget,
+  telegramApprovalText
 } from "../src/telegramApprovals.js";
 
 const approvalContext = () => ({
+  approval: { kind: "custom" },
+  ask: { action: "Queue & run", reason: "Runs a coding agent on the repo.", audience: "operators" },
   workflow: { name: "Improve <App>", slug: "improve" },
   proposedChange: "Change <script>",
   proposedAction: "Queue & run",
@@ -21,7 +27,8 @@ const approvalContext = () => ({
   targetBranch: "main",
   branch: "",
   deploy: true,
-  run: { status: "queued" }
+  run: { status: "queued", statusLabel: "Queued" },
+  whatHappensIfIgnored: "Nothing happens by itself: this card waits until someone decides."
 });
 
 describe("telegram approval helpers", () => {
@@ -39,10 +46,10 @@ describe("telegram approval helpers", () => {
     assert.equal(telegramApprovalTarget({}), null);
   });
 
-  it("builds escaped approval sendMessage payloads", () => {
+  it("builds escaped approval sendMessage payloads answering what/why/if-ignored", () => {
     const payload = telegramApprovalMessagePayload({
       target: { chatId: "111", private: true },
-      approval: { id: "appr_abc", runId: "run_1" },
+      approval: { id: "appr_abc", runId: "run_1", status: "pending", title: "Approve Improve" },
       approvalUrl: "https://hub.example/app#approvals/appr_abc",
       approvalContext,
       instanceName: "Run&Yard"
@@ -50,13 +57,85 @@ describe("telegram approval helpers", () => {
 
     assert.equal(payload.chat_id, "111");
     assert.equal(payload.parse_mode, "HTML");
-    assert.match(payload.text, /Run&amp;Yard approval requested/);
+    assert.match(payload.text, /Run&amp;Yard: Approval requested/);
+    assert.match(payload.text, /What happens if you approve/);
+    assert.match(payload.text, /Queue &amp; run/);
+    assert.match(payload.text, /Why a human is needed/);
+    assert.match(payload.text, /Runs a coding agent on the repo\./);
+    assert.match(payload.text, /If nobody decides/);
     assert.match(payload.text, /Improve &lt;App&gt; \(improve\)/);
     assert.match(payload.text, /Change &lt;script&gt;/);
+    // Humanized run status, never the raw enum.
+    assert.match(payload.text, /\(Queued\)/);
+    // The vestigial empty header is gone.
+    assert.doesNotMatch(payload.text, /Thing being approved/);
     assert.deepEqual(payload.reply_markup.inline_keyboard[0][0], {
       text: "Open approval",
       web_app: { url: "https://hub.example/app#approvals/appr_abc" }
     });
+  });
+
+  it("leads with the card's kind and states the deadline + fallback on timed cards", () => {
+    assert.equal(telegramApprovalKindLead("workflow_gate"), "Workflow paused for your sign-off");
+    assert.equal(telegramApprovalKindLead("escalation"), "A run needs a recovery decision");
+    assert.equal(telegramApprovalKindLead("side_effect"), "A run wants to perform a gated side effect");
+
+    const timedContext = () => ({
+      ...approvalContext(),
+      approval: { kind: "workflow_gate", fallbackDecisionLabel: "Approved" },
+      whatHappensIfIgnored: ""
+    });
+    const text = telegramApprovalText(
+      {
+        id: "appr_abc",
+        status: "pending",
+        kind: "workflow_gate",
+        title: "Approve app skin direction",
+        timeoutAt: "2026-07-04T18:00:00.000Z",
+        fallback: { decision: "approved" }
+      },
+      { approvalContext: timedContext, instanceName: "Runyard" }
+    );
+    assert.match(text, /Workflow paused for your sign-off/);
+    assert.match(text, /If nobody decides by 2026-07-04T18:00:00\.000Z, “Approved” is applied automatically\./);
+  });
+
+  it("states that blocking cards wait and never fail the run", () => {
+    const blockingContext = () => ({ ...approvalContext(), whatHappensIfIgnored: "" });
+    const line = telegramApprovalIfIgnoredLine({ id: "appr_abc", status: "pending" }, blockingContext());
+    assert.match(line, /waits until someone decides/);
+    assert.match(line, /never failed/);
+  });
+
+  it("edits a decided message to name the outcome instead of asking for buttons", () => {
+    const resolvedApproval = {
+      id: "appr_abc",
+      status: "resolved",
+      resolution: "approved",
+      resolvedBy: "telegram:fran",
+      resolvedAt: "2026-07-04T17:42:00.000Z",
+      title: "Approve Improve"
+    };
+    const resolvedContext = () => ({
+      ...approvalContext(),
+      approval: { kind: "custom", resolutionLabel: "Approved", resolvedViaLabel: "decided by a human" }
+    });
+    const payload = telegramApprovalMessageEditPayload({
+      callback: { message: { chat: { id: 1 }, message_id: 2 } },
+      approval: resolvedApproval,
+      approvalContext: resolvedContext,
+      instanceName: "Runyard"
+    });
+    assert.equal(payload.chat_id, 1);
+    assert.equal(payload.message_id, 2);
+    assert.deepEqual(payload.reply_markup, { inline_keyboard: [] });
+    assert.match(payload.text, /✅ Approved by telegram:fran at 2026-07-04T17:42:00\.000Z/);
+    assert.doesNotMatch(payload.text, /Use the buttons below to decide\./);
+    // No editable message → no payload (caller falls back to clearing buttons).
+    assert.equal(
+      telegramApprovalMessageEditPayload({ callback: {}, approval: resolvedApproval, approvalContext: resolvedContext }),
+      null
+    );
   });
 
   it("escapes primitive HTML text", () => {

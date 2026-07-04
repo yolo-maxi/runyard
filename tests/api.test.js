@@ -1578,16 +1578,24 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
       assert.equal(send.body.chat_id, "12345");
       assert.equal(Object.hasOwn(send.body, "message_thread_id"), false);
       assert.equal(send.body.parse_mode, "HTML");
-      assert.match(send.body.text, /<b>Thing being approved<\/b>/);
-      assert.match(send.body.text, /<b>Proposed change<\/b>\n<pre>Ship &lt;b&gt;approval&lt;\/b&gt; DM formatting &amp; keep JSON out<\/pre>/);
-      assert.match(send.body.text, /<b>Decision \/ action<\/b>\nApprove the deploy checkpoint after tests pass\./);
+      // Per-kind lead line, and the vestigial empty header is gone for good.
+      assert.match(send.body.text, /Workflow paused for your sign-off<\/b>/);
+      assert.doesNotMatch(send.body.text, /Thing being approved/);
+      // The declared action (explicit proposedAction input) is the headline,
+      // and the authored description answers "why" — a workflow_gate card no
+      // longer scavenges input keys for its details.
+      assert.match(send.body.text, /<b>What happens if you approve<\/b>\nApprove the deploy checkpoint after tests pass\./);
+      assert.match(send.body.text, /<b>Why a human is needed<\/b>\nA workflow checkpoint needs an operator decision\./);
       assert.match(send.body.text, /<b>Workflow<\/b>\nHello \(Smithers proof\) \(hello\)/);
       assert.match(send.body.text, /<b>Originator:<\/b> Operator &lt;ops&gt;/);
       assert.match(send.body.text, /<b>Project \/ repo \/ path:<\/b> \/tmp\/runyard/);
       assert.match(send.body.text, /<b>Target branch:<\/b> main/);
       assert.match(send.body.text, /<b>Deploy:<\/b> yes/);
-      assert.match(send.body.text, /<b>Run<\/b>\n<code>run_[a-f0-9]{20}<\/code> \(queued\)/);
+      // Humanized run status, not the raw enum.
+      assert.match(send.body.text, /<b>Run<\/b>\n<code>run_[a-f0-9]{20}<\/code> \(Queued\)/);
       assert.match(send.body.text, /<b>Approval:<\/b> appr_[a-f0-9]{20}/);
+      // What silence does is stated on every card.
+      assert.match(send.body.text, /<b>If nobody decides<\/b>/);
       assert.doesNotMatch(send.body.text, /Approval link:/);
       assert.doesNotMatch(send.body.text, /"change"|"requestedBy"|\{|\}/);
       const buttons = send.body.reply_markup.inline_keyboard.flat();
@@ -1620,9 +1628,13 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
       const ack = calls.find((call) => call.url.endsWith("/answerCallbackQuery") && call.body.callback_query_id === "cb-checkpoint-approve");
       assert.ok(ack);
       assert.equal(ack.body.text, "Approved.");
-      const edit = calls.find((call) => call.url.endsWith("/editMessageReplyMarkup") && call.body.message_id === 21);
+      // The decided message is rewritten to name the outcome and actor; the
+      // decision buttons are gone and the CTA does not survive the decision.
+      const edit = calls.find((call) => call.url.endsWith("/editMessageText") && call.body.message_id === 21);
       assert.ok(edit);
       assert.deepEqual(edit.body.reply_markup.inline_keyboard, []);
+      assert.match(edit.body.text, /✅ Approved by telegram:fran/);
+      assert.doesNotMatch(edit.body.text, /Use the buttons below to decide\./);
     } finally {
       restoreEnv();
       restoreFetch();
@@ -1756,10 +1768,11 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
       const ack = calls.find((call) => call.url.endsWith("/answerCallbackQuery") && call.body.callback_query_id === "cb-approve");
       assert.ok(ack);
       assert.equal(ack.body.text, "Approved.");
-      const edit = calls.find((call) => call.url.endsWith("/editMessageReplyMarkup") && call.body.message_id === 11);
+      const edit = calls.find((call) => call.url.endsWith("/editMessageText") && call.body.message_id === 11);
       assert.ok(edit);
       assert.equal(String(edit.body.chat_id), "12345");
       assert.deepEqual(edit.body.reply_markup.inline_keyboard, []);
+      assert.match(edit.body.text, /✅ Approved by telegram:fran/);
     } finally {
       restoreEnv();
       restoreFetch();
@@ -1806,9 +1819,10 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
       const ack = calls.find((call) => call.url.endsWith("/answerCallbackQuery") && call.body.callback_query_id === "cb-reject");
       assert.ok(ack);
       assert.equal(ack.body.text, "Rejected.");
-      const edit = calls.find((call) => call.url.endsWith("/editMessageReplyMarkup") && call.body.message_id === 12);
+      const edit = calls.find((call) => call.url.endsWith("/editMessageText") && call.body.message_id === 12);
       assert.ok(edit);
       assert.deepEqual(edit.body.reply_markup.inline_keyboard, []);
+      assert.match(edit.body.text, /🚫 Rejected by telegram:fran/);
     } finally {
       restoreEnv();
       restoreFetch();
@@ -1858,9 +1872,10 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
       const ack = calls.find((call) => call.url.endsWith("/answerCallbackQuery") && call.body.callback_query_id === "cb-changes");
       assert.ok(ack);
       assert.equal(ack.body.text, "Changes requested.");
-      const edit = calls.find((call) => call.url.endsWith("/editMessageReplyMarkup") && call.body.message_id === 13);
+      const edit = calls.find((call) => call.url.endsWith("/editMessageText") && call.body.message_id === 13);
       assert.ok(edit);
       assert.deepEqual(edit.body.reply_markup.inline_keyboard, []);
+      assert.match(edit.body.text, /🚫 Changes requested by telegram:fran/);
     } finally {
       restoreEnv();
       restoreFetch();

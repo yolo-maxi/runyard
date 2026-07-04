@@ -48,6 +48,9 @@ export function approvalCreateInput(body = {}, token = {}, { getRun } = {}) {
     title: String(body.title || "Approval requested").slice(0, 240),
     description: String(body.description || "").slice(0, 2000),
     requestedBy: String(body.requestedBy || token.name || "workflow").slice(0, 120),
+    // The ask contract (approvalAsk.js). Body-level wins over payload-level;
+    // the store normalizes and drops asks missing action or reason.
+    ask: body.ask ?? payload.ask ?? null,
     payload,
     // Timed-approval opt-in. Raw values pass through; the store validates them
     // (normalizeApprovalFallback / approvalTimeoutAtIso), so malformed input

@@ -69,6 +69,24 @@ describe("approval kind + honest resolution", () => {
     assert.equal(getApproval(adHoc.id).kind, "custom");
   });
 
+  it("stores the declared ask and round-trips it verbatim", () => {
+    const ask = { audience: "operators", action: "Pick the skin direction.", reason: "The author requires a human choice." };
+    const declared = createApproval({ title: "Approve app skin direction", ask });
+    assert.deepEqual(getApproval(declared.id).ask, ask);
+
+    // Creators that can only speak payload (engine bridge, workflows posting
+    // to /api/approvals) may carry the ask there.
+    const viaPayload = createApproval({ title: "Gate", payload: { ask, kind: "engine_approval", nodeId: "g" } });
+    assert.deepEqual(getApproval(viaPayload.id).ask, ask);
+
+    // An ask that cannot answer "what" and "why" is stored as no ask at all —
+    // flagged for presentation, never silently completed.
+    const incomplete = createApproval({ title: "Vague", ask: { action: "do it" } });
+    assert.equal(getApproval(incomplete.id).ask, null);
+    const askless = createApproval({ title: "Legacy shape" });
+    assert.equal(getApproval(askless.id).ask, null);
+  });
+
   it("infers resolved_via from historical actor strings (migration backfill contract)", () => {
     assert.equal(approvalResolvedViaFromActor("system:approval-timer"), "fallback_timer");
     assert.equal(approvalResolvedViaFromActor("engine:cli"), "engine");

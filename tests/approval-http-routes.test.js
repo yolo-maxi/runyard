@@ -273,7 +273,7 @@ describe("approval HTTP route helpers", () => {
 
     assert.equal(res.statusCode, 409);
     assert.equal(res.body.error, "approval is not pending");
-    assert.deepEqual(callbackAnswers, [{ callbackQueryId: "cb_1", text: "Approval is already approved." }]);
+    assert.deepEqual(callbackAnswers, [{ callbackQueryId: "cb_1", text: "Approval is already resolved: Approved." }]);
     assert.deepEqual(clearedCallbacks, ["cb_1"]);
     assert.deepEqual(resolved, []);
   });

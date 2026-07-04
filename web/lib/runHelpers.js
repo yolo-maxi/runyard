@@ -266,6 +266,27 @@ export function timeRangeToSinceISO(value) {
   return new Date(Date.now() - n * unit).toISOString();
 }
 
+// Humanized run status for anywhere a person reads it (badges, diagnostics).
+// Mirrors the server-side vocabulary in src/approvalPresentation.js; the raw
+// enum stays in JSON and in CSS class names.
+const RUN_STATUS_LABELS = {
+  queued: "Queued",
+  assigned: "Assigned to a runner",
+  running: "Running",
+  pending: "Pending",
+  waiting_approval: "Waiting for approval",
+  succeeded: "Succeeded",
+  failed: "Failed",
+  error: "Failed",
+  cancelled: "Cancelled",
+  rejected: "Rejected"
+};
+
+export function runStatusLabel(status) {
+  if (!status) return "";
+  return RUN_STATUS_LABELS[status] || String(status).replace(/_/g, " ");
+}
+
 export function approvalWorkflowLabel(approval) {
   // Faithful to legacy approvalWorkflowLabel(); the dashboard's pendingApprovals
   // rows carry capabilityName/slug directly, so prefer those, then payload.
