@@ -81,20 +81,23 @@ export function telegramApprovalIfIgnoredLine(approval, context) {
   return "Waits for a human; waiting never fails the run.";
 }
 
-// One resolved-state line for message edits: "✅ Approved by @fran at 17:42".
+// One resolved-state line for message edits. Keep it receipt-like: the detail
+// page has the audit trail; Telegram needs to say what happened at a glance.
 export function telegramApprovalResolvedLine(approval, context) {
   const resolution = context?.approval?.resolutionLabel || approvalDecisionLabel(approval?.resolution || approval?.decision);
   const glyph = (approval?.resolution || approval?.decision) === "approved" ? "✅" : "🚫";
   const via = context?.approval?.resolvedViaLabel || "";
   const by = approval?.resolvedBy ? ` by ${approval.resolvedBy}` : "";
   const at = approval?.resolvedAt ? ` ${telegramTime(approval.resolvedAt, { format: "r", fallback: "now" })}` : "";
-  const viaSuffix = via && via !== "decided by a human" ? ` (${via})` : "";
+  if (approval?.resolvedVia === "fallback_timer") {
+    return `${glyph} Expired${at}\n<b>Result</b>: ${htmlEscape(resolution.toLowerCase())} by timer`;
+  }
+  const viaSuffix = via && via !== "decided by a human" ? ` · ${via}` : "";
   return htmlEscape(`${glyph} ${resolution}${by}`) + at + htmlEscape(viaSuffix);
 }
 
 export function telegramApprovalText(approval, { approvalContext, instanceName = "Runyard" } = {}) {
   const context = approvalContext(approval);
-  const kind = context.approval?.kind || approval?.kind || "custom";
   const pending = (approval?.status || "pending") === "pending";
   const workflow = context.workflow?.name
     ? `${context.workflow.name}${context.workflow.slug ? ` (${context.workflow.slug})` : ""}`
@@ -103,38 +106,28 @@ export function telegramApprovalText(approval, { approvalContext, instanceName =
   const action = truncate(ask.action || context.proposedAction || "Resolve this approval.", 320);
   const reason = truncate(ask.reason || approval?.description || "", 500);
   const details = truncate(context.proposedChange || "", 900);
-  const branchLine = context.targetBranch ? telegramLabeledLine("Target branch", context.targetBranch) : telegramLabeledLine("Branch", context.branch);
-  const runLine = approval.runId
-    ? `${telegramCode(approval.runId)}${context.run?.statusLabel ? ` (${htmlEscape(context.run.statusLabel)})` : ""}`
-    : "No run attached";
+  const titleGlyph = pending
+    ? "⏳"
+    : (approval?.resolution || approval?.decision) === "approved"
+      ? "✅"
+      : "🚫";
+  const contextLine = context.requestedBy || context.project?.display || workflow || "workflow";
   const options = Array.isArray(ask.options) ? ask.options : [];
-  return [
-    `<b>${htmlEscape(instanceName)} · ${htmlEscape(telegramApprovalKindLead(kind))}</b>`,
-    `<b>${htmlEscape(truncate(approval?.title || "Approval", 240))}</b>`,
-    "<b>Approve</b>",
-    htmlEscape(action),
-    reason && reason !== action ? "<b>Why</b>" : "",
-    reason && reason !== action ? htmlEscape(reason) : "",
-    details && details !== reason ? "<b>Details</b>" : "",
-    details && details !== reason ? `<pre>${htmlEscape(details)}</pre>` : "",
-    ...(options.length
-      ? ["<b>Options</b>", ...options.map((option) => htmlEscape(`• ${option.label}${option.effect ? ` — ${option.effect}` : ""}`))]
-      : []),
-    "<b>Context</b>",
-    htmlEscape(workflow),
-    telegramLabeledLine("From", context.requestedBy || "unknown"),
-    telegramLabeledLine("For", context.ask?.audienceLabel || context.ask?.audience || ""),
-    context.project?.display ? telegramLabeledLine("Project", truncate(context.project.display, 180)) : "",
-    branchLine,
-    context.deploy == null ? "" : telegramLabeledLine("Deploy", context.deploy ? "yes" : "no"),
-    `<b>Run:</b> ${runLine}`,
-    telegramLabeledLine("Card", approval.id),
-    pending ? "<b>Ignored</b>" : "",
-    pending ? telegramApprovalIfIgnoredLine(approval, context) : "",
-    pending ? "<b>Decide:</b> Approve · Changes · Reject" : telegramApprovalResolvedLine(approval, context)
-  ]
-    .filter(Boolean)
-    .join("\n");
+  const lines = [
+    `<b>${titleGlyph} ${htmlEscape(truncate(approval?.title || "Approval", 240))}</b>`,
+    `<i>Context</i>: ${htmlEscape(contextLine)}`,
+    ""
+  ];
+  if (pending) {
+    lines.push(`<b>Approve</b>: ${htmlEscape(action)}`);
+    if (details && details !== reason) lines.push(`<b>Details</b>: ${htmlEscape(details)}`);
+    if (reason && reason !== action) lines.push(`<b>Why</b>: ${htmlEscape(reason)}`);
+    if (options.length) lines.push(`<b>Options</b>: ${htmlEscape(options.map((option) => option.label).join(" · "))}`);
+    lines.push("", telegramApprovalIfIgnoredLine(approval, context));
+  } else {
+    lines.push(telegramApprovalResolvedLine(approval, context));
+  }
+  return lines.join("\n").trim();
 }
 
 export function telegramApprovalOpenButton(target, approvalUrl) {

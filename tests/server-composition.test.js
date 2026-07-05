@@ -119,7 +119,8 @@ describe("server composition", () => {
       assert.equal(edit.body.chat_id, "111");
       assert.equal(edit.body.message_id, 44);
       assert.deepEqual(edit.body.reply_markup, { inline_keyboard: [] });
-      assert.match(edit.body.text, /Approved/);
+      assert.match(edit.body.text, /✅ Expired <tg-time unix="1783209600" format="r">now<\/tg-time>/);
+      assert.match(edit.body.text, /<b>Result<\/b>: approved by timer/);
     } finally {
       global.fetch = previousFetch;
     }

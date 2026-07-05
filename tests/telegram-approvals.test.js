@@ -60,16 +60,16 @@ describe("telegram approval helpers", () => {
 
     assert.equal(payload.chat_id, "111");
     assert.equal(payload.parse_mode, "HTML");
-    assert.match(payload.text, /Run&amp;Yard · Approval requested/);
-    assert.match(payload.text, /<b>Approve<\/b>/);
+    assert.match(payload.text, /<b>⏳ Approve Improve<\/b>/);
+    assert.match(payload.text, /<i>Context<\/i>: mcp: operator/);
+    assert.match(payload.text, /<b>Approve<\/b>: Queue &amp; run/);
     assert.match(payload.text, /Queue &amp; run/);
-    assert.match(payload.text, /<b>Why<\/b>/);
+    assert.match(payload.text, /<b>Why<\/b>: Runs a coding agent on the repo\./);
     assert.match(payload.text, /Runs a coding agent on the repo\./);
-    assert.match(payload.text, /<b>Ignored<\/b>/);
-    assert.match(payload.text, /Improve &lt;App&gt; \(improve\)/);
-    assert.match(payload.text, /Change &lt;script&gt;/);
-    // Humanized run status, never the raw enum.
-    assert.match(payload.text, /\(Queued\)/);
+    assert.match(payload.text, /<b>Details<\/b>: Change &lt;script&gt;/);
+    assert.doesNotMatch(payload.text, /Improve &lt;App&gt; \(improve\)/);
+    assert.doesNotMatch(payload.text, /<b>Run:<\/b>/);
+    assert.doesNotMatch(payload.text, /<b>Card:<\/b>/);
     // The vestigial empty header is gone.
     assert.doesNotMatch(payload.text, /Thing being approved/);
     assert.deepEqual(payload.reply_markup.inline_keyboard[0][0], {
@@ -99,7 +99,7 @@ describe("telegram approval helpers", () => {
       },
       { approvalContext: timedContext, instanceName: "Runyard" }
     );
-    assert.match(text, /Gate needs sign-off/);
+    assert.doesNotMatch(text, /Gate needs sign-off/);
     assert.match(text, /✅ Auto-approves <tg-time unix="1783188000" format="r">soon<\/tg-time>/);
   });
 
@@ -113,13 +113,15 @@ describe("telegram approval helpers", () => {
         id: "appr_abc",
         status: "resolved",
         resolution: "rejected",
+        resolvedVia: "fallback_timer",
         resolvedBy: "system:approval-timer",
         resolvedAt: "2026-07-04T18:00:00.000Z",
         title: "Expired approval"
       },
       { approvalContext: resolvedContext, instanceName: "Runyard" }
     );
-    assert.match(text, /🚫 Rejected by system:approval-timer <tg-time unix="1783188000" format="r">now<\/tg-time>/);
+    assert.match(text, /🚫 Expired <tg-time unix="1783188000" format="r">now<\/tg-time>/);
+    assert.match(text, /<b>Result<\/b>: rejected by timer/);
     assert.doesNotMatch(text, /2026-07-04T18:00:00\.000Z/);
   });
 

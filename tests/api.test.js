@@ -1578,25 +1578,21 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
       assert.equal(send.body.chat_id, "12345");
       assert.equal(Object.hasOwn(send.body, "message_thread_id"), false);
       assert.equal(send.body.parse_mode, "HTML");
-      // Per-kind lead line, and the vestigial empty header is gone for good.
-      assert.match(send.body.text, /Gate needs sign-off<\/b>/);
+      // Compact approval object, and the vestigial empty header is gone for good.
+      assert.match(send.body.text, /<b>⏳ Approve production checkpoint<\/b>/);
+      assert.match(send.body.text, /<i>Context<\/i>: Operator &lt;ops&gt;/);
       assert.doesNotMatch(send.body.text, /Thing being approved/);
       // The declared action (explicit proposedAction input) is the headline,
       // and the authored description answers "why" — a workflow_gate card no
       // longer scavenges input keys for its details.
-      assert.match(send.body.text, /<b>Approve<\/b>\nApprove the deploy checkpoint after tests pass\./);
-      assert.match(send.body.text, /<b>Why<\/b>\nA workflow checkpoint needs an operator decision\./);
-      assert.match(send.body.text, /<b>Context<\/b>\nHello \(Smithers proof\) \(hello\)/);
-      assert.match(send.body.text, /<b>From:<\/b> Operator &lt;ops&gt;/);
-      assert.match(send.body.text, /<b>For:<\/b> Anyone supervising runs/);
-      assert.match(send.body.text, /<b>Project:<\/b> \/tmp\/runyard/);
-      assert.match(send.body.text, /<b>Target branch:<\/b> main/);
-      assert.match(send.body.text, /<b>Deploy:<\/b> yes/);
-      // Humanized run status, not the raw enum.
-      assert.match(send.body.text, /<b>Run:<\/b> <code>run_[a-f0-9]{20}<\/code> \(Queued\)/);
-      assert.match(send.body.text, /<b>Card:<\/b> appr_[a-f0-9]{20}/);
+      assert.match(send.body.text, /<b>Approve<\/b>: Approve the deploy checkpoint after tests pass\./);
+      assert.match(send.body.text, /<b>Why<\/b>: A workflow checkpoint needs an operator decision\./);
+      assert.doesNotMatch(send.body.text, /<b>Details<\/b>: Ship &lt;b&gt;approval&lt;\/b&gt; DM formatting &amp; keep JSON out/);
+      assert.doesNotMatch(send.body.text, /Hello \(Smithers proof\) \(hello\)/);
+      assert.doesNotMatch(send.body.text, /<b>Run:<\/b>/);
+      assert.doesNotMatch(send.body.text, /<b>Card:<\/b>/);
       // What silence does is stated on every card.
-      assert.match(send.body.text, /<b>Ignored<\/b>/);
+      assert.match(send.body.text, /Waits for a human; waiting never fails the run\./);
       assert.doesNotMatch(send.body.text, /Approval link:/);
       assert.doesNotMatch(send.body.text, /"change"|"requestedBy"|\{|\}/);
       const buttons = send.body.reply_markup.inline_keyboard.flat();
