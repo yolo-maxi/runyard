@@ -4,6 +4,7 @@ import {
   answerTelegramCallbackQuery,
   callTelegramBot,
   clearTelegramApprovalButtons,
+  sendTelegramApprovalVisual,
   sendTelegramApprovalNotification
 } from "../src/telegramBotClient.js";
 
@@ -46,6 +47,38 @@ describe("telegram bot client", () => {
     assert.equal(calls[0].body.chat_id, "42");
     assert.equal(calls[0].body.message_thread_id, 7);
     assert.ok(calls[0].body.reply_markup.inline_keyboard.length > 0);
+  });
+
+  it("sends an optional visual approval header through sendPhoto", async () => {
+    const calls = [];
+    const ok = await sendTelegramApprovalVisual({
+      botToken: "token",
+      target: { chatId: "42", threadId: 7 },
+      approval: { id: "appr_123", title: "Deploy?", payload: {} },
+      approvalContext: () => ({
+        approval: { kindLabel: "Side effect" },
+        workflow: { name: "Deploy production", slug: "deploy-production" },
+        project: { repo: "/home/xiko/runyard" }
+      }),
+      renderApprovalVisual: async (summary) => {
+        assert.deepEqual(summary, {
+          workflow: "Deploy production",
+          repo: "runyard",
+          kind: "Side effect"
+        });
+        return Buffer.from("png");
+      },
+      fetchImpl: async (url, options) => {
+        calls.push({ url, options });
+        return { ok: true, status: 200 };
+      }
+    });
+
+    assert.equal(ok, true);
+    assert.equal(calls[0].url.endsWith("/sendPhoto"), true);
+    assert.equal(calls[0].options.body.get("chat_id"), "42");
+    assert.equal(calls[0].options.body.get("message_thread_id"), "7");
+    assert.equal(calls[0].options.body.get("photo").type, "image/png");
   });
 
   it("answers callback queries with truncated text", async () => {

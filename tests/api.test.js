@@ -41,6 +41,19 @@ function withTelegramEnv(overrides) {
   return () => Object.assign(env, previous);
 }
 
+function telegramFetchBody(body) {
+  if (!body) return null;
+  if (typeof body === "string") return JSON.parse(body);
+  if (typeof body.get === "function") {
+    return {
+      chat_id: body.get("chat_id"),
+      message_thread_id: body.get("message_thread_id") || undefined,
+      photoType: body.get("photo")?.type || ""
+    };
+  }
+  return null;
+}
+
 function captureTelegramFetch(calls) {
   const previousFetch = globalThis.fetch;
   globalThis.fetch = async (url, options = {}) => {
@@ -48,7 +61,7 @@ function captureTelegramFetch(calls) {
     if (href.startsWith("https://api.telegram.org/")) {
       calls.push({
         url: href.replace(/bot[^/]+/, "bot<redacted>"),
-        body: options.body ? JSON.parse(options.body) : null
+        body: telegramFetchBody(options.body)
       });
       return new Response(JSON.stringify({ ok: true, result: {} }), {
         status: 200,
@@ -1573,6 +1586,10 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
       });
       await notifyTelegram(approval);
 
+      const photo = calls.find((call) => call.url.endsWith("/sendPhoto"));
+      assert.ok(photo, "workflow approvals with project context should send a visual header");
+      assert.equal(photo.body.chat_id, "12345");
+      assert.equal(photo.body.photoType, "image/png");
       const send = calls.find((call) => call.url.endsWith("/sendMessage"));
       assert.ok(send);
       assert.equal(send.body.chat_id, "12345");

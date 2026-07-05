@@ -4,6 +4,10 @@ import {
   telegramApprovalMessageEditPayload,
   telegramApprovalMessagePayload
 } from "./telegramApprovals.js";
+import {
+  renderTelegramApprovalVisual,
+  telegramApprovalVisualSummary
+} from "./telegramApprovalVisual.js";
 
 export async function callTelegramBot({ botToken, method, payload, fetchImpl = fetch, logError = console.error, errorLabel = "Telegram request", returnResult = false } = {}) {
   if (!botToken || !method || !payload) return false;
@@ -12,6 +16,37 @@ export async function callTelegramBot({ botToken, method, payload, fetchImpl = f
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(payload)
+    });
+    if (!response.ok) {
+      logError(`${errorLabel} failed:`, response.status);
+      return false;
+    }
+    if (returnResult && typeof response.json === "function") {
+      const body = await response.json();
+      return body?.result || body || true;
+    }
+    return true;
+  } catch (error) {
+    logError(`${errorLabel} failed:`, error.message);
+    return false;
+  }
+}
+
+export async function callTelegramBotFormData({ botToken, method, fields = {}, fetchImpl = fetch, logError = console.error, errorLabel = "Telegram request", returnResult = false } = {}) {
+  if (!botToken || !method || !fields) return false;
+  try {
+    const form = new FormData();
+    for (const [key, value] of Object.entries(fields)) {
+      if (value == null) continue;
+      if (value instanceof Blob) {
+        form.append(key, value, value.name || "approval.png");
+      } else {
+        form.append(key, String(value));
+      }
+    }
+    const response = await fetchImpl(`https://api.telegram.org/bot${botToken}/${method}`, {
+      method: "POST",
+      body: form
     });
     if (!response.ok) {
       logError(`${errorLabel} failed:`, response.status);
@@ -38,9 +73,35 @@ export function approvalNotificationPayload({ target, approval, approvalUrl, app
   });
 }
 
+export async function sendTelegramApprovalVisual(options = {}) {
+  const { botToken, target, approval, approvalContext, renderApprovalVisual = renderTelegramApprovalVisual } = options;
+  if (!botToken || !target || !approvalContext) return false;
+  const summary = telegramApprovalVisualSummary(approvalContext(approval));
+  if (!summary) return false;
+  const png = await renderApprovalVisual(summary);
+  if (!png?.length) return false;
+  const photo = new Blob([png], { type: "image/png" });
+  photo.name = "approval.png";
+  return callTelegramBotFormData({
+    botToken,
+    method: "sendPhoto",
+    fields: {
+      chat_id: target.chatId,
+      ...(target.threadId ? { message_thread_id: target.threadId } : {}),
+      photo
+    },
+    fetchImpl: options.fetchImpl,
+    logError: options.logError,
+    errorLabel: "Telegram approval visual"
+  });
+}
+
 export async function sendTelegramApprovalNotification(options = {}) {
   const { botToken, target } = options;
   if (!botToken || !target) return false;
+  await sendTelegramApprovalVisual(options).catch((error) => {
+    options.logError?.("Telegram approval visual failed:", error.message);
+  });
   return callTelegramBot({
     botToken,
     method: "sendMessage",
