@@ -136,12 +136,13 @@ describe("telegram approval helpers", () => {
     assert.deepEqual(
       telegramApprovalStoredMessage({
         target: { chatId: "42" },
-        sendResult: { message_id: 9, chat: { id: "42" } }
+        sendResult: { message_id: 9, chat: { id: "42" }, photo: [{ file_id: "photo" }] }
       }),
-      { chatId: "42", messageId: 9 }
+      { chatId: "42", messageId: 9, kind: "photo" }
     );
-    assert.deepEqual(telegramApprovalStoredMessageCallback({ chatId: "42", messageId: 9 }), {
-      message: { chat: { id: "42" }, message_id: 9 }
+    assert.deepEqual(telegramApprovalStoredMessageCallback({ chatId: "42", messageId: 9, kind: "photo" }), {
+      message: { chat: { id: "42" }, message_id: 9 },
+      messageKind: "photo"
     });
     assert.equal(telegramApprovalStoredMessage({ target: { chatId: "42" }, sendResult: true }), null);
     assert.equal(telegramApprovalStoredMessageCallback({}), null);

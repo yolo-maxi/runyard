@@ -23,14 +23,24 @@ function compactProjectLabel(project = {}) {
   );
 }
 
+function visualKindLabel(context = {}) {
+  const kind = context.approval?.kind || "";
+  if (kind === "side_effect") return "External action";
+  if (kind === "workflow_gate") return "Workflow checkpoint";
+  if (kind === "escalation") return "Recovery decision";
+  return context.approval?.kindLabel || "Approval";
+}
+
 export function telegramApprovalVisualSummary(context = {}) {
   const workflow = truncate(context.workflow?.name || context.workflow?.slug || "", 54);
   const repo = truncate(compactProjectLabel(context.project), 54);
+  const runTitle = truncate(context.run?.title || context.inputTitle || "", 72);
   if (!workflow && !repo) return null;
   return {
     workflow,
     repo,
-    kind: context.approval?.kindLabel || context.approval?.kind || "Approval"
+    runTitle,
+    kind: visualKindLabel(context)
   };
 }
 
@@ -56,13 +66,16 @@ export function telegramApprovalVisualSvg(summary = {}) {
   const showRepo = Boolean(summary.workflow && summary.repo);
   const repoLines = showRepo ? splitLine(summary.repo, 32) : [];
   const repoY = primaryLines.length > 1 ? 238 : 206;
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="960" height="360" viewBox="0 0 960 360">
-  <rect width="960" height="360" rx="36" fill="#101828"/>
-  <rect x="0" y="0" width="16" height="360" fill="#22c55e"/>
+  const runLines = summary.runTitle ? splitLine(summary.runTitle, 54).slice(0, 1) : [];
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="960" height="420" viewBox="0 0 960 420">
+  <rect width="960" height="420" rx="36" fill="#101828"/>
+  <rect x="0" y="0" width="16" height="420" fill="#22c55e"/>
   <text x="64" y="74" font-family="DejaVu Sans, Arial, sans-serif" font-size="28" font-weight="700" fill="#86efac">${escapeXml(summary.kind || "Approval")}</text>
   ${primaryLines.map((line, index) => `<text x="64" y="${142 + index * 58}" font-family="DejaVu Sans, Arial, sans-serif" font-size="50" font-weight="800" fill="#ffffff">${escapeXml(line)}</text>`).join("\n  ")}
   ${showRepo ? `<text x="64" y="${repoY}" font-family="DejaVu Sans, Arial, sans-serif" font-size="24" font-weight="700" fill="#94a3b8">REPO / PROJECT</text>` : ""}
   ${repoLines.map((line, index) => `<text x="64" y="${repoY + 48 + index * 42}" font-family="DejaVu Sans, Arial, sans-serif" font-size="36" font-weight="700" fill="#dbeafe">${escapeXml(line)}</text>`).join("\n  ")}
+  ${runLines.length ? `<text x="64" y="374" font-family="DejaVu Sans, Arial, sans-serif" font-size="24" font-weight="700" fill="#94a3b8">RUN</text>
+  <text x="128" y="374" font-family="DejaVu Sans, Arial, sans-serif" font-size="28" font-weight="700" fill="#e2e8f0">${escapeXml(runLines[0])}</text>` : ""}
 </svg>`;
 }
 

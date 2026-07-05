@@ -4,6 +4,7 @@ import {
   answerTelegramCallbackQuery,
   callTelegramBot,
   clearTelegramApprovalButtons,
+  editTelegramApprovalMessage,
   sendTelegramApprovalVisual,
   sendTelegramApprovalNotification
 } from "../src/telegramBotClient.js";
@@ -56,7 +57,7 @@ describe("telegram bot client", () => {
       target: { chatId: "42", threadId: 7 },
       approval: { id: "appr_123", title: "Deploy?", payload: {} },
       approvalContext: () => ({
-        approval: { kindLabel: "Side effect" },
+        approval: { kind: "side_effect", kindLabel: "Side effect" },
         workflow: { name: "Deploy production", slug: "deploy-production" },
         project: { repo: "/home/xiko/runyard" }
       }),
@@ -64,21 +65,53 @@ describe("telegram bot client", () => {
         assert.deepEqual(summary, {
           workflow: "Deploy production",
           repo: "runyard",
-          kind: "Side effect"
+          runTitle: "",
+          kind: "External action"
         });
         return Buffer.from("png");
       },
       fetchImpl: async (url, options) => {
         calls.push({ url, options });
-        return { ok: true, status: 200 };
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ ok: true, result: { message_id: 12, chat: { id: "42" }, photo: [{ file_id: "p" }] } })
+        };
       }
     });
 
-    assert.equal(ok, true);
+    assert.deepEqual(ok, { message_id: 12, chat: { id: "42" }, photo: [{ file_id: "p" }] });
     assert.equal(calls[0].url.endsWith("/sendPhoto"), true);
     assert.equal(calls[0].options.body.get("chat_id"), "42");
     assert.equal(calls[0].options.body.get("message_thread_id"), "7");
     assert.equal(calls[0].options.body.get("photo").type, "image/png");
+    assert.match(calls[0].options.body.get("caption"), /<b>⏳ Deploy\?<\/b>/);
+    assert.match(calls[0].options.body.get("reply_markup"), /approval:approve:appr_123/);
+  });
+
+  it("edits photo approval captions when a visual message resolves", async () => {
+    const calls = [];
+    await editTelegramApprovalMessage({
+      botToken: "token",
+      callback: { message: { chat: { id: "42" }, message_id: 9 }, messageKind: "photo" },
+      approval: {
+        id: "appr_123",
+        status: "resolved",
+        resolution: "rejected",
+        resolvedVia: "fallback_timer",
+        resolvedAt: "2026-07-05T00:00:00.000Z",
+        title: "Deploy?"
+      },
+      approvalContext: () => ({ approval: { resolutionLabel: "Rejected" }, requestedBy: "ci" }),
+      instanceName: "Runyard",
+      fetchImpl: okFetch(calls)
+    });
+
+    assert.equal(calls[0].url.endsWith("/editMessageCaption"), true);
+    assert.equal(calls[0].body.chat_id, "42");
+    assert.equal(calls[0].body.message_id, 9);
+    assert.match(calls[0].body.caption, /<b>🚫 Deploy\?<\/b>/);
+    assert.equal(calls[0].body.text, undefined);
   });
 
   it("answers callback queries with truncated text", async () => {

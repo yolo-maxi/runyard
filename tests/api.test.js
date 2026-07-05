@@ -48,7 +48,10 @@ function telegramFetchBody(body) {
     return {
       chat_id: body.get("chat_id"),
       message_thread_id: body.get("message_thread_id") || undefined,
-      photoType: body.get("photo")?.type || ""
+      photoType: body.get("photo")?.type || "",
+      caption: body.get("caption") || "",
+      parse_mode: body.get("parse_mode") || "",
+      reply_markup: body.get("reply_markup") ? JSON.parse(body.get("reply_markup")) : undefined
     };
   }
   return null;
@@ -1587,31 +1590,31 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
       await notifyTelegram(approval);
 
       const photo = calls.find((call) => call.url.endsWith("/sendPhoto"));
-      assert.ok(photo, "workflow approvals with project context should send a visual header");
-      assert.equal(photo.body.chat_id, "12345");
-      assert.equal(photo.body.photoType, "image/png");
-      const send = calls.find((call) => call.url.endsWith("/sendMessage"));
-      assert.ok(send);
+      assert.ok(photo, "workflow approvals with project context should send a visual attachment");
+      const send = photo;
       assert.equal(send.body.chat_id, "12345");
-      assert.equal(Object.hasOwn(send.body, "message_thread_id"), false);
+      assert.equal(Object.hasOwn(send.body, "message_thread_id"), true);
+      assert.equal(send.body.message_thread_id, undefined);
+      assert.equal(send.body.photoType, "image/png");
       assert.equal(send.body.parse_mode, "HTML");
+      const text = send.body.caption;
       // Compact approval object, and the vestigial empty header is gone for good.
-      assert.match(send.body.text, /<b>⏳ Approve production checkpoint<\/b>/);
-      assert.match(send.body.text, /<i>Context<\/i>: Operator &lt;ops&gt;/);
-      assert.doesNotMatch(send.body.text, /Thing being approved/);
+      assert.match(text, /<b>⏳ Approve production checkpoint<\/b>/);
+      assert.match(text, /<i>Context<\/i>: Operator &lt;ops&gt;/);
+      assert.doesNotMatch(text, /Thing being approved/);
       // The declared action (explicit proposedAction input) is the headline,
       // and the authored description answers "why" — a workflow_gate card no
       // longer scavenges input keys for its details.
-      assert.match(send.body.text, /<b>Approve<\/b>: Approve the deploy checkpoint after tests pass\./);
-      assert.match(send.body.text, /<b>Why<\/b>: A workflow checkpoint needs an operator decision\./);
-      assert.doesNotMatch(send.body.text, /<b>Details<\/b>: Ship &lt;b&gt;approval&lt;\/b&gt; DM formatting &amp; keep JSON out/);
-      assert.doesNotMatch(send.body.text, /Hello \(Smithers proof\) \(hello\)/);
-      assert.doesNotMatch(send.body.text, /<b>Run:<\/b>/);
-      assert.doesNotMatch(send.body.text, /<b>Card:<\/b>/);
+      assert.match(text, /<b>Approve<\/b>: Approve the deploy checkpoint after tests pass\./);
+      assert.match(text, /<b>Why<\/b>: A workflow checkpoint needs an operator decision\./);
+      assert.doesNotMatch(text, /<b>Details<\/b>: Ship &lt;b&gt;approval&lt;\/b&gt; DM formatting &amp; keep JSON out/);
+      assert.doesNotMatch(text, /Hello \(Smithers proof\) \(hello\)/);
+      assert.doesNotMatch(text, /<b>Run:<\/b>/);
+      assert.doesNotMatch(text, /<b>Card:<\/b>/);
       // What silence does is stated on every card.
-      assert.match(send.body.text, /Waits for a human; waiting never fails the run\./);
-      assert.doesNotMatch(send.body.text, /Approval link:/);
-      assert.doesNotMatch(send.body.text, /"change"|"requestedBy"|\{|\}/);
+      assert.match(text, /Waits for a human; waiting never fails the run\./);
+      assert.doesNotMatch(text, /Approval link:/);
+      assert.doesNotMatch(text, /"change"|"requestedBy"|\{|\}/);
       const buttons = send.body.reply_markup.inline_keyboard.flat();
       assert.ok(buttons.find((button) => button.text === "Open approval" && button.web_app?.url.includes("/app#approvals/")));
       assert.ok(buttons.find((button) => button.text === "Approve" && /^approval:approve:appr_[a-f0-9]{20}$/.test(button.callback_data)));
@@ -1698,7 +1701,7 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
         (approval) => approval.payload?.childRunId === created.run.id && approval.payload?.nodeId === "skin:approval"
       );
       assert.equal(approvals.length, 1);
-      assert.equal(calls.filter((call) => call.url.endsWith("/sendMessage")).length, 1);
+      assert.equal(calls.filter((call) => call.url.endsWith("/sendMessage") || call.url.endsWith("/sendPhoto")).length, 1);
 
       const approved = await api(`/api/approvals/${first.data.approval.id}/approve`, {
         method: "POST",

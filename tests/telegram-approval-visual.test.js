@@ -10,14 +10,16 @@ describe("telegram approval visual", () => {
   it("summarizes workflow and repo context for the image header", () => {
     assert.deepEqual(
       telegramApprovalVisualSummary({
-        approval: { kindLabel: "Workflow gate" },
+        approval: { kind: "workflow_gate", kindLabel: "Workflow gate" },
         workflow: { name: "Research plan implement", slug: "research-plan-implement" },
-        project: { repo: "/home/xiko/runyard" }
+        project: { repo: "/home/xiko/runyard" },
+        run: { title: "Fix approval UX" }
       }),
       {
         workflow: "Research plan implement",
         repo: "runyard",
-        kind: "Workflow gate"
+        runTitle: "Fix approval UX",
+        kind: "Workflow checkpoint"
       }
     );
   });

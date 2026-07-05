@@ -220,7 +220,7 @@ export function telegramApprovalMessageEditPayload({ callback, approval, approva
 export function telegramApprovalStoredMessageCallback(message = {}) {
   if (message.inlineMessageId) return { inline_message_id: message.inlineMessageId };
   if (message.chatId && message.messageId) {
-    return { message: { chat: { id: message.chatId }, message_id: message.messageId } };
+    return { message: { chat: { id: message.chatId }, message_id: message.messageId }, messageKind: message.kind || "" };
   }
   return null;
 }
@@ -229,7 +229,7 @@ export function telegramApprovalStoredMessage({ target, sendResult } = {}) {
   const messageId = sendResult?.message_id;
   const chatId = sendResult?.chat?.id ?? target?.chatId;
   if (!chatId || !messageId) return null;
-  return { chatId, messageId };
+  return { chatId, messageId, ...(sendResult?.photo ? { kind: "photo" } : {}) };
 }
 
 export function telegramApprovalButtonClearPayload(callback) {

@@ -73,11 +73,12 @@ export function approvalNotificationPayload({ target, approval, approvalUrl, app
   });
 }
 
-export async function sendTelegramApprovalVisual(options = {}) {
+export async function sendTelegramApprovalPhotoNotification(options = {}) {
   const { botToken, target, approval, approvalContext, renderApprovalVisual = renderTelegramApprovalVisual } = options;
   if (!botToken || !target || !approvalContext) return false;
   const summary = telegramApprovalVisualSummary(approvalContext(approval));
   if (!summary) return false;
+  const message = approvalNotificationPayload(options);
   const png = await renderApprovalVisual(summary);
   if (!png?.length) return false;
   const photo = new Blob([png], { type: "image/png" });
@@ -88,20 +89,28 @@ export async function sendTelegramApprovalVisual(options = {}) {
     fields: {
       chat_id: target.chatId,
       ...(target.threadId ? { message_thread_id: target.threadId } : {}),
-      photo
+      photo,
+      caption: message.text,
+      parse_mode: message.parse_mode,
+      reply_markup: JSON.stringify(message.reply_markup)
     },
     fetchImpl: options.fetchImpl,
     logError: options.logError,
-    errorLabel: "Telegram approval visual"
+    errorLabel: "Telegram approval photo notification",
+    returnResult: true
   });
 }
+
+export const sendTelegramApprovalVisual = sendTelegramApprovalPhotoNotification;
 
 export async function sendTelegramApprovalNotification(options = {}) {
   const { botToken, target } = options;
   if (!botToken || !target) return false;
-  await sendTelegramApprovalVisual(options).catch((error) => {
-    options.logError?.("Telegram approval visual failed:", error.message);
+  const photoResult = await sendTelegramApprovalPhotoNotification(options).catch((error) => {
+    options.logError?.("Telegram approval photo notification failed:", error.message);
+    return false;
   });
+  if (photoResult) return photoResult;
   return callTelegramBot({
     botToken,
     method: "sendMessage",
@@ -133,9 +142,14 @@ export async function editTelegramApprovalMessage({ botToken, callback, approval
   if (!botToken) return false;
   const payload = telegramApprovalMessageEditPayload({ callback, approval, approvalContext, instanceName });
   if (!payload) return false;
+  const caption = callback?.messageKind === "photo" || Array.isArray(callback?.message?.photo);
+  if (caption) {
+    payload.caption = payload.text;
+    delete payload.text;
+  }
   return callTelegramBot({
     botToken,
-    method: "editMessageText",
+    method: caption ? "editMessageCaption" : "editMessageText",
     payload,
     fetchImpl,
     logError,
