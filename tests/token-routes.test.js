@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  KNOWN_TOKEN_SCOPES,
   createTokenHandlers,
   revokeTokenDecision,
   tokenCreateInput
@@ -50,6 +51,28 @@ describe("token route helpers", () => {
       scopes: ["runner"],
       expiresAt: "2026-07-02T00:00:00.000Z"
     });
+  });
+
+  it("rejects unknown scopes so typos never become long-lived credentials", () => {
+    const input = tokenCreateInput({ name: "oops", scopes: ["api", "read"] });
+    assert.equal(input.error.status, 400);
+    assert.deepEqual(input.error.body.unknown, ["read"]);
+    assert.deepEqual(input.error.body.known, KNOWN_TOKEN_SCOPES);
+
+    // Every documented scope is mintable, including approvals (least-privilege bots).
+    for (const scope of KNOWN_TOKEN_SCOPES) {
+      assert.equal(tokenCreateInput({ scopes: [scope] }).error, undefined, scope);
+    }
+  });
+
+  it("400s through the route handler on unknown scopes without minting", () => {
+    const { audits, handlers, tokens } = harness();
+    const res = response();
+    handlers.createToken(req({ body: { name: "evil", scopes: ["superuser"] } }), res);
+    assert.equal(res.statusCode, 400);
+    assert.equal(res.body.error, "unknown scopes");
+    assert.equal(tokens.length, 2, "no token minted");
+    assert.equal(audits.length, 0, "no audit entry for a rejected mint");
   });
 
   it("blocks revoking the last active admin token", () => {

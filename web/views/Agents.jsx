@@ -4,6 +4,7 @@ import { useLiveQuery } from "@tanstack/react-db";
 import { capabilitiesCollection } from "../lib/collections.js";
 import { api } from "../lib/api.js";
 import { deepLinks, useNavigate } from "../lib/router.js";
+import { useMe, meIsAdmin } from "../lib/me.js";
 import { toast } from "../lib/toast.js";
 import { Toolbar, ShareButton } from "../components/ui.jsx";
 
@@ -90,11 +91,13 @@ function AgentCard({ meta, item, capabilities, onEdit }) {
           <Pills items={related.map((c) => ({ label: c.name, href: deepLinks.workflow(c.slug) }))} />
         </div>
       ) : null}
-      <div className="toolbar-actions">
-        {/* The card title already links to the detail page, so the footer
-            carries just the one secondary action. */}
-        <button className="btn-sm" onClick={() => onEdit(item.slug)}>Edit</button>
-      </div>
+      {onEdit ? (
+        <div className="toolbar-actions">
+          {/* The card title already links to the detail page, so the footer
+              carries just the one secondary action. */}
+          <button className="btn-sm" onClick={() => onEdit(item.slug)}>Edit</button>
+        </div>
+      ) : null}
     </article>
   );
 }
@@ -157,6 +160,10 @@ function Editor({ meta, slug, item, onSaved }) {
 export function Agents({ tab = "agents", slug }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { data: me } = useMe();
+  // Catalog writes are admin-only server-side; non-admins get a read-only
+  // view instead of forms that would 403 on save.
+  const canEdit = meIsAdmin(me);
   const meta = AGENT_TABS.find((t) => t.key === tab) || AGENT_TABS[0];
 
   const listQuery = useQuery({
@@ -175,7 +182,7 @@ export function Agents({ tab = "agents", slug }) {
 
   // Editor opens for a real slug (deep link / Edit) or for "" (New). null = closed.
   // We treat an empty string slug as "new"; undefined means no editor.
-  const editing = slug !== undefined;
+  const editing = canEdit && slug !== undefined;
   const editTarget = editing
     ? slug
       ? items.find((entry) => entry.slug === slug)
@@ -192,7 +199,7 @@ export function Agents({ tab = "agents", slug }) {
   return (
     <>
       <Toolbar title="Agents" shareHash={sectionHash}>
-        <button id="new-item" onClick={() => openEditor("")}>New {newLabel}</button>
+        {canEdit ? <button id="new-item" onClick={() => openEditor("")}>New {newLabel}</button> : null}
       </Toolbar>
       <nav className="tabs">
         {AGENT_TABS.map((t) => (
@@ -213,7 +220,7 @@ export function Agents({ tab = "agents", slug }) {
       ) : items.length ? (
         <div className="grid">
           {items.map((item) => (
-            <AgentCard key={item.slug} meta={meta} item={item} capabilities={caps} onEdit={openEditor} />
+            <AgentCard key={item.slug} meta={meta} item={item} capabilities={caps} onEdit={canEdit ? openEditor : null} />
           ))}
         </div>
       ) : (

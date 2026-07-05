@@ -41,10 +41,11 @@ before(async () => {
       resolve();
     });
   });
-  // Mint a non-admin, read-scoped token via the admin API.
-  const created = await req("/api/tokens", { method: "POST", body: { name: "read-only", scopes: ["read"] } });
+  // Mint a non-admin (api-scoped) token via the admin API. Token creation
+  // validates scopes against the known set, so a made-up scope would 400.
+  const created = await req("/api/tokens", { method: "POST", body: { name: "read-only", scopes: ["api"] } });
   readToken = created.data.token.token;
-  assert.ok(readToken, "expected a read-scoped token to be issued");
+  assert.ok(readToken, "expected a non-admin token to be issued");
 });
 
 after(async () => {
@@ -93,8 +94,8 @@ describe("secrets API — admin scope + write-only values", () => {
   });
 });
 
-describe("secrets API — read-scoped token is forbidden (403)", () => {
-  it("403s on list, upsert, and delete for a read-scoped token", async () => {
+describe("secrets API — non-admin token is forbidden (403)", () => {
+  it("403s on list, upsert, and delete for a non-admin token", async () => {
     assert.equal((await req("/api/secrets", {}, readToken)).status, 403);
     assert.equal(
       (await req("/api/secrets/NOPE", { method: "PUT", body: { value: "should-fail-1234" } }, readToken)).status,

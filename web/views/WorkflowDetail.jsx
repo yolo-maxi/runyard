@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api.js";
 import { deepLinks, navigate } from "../lib/router.js";
 import { copyText } from "../lib/clipboard.js";
+import { useMe, meIsAdmin } from "../lib/me.js";
 import { formatBytes } from "../lib/runHelpers.js";
 import { Toolbar, Breadcrumbs, ShareButton, JsonBlock } from "../components/ui.jsx";
 import { Pills, WorkflowRunsList, Empty, CopyRow } from "../components/WorkflowParts.jsx";
@@ -234,6 +235,9 @@ function RunsTab({ slug, cap, runs }) {
 //   Overview · Visual graph · Code · Runs
 // `sub` selects the tab and the run-form / editor overlays ("run" / "edit").
 export function WorkflowDetail({ slug, sub = "" }) {
+  const { data: me } = useMe();
+  // Workflow editing is admin-only server-side; hide the levers that 403.
+  const canEdit = meIsAdmin(me);
   const capQuery = useQuery({
     queryKey: ["capability", slug],
     queryFn: () => api(`/api/capabilities/${slug}`)
@@ -294,7 +298,7 @@ export function WorkflowDetail({ slug, sub = "" }) {
       ]} />
       <Toolbar title={cap.name} shareHash={deepLinks.workflow(slug)}>
         <button id="wf-run" className="primary" onClick={() => navigate(deepLinks.workflowRun(slug))}>Run this workflow</button>
-        <button id="wf-edit" onClick={() => navigate(deepLinks.workflowEdit(slug))}>Edit</button>
+        {canEdit ? <button id="wf-edit" onClick={() => navigate(deepLinks.workflowEdit(slug))}>Edit</button> : null}
         <a className="button" href={deepLinks.workflows()}>All workflows</a>
       </Toolbar>
       <p className="muted workflow-detail-desc">{cap.description || "No description."}</p>
@@ -316,7 +320,7 @@ export function WorkflowDetail({ slug, sub = "" }) {
 
       {sub === "run" ? (
         <RunForm cap={cap} slug={slug} />
-      ) : sub === "edit" ? (
+      ) : sub === "edit" && canEdit ? (
         <WorkflowEditor slug={slug} />
       ) : (
         <section id="editor" className="panel hidden" />
