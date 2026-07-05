@@ -39,9 +39,9 @@ export function telegramLabeledLine(label, value) {
 // Per-kind lead line: the first thing an approver reads must say what class
 // of question this is, not a generic "approval requested".
 const TELEGRAM_KIND_LEADS = {
-  workflow_gate: "Workflow paused for your sign-off",
-  escalation: "A run needs a recovery decision",
-  side_effect: "A run wants to perform a gated side effect",
+  workflow_gate: "Gate needs sign-off",
+  escalation: "Recovery decision needed",
+  side_effect: "Side effect needs sign-off",
   custom: "Approval requested"
 };
 
@@ -53,15 +53,14 @@ export function telegramApprovalKindLead(kind) {
 // fallback; a blocking card says it waits. Never leave "ignoring this" with an
 // unstated meaning.
 export function telegramApprovalIfIgnoredLine(approval, context) {
-  const fromContext = String(context?.whatHappensIfIgnored || "").trim();
-  if (fromContext) return fromContext;
+  if (approval?.timerState === "fallback_required") return "Expired: needs human; no auto decision.";
   if (approval?.timeoutAt) {
     const fallback = context?.approval?.fallbackDecisionLabel || approval?.fallback?.decision;
     return fallback
-      ? `If nobody decides by ${approval.timeoutAt}, “${fallback}” is applied automatically.`
-      : `The timer elapses at ${approval.timeoutAt}; the card then flags itself for a human and keeps waiting.`;
+      ? `By ${approval.timeoutAt}: auto-${fallback}.`
+      : `At ${approval.timeoutAt}: needs human; no auto decision.`;
   }
-  return "This waits until someone decides — the run is held, never failed by waiting.";
+  return "Waits for a human; waiting never fails the run.";
 }
 
 // One resolved-state line for message edits: "✅ Approved by @fran at 17:42".
@@ -92,29 +91,29 @@ export function telegramApprovalText(approval, { approvalContext, instanceName =
     : "No run attached";
   const options = Array.isArray(ask.options) ? ask.options : [];
   return [
-    `<b>${htmlEscape(instanceName)}: ${htmlEscape(telegramApprovalKindLead(kind))}</b>`,
+    `<b>${htmlEscape(instanceName)} · ${htmlEscape(telegramApprovalKindLead(kind))}</b>`,
     `<b>${htmlEscape(truncate(approval?.title || "Approval", 240))}</b>`,
-    "<b>What happens if you approve</b>",
+    "<b>Approve</b>",
     htmlEscape(action),
-    reason && reason !== action ? "<b>Why a human is needed</b>" : "",
+    reason && reason !== action ? "<b>Why</b>" : "",
     reason && reason !== action ? htmlEscape(reason) : "",
     details && details !== reason ? "<b>Details</b>" : "",
     details && details !== reason ? `<pre>${htmlEscape(details)}</pre>` : "",
     ...(options.length
       ? ["<b>Options</b>", ...options.map((option) => htmlEscape(`• ${option.label}${option.effect ? ` — ${option.effect}` : ""}`))]
       : []),
-    "<b>Workflow</b>",
+    "<b>Context</b>",
     htmlEscape(workflow),
-    telegramLabeledLine("Originator", context.requestedBy || "unknown"),
-    context.project?.display ? telegramLabeledLine("Project / repo / path", truncate(context.project.display, 180)) : "",
+    telegramLabeledLine("From", context.requestedBy || "unknown"),
+    telegramLabeledLine("For", context.ask?.audienceLabel || context.ask?.audience || ""),
+    context.project?.display ? telegramLabeledLine("Project", truncate(context.project.display, 180)) : "",
     branchLine,
     context.deploy == null ? "" : telegramLabeledLine("Deploy", context.deploy ? "yes" : "no"),
-    "<b>Run</b>",
-    runLine,
-    telegramLabeledLine("Approval", approval.id),
-    pending ? "<b>If nobody decides</b>" : "",
+    `<b>Run:</b> ${runLine}`,
+    telegramLabeledLine("Card", approval.id),
+    pending ? "<b>Ignored</b>" : "",
     pending ? htmlEscape(telegramApprovalIfIgnoredLine(approval, context)) : "",
-    pending ? "Use the buttons below to decide." : htmlEscape(telegramApprovalResolvedLine(approval, context))
+    pending ? "<b>Decide:</b> Approve · Changes · Reject" : htmlEscape(telegramApprovalResolvedLine(approval, context))
   ]
     .filter(Boolean)
     .join("\n");
@@ -205,6 +204,21 @@ export function telegramApprovalMessageEditPayload({ callback, approval, approva
     text: telegramApprovalText(approval, { approvalContext, instanceName }),
     parse_mode: "HTML"
   };
+}
+
+export function telegramApprovalStoredMessageCallback(message = {}) {
+  if (message.inlineMessageId) return { inline_message_id: message.inlineMessageId };
+  if (message.chatId && message.messageId) {
+    return { message: { chat: { id: message.chatId }, message_id: message.messageId } };
+  }
+  return null;
+}
+
+export function telegramApprovalStoredMessage({ target, sendResult } = {}) {
+  const messageId = sendResult?.message_id;
+  const chatId = sendResult?.chat?.id ?? target?.chatId;
+  if (!chatId || !messageId) return null;
+  return { chatId, messageId };
 }
 
 export function telegramApprovalButtonClearPayload(callback) {

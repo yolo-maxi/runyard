@@ -108,7 +108,8 @@ export function normalizeApproval(row) {
     timeoutAt: row.timeout_at || null,
     fallback: row.fallback ? parseMaybeJson(row.fallback, null) : null,
     timerState: row.timer_state || "",
-    timerElapsedAt: row.timer_elapsed_at || null
+    timerElapsedAt: row.timer_elapsed_at || null,
+    telegramMessage: row.telegram_message ? parseMaybeJson(row.telegram_message, null) : null
   };
 }
 

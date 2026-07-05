@@ -181,6 +181,7 @@ export function initDb() {
   migrateRunnerAuthHealthColumn();
   migrateRunsSupervisorColumns();
   migrateApprovalsTimerColumns();
+  migrateApprovalsTelegramMessageColumn();
   migrateApprovalsKindResolutionColumns();
   migrateApprovalsAskColumn();
   dbBootstrap.setSettingDefault("instance_name", env.instanceName);
@@ -278,6 +279,10 @@ function migrateApprovalsTimerColumns() {
     { name: "timer_state", definition: "timer_state TEXT NOT NULL DEFAULT ''" },
     { name: "timer_elapsed_at", definition: "timer_elapsed_at TEXT" }
   ]);
+}
+
+function migrateApprovalsTelegramMessageColumn() {
+  migrateMissingColumns("approvals", [{ name: "telegram_message", definition: "telegram_message TEXT" }]);
 }
 
 // The ask contract (audience/action/reason/options, JSON). Nullable and never
@@ -805,6 +810,10 @@ export function sweepTimedApprovals() {
 
 export function sweepSupersededApprovals() {
   return operatorStore.sweepSupersededApprovals();
+}
+
+export function setApprovalTelegramMessage(approvalId, telegramMessage = null) {
+  return operatorStore.setApprovalTelegramMessage(approvalId, telegramMessage);
 }
 
 export function getApproval(approvalId) {

@@ -204,7 +204,8 @@ export const DB_SCHEMA_SQL = `
     timeout_at TEXT,
     fallback TEXT,
     timer_state TEXT NOT NULL DEFAULT '',
-    timer_elapsed_at TEXT
+    timer_elapsed_at TEXT,
+    telegram_message TEXT
   );
 
   CREATE TABLE IF NOT EXISTS audit_log (

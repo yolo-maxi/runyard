@@ -5,7 +5,7 @@ import {
   telegramApprovalMessagePayload
 } from "./telegramApprovals.js";
 
-export async function callTelegramBot({ botToken, method, payload, fetchImpl = fetch, logError = console.error, errorLabel = "Telegram request" } = {}) {
+export async function callTelegramBot({ botToken, method, payload, fetchImpl = fetch, logError = console.error, errorLabel = "Telegram request", returnResult = false } = {}) {
   if (!botToken || !method || !payload) return false;
   try {
     const response = await fetchImpl(`https://api.telegram.org/bot${botToken}/${method}`, {
@@ -16,6 +16,10 @@ export async function callTelegramBot({ botToken, method, payload, fetchImpl = f
     if (!response.ok) {
       logError(`${errorLabel} failed:`, response.status);
       return false;
+    }
+    if (returnResult && typeof response.json === "function") {
+      const body = await response.json();
+      return body?.result || body || true;
     }
     return true;
   } catch (error) {
@@ -43,7 +47,8 @@ export async function sendTelegramApprovalNotification(options = {}) {
     payload: approvalNotificationPayload(options),
     fetchImpl: options.fetchImpl,
     logError: options.logError,
-    errorLabel: "Telegram notification"
+    errorLabel: "Telegram notification",
+    returnResult: true
   });
 }
 

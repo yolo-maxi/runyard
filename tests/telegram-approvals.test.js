@@ -12,6 +12,8 @@ import {
   telegramApprovalKindLead,
   telegramApprovalMessageEditPayload,
   telegramApprovalMessagePayload,
+  telegramApprovalStoredMessage,
+  telegramApprovalStoredMessageCallback,
   telegramApprovalTarget,
   telegramApprovalText
 } from "../src/telegramApprovals.js";
@@ -57,12 +59,12 @@ describe("telegram approval helpers", () => {
 
     assert.equal(payload.chat_id, "111");
     assert.equal(payload.parse_mode, "HTML");
-    assert.match(payload.text, /Run&amp;Yard: Approval requested/);
-    assert.match(payload.text, /What happens if you approve/);
+    assert.match(payload.text, /Run&amp;Yard · Approval requested/);
+    assert.match(payload.text, /<b>Approve<\/b>/);
     assert.match(payload.text, /Queue &amp; run/);
-    assert.match(payload.text, /Why a human is needed/);
+    assert.match(payload.text, /<b>Why<\/b>/);
     assert.match(payload.text, /Runs a coding agent on the repo\./);
-    assert.match(payload.text, /If nobody decides/);
+    assert.match(payload.text, /<b>Ignored<\/b>/);
     assert.match(payload.text, /Improve &lt;App&gt; \(improve\)/);
     assert.match(payload.text, /Change &lt;script&gt;/);
     // Humanized run status, never the raw enum.
@@ -76,9 +78,9 @@ describe("telegram approval helpers", () => {
   });
 
   it("leads with the card's kind and states the deadline + fallback on timed cards", () => {
-    assert.equal(telegramApprovalKindLead("workflow_gate"), "Workflow paused for your sign-off");
-    assert.equal(telegramApprovalKindLead("escalation"), "A run needs a recovery decision");
-    assert.equal(telegramApprovalKindLead("side_effect"), "A run wants to perform a gated side effect");
+    assert.equal(telegramApprovalKindLead("workflow_gate"), "Gate needs sign-off");
+    assert.equal(telegramApprovalKindLead("escalation"), "Recovery decision needed");
+    assert.equal(telegramApprovalKindLead("side_effect"), "Side effect needs sign-off");
 
     const timedContext = () => ({
       ...approvalContext(),
@@ -96,15 +98,30 @@ describe("telegram approval helpers", () => {
       },
       { approvalContext: timedContext, instanceName: "Runyard" }
     );
-    assert.match(text, /Workflow paused for your sign-off/);
-    assert.match(text, /If nobody decides by 2026-07-04T18:00:00\.000Z, “Approved” is applied automatically\./);
+    assert.match(text, /Gate needs sign-off/);
+    assert.match(text, /By 2026-07-04T18:00:00\.000Z: auto-Approved\./);
   });
 
   it("states that blocking cards wait and never fail the run", () => {
     const blockingContext = () => ({ ...approvalContext(), whatHappensIfIgnored: "" });
     const line = telegramApprovalIfIgnoredLine({ id: "appr_abc", status: "pending" }, blockingContext());
-    assert.match(line, /waits until someone decides/);
-    assert.match(line, /never failed/);
+    assert.match(line, /Waits for a human/);
+    assert.match(line, /never fails/);
+  });
+
+  it("builds stored message references for later expiry edits", () => {
+    assert.deepEqual(
+      telegramApprovalStoredMessage({
+        target: { chatId: "42" },
+        sendResult: { message_id: 9, chat: { id: "42" } }
+      }),
+      { chatId: "42", messageId: 9 }
+    );
+    assert.deepEqual(telegramApprovalStoredMessageCallback({ chatId: "42", messageId: 9 }), {
+      message: { chat: { id: "42" }, message_id: 9 }
+    });
+    assert.equal(telegramApprovalStoredMessage({ target: { chatId: "42" }, sendResult: true }), null);
+    assert.equal(telegramApprovalStoredMessageCallback({}), null);
   });
 
   it("edits a decided message to name the outcome instead of asking for buttons", () => {

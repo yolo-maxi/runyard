@@ -127,6 +127,7 @@ export function createServerComposition({
     recordAlert,
     listAlerts,
     latestAlert,
+    setApprovalTelegramMessage,
     sweepSupersededApprovals,
     sweepTimedApprovals
   } = db;
@@ -188,13 +189,27 @@ export function createServerComposition({
     clearTelegramApprovalButtons,
     notifyTelegram,
     telegramApprovalTarget,
+    updateStoredTelegramApprovalMessage,
     updateTelegramApprovalMessage
   } = createTelegramApprovalNotifier({
     approvalContext,
     env,
     getCapability,
-    getRun
+    getRun,
+    setApprovalTelegramMessage
   });
+
+  function sweepTimedApprovalsAndUpdateTelegram() {
+    const swept = sweepTimedApprovals();
+    for (const entry of swept) {
+      const approval = getApproval(entry.id);
+      if (!approval?.telegramMessage) continue;
+      updateStoredTelegramApprovalMessage(approval).catch((error) => {
+        console.error("Telegram approval expiry update failed:", error.message);
+      });
+    }
+    return swept;
+  }
 
   const maybeRecordFailureClassAlert = (status) =>
     maybeRecordFailureAlert(status, { countRuns, latestAlert, recordAlert });
@@ -454,7 +469,7 @@ export function createServerComposition({
     reconcileSupervisedChildTerminals,
     reconcileRunnerActiveRuns,
     sweepSupersededApprovals,
-    sweepTimedApprovals,
+    sweepTimedApprovals: sweepTimedApprovalsAndUpdateTelegram,
     routes: {
       adminReadHandlers,
       approvalHandlers,

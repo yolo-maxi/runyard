@@ -26,6 +26,13 @@ export function ApprovalList({ approvals = [] }) {
         const context = approval.context || {};
         const contextApproval = context.approval || {};
         const pending = approval.status === "pending";
+        const ignored = pending
+          ? approval.timeoutAt
+            ? contextApproval.fallbackDecisionLabel
+              ? `${approval.timeoutAt} → ${contextApproval.fallbackDecisionLabel}`
+              : `${approval.timeoutAt} → needs human`
+            : "waits for human"
+          : contextApproval.resolutionSentence;
         return (
           <article className="item approval-card" id={`approval-${approval.id}`} key={approval.id}>
             <header className="approval-card-head">
@@ -43,28 +50,33 @@ export function ApprovalList({ approvals = [] }) {
               <ShareButton hash={deepLinks.approval(approval.id)} label="Copy share link to this approval" />
             </header>
             <h3><a href={deepLinks.approval(approval.id)}>{approval.title}</a></h3>
-            {context.ask?.action ? <p className="approval-card-desc">{context.ask.action}</p> : null}
-            <p className="muted approval-card-desc">{context.ask?.reason || approval.description || "No description provided."}</p>
-            {pending && approval.timeoutAt ? (
-              <p className="muted approval-card-meta">
-                {contextApproval.fallbackDecisionLabel
-                  ? `Decides itself at ${approval.timeoutAt} → ${contextApproval.fallbackDecisionLabel}`
-                  : `Timer elapses at ${approval.timeoutAt}; it will flag itself for a human`}
-              </p>
-            ) : null}
-            {!pending && contextApproval.resolutionSentence ? (
-              <p className="muted approval-card-meta">{contextApproval.resolutionSentence}</p>
-            ) : null}
-            <p className="muted approval-card-meta">
-              {approval.runId ? (
-                <a href={approval.deepLinkRun || deepLinks.run(approval.runId)}>
-                  {approval.runId}
-                </a>
-              ) : (
-                "No linked run"
-              )}
-              {context.run?.statusLabel ? ` — ${context.run.statusLabel}` : ""}
-            </p>
+            <dl className="approval-card-rows">
+              <div>
+                <dt>Ask</dt>
+                <dd>{context.ask?.action || "Record a decision on this approval."}</dd>
+              </div>
+              <div>
+                <dt>Why</dt>
+                <dd>{context.ask?.reason || approval.description || "Human sign-off required."}</dd>
+              </div>
+              <div>
+                <dt>Ignored</dt>
+                <dd>{ignored}</dd>
+              </div>
+              <div>
+                <dt>Run</dt>
+                <dd>
+                  {approval.runId ? (
+                    <a href={approval.deepLinkRun || deepLinks.run(approval.runId)}>
+                      {approval.runId}
+                    </a>
+                  ) : (
+                    "none"
+                  )}
+                  {context.run?.statusLabel ? ` · ${context.run.statusLabel}` : ""}
+                </dd>
+              </div>
+            </dl>
             <div className="toolbar-actions">
               <a className="button" href={deepLinks.approval(approval.id)}>Open approval</a>
               {pending ? (

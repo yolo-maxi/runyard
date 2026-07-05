@@ -52,7 +52,8 @@ describe("operator record helpers", () => {
       timeoutAt: null,
       fallback: null,
       timerState: "",
-      timerElapsedAt: null
+      timerElapsedAt: null,
+      telegramMessage: null
     });
   });
 

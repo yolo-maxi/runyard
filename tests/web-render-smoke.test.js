@@ -38,6 +38,19 @@ async function loadRenderSmoke() {
           };
           return {
             approvalsEmpty: renderToStaticMarkup(<ApprovalList approvals={[]} />),
+            approvalsCompact: renderToStaticMarkup(<ApprovalList approvals={[{
+              id: "appr_smoke",
+              status: "pending",
+              title: "Approve compact card",
+              timeoutAt: "2026-07-05T00:00:00.000Z",
+              runId: "run_smoke",
+              deepLinkRun: "/app#runs/run_smoke",
+              context: {
+                approval: { statusLabel: "Pending decision", kindLabel: "Workflow gate" },
+                ask: { action: "Release the held run.", reason: "Operator sign-off required." },
+                run: { statusLabel: "Waiting for approval" }
+              }
+            }]} />),
             progress: renderToStaticMarkup(<RunProgressStrip run={run} now={Date.parse("2026-06-26T20:00:40.000Z")} />),
             code: renderToStaticMarkup(<CodeBlock code={"const answer = 42;"} language="js" />)
           };
@@ -64,6 +77,10 @@ describe("React render smoke", () => {
 
     assert.match(html.approvalsEmpty, /class="empty"/);
     assert.match(html.approvalsEmpty, /No pending approvals/);
+    assert.match(html.approvalsCompact, /approval-card-rows/);
+    assert.match(html.approvalsCompact, /<dt>Ask<\/dt>/);
+    assert.match(html.approvalsCompact, /<dt>Ignored<\/dt>/);
+    assert.match(html.approvalsCompact, /2026-07-05T00:00:00\.000Z → needs human/);
 
     assert.match(html.progress, /data-run-progress="run_smoke"/);
     assert.match(html.progress, /building/);

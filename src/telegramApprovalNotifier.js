@@ -1,5 +1,7 @@
 import { absoluteDeepLink, deepLinks } from "./deepLinks.js";
 import {
+  telegramApprovalStoredMessage,
+  telegramApprovalStoredMessageCallback,
   shouldNotifyTelegram as shouldNotifyTelegramApproval,
   telegramApprovalTarget as resolveTelegramApprovalTarget
 } from "./telegramApprovals.js";
@@ -15,6 +17,7 @@ export function createTelegramApprovalNotifier({
   env,
   getCapability,
   getRun,
+  setApprovalTelegramMessage = async () => {},
   sendApprovalNotification = sendTelegramApprovalNotification,
   sendCallbackAnswer = sendTelegramCallbackAnswer,
   clearApprovalMarkup = clearTelegramApprovalMarkup,
@@ -37,7 +40,7 @@ export function createTelegramApprovalNotifier({
     if (!env.telegramBotToken || !target) return false;
     if (!shouldNotifyTelegram(approval)) return false;
     const approvalUrl = absoluteDeepLink(deepLinks.approval(approval.id), env.baseUrl);
-    return sendApprovalNotification({
+    const result = await sendApprovalNotification({
       botToken: env.telegramBotToken,
       target,
       approval,
@@ -45,6 +48,9 @@ export function createTelegramApprovalNotifier({
       approvalContext,
       instanceName: env.instanceName
     });
+    const message = telegramApprovalStoredMessage({ target, sendResult: result });
+    if (message) await setApprovalTelegramMessage(approval.id, message);
+    return Boolean(result);
   }
 
   async function answerTelegramCallbackQuery(callbackQueryId, text) {
@@ -70,12 +76,19 @@ export function createTelegramApprovalNotifier({
     return true;
   }
 
+  async function updateStoredTelegramApprovalMessage(approval) {
+    const callback = telegramApprovalStoredMessageCallback(approval?.telegramMessage);
+    if (!callback) return false;
+    return updateTelegramApprovalMessage(callback, approval);
+  }
+
   return {
     answerTelegramCallbackQuery,
     clearTelegramApprovalButtons,
     notifyTelegram,
     shouldNotifyTelegram,
     telegramApprovalTarget,
+    updateStoredTelegramApprovalMessage,
     updateTelegramApprovalMessage
   };
 }

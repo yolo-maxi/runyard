@@ -216,6 +216,12 @@ export function createOperatorStore({ all, one, run, id, now, addRunEvent, getRu
     return all(query.sql, query.params).map(normalizeApproval);
   }
 
+  function setApprovalTelegramMessage(approvalId, telegramMessage = null) {
+    const clean = telegramMessage && typeof telegramMessage === "object" ? telegramMessage : null;
+    run("UPDATE approvals SET telegram_message=? WHERE id=?", [clean ? JSON.stringify(clean) : null, approvalId]);
+    return getApproval(approvalId);
+  }
+
   function recordAudit(actor, action, target = null, detail = {}) {
     const entry = auditRecord({ id: id("aud"), actor, action, target, detail, createdAt: now() });
     const query = auditInsertQuery();
@@ -353,6 +359,7 @@ export function createOperatorStore({ all, one, run, id, now, addRunEvent, getRu
     recordAudit,
     resolveApproval,
     resolveEngineApprovalOnResume,
+    setApprovalTelegramMessage,
     sweepSupersededApprovals,
     sweepTimedApprovals
   };
