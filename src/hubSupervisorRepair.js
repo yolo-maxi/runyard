@@ -36,9 +36,20 @@ export function buildHubRepairInput(failedRun, decision, options = {}) {
 export function buildEscalationApproval(run, decision) {
   const runId = run?.id || "";
   const capability = run?.capability_slug || run?.capabilitySlug || "";
+  const reason = (decision?.reason || "Autonomous recovery exhausted; operator review required.").slice(0, 2000);
   return {
-    title: `Supervisor escalation: ${capability || runId}`.slice(0, 240),
-    description: (decision?.reason || "Autonomous recovery exhausted; operator review required.").slice(0, 2000),
+    title: `Needs a decision: ${capability || runId}`.slice(0, 240),
+    description: reason,
+    // The declared ask. Honest about what resolving does today: the run was
+    // already marked failed before this card existed, and no option handlers
+    // exist yet, so a decision here is recorded guidance — it does not requeue
+    // the run by itself (the escalation-options branch wires that up).
+    ask: {
+      audience: "operators",
+      action:
+        "Record how this run should proceed now that autonomous recovery gave up. To try again, re-run it from the run page.",
+      reason: reason.slice(0, 500)
+    },
     payload: {
       kind: "supervisor_escalation",
       approvalKind: "supervisor_escalation",

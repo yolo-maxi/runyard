@@ -40,6 +40,7 @@ describe("operator record helpers", () => {
       title: "Approve deploy",
       description: "Ship it?",
       requestedBy: "workflow",
+      ask: null,
       payload: { kind: "checkpoint" },
       createdAt: "2026-01-01T00:00:00.000Z",
       resolvedAt: null,
@@ -164,8 +165,8 @@ describe("operator record helpers", () => {
     const resolution = approvalResolution("approved", "ignored");
 
     assert.deepEqual(approvalInsertQuery(), {
-      sql: `INSERT INTO approvals (id, run_id, status, kind, title, description, requested_by, payload, created_at, timeout_at, fallback)
-     VALUES ($id, $run_id, $status, $kind, $title, $description, $requested_by, $payload, $created_at, $timeout_at, $fallback)`
+      sql: `INSERT INTO approvals (id, run_id, status, kind, title, description, requested_by, ask, payload, created_at, timeout_at, fallback)
+     VALUES ($id, $run_id, $status, $kind, $title, $description, $requested_by, $ask, $payload, $created_at, $timeout_at, $fallback)`
     });
     assert.deepEqual(approvalLookupQuery("appr_1"), {
       sql: "SELECT * FROM approvals WHERE id = ?",

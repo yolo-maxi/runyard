@@ -24,7 +24,9 @@ export function RunProgressStrip({ run, now = Date.now() }) {
   const durations = runPhaseDurations(run);
   const outcomeLabel =
     phases.outcome === "ok" ? "Done" : phases.outcome === "fail" ? "Failed" : phases.outcome === "cancel" ? "Cancelled" : "Done";
-  const runningLabel = phases.running === "stalled" ? "Stalled" : "Running";
+  // A run paused on a human decision must never read as "Running".
+  const runningLabel =
+    run?.status === "waiting_approval" ? "Waiting for approval" : phases.running === "stalled" ? "Stalled" : "Running";
   const items = [
     { key: "queued", label: "Queued", state: phases.queued, dur: durations.queued },
     { key: "running", label: runningLabel, state: phases.running, dur: durations.running },

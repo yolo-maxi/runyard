@@ -79,7 +79,7 @@ describe("status humanization: users read labels, not enums", () => {
 
   it("renders the human label in StatusBadge with the raw enum as tooltip only", () => {
     assert.match(ui, /humanizeStatus/);
-    assert.match(ui, /\{glyph\}<\/span> \{label\}/);
+    assert.match(ui, /\{glyph\}<\/span> \{displayLabel\}/);
     assert.doesNotMatch(ui, /\{glyph\}<\/span> \{value\}/);
   });
 

@@ -268,6 +268,14 @@ async function requestApprovalCheckpoint(state: ReturnType<typeof createWatcherS
       title: `run-smithers needs approval for ${state.capabilitySlug}`,
       description: decision.reason,
       requestedBy: `workflow: run-smithers`,
+      // Honest ask: by the time this card exists the supervising wrapper has
+      // stopped retrying, so a decision here is recorded operator guidance —
+      // it does not restart the wrapped run by itself.
+      ask: {
+        audience: "operators",
+        action: `Record whether '${state.capabilitySlug}' should be retried after supervised recovery stopped. Re-run it from the run page if so.`,
+        reason: String(decision.reason || "Supervised retries were exhausted; operator review required.").slice(0, 500)
+      },
       payload: {
         kind: "checkpoint",
         approvalKind: "checkpoint",
@@ -301,6 +309,14 @@ async function requestChildApprovalBridge(
       title: `Approve ${state.capabilitySlug} checkpoint`,
       description: decision.reason,
       requestedBy: `workflow: ${state.capabilitySlug}`,
+      // The child run is held in waiting_approval: approving releases it past
+      // this checkpoint, rejecting cancels it. The supervising wrapper waits
+      // for whichever decision lands.
+      ask: {
+        audience: "operators",
+        action: `Release the wrapped '${state.capabilitySlug}' run past its checkpoint, or cancel it. The supervisor resumes watching after your decision.`,
+        reason: String(decision.reason || "The wrapped run paused at a checkpoint that requires human sign-off.").slice(0, 500)
+      },
       payload: {
         kind: "child_run_approval",
         approvalKind: "checkpoint",

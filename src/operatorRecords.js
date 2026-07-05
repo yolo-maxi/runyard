@@ -1,3 +1,4 @@
+import { normalizeApprovalAsk } from "./approvalAsk.js";
 import { parseMaybeJson } from "./dbNormalization.js";
 export {
   artifactInsertQuery,
@@ -55,11 +56,18 @@ export function approvalRecord({
   title,
   description = "",
   requestedBy = "workflow",
+  ask = null,
   payload = {},
   createdAt,
   timeoutAt = null,
   fallback = null
 }) {
+  // The stored ask is the declared question (see approvalAsk.js). An ask
+  // without both action and reason normalizes to null — the card is stored
+  // ask-less and flagged by presentation, never silently completed for the
+  // creator. payload.ask is accepted as a carrier for creators that can only
+  // speak payload (engine bridge, workflows posting to /api/approvals).
+  const declaredAsk = normalizeApprovalAsk(ask) || normalizeApprovalAsk(payload?.ask);
   return {
     id,
     run_id: runId,
@@ -68,6 +76,7 @@ export function approvalRecord({
     title,
     description,
     requested_by: requestedBy,
+    ask: declaredAsk ? JSON.stringify(declaredAsk) : null,
     payload: jsonField(payload, {}),
     created_at: createdAt,
     // NULL timeout_at = blocking approval; fallback is only stored when the
@@ -87,6 +96,7 @@ export function normalizeApproval(row) {
     title: row.title,
     description: row.description,
     requestedBy: row.requested_by,
+    ask: row.ask ? normalizeApprovalAsk(parseMaybeJson(row.ask, null)) : null,
     payload: parseMaybeJson(row.payload, {}),
     createdAt: row.created_at,
     resolvedAt: row.resolved_at,
@@ -116,8 +126,8 @@ export function approvalListQuery(status = "") {
 
 export function approvalInsertQuery() {
   return {
-    sql: `INSERT INTO approvals (id, run_id, status, kind, title, description, requested_by, payload, created_at, timeout_at, fallback)
-     VALUES ($id, $run_id, $status, $kind, $title, $description, $requested_by, $payload, $created_at, $timeout_at, $fallback)`
+    sql: `INSERT INTO approvals (id, run_id, status, kind, title, description, requested_by, ask, payload, created_at, timeout_at, fallback)
+     VALUES ($id, $run_id, $status, $kind, $title, $description, $requested_by, $ask, $payload, $created_at, $timeout_at, $fallback)`
   };
 }
 

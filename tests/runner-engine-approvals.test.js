@@ -24,8 +24,29 @@ const RUNNING_INSPECT = { run: { id: "run_sm1", status: "running" }, runState: {
 describe("engineApprovalWaits", () => {
   it("extracts pending engine approval nodes from inspect JSON", () => {
     assert.deepEqual(engineApprovalWaits(WAITING_INSPECT), [
-      { nodeId: "ship-gate", requestedAt: "2026-07-04T00:00:00.000Z" }
+      { nodeId: "ship-gate", requestedAt: "2026-07-04T00:00:00.000Z", title: "", summary: "", metadata: null }
     ]);
+  });
+
+  it("carries the gate's authored request when the engine exposes it (≥0.25 inspect)", () => {
+    const waits = engineApprovalWaits({
+      runState: { state: "waiting-approval" },
+      approvals: [
+        {
+          nodeId: "skin:approval",
+          status: "pending",
+          requestedAt: "2026-07-04T00:00:00.000Z",
+          request: {
+            title: "Approve app skin direction",
+            summary: "4 skins proposed; recommendation: Neon Tide",
+            metadata: { skinCount: 4 }
+          }
+        }
+      ]
+    });
+    assert.equal(waits[0].title, "Approve app skin direction");
+    assert.equal(waits[0].summary, "4 skins proposed; recommendation: Neon Tide");
+    assert.deepEqual(waits[0].metadata, { skinCount: 4 });
   });
 
   it("returns no waits for a running workflow", () => {
@@ -35,7 +56,9 @@ describe("engineApprovalWaits", () => {
   });
 
   it("synthesizes an empty-node wait when the engine reports waiting-approval without an approvals array", () => {
-    assert.deepEqual(engineApprovalWaits({ run: { status: "waiting-approval" } }), [{ nodeId: "", requestedAt: "" }]);
+    assert.deepEqual(engineApprovalWaits({ run: { status: "waiting-approval" } }), [
+      { nodeId: "", requestedAt: "", title: "", summary: "", metadata: null }
+    ]);
   });
 
   it("ignores non-pending approval rows", () => {
@@ -59,13 +82,79 @@ describe("engineApprovalCardRequest", () => {
       runnerName: "hetzner (vps)"
     });
     assert.equal(body.runId, "run_hub1");
-    assert.match(body.title, /Engine approval: improve · ship-gate/);
+    assert.match(body.title, /Workflow gate: improve · ship-gate/);
     assert.equal(body.payload.kind, "engine_approval");
     assert.equal(body.payload.smithersRunId, "run_sm1");
     assert.equal(body.payload.nodeId, "ship-gate");
+    // Even generic cards declare an ask (the contract), and the smithers CLI
+    // incantation is ops payload detail, never human-facing description copy.
+    assert.match(body.ask.action, /ship-gate/);
+    assert.ok(body.ask.reason);
+    assert.doesNotMatch(body.description, /smithers approve/);
+    assert.match(body.payload.engineCli, /smithers approve\|deny run_sm1 --node ship-gate/);
     // Blocking by contract: no timer fields on engine approval cards.
     assert.equal("timeoutMs" in body, false);
     assert.equal("fallback" in body, false);
+  });
+
+  it("preserves the gate's authored title and summary instead of generic boilerplate", () => {
+    const body = engineApprovalCardRequest({
+      hubRunId: "run_hub1",
+      smithersRunId: "run_sm1",
+      nodeId: "skin:approval",
+      capabilitySlug: "app-skinner",
+      runnerName: "vps",
+      wait: {
+        nodeId: "skin:approval",
+        title: "Approve app skin direction",
+        summary: "4 skins proposed; recommendation: Neon Tide",
+        metadata: { skinCount: 4 }
+      }
+    });
+    assert.equal(body.title, "Approve app skin direction");
+    assert.equal(body.description, "4 skins proposed; recommendation: Neon Tide");
+    assert.deepEqual(body.payload.request, {
+      title: "Approve app skin direction",
+      summary: "4 skins proposed; recommendation: Neon Tide",
+      metadata: { skinCount: 4 }
+    });
+    // The authored summary doubles as the ask's reason when no seed ask exists.
+    assert.equal(body.ask.reason, "4 skins proposed; recommendation: Neon Tide");
+  });
+
+  it("falls back to the seed-registered gate ask when the engine exposes no request (0.22)", () => {
+    const body = engineApprovalCardRequest({
+      hubRunId: "run_hub1",
+      smithersRunId: "run_sm1",
+      nodeId: "skin:approval",
+      capabilitySlug: "app-skinner",
+      runnerName: "vps",
+      wait: { nodeId: "skin:approval", title: "", summary: "", metadata: null },
+      gateAsk: {
+        title: "Approve app skin direction",
+        action: "Pick the proposed visual skin direction.",
+        reason: "The skin direction shapes all downstream design work.",
+        summary: "The workflow proposed several skins and paused for a human choice."
+      }
+    });
+    assert.equal(body.title, "Approve app skin direction");
+    assert.equal(body.description, "The workflow proposed several skins and paused for a human choice.");
+    assert.equal(body.ask.action, "Pick the proposed visual skin direction.");
+    assert.equal(body.ask.reason, "The skin direction shapes all downstream design work.");
+  });
+
+  it("prefers the authored request over the seed ask when both exist", () => {
+    const body = engineApprovalCardRequest({
+      nodeId: "gate",
+      smithersRunId: "run_sm1",
+      wait: { nodeId: "gate", title: "Authored title", summary: "Authored summary" },
+      gateAsk: { title: "Seed title", summary: "Seed summary", action: "Seed action", reason: "Seed reason" }
+    });
+    assert.equal(body.title, "Authored title");
+    assert.equal(body.description, "Authored summary");
+    // The seed ask still supplies the declared action/reason when present.
+    assert.equal(body.ask.action, "Seed action");
+    assert.equal(body.ask.reason, "Seed reason");
   });
 });
 

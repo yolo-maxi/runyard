@@ -40,8 +40,13 @@ describe("hub supervisor repair and escalation helpers", () => {
       { escalation: "loop_breaker", fingerprint: "fp", attempt: 2, reason: "needs review" }
     );
 
-    assert.equal(approval.title, "Supervisor escalation: hello");
+    assert.equal(approval.title, "Needs a decision: hello");
     assert.equal(approval.description, "needs review");
+    // The declared ask: honest that resolving records guidance and does not
+    // requeue the already-failed run (no option handlers exist yet).
+    assert.equal(approval.ask.audience, "operators");
+    assert.match(approval.ask.action, /re-run it from the run page/i);
+    assert.equal(approval.ask.reason, "needs review");
     assert.equal(approval.payload.kind, "supervisor_escalation");
     assert.equal(approval.payload.escalation, "loop_breaker");
     assert.equal(approval.payload.fingerprint, "fp");

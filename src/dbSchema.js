@@ -173,6 +173,11 @@ export const DB_SCHEMA_SQL = `
   -- for human-vocabulary decisions. The CHECKs bind fresh installs only;
   -- existing installs are backfilled by
   -- migrateApprovalsKindResolutionColumns (ALTER cannot add constraints).
+  --
+  -- ask: the declared question (JSON: audience/action/reason/options),
+  -- supplied by the creator and rendered verbatim by every surface. NULL =
+  -- the card predates the ask contract (or its creator did not declare one);
+  -- presentation falls back to a heuristic ask explicitly marked derived.
   CREATE TABLE IF NOT EXISTS approvals (
     id TEXT PRIMARY KEY,
     run_id TEXT REFERENCES runs(id) ON DELETE CASCADE,
@@ -181,6 +186,7 @@ export const DB_SCHEMA_SQL = `
     title TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
     requested_by TEXT NOT NULL DEFAULT 'workflow',
+    ask TEXT,
     payload TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL,
     resolved_at TEXT,

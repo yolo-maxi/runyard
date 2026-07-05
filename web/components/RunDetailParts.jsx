@@ -2,7 +2,7 @@ import { deepLinks } from "../lib/router.js";
 import { copyText } from "../lib/clipboard.js";
 import {
   isActiveRun, runDurationMs, formatDuration, relativeTime, formatTimestamp,
-  artifactDisplayName, formatBytes, truncate
+  artifactDisplayName, formatBytes, truncate, runStatusLabel
 } from "../lib/runHelpers.js";
 import { rerunRun, editRerunRun, cancelRun } from "../lib/runActions.js";
 import { promoteRun, runPromotionCandidate } from "../lib/runPromotion.js";
@@ -28,7 +28,7 @@ export function RunBanner({ run, diagnostics, title, slug, onChanged }) {
   return (
     <header className="run-banner" data-status={statusKey} data-failure={isFailure ? "1" : "0"}>
       <div className="run-banner-headline">
-        <span className="run-banner-status"><StatusBadge value={run.status} /></span>
+        <span className="run-banner-status"><StatusBadge value={run.status} label={runStatusLabel(run.status)} /></span>
         {durStr ? <span className="run-banner-duration" title="Total duration"><span className="muted" aria-hidden="true">⏱</span> {durStr}</span> : null}
         {startedRel ? <span className="run-banner-time muted" title={startedAbs || ""}>started {startedRel}</span> : null}
         {headline ? <span className="run-banner-error" title={diagnostics?.headline || ""}>{headline}</span> : null}
@@ -190,7 +190,7 @@ export function RunDiagnostics({ diagnostics }) {
     <section className={`panel diagnostics-panel diagnostics-${statusKey}`} aria-label="Run diagnostics">
       <header className="diagnostics-head">
         <h2>Why this run {statusKey === "waiting_approval" ? "is paused" : statusKey === "failed" || statusKey === "error" ? "failed" : "was cancelled"}</h2>
-        <StatusBadge value={statusKey} />
+        <StatusBadge value={statusKey} label={runStatusLabel(statusKey)} />
       </header>
       <p className="muted diagnostics-intro">{intro}</p>
       {diagnostics.headline ? <p className="diagnostics-headline">{diagnostics.headline}</p> : null}
@@ -200,8 +200,23 @@ export function RunDiagnostics({ diagnostics }) {
           {diagnostics.failureType ? <><dt>Failure event</dt><dd><code>{diagnostics.failureType}</code></dd></> : null}
           {diagnostics.failedAt ? <><dt>When</dt><dd>{formatTimestamp(diagnostics.failedAt)}</dd></> : null}
           {diagnostics.cancelledBy ? <><dt>Cancelled by</dt><dd>{diagnostics.cancelledBy}</dd></> : null}
-          {diagnostics.approval ? <><dt>Linked approval</dt><dd><a href={diagnostics.approval.deepLink}>{diagnostics.approval.title || diagnostics.approval.id}</a> <span className="muted">{diagnostics.approval.decision || diagnostics.approval.status || ""}</span></dd></> : null}
+          {diagnostics.approval ? (
+            <>
+              <dt>Linked approval</dt>
+              <dd>
+                <a href={diagnostics.approval.deepLink}>{diagnostics.approval.title || diagnostics.approval.id}</a>{" "}
+                <span className="muted">
+                  {diagnostics.approval.status === "pending"
+                    ? diagnostics.approval.statusLabel || "Pending decision"
+                    : diagnostics.approval.resolutionSentence || diagnostics.approval.resolutionLabel || "Resolved"}
+                </span>
+              </dd>
+            </>
+          ) : null}
         </dl>
+      ) : null}
+      {diagnostics.approval?.status === "pending" && diagnostics.approval.ifIgnored ? (
+        <p className="muted diagnostics-intro">{diagnostics.approval.ifIgnored}</p>
       ) : null}
       {diagnostics.approval?.comment ? (
         <div className="diagnostics-approval-quote">

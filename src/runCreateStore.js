@@ -53,10 +53,18 @@ export function createRunCreateStore({
 
     if (approvalRequired) {
       const requestedBy = options.requestedBy || "workflow";
+      const reason = capability.approvalPolicy?.reason || "This capability requires approval before execution.";
       createApproval({
         runId,
         title: `Approve ${capability.name}`,
-        description: capability.approvalPolicy?.reason || "This capability requires approval before execution.",
+        description: reason,
+        // Run-start gates hold the run in waiting_approval: approving releases
+        // it to the queue, rejecting cancels it before anything executes.
+        ask: {
+          audience: "operators",
+          action: `Release this ${capability.name} run to the queue for runner execution (reject to cancel it before it starts).`,
+          reason: String(reason).slice(0, 500)
+        },
         requestedBy,
         payload: runStartApprovalPayload({
           capability,
