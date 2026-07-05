@@ -36,6 +36,22 @@ export function telegramLabeledLine(label, value) {
   return `<b>${htmlEscape(label)}:</b> ${htmlEscape(value)}`;
 }
 
+const TELEGRAM_TIME_FORMAT_RE = /^(r|w?[dD]?[tT]?)$/;
+
+export function telegramTime(value, { format = "r", fallback = "" } = {}) {
+  const unix = Number.isFinite(value) ? value : Math.floor(Date.parse(value || "") / 1000);
+  if (!Number.isFinite(unix)) return htmlEscape(fallback || value || "");
+  const safeFormat = TELEGRAM_TIME_FORMAT_RE.test(format) ? format : "r";
+  return `<tg-time unix="${unix}" format="${safeFormat}">${htmlEscape(fallback || value)}</tg-time>`;
+}
+
+function fallbackDecisionAction(decision) {
+  const label = approvalDecisionLabel(decision);
+  if (label === "Approved") return { glyph: "✅", text: "Auto-approves" };
+  if (label === "Changes requested") return { glyph: "⚠️", text: "Requests changes" };
+  return { glyph: "🚫", text: "Auto-rejects" };
+}
+
 // Per-kind lead line: the first thing an approver reads must say what class
 // of question this is, not a generic "approval requested".
 const TELEGRAM_KIND_LEADS = {
@@ -56,9 +72,11 @@ export function telegramApprovalIfIgnoredLine(approval, context) {
   if (approval?.timerState === "fallback_required") return "Expired: needs human; no auto decision.";
   if (approval?.timeoutAt) {
     const fallback = context?.approval?.fallbackDecisionLabel || approval?.fallback?.decision;
-    return fallback
-      ? `By ${approval.timeoutAt}: auto-${fallback}.`
-      : `At ${approval.timeoutAt}: needs human; no auto decision.`;
+    if (fallback) {
+      const action = fallbackDecisionAction(fallback);
+      return `${action.glyph} ${action.text} ${telegramTime(approval.timeoutAt, { format: "r", fallback: "soon" })}`;
+    }
+    return `⏱ Needs human ${telegramTime(approval.timeoutAt, { format: "r", fallback: "soon" })}; no auto decision.`;
   }
   return "Waits for a human; waiting never fails the run.";
 }
@@ -69,9 +87,9 @@ export function telegramApprovalResolvedLine(approval, context) {
   const glyph = (approval?.resolution || approval?.decision) === "approved" ? "✅" : "🚫";
   const via = context?.approval?.resolvedViaLabel || "";
   const by = approval?.resolvedBy ? ` by ${approval.resolvedBy}` : "";
-  const at = approval?.resolvedAt ? ` at ${approval.resolvedAt}` : "";
+  const at = approval?.resolvedAt ? ` ${telegramTime(approval.resolvedAt, { format: "r", fallback: "now" })}` : "";
   const viaSuffix = via && via !== "decided by a human" ? ` (${via})` : "";
-  return `${glyph} ${resolution}${by}${at}${viaSuffix}`;
+  return htmlEscape(`${glyph} ${resolution}${by}`) + at + htmlEscape(viaSuffix);
 }
 
 export function telegramApprovalText(approval, { approvalContext, instanceName = "Runyard" } = {}) {
@@ -112,8 +130,8 @@ export function telegramApprovalText(approval, { approvalContext, instanceName =
     `<b>Run:</b> ${runLine}`,
     telegramLabeledLine("Card", approval.id),
     pending ? "<b>Ignored</b>" : "",
-    pending ? htmlEscape(telegramApprovalIfIgnoredLine(approval, context)) : "",
-    pending ? "<b>Decide:</b> Approve · Changes · Reject" : htmlEscape(telegramApprovalResolvedLine(approval, context))
+    pending ? telegramApprovalIfIgnoredLine(approval, context) : "",
+    pending ? "<b>Decide:</b> Approve · Changes · Reject" : telegramApprovalResolvedLine(approval, context)
   ]
     .filter(Boolean)
     .join("\n");

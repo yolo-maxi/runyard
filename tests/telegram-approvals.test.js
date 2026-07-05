@@ -15,7 +15,8 @@ import {
   telegramApprovalStoredMessage,
   telegramApprovalStoredMessageCallback,
   telegramApprovalTarget,
-  telegramApprovalText
+  telegramApprovalText,
+  telegramTime
 } from "../src/telegramApprovals.js";
 
 const approvalContext = () => ({
@@ -99,7 +100,27 @@ describe("telegram approval helpers", () => {
       { approvalContext: timedContext, instanceName: "Runyard" }
     );
     assert.match(text, /Gate needs sign-off/);
-    assert.match(text, /By 2026-07-04T18:00:00\.000Z: auto-Approved\./);
+    assert.match(text, /✅ Auto-approves <tg-time unix="1783188000" format="r">soon<\/tg-time>/);
+  });
+
+  it("uses relative Telegram time for resolved approval timestamps", () => {
+    const resolvedContext = () => ({
+      ...approvalContext(),
+      approval: { kind: "custom", resolutionLabel: "Rejected", resolvedViaLabel: "decided by the timer (autopilot)" }
+    });
+    const text = telegramApprovalText(
+      {
+        id: "appr_abc",
+        status: "resolved",
+        resolution: "rejected",
+        resolvedBy: "system:approval-timer",
+        resolvedAt: "2026-07-04T18:00:00.000Z",
+        title: "Expired approval"
+      },
+      { approvalContext: resolvedContext, instanceName: "Runyard" }
+    );
+    assert.match(text, /🚫 Rejected by system:approval-timer <tg-time unix="1783188000" format="r">now<\/tg-time>/);
+    assert.doesNotMatch(text, /2026-07-04T18:00:00\.000Z/);
   });
 
   it("states that blocking cards wait and never fail the run", () => {
@@ -146,7 +167,7 @@ describe("telegram approval helpers", () => {
     assert.equal(payload.chat_id, 1);
     assert.equal(payload.message_id, 2);
     assert.deepEqual(payload.reply_markup, { inline_keyboard: [] });
-    assert.match(payload.text, /✅ Approved by telegram:fran at 2026-07-04T17:42:00\.000Z/);
+    assert.match(payload.text, /✅ Approved by telegram:fran <tg-time unix="1783186920" format="r">now<\/tg-time>/);
     assert.doesNotMatch(payload.text, /Use the buttons below to decide\./);
     // No editable message → no payload (caller falls back to clearing buttons).
     assert.equal(
@@ -157,6 +178,10 @@ describe("telegram approval helpers", () => {
 
   it("escapes primitive HTML text", () => {
     assert.equal(htmlEscape(`<tag attr="x">&'`), "&lt;tag attr=&quot;x&quot;&gt;&amp;&#39;");
+    assert.equal(
+      telegramTime("2026-07-04T18:00:00.000Z", { format: "not-valid", fallback: "<soon>" }),
+      '<tg-time unix="1783188000" format="r">&lt;soon&gt;</tg-time>'
+    );
   });
 
   it("applies run-start Telegram notification policy", () => {
