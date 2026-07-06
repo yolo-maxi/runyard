@@ -45,6 +45,16 @@ export const CHILD_ENV_ALLOWLIST = new Set([
   "APPDATA"
 ]);
 
+export const CHILD_REPO_CONFIG_ALLOWLIST = new Set([
+  "GATED_REPO_DIR",
+  "IMPROVE_ALLOWED_REPO_ROOTS",
+  "IMPROVE_PROJECT_MAP",
+  "IMPROVE_REPO_DIR",
+  "IMPROVE_REPO_MAP",
+  "RUNYARD_REPO_DIR",
+  "SMITHERS_REPO_CATALOG"
+]);
+
 // Harness/provider SELECTION config the workflow templates read from their own
 // process env: which agent CLI drives a workflow (claude/codex/pi), which model,
 // and — for the Pi harness — the custom-endpoint descriptor (provider label,
@@ -74,6 +84,10 @@ export function allowlistedBaseEnv(
 ) {
   const out = {};
   for (const key of allowlist) {
+    const value = baseEnv[key];
+    if (value !== undefined) out[key] = value;
+  }
+  for (const key of CHILD_REPO_CONFIG_ALLOWLIST) {
     const value = baseEnv[key];
     if (value !== undefined) out[key] = value;
   }

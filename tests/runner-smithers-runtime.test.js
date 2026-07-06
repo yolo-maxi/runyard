@@ -156,6 +156,27 @@ describe("runner Smithers runtime helpers", () => {
     assert.equal(env.API_KEY, "secret");
   });
 
+  it("passes non-secret repo selection config to Smithers workflows", () => {
+    const env = runyardChildEnv({
+      baseEnv: {
+        PATH: "/usr/bin",
+        IMPROVE_REPO_DIR: "/home/xiko/runyard",
+        IMPROVE_ALLOWED_REPO_ROOTS: "/home/xiko/runyard,/home/xiko/skillmarket",
+        IMPROVE_REPO_MAP: '{"skillmarket":"/home/xiko/skillmarket"}',
+        SMITHERS_REPO_CATALOG: '[{"value":"skillmarket","label":"SkillMarket"}]',
+        SMITHERS_HUB_TOKEN: "runner-token",
+        TELEGRAM_BOT_TOKEN: "bot-token"
+      }
+    });
+
+    assert.equal(env.IMPROVE_REPO_DIR, "/home/xiko/runyard");
+    assert.equal(env.IMPROVE_ALLOWED_REPO_ROOTS, "/home/xiko/runyard,/home/xiko/skillmarket");
+    assert.equal(env.IMPROVE_REPO_MAP, '{"skillmarket":"/home/xiko/skillmarket"}');
+    assert.equal(env.SMITHERS_REPO_CATALOG, '[{"value":"skillmarket","label":"SkillMarket"}]');
+    assert.equal(env.SMITHERS_HUB_TOKEN, undefined);
+    assert.equal(env.TELEGRAM_BOT_TOKEN, undefined);
+  });
+
   it("parses run ids from json or text output", () => {
     assert.equal(parseSmithersRunId('{"runId":"run_json"}'), "run_json");
     assert.equal(parseSmithersRunId("started run-12345"), "run-12345");
