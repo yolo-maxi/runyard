@@ -3,8 +3,8 @@ export const seedCoreCapabilities = [
     slug: "run-smithers",
     name: "run-smithers (supervising wrapper)",
     description:
-      "Core supervising wrapper. Wraps a child capability/workflow request inside a Smithers-managed run, records child lineage (run id, capability, checkpoints, retry attempts, normalized error fingerprints, final outcome), recovers interrupted/failed child runs where the runner supports it, and requests approval with concrete options after the same normalized error fingerprint repeats three times. Existing user-facing workflows are migrating to run behind run-smithers.",
-    category: "Orchestration",
+      "Retired supervising wrapper kept only for historical run compatibility. New RunYard workflows execute directly; do not start new runs through run-smithers.",
+    category: "Retired",
     keywords: ["run-smithers", "watcher", "supervisor", "wrapper", "recovery", "lineage", "core", "smithers"],
     inputSchema: {
       type: "object",
@@ -50,6 +50,7 @@ export const seedCoreCapabilities = [
     requiredSkills: ["smithers-supervision"],
     requiredAgents: ["smithers-watcher"],
     approvalPolicy: { required: false },
+    enabled: false,
     workflow: { engine: "smithers", entry: ".smithers/workflows/run-smithers.tsx" }
   },
   {

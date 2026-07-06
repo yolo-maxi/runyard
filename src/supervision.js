@@ -1,17 +1,10 @@
-// Default supervision envelope.
+// Retired run-smithers supervision envelope.
 //
-// Real user-facing / mutating workflows (e.g. `improve`, `idea-to-product`)
-// should not be dispatched bare: a silent runner death or mid-run failure must
-// be captured and (where possible) recovered instead of looking like a green
-// success. The `run-smithers` capability is that supervising envelope — it
-// wraps a child capability request, records lineage, retries recoverable
-// failures, and escalates to an operator approval after repeated identical
-// failures.
-//
-// This module owns the *single* decision of whether a given run request should
-// be wrapped, plus the internal bypass metadata that keeps the wrapper from
-// recursively wrapping its own child runs. It is intentionally dependency-light
-// so it can be unit-tested without a live server.
+// RunYard used to wrap Smithers capabilities in a `run-smithers` watcher that
+// tried to self-heal by retrying, repairing workflow code, and escalating. In
+// dogfood it became a frequent source of failures and queue noise, so normal
+// runs are now dispatched directly. The compatibility helpers remain only so
+// old stored runs can still be presented/redacted safely.
 
 import { randomToken } from "./security.js";
 
@@ -31,19 +24,11 @@ export const SUPERVISION_INTERNAL_KEYS = [SUPERVISION_CHILD_KEY, SUPERVISION_TOK
 
 const TERMINAL_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
 
-// Smithers workflow capabilities are supervised by default. Low-level/internal
-// capabilities can opt out with `supervision: { default: false }` or
-// `supervision: { internal: true }`. The wrapper itself is never wrapped — that
-// is the recursion base case.
+// Supervision is retired: no capability defaults to wrapping, even if a stale
+// seed/config row still says `supervision.default=true`.
 export function capabilityDefaultsToSupervision(capability) {
   if (!capability || typeof capability !== "object") return false;
-  if (capability.slug === SUPERVISOR_CAPABILITY_SLUG) return false;
-  const supervision = capability.supervision;
-  if (supervision && typeof supervision === "object") {
-    if (supervision.default === false || supervision.internal === true) return false;
-    if (supervision.default === true) return true;
-  }
-  return capability.workflow?.engine === "smithers";
+  return false;
 }
 
 // Pull the internal bypass marker off a run input, if present and well-formed.
@@ -88,8 +73,8 @@ export function buildSupervisorInput({ capability, input, goal = "", token }) {
 }
 
 // Decide what to do with an incoming run request. Pure function; the caller
-// provides a `findSupervisorByToken(token, wrappedCapability)` lookup so this
-// module stays free of DB wiring.
+// provides a `findSupervisorByToken(token, wrappedCapability)` lookup so old
+// in-flight supervised child requests can still be recognized during rollout.
 //
 // Returns one of:
 //   { action: "wrap" }                       — create a run-smithers envelope

@@ -96,11 +96,9 @@ export const env = {
   runnerPruneMs: Number(process.env.SMITHERS_RUNNER_PRUNE_MS || 24 * 60 * 60_000),
   // Running/assigned runs are considered stalled if they emit no event within this window. 0 disables.
   runStallMs: Number(process.env.SMITHERS_RUN_STALL_MS || 15 * 60_000),
-  // Supervisor (run-smithers) runs are lightweight orchestrators that mostly poll
-  // their child; counting them against the same work-slot pool deadlocks (a parent
-  // holds a slot waiting for a child that can never get one). They draw from a
-  // SEPARATE pool sized as ceil(capacity * ratio). Default 1.0 → each work slot can
-  // have its supervising parent. Raise above 1 only if you nest supervisors.
+  // Retired run-smithers compatibility: historical supervisor rows still use a
+  // separate pool so old in-flight wrappers cannot deadlock normal work during
+  // rollout. New runs are dispatched directly and should not consume this pool.
   supervisorSlotRatio: (() => {
     const raw = Number(process.env.SMITHERS_SUPERVISOR_SLOT_RATIO);
     return Number.isFinite(raw) && raw > 0 ? raw : 1.0;

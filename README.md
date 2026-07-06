@@ -18,24 +18,15 @@ One private deployment per company/org — no SaaS dependency, no shared databas
 
 The full concepts overview, setup, API, and the in-app **Assistant** (the context-aware support copilot in `/app`) are documented in **[/docs/quickstart](public/docs.html)**.
 
-## run-smithers (supervising wrapper)
+## Retired Supervisor
 
-`run-smithers` is an explicit Orchestration capability that can wrap another
-capability/workflow request inside a Smithers-managed supervising run. The
-watcher:
+The old `run-smithers` supervising wrapper is disabled. Normal workflows run
+directly; the Hub and runner own status, liveness, approvals, diagnostics, and
+operator recovery without inserting a second workflow around every run.
 
-- Records child lineage: child run id, capability, current/failed step, checkpoint when present, recovery attempts, and normalized error fingerprint counts.
-- Retries recoverable failures and re-queues child runs whose state was interrupted.
-- Pauses autonomous retry and requests an approval (with concrete options: retry as-is, approve a revised input, or abandon) once the same normalized error fingerprint repeats three times.
-- Never marks the supervising run a success unless the child workflow reaches a terminal `succeeded` state.
-
-Normal user-facing workflows should not be wrapped by `run-smithers` by
-default. Hub-native supervision is the v0.11 direction: the Hub scheduler/reaper
-owns retry, resume, repair, approval, and escalation policy, while workflows run
-directly unless an operator explicitly starts `run-smithers`. See
-`specs/v0.11-hub-native-supervision.md` and `docs/design/hub-supervisor.md`.
-The pure watcher decision logic lives in `src/runSmithersWatcher.js` and is
-covered by `tests/run-smithers-watcher.test.js`.
+The old watcher source remains in the repository for historical runs and narrow
+regression coverage, but it is not part of the active capability catalog and new
+runs are not wrapped by default or by stale `supervision.default` config.
 
 ## Workflow hardening
 

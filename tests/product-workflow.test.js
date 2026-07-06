@@ -220,25 +220,23 @@ describe("Product Workflow capability", () => {
     assert.deepEqual(oneCompetitor.openQuestions, []);
   });
 
-  it("is supervised by the run-smithers envelope by default", async () => {
+  it("queues directly without the run-smithers envelope", async () => {
     const created = await api("/api/capabilities/product-workflow/run", {
       method: "POST",
       body: { input: { context: "tiny", maxFeatures: 1 } }
     });
     assert.equal(created.run.capabilitySlug, "product-workflow", "stays visible as the requested workflow");
-    assert.equal(created.run.actualCapabilitySlug, "run-smithers", "is executed by the supervisor by default");
-    assert.equal(created.supervising.wrappedCapability, "product-workflow");
+    assert.equal(created.run.actualCapabilitySlug, undefined, "executes directly with no hidden wrapper");
+    assert.equal(created.supervising, undefined);
   });
 
-  it("queues immediately under supervision without a separate visible start approval", async () => {
+  it("queues immediately without a separate visible start approval", async () => {
     const created = await api("/api/capabilities/product-workflow/run", {
       method: "POST",
       body: { input: { context: "queued", maxFeatures: 1 } }
     });
     assert.equal(created.run.status, "queued");
-    assert.equal(created.run.actualCapabilitySlug, "run-smithers");
-    // Like other supervised mutating workflows, the visible run carries no
-    // separate pending start approval — supervision owns the envelope.
+    assert.equal(created.run.actualCapabilitySlug, undefined);
     const approval = (await api("/api/approvals?status=pending")).approvals.find((item) => item.runId === created.run.id);
     assert.equal(approval, undefined);
   });

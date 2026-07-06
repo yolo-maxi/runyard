@@ -29,7 +29,7 @@ function dispatchHarness(overrides = {}) {
 }
 
 describe("run dispatcher", () => {
-  it("wraps supervised capabilities in run-smithers and records lineage", () => {
+  it("dispatches capabilities directly even when stale supervision flags remain", () => {
     const { created, dispatchRun, events } = dispatchHarness();
     const result = dispatchRun(
       { slug: "improve", name: "Improve", enabled: true, supervision: { default: true } },
@@ -37,17 +37,10 @@ describe("run dispatcher", () => {
       { requestedBy: "operator", origin: { type: "api" } }
     );
 
-    assert.equal(result.run.capabilitySlug, "run-smithers");
-    assert.deepEqual(result.supervising, {
-      supervisor: "run-smithers",
-      wrappedCapability: "improve",
-      wrappedCapabilityName: "Improve"
-    });
-    assert.equal(created[0].input.wrappedCapability, "improve");
-    assert.deepEqual(created[0].input.wrappedInput, { goal: "polish", target: "app" });
-    assert.equal(created[0].input.__supervisionToken, "sup_test");
-    assert.equal(created[0].options.origin.supervises, "improve");
-    assert.equal(events[0].type, "run.supervision.wrapped");
+    assert.equal(result.run.capabilitySlug, "improve");
+    assert.equal(result.supervising, undefined);
+    assert.deepEqual(created[0].input, { goal: "polish", target: "app" });
+    assert.deepEqual(events, []);
   });
 
   it("dispatches verified supervised children directly and strips bypass internals", () => {
@@ -71,7 +64,7 @@ describe("run dispatcher", () => {
     assert.equal(events[1].runId, "run_parent");
   });
 
-  it("falls back to direct dispatch when the supervisor capability is disabled", () => {
+  it("dispatches directly when the supervisor capability is disabled", () => {
     const { capabilities, created, dispatchRun, events } = dispatchHarness();
     capabilities.set("run-smithers", { slug: "run-smithers", enabled: false });
 

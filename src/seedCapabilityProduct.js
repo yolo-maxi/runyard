@@ -85,10 +85,6 @@ export const seedProductCapabilities = [
       required: true,
       reason: "Runs coding agents; the static-publish post-run hook can publish a new static site when explicitly requested."
     },
-    // Default supervision envelope: user-triggered runs are wrapped by
-    // run-smithers so a silent runner death or mid-run failure is captured and
-    // recovered instead of reading as a green success.
-    supervision: { default: true },
     workflow: {
       engine: "smithers",
       entry: ".smithers/workflows/idea-to-product.tsx",
@@ -211,7 +207,6 @@ export const seedProductCapabilities = [
       reason:
         "Produces public-marketing candidates and Codex image_gen prompts; human review is required before image generation or posting."
     },
-    supervision: { default: true },
     workflow: { engine: "smithers", entry: ".smithers/workflows/gobbler-comic-pipeline.tsx" }
   },
   {
@@ -412,10 +407,6 @@ export const seedProductCapabilities = [
       required: true,
       reason: "Runs a Product Manager review then a coding agent that commits and pushes an isolated branch; merge to main is explicit."
     },
-    // Default supervision envelope: a user starting `improve` gets a visible
-    // run-smithers supervising run that wraps it, so a failure surfaces as
-    // attention-needed instead of a silent green success. See src/supervision.js.
-    supervision: { default: true },
     workflow: { engine: "smithers", entry: ".smithers/workflows/improve.tsx" }
   },
   {
@@ -482,10 +473,6 @@ export const seedProductCapabilities = [
       required: true,
       reason: "Runs research and PM agents, then can queue gated implementation runs that commit and push to main."
     },
-    // Default supervision envelope: a user starting `product-workflow` gets a
-    // visible run-smithers supervising run that wraps it, so a failure surfaces
-    // as attention-needed instead of a silent green success.
-    supervision: { default: true },
     workflow: { engine: "smithers", entry: ".smithers/workflows/product-workflow.tsx" }
   }
 ];

@@ -87,12 +87,9 @@ export const seedAgents = [
     slug: "smithers-watcher",
     name: "Smithers Watcher",
     description:
-      "Supervises a child workflow inside the run-smithers wrapper: records lineage, recovers interrupted/failed runs where the platform supports it, and requests approval after the same normalized error fingerprint appears three times.",
+      "Retired helper agent for historical run-smithers wrapper runs. Kept for old run lineage and tests; not used for new workflow execution.",
     instructions:
-      "Wrap exactly one wrapped capability request at a time. Record the child run id, capability, failed/current step, recovery attempts, normalized error fingerprint, and final outcome. " +
-      "Retry from a recorded checkpoint where the runner exposes one; otherwise re-queue the child run with the same input. " +
-      "Never mark the supervising run a success unless the child workflow reaches a terminal promoted/succeeded state. " +
-      "After three identical normalized error fingerprints in a row, stop autonomous retry and request operator approval with concrete options (retry, edit input, abandon).",
+      "Compatibility only. Do not use this agent for new runs. Historical run-smithers records may still need lineage, fingerprint, or approval payload interpretation.",
     tools: ["hub-api", "files"],
     skillSlugs: ["smithers-supervision"]
   },

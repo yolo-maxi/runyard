@@ -35,6 +35,7 @@ let server;
 let baseUrl;
 const token = "shub_test_run_smithers";
 const api = createJsonApiClient({ baseUrl: () => baseUrl, token });
+const apiNoThrow = createJsonApiClient({ baseUrl: () => baseUrl, token, throwOnError: false, includeStatus: true });
 
 before(async () => {
   await new Promise((resolve) => {
@@ -50,18 +51,21 @@ after(async () => {
 });
 
 describe("run-smithers capability", () => {
-  it("is seeded as a core Orchestration capability", async () => {
-    const { capabilities } = await api("/api/capabilities");
-    const cap = capabilities.find((entry) => entry.slug === "run-smithers");
-    assert.ok(cap, "run-smithers capability should be seeded");
-    assert.equal(cap.category, "Orchestration");
+  it("is seeded disabled as a retired Orchestration capability", async () => {
+    const { seedCapabilities } = await import("../src/seedCapabilityCatalog.js");
+    const cap = seedCapabilities.find((entry) => entry.slug === "run-smithers");
+    assert.ok(cap, "run-smithers capability definition should remain for historical compatibility");
+    assert.equal(cap.category, "Retired");
     assert.equal(cap.workflow.engine, "smithers");
     assert.equal(cap.workflow.entry, ".smithers/workflows/run-smithers.tsx");
     assert.ok(cap.inputSchema.required.includes("wrappedCapability"));
     assert.ok(cap.requiredAgents.includes("smithers-watcher"));
     assert.ok(cap.requiredSkills.includes("smithers-supervision"));
     assert.equal(cap.approvalPolicy.required, false);
-    assert.equal(cap.enabled, true);
+    assert.equal(cap.enabled, false);
+
+    const { capabilities } = await api("/api/capabilities");
+    assert.equal(capabilities.some((entry) => entry.slug === "run-smithers"), false);
   });
 
   it("seeds the supervising agent + supervision skill", async () => {
@@ -94,13 +98,13 @@ describe("run-smithers capability", () => {
     assert.match(src, /resolveImproveRepo\(\{\s*repoDir:\s*explicitRepairRepo\s*\}/);
   });
 
-  it("queues immediately and does not block existing capabilities", async () => {
-    const created = await api("/api/capabilities/run-smithers/run", {
+  it("is not runnable from the active capability API and does not block existing capabilities", async () => {
+    const created = await apiNoThrow("/api/capabilities/run-smithers/run", {
       method: "POST",
       body: { input: { wrappedCapability: "hello", wrappedInput: { topic: "wrapped" }, goal: "prove wrapping works" } }
     });
-    assert.equal(created.run.status, "queued");
-    assert.equal(created.run.capabilitySlug, "run-smithers");
+    assert.equal(created.status, 404);
+    assert.match(created.data.error, /not found/i);
     // existing capabilities must still be visible/runnable
     const hello = await api("/api/capabilities/hello/run", { method: "POST", body: { input: { topic: "still works" } } });
     assert.equal(hello.run.status, "queued");

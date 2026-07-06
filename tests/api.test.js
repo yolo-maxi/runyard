@@ -2421,9 +2421,9 @@ describe("Smart Contract Audit capability", () => {
     });
     assert.equal(created.run.status, "queued");
     assert.equal(created.run.capabilitySlug, "smart-contract-audit");
-    assert.equal(created.run.actualCapabilitySlug, "run-smithers");
-    assert.equal(created.supervising.wrappedCapability, "smart-contract-audit");
-    assert.equal(created.run.supervision.wrappedCapability, "smart-contract-audit");
+    assert.equal(created.run.actualCapabilitySlug, undefined);
+    assert.equal(created.supervising, undefined);
+    assert.equal(created.run.supervision, undefined);
     assert.equal(created.run.input.target, smokeFixture);
     assert.equal(created.run.input.maxAgents, 1);
     assert.equal(created.run.input.wrappedCapability, undefined);
@@ -2487,22 +2487,19 @@ describe("Idea to Product capability", () => {
     assert.equal(cap.approvalPolicy.required, true);
   });
 
-  it("is wrapped in a supervising run-smithers run by default", async () => {
+  it("queues directly without a supervising run-smithers wrapper", async () => {
     const created = await api("/api/capabilities/idea-to-product/run", {
       method: "POST",
       body: { input: { idea: "A tiny dashboard for tracking launch chores", deploy: false } }
     });
     assert.equal(created.run.status, "queued");
-    // The Hub applies the default supervision envelope, but the API presents
-    // the user-requested workflow and keeps the wrapper as metadata.
     assert.equal(created.run.capabilitySlug, "idea-to-product");
-    assert.equal(created.run.actualCapabilitySlug, "run-smithers");
-    assert.equal(created.supervising.wrappedCapability, "idea-to-product");
-    assert.equal(created.run.supervision.wrappedCapability, "idea-to-product");
+    assert.equal(created.run.actualCapabilitySlug, undefined);
+    assert.equal(created.supervising, undefined);
+    assert.equal(created.run.supervision, undefined);
     assert.equal(created.run.input.idea, "A tiny dashboard for tracking launch chores");
     assert.equal(created.run.input.wrappedCapability, undefined);
     assert.equal(created.run.input.wrappedInput, undefined);
-    // The internal bypass token must never be exposed to API callers.
     assert.equal(created.run.input.__supervisionToken, undefined);
     const approval = (await api("/api/approvals?status=pending")).approvals.find((item) => item.runId === created.run.id);
     assert.equal(approval, undefined);
@@ -2585,9 +2582,9 @@ describe("App Skinner capability", () => {
     });
     assert.equal(created.run.status, "queued");
     assert.equal(created.run.capabilitySlug, "app-skinner");
-    assert.equal(created.run.actualCapabilitySlug, "run-smithers");
-    assert.equal(created.supervising.wrappedCapability, "app-skinner");
-    assert.equal(created.run.supervision.wrappedCapability, "app-skinner");
+    assert.equal(created.run.actualCapabilitySlug, undefined);
+    assert.equal(created.supervising, undefined);
+    assert.equal(created.run.supervision, undefined);
     const approval = (await api("/api/approvals?status=pending")).approvals.find((item) => item.runId === created.run.id);
     assert.equal(approval, undefined);
   });
@@ -2657,9 +2654,9 @@ describe("Run Knowledge Builder capability", () => {
     });
     assert.equal(created.run.status, "queued");
     assert.equal(created.run.capabilitySlug, "run-knowledge-builder");
-    assert.equal(created.run.actualCapabilitySlug, "run-smithers");
-    assert.equal(created.supervising.wrappedCapability, "run-knowledge-builder");
-    assert.equal(created.run.supervision.wrappedCapability, "run-knowledge-builder");
+    assert.equal(created.run.actualCapabilitySlug, undefined);
+    assert.equal(created.supervising, undefined);
+    assert.equal(created.run.supervision, undefined);
     const approval = (await api("/api/approvals?status=pending")).approvals.find((item) => item.runId === created.run.id);
     assert.equal(approval, undefined);
   });
@@ -2699,18 +2696,16 @@ describe("Improve capability", () => {
     assert.equal(cap.approvalPolicy.required, true);
   });
 
-  it("is wrapped in a supervising run-smithers run by default", async () => {
+  it("queues directly without a supervising run-smithers wrapper", async () => {
     const created = await api("/api/capabilities/improve/run", {
       method: "POST",
       body: { input: { target: "Run log usability", context: "Logs are too noisy" } }
     });
     assert.equal(created.run.status, "queued");
-    // Default supervision envelope: improve runs behind run-smithers, but the
-    // API keeps the requested workflow/input visible.
     assert.equal(created.run.capabilitySlug, "improve");
-    assert.equal(created.run.actualCapabilitySlug, "run-smithers");
-    assert.equal(created.supervising.wrappedCapability, "improve");
-    assert.equal(created.run.supervision.wrappedCapability, "improve");
+    assert.equal(created.run.actualCapabilitySlug, undefined);
+    assert.equal(created.supervising, undefined);
+    assert.equal(created.run.supervision, undefined);
     assert.equal(created.run.input.target, "Run log usability");
     assert.equal(created.run.input.context, "Logs are too noisy");
     assert.equal(created.run.input.wrappedCapability, undefined);

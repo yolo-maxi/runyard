@@ -12,7 +12,7 @@ describe("gobbler comic pipeline", () => {
     assert.equal(cap.category, "Marketing");
     assert.deepEqual(cap.requiredRunnerTags, ["smithers", "vps"]);
     assert.equal(cap.approvalPolicy.required, true);
-    assert.equal(cap.supervision.default, true);
+    assert.equal(cap.supervision?.default, undefined);
     assert.equal(cap.workflow.entry, ".smithers/workflows/gobbler-comic-pipeline.tsx");
     assert.equal(cap.inputSchema.required.includes("signal"), true);
   });

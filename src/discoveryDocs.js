@@ -201,7 +201,7 @@ export function openApiDocument({ baseUrl, version }) {
       "/workflow-endpoints/{slug}": { get: { summary: "Describe a workflow endpoint (admin)" }, post: { summary: "Submit data to a fixed authenticated workflow endpoint (per-endpoint secret, rate-limited, deduped)" } },
       "/schedules": {
         get: { summary: "List schedules (cron jobs) with next/last run and a human-readable preview" },
-        post: { summary: "Create a schedule (admin). Body: {name, capabilitySlug, cron|runAt, timezone, input, enabled}. Cron schedules fire recurringly; runAt fires once. Fires honor the capability's approval policy and supervision." }
+        post: { summary: "Create a schedule (admin). Body: {name, capabilitySlug, cron|runAt, timezone, input, enabled}. Cron schedules fire recurringly; runAt fires once. Fires honor the capability's approval policy." }
       },
       "/schedules/preview": { get: { summary: "Validate a cron expression (query: cron, timezone) and return a description plus the next fire times" } },
       "/schedules/{id}": {
