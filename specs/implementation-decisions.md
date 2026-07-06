@@ -321,6 +321,21 @@ Reasoning:
 - Agents need a stable discovery surface.
 - Existing Springfield had similar discovery patterns worth reusing conceptually.
 
+### Decision: agent-created runs should provide `input.title`
+
+Agent-created runs should include a short, human-readable `input.title` when
+practical. This is a recommendation, not validation: old clients and ad hoc
+runs without a title still work, but agents should treat titles as part of the
+handoff contract.
+
+Reasoning:
+
+- Approval cards and Telegram notifications need a concise job label.
+- Run lists become easier to decipher when multiple agents queue similar
+  workflows against the same repo.
+- The existing fallback title derivation is useful as a safety net, but it
+  should not be the primary way humans understand agent work.
+
 ## Web Product
 
 ### Decision: React + TanStack Query app over stable REST contracts

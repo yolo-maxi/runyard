@@ -22,11 +22,12 @@ describe("discovery docs", () => {
     });
 
     assert.equal(menu.hub.status, "https://hub.example/api/runs/{runId}");
-    assert.equal(menu.capabilities[0].runWithCli, "runyard run hello --where local --input '{}'");
+    assert.equal(menu.capabilities[0].runWithCli, "runyard run hello --where local --input '{\"title\":\"Short human-readable run title\"}'");
     assert.deepEqual(menu.capabilities[0].runWithMcp, {
       tool: "run_capability",
-      arguments: { id: "hello", input: {}, executionMode: "local" }
+      arguments: { id: "hello", input: { title: "Short human-readable run title" }, executionMode: "local" }
     });
+    assert.match(menu.runInputGuidance.title, /input\.title/);
     assert.equal(menu.pool.online, 1);
   });
 
@@ -37,6 +38,7 @@ describe("discovery docs", () => {
     assert.match(text, /- OpenAPI: https:\/\/hub\.example\/openapi\.json/);
     assert.match(text, /Menu \(authenticated\): https:\/\/hub\.example\/api\/menu/);
     assert.match(text, /- local -> runners tagged local/);
+    assert.match(text, /For agent-created runs, include input\.title/);
     assert.match(text, /- get_menu/);
     assert.ok(text.endsWith("\n"));
   });

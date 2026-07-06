@@ -16,6 +16,7 @@ export function renderMenu(data, { json = false, all = false } = {}) {
       lines.push(`  …${caps.length - shown.length} more — run \`runyard menu --all\` for the full catalog`);
     }
   }
+  if (data.runInputGuidance?.title) lines.push("", `Run input: ${data.runInputGuidance.title}`);
   lines.push("", "After a run: runyard run-status|logs|artifacts <run-id>");
   return lines;
 }

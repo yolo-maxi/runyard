@@ -18,6 +18,13 @@ describe("CLI presentation helpers", () => {
     const compact = renderMenu({ capabilities });
     assert.equal(compact[0], "Try: runyard run hello");
     assert.ok(compact.includes("  …1 more — run `runyard menu --all` for the full catalog"));
+    const guided = renderMenu({
+      capabilities,
+      runInputGuidance: {
+        title: "For agent-created runs, include input.title."
+      }
+    });
+    assert.ok(guided.includes("Run input: For agent-created runs, include input.title."));
     assert.equal(renderMenu({ capabilities }, { all: true }).some((line) => line.includes("more")), false);
   });
 

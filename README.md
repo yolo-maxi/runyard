@@ -76,6 +76,13 @@ The `improve` workflow edits the runner's default repo by default: `IMPROVE_REPO
 
 The selected repo is where the PM review, builder, tests, commit, push, and deploy run. The Hub remains the source of truth for run status, logs, outputs, and artifacts.
 
+## Agent-created run titles
+
+When an agent starts a run, it should include `input.title` when practical:
+a short, human-readable title for the specific job. This is advisory, not a
+hard API requirement, but it makes run lists, approval cards, Telegram
+notifications, and later handoff much easier to scan.
+
 ## Repo layout
 
 - `bin/` — CLI / MCP / runner entry points

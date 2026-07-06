@@ -13,6 +13,8 @@ const HUB_TOOL_NAMES = [
   "list_hooks"
 ];
 
+const RUN_TITLE_RECOMMENDATION = "For agent-created runs, include input.title: a short human-readable title that explains the specific job.";
+
 export function hubMenuPayload({ baseUrl, capabilities = [], pool = null } = {}) {
   const linkedCapabilities = capabilities.map((linked) => ({
     slug: linked.slug,
@@ -21,8 +23,11 @@ export function hubMenuPayload({ baseUrl, capabilities = [], pool = null } = {})
     category: linked.category,
     requiredRunnerTags: linked.requiredRunnerTags,
     deepLink: linked.deepLink,
-    runWithCli: `runyard run ${linked.slug} --where local --input '{}'`,
-    runWithMcp: { tool: "run_capability", arguments: { id: linked.slug, input: {}, executionMode: "local" } }
+    runWithCli: `runyard run ${linked.slug} --where local --input '{"title":"Short human-readable run title"}'`,
+    runWithMcp: {
+      tool: "run_capability",
+      arguments: { id: linked.slug, input: { title: "Short human-readable run title" }, executionMode: "local" }
+    }
   }));
   return {
     product: "Runyard",
@@ -59,6 +64,9 @@ export function hubMenuPayload({ baseUrl, capabilities = [], pool = null } = {})
         result: "A remote runner executes the workflow; outputs and artifacts are fetched from the Hub."
       }
     ],
+    runInputGuidance: {
+      title: RUN_TITLE_RECOMMENDATION
+    },
     tools: [...HUB_TOOL_NAMES],
     capabilities: linkedCapabilities,
     pool
@@ -98,6 +106,12 @@ export function renderLlmsTxt(baseUrl) {
   lines.push("- local -> runners tagged local");
   lines.push("- remote -> runners tagged vps or remote");
   lines.push("");
+  lines.push("Run input recommendation:");
+  lines.push(`- ${RUN_TITLE_RECOMMENDATION}`);
+  lines.push("- Keep it concise and specific, e.g. \"Audit checkout flow mobile states\".");
+  lines.push("- The title is advisory, not required; it helps approval cards, run");
+  lines.push("  lists, and human handoff stay decipherable.");
+  lines.push("");
   lines.push("Authenticate with a Hub access token using Bearer auth. Tokens carry");
   lines.push("scopes (api, mcp, runner, admin). Ask this Hub's administrator for a");
   lines.push("token; admins issue them from the Connect tab in the web app.");
@@ -106,6 +120,7 @@ export function renderLlmsTxt(baseUrl) {
   lines.push("1. Discover with get_menu / list_capabilities.");
   lines.push("2. Choose local or remote execution.");
   lines.push("3. Start with run_capability or `runyard run --where local|remote`.");
+  lines.push("   For agent-created runs, set input.title when practical.");
   lines.push("4. Fetch status, logs, outputs, artifacts, and the unified timeline from the Hub.");
   lines.push("5. Operators can run `runyard tail <run-id>` for an NDJSON timeline stream.");
   lines.push("");
@@ -154,7 +169,7 @@ export function openApiDocument({ baseUrl, version }) {
       "/menu": { get: { summary: "Discover the Runyard MCP/CLI menu: tools, capability catalog, and local/remote execution modes (same source as get_menu and /llms.txt)" } },
       "/capabilities": { get: { summary: "List capabilities" }, post: { summary: "Create/update capability (admin)" } },
       "/capabilities/{id}": { get: { summary: "Describe capability and its input schema" }, patch: { summary: "Update capability (admin)" } },
-      "/capabilities/{id}/run": { post: { summary: "Run capability. Body: {input, executionMode: local|remote}. improve.repoDir selects an allowlisted runner-local repo while logs/artifacts stay in the Hub. Accepts an optional responseEndpoint ({type: http|telegram, config}) so the caller can have the terminal-state reply delivered when the run finishes (http endpoints receive a sanitized JSON payload; telegram endpoints receive a concise message and require TELEGRAM_BOT_TOKEN on the Hub). Polling /runs/{id} remains the canonical fallback; delivery state is exposed on /runs/{id}.responseEndpoints[]." } },
+      "/capabilities/{id}/run": { post: { summary: "Run capability. Body: {input, executionMode: local|remote}. For agent-created runs, input.title is recommended as a short human-readable run title for run lists, approval cards, and handoff. improve.repoDir selects an allowlisted runner-local repo while logs/artifacts stay in the Hub. Accepts an optional responseEndpoint ({type: http|telegram, config}) so the caller can have the terminal-state reply delivered when the run finishes (http endpoints receive a sanitized JSON payload; telegram endpoints receive a concise message and require TELEGRAM_BOT_TOKEN on the Hub). Polling /runs/{id} remains the canonical fallback; delivery state is exposed on /runs/{id}.responseEndpoints[]." } },
       "/runs": { get: { summary: "List runs (filter by status, q, capability)" } },
       "/runs/{id}": { get: { summary: "Get run: status, outputs, error, and responseEndpoints[] delivery state" } },
       "/runs/{id}/events": { get: { summary: "Get run events" }, post: { summary: "Append run event (runner)" } },
