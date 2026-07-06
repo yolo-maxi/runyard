@@ -82,8 +82,6 @@ export function rerunAcceptedResponse({ deduped = false, dispatched = {}, previo
   return {
     ...(deduped ? { deduped: true } : {}),
     run: withRunLinks(run),
-    ...(dispatched.supervising ? { supervising: dispatched.supervising } : {}),
-    ...(dispatched.supervisedChild ? { supervisedChild: dispatched.supervisedChild } : {}),
     previousRun: withRunLinks(previous),
     ...runStatusLinks(run.id)
   };

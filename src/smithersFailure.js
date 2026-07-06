@@ -1,11 +1,8 @@
 // Pure helper: pull the *real* failing-node error out of a Smithers run state
 // (and, as a fallback, its event trace) so the Hub child run records a
 // diagnostic error instead of the opaque "smithers run X ended in state
-// 'failed'". The supervising run-smithers watcher relies on this richer error
-// to recognise deterministic workflow-code failures (a TypeError in a workflow
-// template, a failed node with a JS stack) and decide whether a one-shot code
-// repair is warranted. Side-effect free so it can be unit-tested without a live
-// Smithers engine.
+// 'failed'". Side-effect free so it can be unit-tested without a live Smithers
+// engine.
 
 const ERROR_HINT =
   /\b(error|typeerror|referenceerror|syntaxerror|rangeerror|exception|stack|cannot read|is not a function|is not defined|is not iterable|unexpected token|unhandled|failed|throw)\b/i;

@@ -20,9 +20,8 @@ export const HUB_TERMINAL_STATUSES = new Set([
 // container, job launcher). Everything else the runner invokes is control-plane:
 // polling (events/inspect/output) and cancellation (cancel). Those run the
 // smithers binary directly against local `.smithers/` state, execute no
-// untrusted code, and MUST stay unwrapped — a container/bwrap wrapper around
-// them would sever the runner from the run it is supervising. Keep this set
-// tight: only launch verbs belong here.
+// untrusted code, and MUST stay unwrapped. Keep this set tight: only launch
+// verbs belong here.
 export const WRAPPED_SUBCOMMANDS = new Set(["up"]);
 
 export function smithersCommand({ smithersBin, execWrapper = [] } = {}, args = []) {
@@ -32,17 +31,17 @@ export function smithersCommand({ smithersBin, execWrapper = [] } = {}, args = [
   return { cmd, args: fullArgs };
 }
 
-export function supervisorChildEnv({ baseEnv = process.env, token = "", baseUrl = "", secretEnv = {}, claudeOauthToken = "", runEnv = {} } = {}) {
-  const supervisorEnv = {};
-  if (token) supervisorEnv.RUN_SMITHERS_HUB_TOKEN = token;
-  if (baseUrl) supervisorEnv.RUN_SMITHERS_HUB_URL = baseUrl;
+export function runyardChildEnv({ baseEnv = process.env, token = "", baseUrl = "", secretEnv = {}, claudeOauthToken = "", runEnv = {} } = {}) {
+  const hubEnv = {};
+  if (token) hubEnv.RUNYARD_HUB_TOKEN = token;
+  if (baseUrl) hubEnv.RUNYARD_HUB_URL = baseUrl;
   if (claudeOauthToken && !secretEnv.CLAUDE_CODE_OAUTH_TOKEN) {
-    supervisorEnv.CLAUDE_CODE_OAUTH_TOKEN = claudeOauthToken;
+    hubEnv.CLAUDE_CODE_OAUTH_TOKEN = claudeOauthToken;
   }
   // Only the OS/toolchain baseline from baseEnv reaches the child; the runner's
   // own secrets stay behind. Everything the workflow needs comes through the
-  // explicit supervisor / secretEnv / runEnv channels below (highest precedence).
-  return { ...allowlistedBaseEnv(baseEnv), ...supervisorEnv, ...secretEnv, ...runEnv };
+  // explicit hub / secretEnv / runEnv channels below (highest precedence).
+  return { ...allowlistedBaseEnv(baseEnv), ...hubEnv, ...secretEnv, ...runEnv };
 }
 
 export function smithersLaunchRequest({ entry, input, workspace, resume = null, maxInlineInputBytes }) {
@@ -140,7 +139,7 @@ export async function launchSmithers({
 }) {
   const request = smithersLaunchRequest({ entry, input, workspace, resume, maxInlineInputBytes });
   const { stdout } = await runSmithers(request.args, {
-    env: supervisorChildEnv({ token, baseUrl, secretEnv, claudeOauthToken, runEnv }),
+    env: runyardChildEnv({ token, baseUrl, secretEnv, claudeOauthToken, runEnv }),
     ...(request.stdin ? { stdin: request.stdin } : {})
   });
   return parseSmithersRunId(stdout);

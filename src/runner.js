@@ -42,7 +42,6 @@ import {
 import {
   activeRunnerLoad as computeActiveRunnerLoad,
   hasClaimCapacity as computeHasClaimCapacity,
-  isSupervisorCapability,
   materializeAgentRuntimePack as writeAgentRuntimePack,
   materializeWorkflowBundle,
   preflightAssignment
@@ -144,17 +143,16 @@ let runnerId = process.env.SMITHERS_RUNNER_ID || loadCachedRunnerId() || "";
 // against this set instead of a single `busy` flag so multiple runs can
 // progress in parallel.
 const activeRuns = new Set();
-const activeRunKinds = new Map();
 let completedRuns = 0;
 let intervalHandle = null;
 const claimAuth = createClaimAuthTracker({ baseUrl });
 
 function activeRunnerLoad() {
-  return computeActiveRunnerLoad(activeRunKinds);
+  return computeActiveRunnerLoad(activeRuns);
 }
 
 function hasClaimCapacity() {
-  return computeHasClaimCapacity(activeRunKinds, concurrency, process.env.SMITHERS_SUPERVISOR_SLOT_RATIO || 1);
+  return computeHasClaimCapacity(activeRuns, concurrency);
 }
 
 // Startup self-check: prove the configured token actually authenticates AND can
@@ -279,9 +277,8 @@ async function observedHubRun(runId) {
     const detail = await client.get(`/api/runs/${runId}`);
     return {
       status: detail?.run?.status || "",
-      // Hub-computed: a human decision is pending on this run (its own approval
-      // card or a supervised child in waiting_approval). While true, the runner
-      // defers its execution deadline instead of timing the run out.
+      // Hub-computed: a human decision is pending on this run. While true, the
+      // runner defers its execution deadline instead of timing the run out.
       approvalHold: Boolean(detail?.approvalHold)
     };
   } catch {
@@ -373,7 +370,6 @@ async function executeAssignment(assignment) {
   const secretEnv = assignment.secretEnv && typeof assignment.secretEnv === "object" ? assignment.secretEnv : {};
   let entry = capability.workflow?.entry || capability.workflow?.file;
   activeRuns.add(run.id);
-  activeRunKinds.set(run.id, isSupervisorCapability(capability) ? "supervisor" : "work");
   try {
     await client.post(`/api/runs/${run.id}/start`, {});
 
@@ -436,7 +432,7 @@ async function executeAssignment(assignment) {
     }
     await event(run.id, "runner.started", `Executing Smithers workflow ${entry} on ${name}`, { runnerId, entry, location });
 
-    // A hub-supervised resume carries the prior Smithers run id in __resume.
+    // A resume request carries the prior Smithers run id in __resume.
     const resume = run.input && typeof run.input === "object" ? run.input.__resume : null;
     const runtimeEnv = materializeAgentRuntimePack(run, assignment.agentRuntimePack);
     // Per-run harness/endpoint selection (validated by preflight above) rides
@@ -573,7 +569,6 @@ async function executeAssignment(assignment) {
   } finally {
     smithersRegistry.unregister(run.id);
     activeRuns.delete(run.id);
-    activeRunKinds.delete(run.id);
     completedRuns += 1;
     maybeExitAfterRuns();
   }
@@ -625,7 +620,7 @@ async function tick() {
       .post(`/api/runners/${runnerId}/heartbeat`, {
         tags,
         capacity: concurrency,
-        activeRuns: load.work + load.supervisors,
+        activeRuns: load.work,
         currentRunId: activeRuns.size ? [...activeRuns][0] : null,
         auth: currentAuthHealth()
       })

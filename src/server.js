@@ -62,12 +62,10 @@ app.use(expressErrorHandler());
 if (process.argv[1]?.endsWith("server.js")) {
   startServerRuntime({
     app,
-    dispatchHubRepair: composition.dispatchHubRepair,
     env,
     fireDueSchedules,
     pruneDeadRunners: composition.pruneDeadRunners,
     reapStuckRunsWithRetrospectives: composition.reapStuckRunsWithRetrospectives,
-    reconcileFailedRecoverable: composition.reconcileFailedRecoverable,
     reconcileRunnerActiveRuns: composition.reconcileRunnerActiveRuns,
     sweepSupersededApprovals: composition.sweepSupersededApprovals,
     sweepTimedApprovals: composition.sweepTimedApprovals,

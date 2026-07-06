@@ -5,33 +5,18 @@ import { workflowBundleReference } from "./workflowSource.js";
 import { resolveHarnessSelection } from "./runHarnessSelection.js";
 import { resolveImproveRepo } from "../workflow-templates/workflows/improve-repo.js";
 
-export function isSupervisorCapability(capability) {
-  return capability?.slug === "run-smithers";
+export function activeRunnerLoad(activeRuns = new Set()) {
+  return { work: activeRuns.size };
 }
 
-export function activeRunnerLoad(activeRunKinds = new Map()) {
-  let work = 0;
-  let supervisors = 0;
-  for (const kind of activeRunKinds.values()) {
-    if (kind === "supervisor") supervisors += 1;
-    else work += 1;
-  }
-  return { work, supervisors };
-}
-
-export function supervisorConcurrencyLimit(concurrency, ratio = 1) {
-  return Math.max(1, Math.ceil(concurrency * Number(ratio || 1)));
-}
-
-export function hasClaimCapacity(activeRunKinds, concurrency, ratio = 1) {
-  const load = activeRunnerLoad(activeRunKinds);
-  return load.work < concurrency || load.supervisors < supervisorConcurrencyLimit(concurrency, ratio);
+export function hasClaimCapacity(activeRuns, concurrency) {
+  return activeRunnerLoad(activeRuns).work < concurrency;
 }
 
 export function authOkFor(capability, health = {}) {
   const agents = Array.isArray(capability?.requiredAgents) ? capability.requiredAgents : [];
   const text = `${capability?.slug || ""} ${agents.join(" ")} ${JSON.stringify(capability?.workflow || {})}`.toLowerCase();
-  const needsClaude = /claude|implementation-agent|researcher|product-manager|taste-agent|design-director|run-knowledge-analyst|smithers-watcher/.test(text);
+  const needsClaude = /claude|implementation-agent|researcher|product-manager|taste-agent|design-director|run-knowledge-analyst/.test(text);
   const needsCodex = /codex/.test(text);
   const missing = [];
   if (needsClaude && health?.claude?.ok === false) missing.push(`claude: ${health.claude.error || "not authenticated"}`);

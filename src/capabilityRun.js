@@ -76,8 +76,6 @@ export function registerRunResponseEndpoint({
 export function capabilityRunResponse({ dispatched, registeredResponseEndpoint, run, withRunLinks }) {
   return {
     run: withRunLinks(run),
-    ...(dispatched.supervising ? { supervising: dispatched.supervising } : {}),
-    ...(dispatched.supervisedChild ? { supervisedChild: dispatched.supervisedChild } : {}),
     ...(registeredResponseEndpoint ? { responseEndpoint: registeredResponseEndpoint } : {}),
     ...runOutputLinks(run.id)
   };

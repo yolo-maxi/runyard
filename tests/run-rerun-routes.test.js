@@ -44,7 +44,7 @@ function harness(overrides = {}) {
     dispatchRun: (capability, input, options) => {
       const run = { id: `run_new_${dispatched.length + 1}`, capabilitySlug: capability.slug, input, status: "queued" };
       dispatched.push({ capability, input, options, run });
-      return { run, supervising: overrides.supervising, supervisedChild: overrides.supervisedChild };
+      return { run };
     },
     getCapability: (slug) => capabilities.get(slug) || null,
     getRun: (id) => runs.get(id) || null,
@@ -66,13 +66,12 @@ describe("run rerun route helpers", () => {
     const run = { id: "run_new" };
 
     assert.deepEqual(rerunAcceptedResponse({
-      dispatched: { supervising: { parentRunId: "run_supervisor" } },
+      dispatched: { run },
       previous,
       run,
       withRunLinks
     }), {
       run: { id: "run_new", deepLink: "/app#runs/run_new" },
-      supervising: { parentRunId: "run_supervisor" },
       previousRun: { id: "run_prev", deepLink: "/app#runs/run_prev" },
       statusUrl: "/api/runs/run_new",
       webUrl: "/app#runs/run_new",
@@ -125,10 +124,7 @@ describe("run rerun route helpers", () => {
   });
 
   it("dispatches forced reruns with cleaned input and lineage events", async () => {
-    const { dispatched, events, handlers } = harness({
-      supervising: { supervisor: "run-smithers" },
-      supervisedChild: { parentRunId: "run_parent" }
-    });
+    const { dispatched, events, handlers } = harness();
     const res = response();
 
     await handlers.rerunRun(req({
@@ -136,9 +132,7 @@ describe("run rerun route helpers", () => {
         force: true,
         input: {
           prompt: "fresh",
-          __origin: { label: "remove" },
-          __supervisionToken: "secret",
-          __supervisedChild: { token: "remove" }
+          __origin: { label: "remove" }
         }
       }
     }), res);
@@ -150,8 +144,6 @@ describe("run rerun route helpers", () => {
     assert.equal(dispatched[0].options.origin.previousRunId, "run_prev");
     assert.deepEqual(events.map((event) => event.type), ["run.rerun_requested", "run.rerun_of"]);
     assert.equal(res.body.run.id, "run_new_1");
-    assert.deepEqual(res.body.supervising, { supervisor: "run-smithers" });
-    assert.deepEqual(res.body.supervisedChild, { parentRunId: "run_parent" });
     assert.equal(res.body.statusUrl, "/api/runs/run_new_1");
   });
 

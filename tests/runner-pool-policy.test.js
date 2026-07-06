@@ -4,8 +4,7 @@ import {
   MAX_RUNNER_CAPACITY,
   clampActiveRuns,
   normalizeRunnerCapacity,
-  runnerHealthSummary,
-  supervisorPoolSizeForCapacity
+  runnerHealthSummary
 } from "../src/runnerPoolPolicy.js";
 
 describe("runner pool policy helpers", () => {
@@ -20,12 +19,6 @@ describe("runner pool policy helpers", () => {
     assert.equal(clampActiveRuns(-2, 4), 0);
     assert.equal(clampActiveRuns(2, 4), 2);
     assert.equal(clampActiveRuns(9, 4), 4);
-  });
-
-  it("sizes supervisor pools separately from work capacity", () => {
-    assert.equal(supervisorPoolSizeForCapacity(1, 1), 1);
-    assert.equal(supervisorPoolSizeForCapacity(4, 0.5), 2);
-    assert.equal(supervisorPoolSizeForCapacity("bad", 2), 2);
   });
 
   it("summarizes runner health from liveness, capacity pressure, and auth", () => {

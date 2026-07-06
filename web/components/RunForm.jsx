@@ -277,9 +277,6 @@ export function RunForm({ cap, slug }) {
       {approval ? (
         <p className="notice">This workflow may ask for approval at checkpoints while it runs.{cap.approvalPolicy?.reason ? ` ${cap.approvalPolicy.reason}` : ""}</p>
       ) : null}
-      {cap.supervision?.default ? (
-        <p className="notice">This run is supervised by <strong>run-smithers</strong>: the Hub creates a supervising run that wraps it, records lineage, recovers interrupted attempts, and flags it for attention instead of reporting a silent success if it can't finish.</p>
-      ) : null}
       <form id="run-form" className="form-grid" onSubmit={onSubmit}>
         {hasFields ? (
           fields.map((field) => (

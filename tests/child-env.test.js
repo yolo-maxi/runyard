@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { CHILD_ENV_ALLOWLIST, allowlistedBaseEnv } from "../src/childEnv.js";
-import { supervisorChildEnv } from "../src/runnerSmithersRuntime.js";
+import { runyardChildEnv } from "../src/runnerSmithersRuntime.js";
 
 // A representative slice of what a real runner process carries: OS baseline the
 // child legitimately needs, plus the runner's own secrets that must NEVER reach
@@ -98,8 +98,8 @@ describe("child env allowlist", () => {
     assert.equal(CHILD_ENV_ALLOWLIST.has("FOO"), false);
   });
 
-  it("supervisorChildEnv passes required env and leaks no runner secret", () => {
-    const env = supervisorChildEnv({
+  it("runyardChildEnv passes required env and leaks no runner secret", () => {
+    const env = runyardChildEnv({
       baseEnv: RUNNER_ENV,
       token: "hub-token",
       baseUrl: "http://hub",
@@ -111,8 +111,8 @@ describe("child env allowlist", () => {
     // Required baseline + explicit channels reach the child.
     assert.equal(env.PATH, "/usr/local/bin:/usr/bin");
     assert.equal(env.HOME, "/home/runner");
-    assert.equal(env.RUN_SMITHERS_HUB_TOKEN, "hub-token");
-    assert.equal(env.RUN_SMITHERS_HUB_URL, "http://hub");
+    assert.equal(env.RUNYARD_HUB_TOKEN, "hub-token");
+    assert.equal(env.RUNYARD_HUB_URL, "http://hub");
     assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, "local-oauth");
     assert.equal(env.API_KEY, "per-run-secret");
     assert.equal(env.RUNYARD_RUN_ID, "run_42");

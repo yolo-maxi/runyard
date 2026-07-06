@@ -20,13 +20,14 @@ The full concepts overview, setup, API, and the in-app **Assistant** (the contex
 
 ## Retired Supervisor
 
-The old `run-smithers` supervising wrapper is disabled. Normal workflows run
-directly; the Hub and runner own status, liveness, approvals, diagnostics, and
-operator recovery without inserting a second workflow around every run.
+The old `run-smithers` supervising wrapper has been removed from the active
+product. Normal workflows run directly; the Hub and runner own status,
+liveness, approvals, diagnostics, and operator recovery without inserting a
+second workflow around every run.
 
-The old watcher source remains in the repository for historical runs and narrow
-regression coverage, but it is not part of the active capability catalog and new
-runs are not wrapped by default or by stale `supervision.default` config.
+Historical database columns remain inert so old records can still be read, but
+there is no active `run-smithers` capability, watcher workflow, default wrapper,
+repair loop, or separate supervisor runner pool.
 
 ## Workflow hardening
 

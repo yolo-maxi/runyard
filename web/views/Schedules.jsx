@@ -10,7 +10,7 @@ import { ScheduleEditor } from "../components/ScheduleEditor.jsx";
 // Schedules area. Ported from legacy renderSchedules() / renderScheduleDetail()
 // / editSchedule(). A schedule runs a workflow automatically on a cron schedule
 // (or once at a future time); a scheduled run honors the workflow's approval
-// policy and supervision exactly like running it by hand.
+// policy exactly like running it by hand.
 
 // --- shared cadence/chip helpers (ported from legacy) -----------------------
 
@@ -153,7 +153,7 @@ export function Schedules() {
         <button id="new-schedule" className="primary" onClick={() => setEditing("")}>New Schedule</button>
       </Toolbar>
       <p className="muted">
-        Schedules run a workflow automatically on a cron schedule (or once at a future time). A scheduled run honors the workflow's approval policy and supervision — exactly like running it by hand.
+        Schedules run a workflow automatically on a cron schedule (or once at a future time). A scheduled run honors the workflow's approval policy exactly like running it by hand.
       </p>
       {schedules.length ? (
         <div className="grid">

@@ -11,20 +11,6 @@ const UNRESOLVED_FAILURE_STATUSES = new Set(["failed", "error"]);
 export const isDiagnosticRun = (run) => Boolean(run && DIAGNOSTIC_STATUSES.has(run.status));
 export const isUnresolvedFailure = (run) => Boolean(run && UNRESOLVED_FAILURE_STATUSES.has(run.status));
 
-export function isSupervisedChildRun(run) {
-  if (!run) return false;
-  const origin = String(run.originLabel || run.origin?.label || "").toLowerCase();
-  if (origin === "run-smithers wrapper") return true;
-  if (origin.startsWith("run-smithers self-repair")) return true;
-  const internalOrigin = run.input?.__origin;
-  return Boolean(
-    internalOrigin?.parentRunId &&
-      String(internalOrigin?.label || "").toLowerCase().startsWith("run-smithers")
-  );
-}
-export const topLevelRuns = (runs) => (runs || []).filter((r) => !isSupervisedChildRun(r));
-export const supervisedChildRuns = (runs) => (runs || []).filter(isSupervisedChildRun);
-
 export function truncate(text, max) {
   const value = String(text || "").trim();
   if (value.length <= max) return value;

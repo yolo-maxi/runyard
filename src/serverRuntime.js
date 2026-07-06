@@ -13,14 +13,11 @@ export function installProcessSafetyHandlers({ processObj = process, logError = 
 }
 
 export function startRunMaintenance({
-  dispatchHubRepair,
   env,
   logError = console.error,
   logInfo = console.log,
   pruneDeadRunners,
   reapStuckRunsWithRetrospectives,
-  reconcileFailedRecoverable,
-  reconcileSupervisedChildTerminals,
   reconcileRunnerActiveRuns,
   setIntervalFn = setInterval,
   sweepSupersededApprovals,
@@ -61,24 +58,6 @@ export function startRunMaintenance({
       reapStuckRunsWithRetrospectives(env.runDeadlineMs);
     } catch (error) {
       logError("Run reaper failed:", error.message);
-    }
-    try {
-      const reconciledParents = reconcileSupervisedChildTerminals ? reconcileSupervisedChildTerminals() : [];
-      if (reconciledParents.length) logInfo(`Reconciled ${reconciledParents.length} supervised parent run(s): ${reconciledParents.join(", ")}`);
-    } catch (error) {
-      logError("Supervised parent reconcile failed:", error.message);
-    }
-    try {
-      // Hub-as-supervisor backstop: resume runs a runner self-reported as
-      // `failed` but that still carry a resumable checkpoint and budget. Phase
-      // 2 repair stays opt-in; when disabled, deterministic code-bug failures
-      // escalate to the operator instead of auto-repairing.
-      const acted = reconcileFailedRecoverable({
-        dispatchRepair: env.hubSupervisorRepairEnabled ? dispatchHubRepair : null
-      });
-      if (acted.length) logInfo(`Hub supervisor reconciled ${acted.length} failed-recoverable run(s): ${acted.join(", ")}`);
-    } catch (error) {
-      logError("Hub supervisor reconcile failed:", error.message);
     }
     try {
       // Recompute cached active_runs from real run state before pruning, so a
@@ -146,7 +125,6 @@ export function startUpdatePolling({
 
 export function startServerRuntime({
   app,
-  dispatchHubRepair,
   env,
   fireDueSchedules,
   logError = console.error,
@@ -154,8 +132,6 @@ export function startServerRuntime({
   processObj = process,
   pruneDeadRunners,
   reapStuckRunsWithRetrospectives,
-  reconcileFailedRecoverable,
-  reconcileSupervisedChildTerminals,
   reconcileRunnerActiveRuns,
   setIntervalFn = setInterval,
   setTimeoutFn = setTimeout,
@@ -168,14 +144,11 @@ export function startServerRuntime({
     logInfo(`${env.instanceName} listening on http://${env.host}:${env.port}`);
   });
   const reaper = startRunMaintenance({
-    dispatchHubRepair,
     env,
     logError,
     logInfo,
     pruneDeadRunners,
     reapStuckRunsWithRetrospectives,
-    reconcileFailedRecoverable,
-    reconcileSupervisedChildTerminals,
     reconcileRunnerActiveRuns,
     setIntervalFn,
     sweepSupersededApprovals,

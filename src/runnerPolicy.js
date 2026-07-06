@@ -48,11 +48,3 @@ export function productiveOutcomeFailure(capability, outputs) {
     error: "invalid output: improve succeeded without changed files or an explicit no-change rationale"
   };
 }
-
-export function runSmithersSupervisionFailure(capability, outputs) {
-  if (capability?.slug !== "run-smithers") return "";
-  const outcome = outputs?.supervise?.outcome;
-  if (!outcome || outcome === "succeeded") return "";
-  const summary = outputs?.supervise?.summary || "";
-  return `run-smithers ended with outcome '${outcome}'${summary ? `: ${summary}` : ""}`;
-}

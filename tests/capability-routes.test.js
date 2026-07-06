@@ -38,7 +38,7 @@ function harness(overrides = {}) {
     dispatchRun: (capability, input, options) => {
       const run = { id: `run_${dispatched.length + 1}`, capabilitySlug: capability.slug, input, options };
       dispatched.push({ capability, input, options, run });
-      return { run, supervising: overrides.supervising };
+      return { run };
     },
     getCapability: (slug) => capabilities.get(slug) || null,
     getWorkflowBundle: (bundleId) => (overrides.bundles || {})[bundleId] || null,

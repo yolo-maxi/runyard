@@ -4,7 +4,6 @@ import assert from "node:assert/strict";
 
 const source = readFileSync(new URL("../src/runner.js", import.meta.url), "utf8");
 const smithersRuntimeSource = readFileSync(new URL("../src/runnerSmithersRuntime.js", import.meta.url), "utf8");
-const smithersOutcomeSource = readFileSync(new URL("../src/runnerSmithersOutcome.js", import.meta.url), "utf8");
 
 describe("Smithers runner deadline containment", () => {
   it("uses a long enough default deadline for real agent workflows", () => {
@@ -27,23 +26,13 @@ describe("Smithers runner deadline containment", () => {
     assert.match(source, /runner\.deadline_deferred/);
   });
 
-  it("does not mark run-smithers needs_recovery as successful", () => {
-    assert.match(source, /smithersRunOutcome/);
-    assert.match(smithersOutcomeSource, /runSmithersSupervisionFailure/);
-    assert.match(smithersOutcomeSource, /from "\.\/runnerPolicy\.js"/);
-    assert.match(smithersOutcomeSource, /const supervisionFailure = state === "succeeded" \? runSmithersSupervisionFailure\(capability, outputs\) : ""/);
-  });
-
-  it("hands its resolved hub token/url down to the run-smithers supervisor child", () => {
-    // The supervisor workflow calls back into the hub to spawn children; a runner
-    // set up with only RUNYARD_HUB_TOKEN must still pass a token down, otherwise
-    // run-smithers throws "needs RUNYARD_HUB_TOKEN / RUN_SMITHERS_HUB_TOKEN".
+  it("hands its resolved hub token/url down to Smithers workflow children", () => {
     assert.match(source, /launchSmithers/);
-    assert.match(smithersRuntimeSource, /supervisorEnv\.RUN_SMITHERS_HUB_TOKEN = token/);
-    assert.match(smithersRuntimeSource, /supervisorEnv\.RUN_SMITHERS_HUB_URL = baseUrl/);
+    assert.match(smithersRuntimeSource, /hubEnv\.RUNYARD_HUB_TOKEN = token/);
+    assert.match(smithersRuntimeSource, /hubEnv\.RUNYARD_HUB_URL = baseUrl/);
     // The child env is the allowlisted OS/toolchain baseline plus the explicit
-    // supervisor/secret/run channels — never a raw spread of the runner's env.
-    assert.match(smithersRuntimeSource, /\.\.\.allowlistedBaseEnv\(baseEnv\), \.\.\.supervisorEnv, \.\.\.secretEnv/);
+    // hub/secret/run channels — never a raw spread of the runner's env.
+    assert.match(smithersRuntimeSource, /\.\.\.allowlistedBaseEnv\(baseEnv\), \.\.\.hubEnv, \.\.\.secretEnv/);
     assert.doesNotMatch(smithersRuntimeSource, /\{ \.\.\.baseEnv,/);
   });
 

@@ -32,9 +32,9 @@ describe("runner pool record helpers", () => {
     assert.deepEqual(runnerPoolSummary({
       counts: { queued: 3, assigned: 2, running: 1, waitingApproval: 4 },
       runners: [
-        { online: true, capacity: 3, workRuns: 2, supervisorRuns: 1, health: { state: "healthy" } },
-        { online: true, capacity: 2, workRuns: 0, supervisorRuns: 2, health: { state: "degraded" } },
-        { online: false, capacity: 8, workRuns: 7, supervisorRuns: 0, health: { state: "offline" } }
+        { online: true, capacity: 3, workRuns: 2, health: { state: "healthy" } },
+        { online: true, capacity: 2, workRuns: 0, health: { state: "degraded" } },
+        { online: false, capacity: 8, workRuns: 7, health: { state: "offline" } }
       ]
     }), {
       queued: 3,
@@ -43,7 +43,6 @@ describe("runner pool record helpers", () => {
       waitingApproval: 4,
       totalCapacity: 5,
       totalActive: 2,
-      totalSupervisors: 3,
       availableSlots: 3,
       onlineRunners: 2,
       runners: 3,

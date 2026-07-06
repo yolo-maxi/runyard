@@ -6,7 +6,7 @@ const { resolveHarnessSelection, harnessSelectionRunEnv, harnessSelectionSecretN
 );
 const { secretNamesForRun } = await import("../src/runnerAssignment.js");
 const { resolveAgentCli, resolvePiEndpoint } = await import("../workflow-templates/workflows/pi-harness.js");
-const { supervisorChildEnv } = await import("../src/runnerSmithersRuntime.js");
+const { runyardChildEnv } = await import("../src/runnerSmithersRuntime.js");
 
 describe("harness selection resolution", () => {
   it("resolves a full selection from run input", () => {
@@ -106,7 +106,7 @@ describe("harness selection run env", () => {
         input: { piProvider: provider, piModel: model, piApiKeyEnv: keyEnv }
       });
       assert.deepEqual(issues, []);
-      const childEnv = supervisorChildEnv({
+      const childEnv = runyardChildEnv({
         baseEnv: runnerEnv,
         secretEnv: { [keyEnv]: `${provider}-secret` },
         runEnv: harnessSelectionRunEnv(selection)
@@ -129,7 +129,7 @@ describe("harness selection run env", () => {
     };
     for (const harness of ["claude", "codex"]) {
       const { selection } = resolveHarnessSelection({ input: { agentHarness: harness } });
-      const childEnv = supervisorChildEnv({ baseEnv: runnerEnv, runEnv: harnessSelectionRunEnv(selection) });
+      const childEnv = runyardChildEnv({ baseEnv: runnerEnv, runEnv: harnessSelectionRunEnv(selection) });
       assert.equal(resolveAgentCli(childEnv, { workflow: "IMPLEMENT", fallback: "codex" }), harness);
     }
   });

@@ -6,12 +6,10 @@ import {
   deriveRunDescription,
   deriveRunTitle,
   hasNoChangeReviewRationale,
-  normalizeSupervisionLineage,
   runOutcomeSummary,
   runPresentation,
   withRunLinks
 } from "../src/runPresentation.js";
-import { SUPERVISION_CHILD_KEY, SUPERVISOR_CAPABILITY_SLUG } from "../src/supervision.js";
 
 describe("run presentation helpers", () => {
   it("derives titles and descriptions from inputs before fallbacks", () => {
@@ -21,12 +19,6 @@ describe("run presentation helpers", () => {
     assert.equal(deriveRunDescription({ input: { description: "Detailed scope" } }), "Detailed scope");
   });
 
-  it("normalizes supervision lineage from arrays and JSON strings", () => {
-    assert.deepEqual(normalizeSupervisionLineage([{ id: 1 }]), [{ id: 1 }]);
-    assert.deepEqual(normalizeSupervisionLineage('[{"id":1}]'), [{ id: 1 }]);
-    assert.deepEqual(normalizeSupervisionLineage("bad json"), []);
-  });
-
   it("normalizes outcome string lists and no-change review rationale", () => {
     assert.deepEqual(cleanStringList([" a.js ", "", null, "b.js"]), ["a.js", "b.js"]);
     assert.deepEqual(cleanStringList("not an array"), []);
@@ -34,34 +26,6 @@ describe("run presentation helpers", () => {
     assert.equal(hasNoChangeReviewRationale({ improvements: [], risks: [" needs review "] }), true);
     assert.equal(hasNoChangeReviewRationale({ summary: "No changes needed" }), true);
     assert.equal(hasNoChangeReviewRationale({ improvements: [], risks: [" "] }), false);
-  });
-
-  it("unwraps supervised runs for presentation without exposing internals", () => {
-    const child = { id: "child", output: { result: "done" } };
-    const presented = runPresentation(
-      {
-        id: "parent",
-        capabilitySlug: SUPERVISOR_CAPABILITY_SLUG,
-        capabilityName: "Run Smithers",
-        input: {
-          __supervisionToken: "secret",
-          wrappedCapability: "improve",
-          wrappedInput: { prompt: "fix", [SUPERVISION_CHILD_KEY]: { token: "hidden" } }
-        },
-        output: { outputs: { supervise: { wrappedRunId: "child", outcome: "completed", lineage: '[{"runId":"child"}]' } } }
-      },
-      {
-        getCapability: (slug) => ({ slug, name: "Improve" }),
-        getRun: (id) => (id === "child" ? child : null)
-      }
-    );
-
-    assert.equal(presented.run.capabilitySlug, "improve");
-    assert.equal(presented.run.capabilityName, "Improve");
-    assert.deepEqual(presented.input, { prompt: "fix" });
-    assert.deepEqual(presented.output, { result: "done" });
-    assert.equal(presented.supervision.childRunId, "child");
-    assert.equal(presented.supervision.attempts, 1);
   });
 
   it("summarizes work products from structured workflow output", () => {

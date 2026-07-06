@@ -95,20 +95,10 @@ describe("run query record helpers", () => {
     assert.equal(runBackstopExceeded({ started_at: "2026-01-01T00:09:00.000Z" }, 5 * 60_000, nowMs), false);
   });
 
-  it("classifies reap reasons while leaving waiting approvals and supervised waits alone", () => {
+  it("classifies reap reasons while leaving waiting approvals alone", () => {
     const nowMs = Date.parse("2026-01-01T00:10:00.000Z");
 
     assert.equal(runReapReason({ status: "waiting_approval" }, { nowMs }), null);
-    assert.equal(runReapReason({
-      id: "parent",
-      status: "running",
-      capability_slug: "run-smithers",
-      last_event_at: "2026-01-01T00:00:00.000Z"
-    }, {
-      stallMs: 5 * 60_000,
-      nowMs,
-      hasWaitingApprovalSupervisedChild: () => true
-    }), null);
 
     assert.equal(runReapReason({
       status: "running",
@@ -153,14 +143,6 @@ describe("run query record helpers", () => {
       maxMs: 5 * 60_000,
       nowMs,
       hasPendingApproval: () => true
-    }), null);
-
-    // A run-smithers parent whose child waits for approval is exempt from the
-    // max-runtime backstop too, not just the stall window.
-    assert.equal(runReapReason({ ...staleRunningRow, capability_slug: "run-smithers" }, {
-      maxMs: 5 * 60_000,
-      nowMs,
-      hasWaitingApprovalSupervisedChild: () => true
     }), null);
 
     // Once the approval is resolved (no longer pending), age-based reaping resumes.

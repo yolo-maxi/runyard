@@ -46,19 +46,6 @@ describe("runner Smithers outcome helper", () => {
     });
   });
 
-  it("turns run-smithers non-success supervision outcomes into runner failures", () => {
-    const outcome = smithersRunOutcome({
-      capability: { slug: "run-smithers" },
-      state: "succeeded",
-      sid: "run-2",
-      outputs: { supervise: { outcome: "needs_recovery", summary: "child failed" } }
-    });
-
-    assert.equal(outcome.ok, false);
-    assert.equal(outcome.status, "");
-    assert.match(outcome.error, /needs_recovery/);
-  });
-
   it("rejects productive success when workflow outputs fail policy checks", () => {
     const outcome = smithersRunOutcome({
       capability: { slug: "improve" },

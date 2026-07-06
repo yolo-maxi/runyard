@@ -177,7 +177,6 @@ export function createScheduleHandlers({
 export function scheduleRunNowResponse({ result, schedule, withRunLinks }) {
   return {
     run: withRunLinks(result.run),
-    ...(result.dispatched.supervising ? { supervising: result.dispatched.supervising } : {}),
     schedule: withScheduleView(schedule),
     ...runStatusLinks(result.run.id)
   };

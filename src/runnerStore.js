@@ -16,7 +16,6 @@ import {
   runnerStableIdentityLookupQuery,
   staleRunnerListQuery
 } from "./runnerRecords.js";
-import { supervisorPoolSizeForCapacity } from "./runnerPoolPolicy.js";
 
 export function createRunnerStore({
   all,
@@ -25,19 +24,17 @@ export function createRunnerStore({
   id,
   now,
   runnerOfflineMs,
-  runnerPruneMs,
-  supervisorCapabilitySlug,
-  supervisorSlotRatio
+  runnerPruneMs
 }) {
   function runnerIsLive(lastHeartbeatAt) {
     return runnerHeartbeatIsLive(lastHeartbeatAt, runnerOfflineMs);
   }
 
   function runnerLoad(runnerId) {
-    if (!runnerId) return { work: 0, supervisors: 0 };
-    const query = runnerLoadQuery({ runnerId, supervisorCapabilitySlug });
+    if (!runnerId) return { work: 0 };
+    const query = runnerLoadQuery({ runnerId });
     const row = one(query.sql, query.params);
-    return { work: Number(row?.work) || 0, supervisors: Number(row?.supervisors) || 0 };
+    return { work: Number(row?.work) || 0 };
   }
 
   function getRunner(runnerId) {
@@ -110,10 +107,6 @@ export function createRunnerStore({
     run(query.sql, query.params);
   }
 
-  function supervisorPoolSize(capacity) {
-    return supervisorPoolSizeForCapacity(capacity, supervisorSlotRatio);
-  }
-
   function reconcileRunnerActiveRuns() {
     const query = runnerActiveRunsReconcileQuery();
     const corrected = [];
@@ -137,7 +130,6 @@ export function createRunnerStore({
     reconcileRunnerActiveRuns,
     registerRunner,
     runnerIsLive,
-    runnerLoad,
-    supervisorPoolSize
+    runnerLoad
   };
 }

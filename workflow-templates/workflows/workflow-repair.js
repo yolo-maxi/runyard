@@ -1,7 +1,6 @@
-// Pure-ish helper for the run-smithers self-correction loop: map a wrapped
-// capability's workflow entry to its repo source file and its runner-workspace
-// copy, and sync a repaired template from the repo into the workspace so the
-// rerun actually executes the fix.
+// Pure-ish helper for workflow repair: map a capability's workflow entry to its
+// repo source file and its runner-workspace copy, and sync a repaired template
+// from the repo into the workspace so the rerun actually executes the fix.
 //
 // The Hub ships workflow templates from `workflow-templates/workflows/<file>`
 // and `smithers-hub runner init` copies them into `<workspace>/.smithers/
@@ -45,7 +44,7 @@ function isInside(root, candidate) {
 
 // Copy the repaired workflow template from the repo into the runner workspace.
 // Returns { ok, file, from, to, bytes, error }. Never throws — callers branch
-// on `ok` so a sync failure escalates rather than crashing the supervisor.
+// on `ok` so a sync failure can be surfaced cleanly.
 export function syncWorkflowToWorkspace({ repoRoot, workspaceDir, entry, slug = "" } = {}) {
   const file = workflowFileFromEntry(entry, slug);
   if (!file) return { ok: false, error: `unrecognised workflow entry: ${entry || slug}` };

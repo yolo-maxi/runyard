@@ -202,7 +202,7 @@ function safeWorkflowFile(slug: string) {
 function resolveRepoRoot() {
   const configured =
     process.env.WORKFLOW_DOCTOR_REPO_DIR ||
-    process.env.RUN_SMITHERS_REPAIR_REPO_DIR ||
+    process.env.RUNYARD_REPAIR_REPO_DIR ||
     process.env.SMITHERS_HUB_ROOT ||
     process.env.IMPROVE_REPO_DIR ||
     process.env.GATED_REPO_DIR ||

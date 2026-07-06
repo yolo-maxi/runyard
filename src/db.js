@@ -3,7 +3,6 @@ import { env } from "./env.js";
 import { id, now } from "./ids.js";
 import { emitRunEvent } from "./runEventBus.js";
 import { hashToken, randomToken } from "./security.js";
-import { SUPERVISOR_CAPABILITY_SLUG } from "./supervision.js";
 import { decrypt as decryptSecret, encrypt as encryptSecret, redactSecrets, secretsEnabled } from "./secretsStore.js";
 import {
   canTransitionRun,
@@ -19,6 +18,7 @@ import { createAccessTokenStore } from "./accessTokenStore.js";
 import { createCatalogStore } from "./catalogStore.js";
 import { createDbBootstrap } from "./dbBootstrap.js";
 import { DB_SCHEMA_SQL } from "./dbSchema.js";
+import { runReapReason } from "./runQueryRecords.js";
 import {
   missingColumnAlterQueries,
   tableColumnsQuery
@@ -31,7 +31,6 @@ import {
 } from "./runnerPoolRecords.js";
 import { approvalKindFromPayload, approvalResolvedViaFromActor } from "./operatorRecords.js";
 import { createOperatorStore } from "./operatorStore.js";
-import { createRunSupervisorStore } from "./runSupervisorStore.js";
 import {
   buildRuntimePack
 } from "./runtimePackRecords.js";
@@ -95,7 +94,6 @@ const runClaimStore = createRunClaimStore({
   run,
   now,
   getRunner,
-  supervisorPoolSize,
   runnerLoad,
   listRuns,
   getCapability,
@@ -104,8 +102,7 @@ const runClaimStore = createRunClaimStore({
   getRun,
   getDecryptedSecretEnv,
   buildAgentRuntimePack,
-  getWorkflowBundle,
-  supervisorCapabilitySlug: SUPERVISOR_CAPABILITY_SLUG
+  getWorkflowBundle
 });
 const runCreateStore = createRunCreateStore({
   run,
@@ -123,9 +120,7 @@ const runnerStore = createRunnerStore({
   id,
   now,
   runnerOfflineMs: env.runnerOfflineMs,
-  runnerPruneMs: env.runnerPruneMs,
-  supervisorCapabilitySlug: SUPERVISOR_CAPABILITY_SLUG,
-  supervisorSlotRatio: env.supervisorSlotRatio
+  runnerPruneMs: env.runnerPruneMs
 });
 const operatorStore = createOperatorStore({ all, one, run, id, now, addRunEvent, getRun, updateRun });
 const scheduleStore = createScheduleStore({ all, one, run, id, now });
@@ -144,18 +139,6 @@ const secretStore = createSecretStore({
 });
 const runResponseEndpointStore = createRunResponseEndpointStore({ all, one, run, id, now });
 const accessTokenStore = createAccessTokenStore({ all, one, run, id, now, randomToken });
-const runSupervisorStore = createRunSupervisorStore({
-  all,
-  one,
-  run,
-  id,
-  now,
-  env,
-  transitionRun,
-  addRunEvent,
-  adjustRunnerActiveRuns,
-  createApproval
-});
 const dbBootstrap = createDbBootstrap({
   one,
   run,
@@ -252,12 +235,8 @@ function migrateRunnerAuthHealthColumn() {
   ]);
 }
 
-// Hub-as-supervisor accounting. These counters must survive a hub restart so
-// the attempt/repair caps and the loop-breaker can't be reset by bouncing the
-// process. `supervisor_meta` is a JSON blob holding the per-fingerprint resume
-// and repair maps plus the loop-breaker progress marker; the scalar columns are
-// the hot fields the reconcile query reads. All nullable/defaulted so the
-// CREATE TABLE no-op on existing installs is backfilled here.
+// Historical run accounting columns kept for existing SQLite files. The
+// supervisor runtime that used them has been removed.
 function migrateRunsSupervisorColumns() {
   migrateMissingColumns("runs", [
     { name: "attempt", definition: "attempt INTEGER NOT NULL DEFAULT 0" },
@@ -553,16 +532,6 @@ export function getRun(runId) {
   return runStore.getRun(runId);
 }
 
-// Find a still-active supervising run-smithers run by its internal supervision
-// token. Used to validate a child run's bypass marker — the token is minted by
-// the Hub when it creates a supervising run and is redacted from every API
-// response, so only a genuine supervised child (the run-smithers workflow
-// echoing the token it received) can present a matching one. Returns the
-// supervising run or null.
-export function findActiveSupervisorByToken(token, wrappedCapability = "") {
-  return runStore.findActiveSupervisorByToken(token, wrappedCapability);
-}
-
 export function listRuns({ status = "", limit = 100, q = "", since = "", until = "", cursor = "", capabilitySlugs = [], includeInternal = false } = {}) {
   return runStore.listRuns({ status, limit, q, since, until, cursor, capabilitySlugs, includeInternal });
 }
@@ -584,40 +553,79 @@ export function runOwnerTokenId(runId) {
   return runStore.runOwnerTokenId(runId);
 }
 
-export function recordRunLineage(runId, entry = {}) {
-  return runSupervisorStore.recordRunLineage(runId, entry);
-}
-
-export function listRunLineage(runId) {
-  return runSupervisorStore.listRunLineage(runId);
-}
-
 export function reconcileRepairChildTerminal(repairRunId) {
-  return runSupervisorStore.reconcileRepairChildTerminal(repairRunId);
-}
-
-export function reconcileSupervisedChildTerminals(options = {}) {
-  return runSupervisorStore.reconcileSupervisedChildTerminals(options);
+  return null;
 }
 
 export function reapStuckRunIds(maxMs) {
-  return runSupervisorStore.reapStuckRunIds(maxMs);
-}
-
-export function reconcileFailedRecoverable(options = {}) {
-  return runSupervisorStore.reconcileFailedRecoverable(options);
+  const rows = all(`SELECT runs.id,
+            runs.runner_id,
+            runs.status,
+            runs.capability_slug,
+            runs.input,
+            runs.created_at,
+            runs.assigned_at,
+            runs.started_at,
+            runners.last_heartbeat_at,
+            (SELECT MAX(created_at) FROM run_events WHERE run_id = runs.id) AS last_event_at
+       FROM runs
+       LEFT JOIN runners ON runners.id = runs.runner_id
+      WHERE runs.status IN ('assigned','running','waiting_approval')`);
+  const reaped = [];
+  const nowMs = Date.now();
+  for (const row of rows) {
+    const reason = runReapReason(row, {
+      maxMs,
+      stallMs: env.runStallMs,
+      runnerOfflineMs: env.runnerOfflineMs,
+      nowMs,
+      hasPendingApproval,
+      hasEngineApprovalWait
+    });
+    if (!reason) continue;
+    const result = transitionRun(row.id, "failed", {
+      current_step: reason.currentStep,
+      error: reason.error,
+      completed_at: now()
+    });
+    if (!result.ok || result.idempotent) continue;
+    addRunEvent(row.id, "run.failed", reason.message, { reason: reason.reason });
+    reaped.push(row.id);
+  }
+  return reaped;
 }
 
 export function reapStuckRuns(maxMs) {
-  return runSupervisorStore.reapStuckRuns(maxMs);
+  return reapStuckRunIds(maxMs).length;
+}
+
+function hasPendingApproval(runId) {
+  if (!runId) return false;
+  return Boolean(one("SELECT id FROM approvals WHERE run_id = ? AND status = 'pending' LIMIT 1", [String(runId)]));
+}
+
+function engineApprovalHoldFromEvents(rows = []) {
+  const seen = new Set();
+  for (const row of rows) {
+    const nodeId = String(parseJson(row?.data, {})?.nodeId ?? "");
+    if (seen.has(nodeId)) continue;
+    seen.add(nodeId);
+    if (row?.type === "engine.approval.waiting") return true;
+  }
+  return false;
 }
 
 export function runApprovalHold(run) {
-  return runSupervisorStore.runApprovalHold(run);
+  if (!run?.id) return false;
+  return hasPendingApproval(run.id) || hasEngineApprovalWait(run.id);
 }
 
 export function hasEngineApprovalWait(runId) {
-  return runSupervisorStore.hasEngineApprovalWait(runId);
+  if (!runId) return false;
+  const rows = all(`SELECT type, data FROM run_events
+      WHERE run_id = ? AND type IN ('engine.approval.waiting', 'engine.approval.resumed')
+      ORDER BY created_at DESC, rowid DESC LIMIT 200`, [String(runId)]);
+  return engineApprovalHoldFromEvents(rows);
 }
 
 export { normalizeRun };
@@ -687,23 +695,10 @@ function adjustRunnerActiveRuns(runnerId, delta) {
   return runnerStore.adjustRunnerActiveRuns(runnerId, delta);
 }
 
-// Ground-truth in-flight load for a runner, split into the two scheduling pools,
-// derived from the durable runs table (NOT the drift-prone active_runs counter).
-//   work        — heavy worker runs (the real agents); compete for `capacity`.
-//   supervisors — run-smithers envelopes that orchestrate + poll their child.
-// Counting supervisors against the work pool is the classic resource deadlock:
-// a parent holds a work slot while waiting for a child that can never get one.
-// Reading from real state means a crashed/reaped run can never leak a slot —
-// the moment its row leaves assigned/running, the slot is free again.
+// Ground-truth in-flight load for a runner, derived from the durable runs table
+// rather than the drift-prone active_runs counter.
 export function runnerLoad(runnerId) {
   return runnerStore.runnerLoad(runnerId);
-}
-
-// Size of the separate supervisor pool for a runner of the given work capacity.
-// Default ratio 1.0 → up to `capacity` concurrent supervisors, so every work
-// slot can host its supervising parent without either starving the other.
-export function supervisorPoolSize(capacity) {
-  return runnerStore.supervisorPoolSize(capacity);
 }
 
 // Recompute every runner's active_runs counter from the durable runs table.

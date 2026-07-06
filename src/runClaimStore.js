@@ -1,4 +1,3 @@
-import { SUPERVISOR_CAPABILITY_SLUG } from "./supervision.js";
 import { runClaimAssignmentQuery } from "./runRecords.js";
 import {
   runnerMatchesAssignment,
@@ -10,7 +9,6 @@ export function createRunClaimStore({
   run,
   now,
   getRunner,
-  supervisorPoolSize,
   runnerLoad,
   listRuns,
   getCapability,
@@ -19,29 +17,21 @@ export function createRunClaimStore({
   getRun,
   getDecryptedSecretEnv,
   buildAgentRuntimePack,
-  getWorkflowBundle,
-  supervisorCapabilitySlug = SUPERVISOR_CAPABILITY_SLUG
+  getWorkflowBundle
 }) {
   function claimNextRun(runnerId) {
     const runner = getRunner(runnerId);
     if (!runner || !runner.online) return null;
 
-    const supervisorCapacity = supervisorPoolSize(runner.capacity);
     const load = runnerLoad(runnerId);
-    if (load.work >= runner.capacity && load.supervisors >= supervisorCapacity) return null;
+    if (load.work >= runner.capacity) return null;
 
     for (const candidate of listRuns({ status: "queued", limit: 200, includeInternal: true })) {
       if (candidate.runnerId && candidate.runnerId !== runnerId) continue;
 
       const capability = getCapability(candidate.capabilitySlug);
       if (!runnerMatchesAssignment(capability, runner, candidate)) continue;
-
-      const isSupervisor = candidate.capabilitySlug === supervisorCapabilitySlug;
-      if (isSupervisor) {
-        if (load.supervisors >= supervisorCapacity) continue;
-      } else if (load.work >= runner.capacity) {
-        continue;
-      }
+      if (load.work >= runner.capacity) continue;
 
       const query = runClaimAssignmentQuery({ runId: candidate.id, runnerId, timestamp: now() });
       const result = run(query.sql, query.params);
@@ -90,6 +80,7 @@ export function createRunClaimStore({
       }
 
       if (Object.keys(secretEnv).length) payload.secretEnv = secretEnv;
+      load.work += 1;
       return payload;
     }
 

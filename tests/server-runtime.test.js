@@ -37,13 +37,11 @@ describe("server runtime helpers", () => {
     const callbacks = [];
     const info = [];
     const reaper = startRunMaintenance({
-      dispatchHubRepair: () => {},
-      env: { hubSupervisorRepairEnabled: true, runDeadlineMs: 10, runnerPruneMs: 20 },
+      env: { runDeadlineMs: 10, runnerPruneMs: 20 },
       logError: () => {},
       logInfo: (line) => info.push(line),
       pruneDeadRunners: (ms) => [`pruned_${ms}`],
       reapStuckRunsWithRetrospectives: (ms) => info.push(`reap ${ms}`),
-      reconcileFailedRecoverable: ({ dispatchRepair }) => dispatchRepair ? ["run_1"] : [],
       reconcileRunnerActiveRuns: () => [{ id: "runner_1", from: 2, to: 1 }],
       setIntervalFn: timer("interval", callbacks),
       sweepTimedApprovals: () => [
@@ -59,7 +57,6 @@ describe("server runtime helpers", () => {
     assert.deepEqual(info, [
       "Timed approvals swept: appr_1 fallback_applied:approved, appr_2 fallback_required",
       "reap 10",
-      "Hub supervisor reconciled 1 failed-recoverable run(s): run_1",
       "Reconciled active_runs for 1 runner(s): runner_1 2->1",
       "Pruned 1 dead runner(s): pruned_20"
     ]);
@@ -69,13 +66,11 @@ describe("server runtime helpers", () => {
     const callbacks = [];
     const errors = [];
     startRunMaintenance({
-      dispatchHubRepair: null,
-      env: { hubSupervisorRepairEnabled: false, runDeadlineMs: 10, runnerPruneMs: 20 },
+      env: { runDeadlineMs: 10, runnerPruneMs: 20 },
       logError: (...entry) => errors.push(entry),
       logInfo: () => {},
       pruneDeadRunners: () => { throw new Error("prune failed"); },
       reapStuckRunsWithRetrospectives: () => { throw new Error("reap failed"); },
-      reconcileFailedRecoverable: () => { throw new Error("reconcile failed"); },
       reconcileRunnerActiveRuns: () => { throw new Error("active failed"); },
       setIntervalFn: timer("interval", callbacks),
       sweepTimedApprovals: () => { throw new Error("sweep failed"); }
@@ -86,7 +81,6 @@ describe("server runtime helpers", () => {
     assert.deepEqual(errors.map((entry) => entry[0]), [
       "Timed-approval sweep failed:",
       "Run reaper failed:",
-      "Hub supervisor reconcile failed:",
       "active_runs reconcile failed:",
       "Runner pruner failed:"
     ]);
@@ -133,10 +127,8 @@ describe("server runtime helpers", () => {
           return { port, host };
         }
       },
-      dispatchHubRepair: null,
       env: {
         host: "127.0.0.1",
-        hubSupervisorRepairEnabled: false,
         instanceName: "Runyard",
         port: 3000,
         runDeadlineMs: 1,
@@ -149,7 +141,6 @@ describe("server runtime helpers", () => {
       processObj: { on: (event, handler) => { processHandlers[event] = handler; } },
       pruneDeadRunners: () => [],
       reapStuckRunsWithRetrospectives: () => {},
-      reconcileFailedRecoverable: () => [],
       reconcileRunnerActiveRuns: () => [],
       setIntervalFn: timer("interval", intervals),
       setTimeoutFn: timer("timeout", timeouts),

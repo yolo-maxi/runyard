@@ -23,7 +23,7 @@ function runnerRow(overrides = {}) {
   };
 }
 
-function createHarness({ oneRows = [runnerRow(), { work: 1, supervisors: 0 }], allRows = [runnerRow()] } = {}) {
+function createHarness({ oneRows = [runnerRow(), { work: 1 }], allRows = [runnerRow()] } = {}) {
   const calls = [];
   const rows = [...oneRows];
   const store = createRunnerStore({
@@ -42,9 +42,7 @@ function createHarness({ oneRows = [runnerRow(), { work: 1, supervisors: 0 }], a
     id: (prefix) => `${prefix}_1`,
     now: () => "2026-07-01T00:00:00.000Z",
     runnerOfflineMs: 60_000,
-    runnerPruneMs: 3_600_000,
-    supervisorCapabilitySlug: "run-smithers",
-    supervisorSlotRatio: 0.5
+    runnerPruneMs: 3_600_000
   });
   return { calls, store };
 }
@@ -52,7 +50,7 @@ function createHarness({ oneRows = [runnerRow(), { work: 1, supervisors: 0 }], a
 describe("runner store", () => {
   it("registers new runners and loads normalized runner state", () => {
     const { calls, store } = createHarness({
-      oneRows: [null, runnerRow(), { work: 0, supervisors: 0 }]
+      oneRows: [null, runnerRow(), { work: 0 }]
     });
 
     const runner = store.registerRunner({ name: "Runner", hostname: "host", capacity: 2 }, "tok_1");
@@ -65,7 +63,7 @@ describe("runner store", () => {
   it("reuses owned and stable-identity runner rows", () => {
     const owned = runnerRow({ id: "runner_owned" });
     const { calls, store } = createHarness({
-      oneRows: [owned, owned, { work: 0, supervisors: 0 }]
+      oneRows: [owned, owned, { work: 0 }]
     });
 
     assert.equal(store.registerRunner({ id: "runner_owned", name: "Runner", hostname: "host" }, "tok_1").id, "runner_owned");
@@ -73,13 +71,13 @@ describe("runner store", () => {
 
     const stable = runnerRow({ id: "runner_stable" });
     assert.equal(createHarness({
-      oneRows: [null, stable, stable, { work: 0, supervisors: 0 }]
+      oneRows: [null, stable, stable, { work: 0 }]
     }).store.registerRunner({ name: "Runner", hostname: "host" }, "tok_1").id, "runner_stable");
   });
 
   it("heartbeats runners and preserves normalized reads", () => {
     const { calls, store } = createHarness({
-      oneRows: [runnerRow({ tags: '["vps"]' }), { work: 1, supervisors: 1 }]
+      oneRows: [runnerRow({ tags: '["vps"]' }), { work: 1 }]
     });
 
     const runner = store.heartbeatRunner("runner_1", {
@@ -125,19 +123,18 @@ describe("runner store", () => {
     assert.equal(calls.filter((call) => call.fn === "run").length, 3);
   });
 
-  it("computes load, liveness, pool size, and runner lists", () => {
+  it("computes load, liveness, and runner lists", () => {
     const { store } = createHarness({
       oneRows: [
-        { work: 2, supervisors: 1 },
-        runnerRow({ id: "runner_1" }), { work: 1, supervisors: 0 },
-        runnerRow({ id: "runner_2" }), { work: 0, supervisors: 1 }
+        { work: 2 },
+        runnerRow({ id: "runner_1" }), { work: 1 },
+        runnerRow({ id: "runner_2" }), { work: 0 }
       ],
       allRows: [runnerRow({ id: "runner_1" }), runnerRow({ id: "runner_2" })]
     });
 
-    assert.deepEqual(store.runnerLoad("runner_1"), { work: 2, supervisors: 1 });
-    assert.deepEqual(store.runnerLoad(""), { work: 0, supervisors: 0 });
-    assert.equal(store.supervisorPoolSize(4), 2);
+    assert.deepEqual(store.runnerLoad("runner_1"), { work: 2 });
+    assert.deepEqual(store.runnerLoad(""), { work: 0 });
     assert.equal(store.runnerIsLive(new Date(Date.now() + 1000).toISOString()), true);
     assert.deepEqual(store.listRunners().map((runner) => runner.id), ["runner_1", "runner_2"]);
   });

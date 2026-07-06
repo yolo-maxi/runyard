@@ -66,22 +66,6 @@ describe("run store", () => {
     assert.ok(calls.some((call) => call.fn === "all" && call.sql.includes("visible = 1")));
   });
 
-  it("finds active supervisors by embedded supervision token and wrapped capability", () => {
-    const rows = [
-      runRow,
-      {
-        ...runRow,
-        id: "run_2",
-        input: '{"__supervisionToken":"sup_secret","wrappedCapability":"deploy"}'
-      }
-    ];
-    const { store } = createHarness({ allRows: rows });
-
-    assert.equal(store.findActiveSupervisorByToken("sup_secret", "deploy").id, "run_2");
-    assert.equal(store.findActiveSupervisorByToken("sup_secret", "other"), null);
-    assert.equal(store.findActiveSupervisorByToken(""), null);
-  });
-
   it("lists capability versions and owner token ids", () => {
     const versionRow = {
       sha: "sha_1",

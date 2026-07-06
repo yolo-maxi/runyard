@@ -85,16 +85,15 @@ describe("capability run helpers", () => {
     assert.equal(JSON.stringify(audits[0]).includes("secret"), false);
   });
 
-  it("builds capability run responses with optional supervision and endpoint data", () => {
+  it("builds capability run responses with endpoint data", () => {
     const payload = capabilityRunResponse({
-      dispatched: { supervising: { wrappedCapability: "hello" } },
+      dispatched: { run: { id: "run_1" } },
       registeredResponseEndpoint: { id: "endpoint_1" },
       run: { id: "run_1" },
       withRunLinks: (run) => ({ ...run, linked: true })
     });
 
     assert.deepEqual(payload.run, { id: "run_1", linked: true });
-    assert.deepEqual(payload.supervising, { wrappedCapability: "hello" });
     assert.deepEqual(payload.responseEndpoint, { id: "endpoint_1" });
     assert.equal(payload.statusUrl, "/api/runs/run_1");
     assert.equal(payload.artifactsUrl, "/api/runs/run_1/artifacts");

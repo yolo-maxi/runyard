@@ -1,5 +1,5 @@
 import { RUN_FAILURE_CLASSES } from "./runFailureClass.js";
-import { productiveOutcomeFailure, runSmithersSupervisionFailure } from "./runnerPolicy.js";
+import { productiveOutcomeFailure } from "./runnerPolicy.js";
 import { smithersChangeSummary } from "./runnerSmithersArtifacts.js";
 import { extractSmithersFailure } from "./smithersFailure.js";
 
@@ -13,10 +13,9 @@ export function smithersRunOutcome({
   deadlineExceeded = false,
   maxRunMs = 0
 }) {
-  const supervisionFailure = state === "succeeded" ? runSmithersSupervisionFailure(capability, outputs) : "";
-  const outcomeFailure = state === "succeeded" && !supervisionFailure ? productiveOutcomeFailure(capability, outputs) : null;
+  const outcomeFailure = state === "succeeded" ? productiveOutcomeFailure(capability, outputs) : null;
 
-  if (state === "succeeded" && !supervisionFailure && !outcomeFailure) {
+  if (state === "succeeded" && !outcomeFailure) {
     // Stamp the same `changeSummary` block we write to smithers-output.json onto
     // the persisted run envelope so hub UI consumers and external readers of
     // `run.output` see the real changed-file count directly, instead of having
@@ -28,7 +27,6 @@ export function smithersRunOutcome({
     };
   }
 
-  if (supervisionFailure) return { ok: false, error: supervisionFailure, status: "" };
   if (outcomeFailure) return { ok: false, error: outcomeFailure.error, status: outcomeFailure.status };
   if (deadlineExceeded) {
     return {

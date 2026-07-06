@@ -7,7 +7,7 @@ import {
   parseSmithersRunId,
   smithersCommand,
   smithersLaunchRequest,
-  supervisorChildEnv
+  runyardChildEnv
 } from "../src/runnerSmithersRuntime.js";
 
 describe("runner Smithers runtime helpers", () => {
@@ -133,8 +133,8 @@ describe("runner Smithers runtime helpers", () => {
     assert.deepEqual(cancelled[1], ["smithers_2", "shutdown"]);
   });
 
-  it("builds supervisor child env with explicit hub URL/token and secret override precedence", () => {
-    const env = supervisorChildEnv({
+  it("builds child env with explicit hub URL/token and secret override precedence", () => {
+    const env = runyardChildEnv({
       baseEnv: { PATH: "/usr/bin", HOME: "/home/runner", SECRETS_ENC_KEY: "master-key", BASE: "1" },
       token: "hub-token",
       baseUrl: "http://hub",
@@ -148,10 +148,10 @@ describe("runner Smithers runtime helpers", () => {
     // Runner secrets and unlisted vars never reach the child.
     assert.equal(env.SECRETS_ENC_KEY, undefined);
     assert.equal(env.BASE, undefined);
-    // Explicit supervisor / secret channels still work, secretEnv wins over the
+    // Explicit hub / secret channels still work, secretEnv wins over the
     // locally-resolved oauth token.
-    assert.equal(env.RUN_SMITHERS_HUB_TOKEN, "hub-token");
-    assert.equal(env.RUN_SMITHERS_HUB_URL, "http://hub");
+    assert.equal(env.RUNYARD_HUB_TOKEN, "hub-token");
+    assert.equal(env.RUNYARD_HUB_URL, "http://hub");
     assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, "secret-oauth");
     assert.equal(env.API_KEY, "secret");
   });
@@ -180,7 +180,7 @@ describe("runner Smithers runtime helpers", () => {
 
     assert.equal(id, "run_launched");
     assert.deepEqual(calls[0].args.slice(0, 2), ["up", "/abs/workflow.tsx"]);
-    assert.equal(calls[0].opts.env.RUN_SMITHERS_HUB_TOKEN, "hub-token");
+    assert.equal(calls[0].opts.env.RUNYARD_HUB_TOKEN, "hub-token");
     assert.equal(calls[0].opts.env.RUNYARD_RUN_ID, "run_hub_1");
   });
 });

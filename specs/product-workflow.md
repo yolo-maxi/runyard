@@ -39,9 +39,8 @@ baseline → research → featureMap → prioritize → dispatch
 
 The dispatch step reuses the **`implement-change-gated`** contract rather than
 inventing a parallel swarm. For each prioritized feature, in rank order, it
-creates one `implement-change-gated` child Hub run (the same pattern
-`run-smithers` uses to queue child runs) and **waits for it to reach a terminal
-state before starting the next one**. Because runs are strictly serialized
+creates one `implement-change-gated` Hub run and **waits for it to reach a
+terminal state before starting the next one**. Because runs are strictly serialized
 against a single repo, no two builders ever edit it at once, and each feature is
 committed and pushed before the next begins.
 
@@ -59,7 +58,7 @@ followed by another builder.
   the exact `implement-change-gated` payloads it *would* create.
 - `execute=true` — queue the gated runs sequentially as described above. Needs
   `SMITHERS_HUB_TOKEN` (or `PRODUCT_WORKFLOW_HUB_TOKEN`) and `SMITHERS_HUB_URL`
-  on the runner, exactly like `run-smithers` / `run-knowledge-builder`.
+  on the runner, exactly like `run-knowledge-builder`.
 
 The `dispatch` output (and the `product-workflow-report.md` artifact) always
 make explicit which competitors/features were mapped, what was prioritized, and
@@ -78,11 +77,11 @@ which implementation runs were **created or would be created**.
 | `targetBranch` | string | "main" | branch each implementation pushes to |
 | `repoDir` / `repo` / `project` | string | `repo="smithers-hub"` | runner-local repo resolution, same as `improve` |
 
-## Safety & supervision
+## Safety & recovery
 
-- **Supervision**: `supervision: { default: true }` — user-started runs are
-  wrapped by the `run-smithers` envelope, so a runner death or mid-run failure
-  surfaces as attention-needed instead of a silent green success.
+- **Execution**: product workflow runs directly. Runner death, pauses, and
+  workflow failures surface through normal run status, events, approvals, and
+  operator recovery rather than a wrapper workflow.
 - **Approval**: `approvalPolicy.required: true` — it runs agents and can queue
   gated runs that commit, push to `main`, and may deploy.
 - **Gates preserved**: implementation work flows through `implement-change-gated`

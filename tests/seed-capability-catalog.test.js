@@ -14,7 +14,6 @@ describe("seed capability catalog", () => {
       ...seedInternalCapabilities
     ]);
     assert.deepEqual(seedCapabilities.map((capability) => capability.slug), [
-      "run-smithers",
       "hello",
       "runyard-smoke-check",
       "runyard-support-agent",

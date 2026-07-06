@@ -30,8 +30,7 @@ function createHarness(overrides = {}) {
   const releases = [];
   const calls = [];
   const capabilities = new Map([
-    ["deploy", capability],
-    ["run-smithers", { slug: "run-smithers", name: "Run Smithers", requiredRunnerTags: [] }]
+    ["deploy", capability]
   ]);
   const store = createRunClaimStore({
     run: (sql, params) => {
@@ -55,8 +54,7 @@ function createHarness(overrides = {}) {
       skills: [{ slug: "skill", version: 4 }],
       missing: []
     }),
-    getWorkflowBundle: overrides.getWorkflowBundle,
-    supervisorCapabilitySlug: "run-smithers"
+    getWorkflowBundle: overrides.getWorkflowBundle
   });
   return { calls, events, releases, store };
 }
@@ -81,7 +79,7 @@ describe("run claim store", () => {
   it("returns null for offline runners, saturated pools, and CAS misses", () => {
     assert.equal(createHarness({ runner: null }).store.claimNextRun("runner_1"), null);
     assert.equal(createHarness({ runner: { ...runner, online: false } }).store.claimNextRun("runner_1"), null);
-    assert.equal(createHarness({ load: { work: 2, supervisors: 2 }, supervisorCapacity: 2 }).store.claimNextRun("runner_1"), null);
+    assert.equal(createHarness({ load: { work: 2 } }).store.claimNextRun("runner_1"), null);
     assert.equal(createHarness({ claimChanges: 0 }).store.claimNextRun("runner_1"), null);
   });
 
@@ -129,19 +127,4 @@ describe("run claim store", () => {
     assert.deepEqual(missingEvent[3], { bundleId: "wfb_gone" });
   });
 
-  it("uses the supervisor pool separately from work capacity", () => {
-    const supervisorRun = { ...queuedRun, id: "run_sup", capabilitySlug: "run-smithers" };
-
-    assert.equal(createHarness({
-      load: { work: 2, supervisors: 0 },
-      runs: [queuedRun, supervisorRun],
-      supervisorCapacity: 1
-    }).store.claimNextRun("runner_1").run.id, "run_sup");
-
-    assert.equal(createHarness({
-      load: { work: 0, supervisors: 1 },
-      runs: [supervisorRun],
-      supervisorCapacity: 1
-    }).store.claimNextRun("runner_1"), null);
-  });
 });

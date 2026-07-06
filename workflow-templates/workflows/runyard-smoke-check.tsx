@@ -31,7 +31,7 @@ export default smithers((ctx) => (
           const checks = [
             { name: "workflow-rendered", ok: true, detail: "Smithers rendered and executed this task." },
             { name: "runner-env", ok: Boolean(process.env.HOME || process.cwd()), detail: process.cwd() },
-            { name: "hub-url-configured", ok: Boolean(process.env.RUN_SMITHERS_HUB_URL || process.env.RUNYARD_HUB_URL || process.env.SMITHERS_HUB_URL || process.env.HUB_URL), detail: "Hub URL env is available when run by RunYard runner." }
+            { name: "hub-url-configured", ok: Boolean(process.env.RUNYARD_HUB_URL || process.env.SMITHERS_HUB_URL || process.env.HUB_URL), detail: "Hub URL env is available when run by RunYard runner." }
           ];
           const ok = checks.every((check) => check.ok);
           return {

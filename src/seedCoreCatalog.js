@@ -84,16 +84,6 @@ export const seedAgents = [
     skillSlugs: ["visual-design", "storyboarding"]
   },
   {
-    slug: "smithers-watcher",
-    name: "Smithers Watcher",
-    description:
-      "Retired helper agent for historical run-smithers wrapper runs. Kept for old run lineage and tests; not used for new workflow execution.",
-    instructions:
-      "Compatibility only. Do not use this agent for new runs. Historical run-smithers records may still need lineage, fingerprint, or approval payload interpretation.",
-    tools: ["hub-api", "files"],
-    skillSlugs: ["smithers-supervision"]
-  },
-  {
     slug: "product-manager",
     name: "Product Manager (with taste)",
     description:
@@ -171,17 +161,6 @@ export const seedSkills = [
     description: "How agents should map a content idea into visual panels.",
     body:
       "Choose a format, shot, setting, and focal subject before image prompting. Keep panel text readable on mobile, avoid crowded pages for social feeds, and make every visual detail serve the joke or story hook."
-  },
-  {
-    slug: "smithers-supervision",
-    name: "Smithers Supervision",
-    description:
-      "How the run-smithers watcher should wrap and supervise a child workflow without silently masking failure.",
-    body:
-      "Treat every wrapped workflow as one supervised attempt. Record child run id, capability, current/failed step, checkpoint when available, retry attempts, and the normalized error fingerprint for every terminal child transition. " +
-      "Only promote the supervising run to success when the child workflow itself reaches a terminal `succeeded` state with output. " +
-      "Resume from a checkpoint when the child run carries one; otherwise re-queue the child with the same input. " +
-      "After three identical normalized error fingerprints, stop autonomous retry and create an approval with three concrete options: retry with the same input, approve a revised input/recovery plan, or abandon the wrapped goal."
   },
   {
     slug: "product-review",

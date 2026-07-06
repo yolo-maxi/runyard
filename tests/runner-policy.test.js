@@ -4,8 +4,7 @@ import { RUN_FAILURE_CLASSES } from "../src/runFailureClass.js";
 import {
   hasExplicitNoChangeRationale,
   largeInputPayload,
-  productiveOutcomeFailure,
-  runSmithersSupervisionFailure
+  productiveOutcomeFailure
 } from "../src/runnerPolicy.js";
 
 describe("runner policy helpers", () => {
@@ -47,15 +46,6 @@ describe("runner policy helpers", () => {
         { baseline: { repoDir: "/repo" }, commit: { files: [] }, review: { improvements: [], summary: "Already clean." } }
       ),
       null
-    );
-  });
-
-  it("surfaces run-smithers non-success outcomes as runner failures", () => {
-    assert.equal(runSmithersSupervisionFailure({ slug: "hello" }, { supervise: { outcome: "needs_recovery" } }), "");
-    assert.equal(runSmithersSupervisionFailure({ slug: "run-smithers" }, { supervise: { outcome: "succeeded" } }), "");
-    assert.match(
-      runSmithersSupervisionFailure({ slug: "run-smithers" }, { supervise: { outcome: "needs_recovery", summary: "child failed" } }),
-      /needs_recovery.*child failed/
     );
   });
 });

@@ -60,7 +60,7 @@ function harness(overrides = {}) {
     dispatchRun: (capability, input, options) => {
       const run = { id: `run_${dispatched.length + 1}`, capabilitySlug: capability.slug, input, status: "queued" };
       dispatched.push({ capability, input, options, run });
-      return { run, supervising: overrides.supervising };
+      return { run };
     },
     getCapability: (slug) => capabilities.get(slug) || null,
     getSchedule: (id) => schedules.get(id) || null,
@@ -94,7 +94,7 @@ describe("schedule route helpers", () => {
     const body = scheduleRunNowResponse({
       result: {
         run: { id: "run_1", status: "queued" },
-        dispatched: { supervising: { supervisorRunId: "run_supervisor" } }
+        dispatched: { run: { id: "run_1", status: "queued" } }
       },
       schedule: {
         id: "sched_1",
@@ -107,7 +107,6 @@ describe("schedule route helpers", () => {
     });
 
     assert.deepEqual(body.run, { id: "run_1", status: "queued", deepLink: "/app#runs/run_1" });
-    assert.deepEqual(body.supervising, { supervisorRunId: "run_supervisor" });
     assert.equal(body.schedule.id, "sched_1");
     assert.equal(body.statusUrl, "/api/runs/run_1");
     assert.equal(body.deepLink, "/app#runs/run_1");
@@ -237,8 +236,7 @@ describe("schedule route helpers", () => {
 
   it("runs schedules immediately through the route handler", async () => {
     const { handlers, notifications } = harness({
-      pendingApprovals: [{ id: "approval_1", runId: "run_1" }],
-      supervising: { supervisor: "run-smithers" }
+      pendingApprovals: [{ id: "approval_1", runId: "run_1" }]
     });
     const res = response();
 
@@ -246,7 +244,6 @@ describe("schedule route helpers", () => {
 
     assert.equal(res.statusCode, 202);
     assert.equal(res.body.run.deepLink, "/app#runs/run_1");
-    assert.deepEqual(res.body.supervising, { supervisor: "run-smithers" });
     assert.equal(res.body.statusUrl, "/api/runs/run_1");
     assert.equal(res.body.deepLink, "/app#runs/run_1");
     assert.deepEqual(notifications, [{ id: "approval_1", runId: "run_1" }]);

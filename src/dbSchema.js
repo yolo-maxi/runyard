@@ -131,10 +131,8 @@ export const DB_SCHEMA_SQL = `
     created_at TEXT NOT NULL
   );
 
-  -- Self-heal lineage: one row per hub-supervisor decision (resume / repair /
-  -- escalate / give_up) on a run. Lets the dashboard show *why* a run was
-  -- re-dispatched and guarantees we can audit (and never silently loop) the
-  -- reconcile loop's actions. Append-only.
+  -- Historical lineage table retained for existing databases. No active
+  -- runtime path writes supervisor decisions after supervisor removal.
   CREATE TABLE IF NOT EXISTS run_lineage (
     id TEXT PRIMARY KEY,
     run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
@@ -359,7 +357,6 @@ export const DB_SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_run_response_endpoints_status ON run_response_endpoints(delivery_status);
   CREATE INDEX IF NOT EXISTS idx_schedules_due ON schedules(enabled, next_run_at);
   CREATE INDEX IF NOT EXISTS idx_run_lineage_run ON run_lineage(run_id, created_at);
-  -- The hub-supervisor failed-recoverable scan filters on status + recency; an
-  -- index keeps the reconcile tick cheap as the runs table grows.
+  -- Status/recency lookups are common in maintenance and run-history paths.
   CREATE INDEX IF NOT EXISTS idx_runs_status_updated ON runs(status, updated_at);
 `;

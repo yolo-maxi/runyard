@@ -10,9 +10,9 @@ import { z } from "zod/v4";
 import { resolveImproveRepo } from "./improve-repo.js";
 import { createAgentFallbackPair, resolveAgentCli } from "./agent-fallback.js";
 
-// The implementation step queues child Hub runs the same way run-smithers does,
-// so it needs the Hub URL + token on the runner. Plan-only (execute=false) runs
-// never call the Hub, so a missing token only blocks actual dispatch.
+// The implementation step queues child Hub runs, so it needs the Hub URL +
+// token on the runner. Plan-only (execute=false) runs never call the Hub, so a
+// missing token only blocks actual dispatch.
 const HUB_URL = String(
   process.env.PRODUCT_WORKFLOW_HUB_URL ||
     process.env.SMITHERS_HUB_URL ||
@@ -381,7 +381,7 @@ async function recoverAgentJsonFromEvents(runId, nodeId, expectedKeys) {
         // is what lets us recover the structured output the strategist
         // actually produced when the persisted task output came through empty
         // (loose-schema defaults + best-effort sibling-DB recovery under
-        // supervision). Without it, dispatch throws
+        // approval). Without it, dispatch throws
         // "prioritize produced no structured items" even when the agent did
         // emit a valid prioritizedFeatures array.
         const recovered = objectFromMaybeJson(
@@ -462,7 +462,7 @@ function assertResearchReady(normalized) {
         "upstream 'research' produced no structured competitors (missing: competitors). " +
         "The research agent likely returned non-JSON output, the node persisted with null fields, " +
         "and event-log recovery (NodeOutput/AgentEvent for nodeId='research') also found nothing usable. " +
-        "Fail fast so supervision can classify + repair rather than silently reporting zero competitors."
+        "Fail fast rather than silently reporting zero competitors."
     );
   }
   return normalized;
@@ -577,7 +577,7 @@ export default smithers((ctx) => {
           <Task id="researchReady" output={outputs.researchReady} retries={0}>
             {/* Upstream stage: do not gate on empty competitors. Persisted output
                 may be empty (loose-schema defaults) and event-log recovery is
-                best-effort under supervision (sibling DB). Only the final
+                best-effort in a sibling DB. Only the final
                 prioritize stage gates dispatch. */}
             {async () => assertResearchReady(normalizeResearch(await hydratedStage(research, ctx.runId, "research", ["competitors"])))}
           </Task>

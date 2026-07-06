@@ -15,7 +15,7 @@ import {
   verifyTelegramWebAppInitData
 } from "./telegramWebAppAuth.js";
 import { sanitizeForDisplay } from "./approvalPresentation.js";
-import { createHubRepairDispatcher, createRunDispatcher } from "./runDispatch.js";
+import { createRunDispatcher } from "./runDispatch.js";
 import { createSecretHandlers } from "./secretsRoutes.js";
 import { createTokenHandlers } from "./tokenRoutes.js";
 import { maybeRecordFailureClassAlert as maybeRecordFailureAlert } from "./failureAlerts.js";
@@ -59,7 +59,6 @@ export function createServerComposition({
     DEFAULT_HIDDEN_RUN_SLUGS,
     countWorkflowEndpointInvocations,
     dashboardStats,
-    findActiveSupervisorByToken,
     findRecentWorkflowEndpointInvocation,
     getArtifact,
     getApproval,
@@ -91,7 +90,6 @@ export function createServerComposition({
     listCapabilityVersionsFromRuns,
     listKnowledge,
     listRunEvents,
-    listRunLineage,
     listRuns,
     listSkills,
     listWorkflowBundles,
@@ -99,9 +97,7 @@ export function createServerComposition({
     pruneDeadRunners,
     publishWorkflowBundle,
     reapStuckRunIds,
-    reconcileFailedRecoverable,
     reconcileRepairChildTerminal,
-    reconcileSupervisedChildTerminals,
     reconcileRunnerActiveRuns,
     runApprovalHold,
     recordWorkflowEndpointInvocation,
@@ -172,16 +168,7 @@ export function createServerComposition({
   });
 
   const dispatchRun = createRunDispatcher({
-    addRunEvent,
-    createRun,
-    findActiveSupervisorByToken,
-    getCapability
-  });
-
-  const dispatchHubRepair = createHubRepairDispatcher({
-    addRunEvent,
-    createRun,
-    getCapability
+    createRun
   });
 
   const {
@@ -256,7 +243,6 @@ export function createServerComposition({
     hiddenRunSlugs: DEFAULT_HIDDEN_RUN_SLUGS,
     listArtifacts,
     listRunEvents,
-    listRunLineage,
     listRunResponseEndpointsForRun,
     listRuns,
     presentRunResponseEndpoint,
@@ -460,13 +446,10 @@ export function createServerComposition({
   });
 
   return {
-    dispatchHubRepair,
     fireDueSchedules: (nowIso) => scheduleHandlers.fireDueSchedules(nowIso),
     notifyTelegram,
     pruneDeadRunners,
     reapStuckRunsWithRetrospectives,
-    reconcileFailedRecoverable,
-    reconcileSupervisedChildTerminals,
     reconcileRunnerActiveRuns,
     sweepSupersededApprovals,
     sweepTimedApprovals: sweepTimedApprovalsAndUpdateTelegram,

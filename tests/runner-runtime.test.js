@@ -7,28 +7,19 @@ import {
   activeRunnerLoad,
   authOkFor,
   hasClaimCapacity,
-  isSupervisorCapability,
   materializeAgentRuntimePack,
   materializeWorkflowBundle,
   preflightAssignment,
-  preflightImproveRepo,
-  supervisorConcurrencyLimit
+  preflightImproveRepo
 } from "../src/runnerRuntime.js";
 import { workflowBundleSha256 } from "../src/workflowBundleRecords.js";
 
 describe("runner runtime helpers", () => {
-  it("classifies supervisor capability and capacity pools", () => {
-    assert.equal(isSupervisorCapability({ slug: "run-smithers" }), true);
-    assert.equal(isSupervisorCapability({ slug: "hello" }), false);
-    const kinds = new Map([
-      ["run_1", "work"],
-      ["run_2", "supervisor"],
-      ["run_3", "work"]
-    ]);
-    assert.deepEqual(activeRunnerLoad(kinds), { work: 2, supervisors: 1 });
-    assert.equal(supervisorConcurrencyLimit(4, 0.5), 2);
-    assert.equal(hasClaimCapacity(kinds, 2, 1), true);
-    assert.equal(hasClaimCapacity(new Map([["a", "work"], ["b", "supervisor"]]), 1, 1), false);
+  it("tracks direct work capacity", () => {
+    const activeRuns = new Set(["run_1", "run_2"]);
+    assert.deepEqual(activeRunnerLoad(activeRuns), { work: 2 });
+    assert.equal(hasClaimCapacity(activeRuns, 3), true);
+    assert.equal(hasClaimCapacity(activeRuns, 2), false);
   });
 
   it("reports missing CLI auth only when a capability needs that provider", () => {

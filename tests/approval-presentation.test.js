@@ -149,7 +149,7 @@ describe("approval presentation helpers", () => {
     assert.equal(declared.ask.derived, false);
     assert.equal(declared.ask.action, "Pick the skin direction.");
     assert.equal(declared.ask.reason, "The author requires a human choice.");
-    assert.equal(declared.ask.audienceLabel, "Anyone supervising runs");
+    assert.equal(declared.ask.audienceLabel, "Anyone operating runs");
     assert.equal(declared.proposedAction, "Pick the skin direction.");
 
     const derived = approvalContext({

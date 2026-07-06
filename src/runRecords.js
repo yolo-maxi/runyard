@@ -22,9 +22,8 @@ export function normalizeRun(row) {
     // existing path (RUNYARD_CAPABILITY_VERSIONING unset); see src/runExecution.js.
     capabilitySha: row.capability_sha || null,
     parentRunId: row.parent_run_id || null,
-    // Hub-supervisor self-heal counters (docs/design/hub-supervisor.md):
-    // attempt counts resume re-dispatches, repairCount counts one-shot code
-    // repairs. Both stay 0 for runs the supervisor never touched.
+    // Historical columns retained for old databases; no active runtime path
+    // mutates them after supervisor removal.
     attempt: Number(row.attempt) || 0,
     repairCount: Number(row.repair_count) || 0,
     createdAt: row.created_at,
@@ -89,16 +88,6 @@ export function runOwnerTokenQuery(runId) {
        JOIN runners ON runners.id = runs.runner_id
       WHERE runs.id = ?`,
     params: [runId]
-  };
-}
-
-export function activeSupervisorRunsQuery() {
-  return {
-    sql: `SELECT * FROM runs
-      WHERE capability_slug = 'run-smithers'
-        AND status NOT IN ('succeeded', 'failed', 'cancelled')
-      ORDER BY created_at DESC LIMIT 200`,
-    params: []
   };
 }
 

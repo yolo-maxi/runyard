@@ -117,17 +117,6 @@ describe("Workflow source + code viewer", () => {
     assert.ok(data.code.includes("run-knowledge-report.md"));
   });
 
-  it("returns a clean graph for the run-smithers supervisor workflow", async () => {
-    const data = await api("/api/capabilities/run-smithers/source");
-    assert.equal(data.available, true);
-    assert.equal(data.slug, "run-smithers");
-    assert.match(data.path, /workflow-templates\/workflows\/run-smithers\.tsx$/);
-    const taskIds = data.graph.nodes.filter((node) => node.kind !== "entry").map((node) => node.id);
-    assert.ok(taskIds.includes("supervise"));
-    assert.ok(taskIds.includes("superviseGate"));
-    assert.ok(data.graph.edges.find((edge) => edge.source === "workflow"));
-  });
-
   it("returns a PM-then-builder graph for the improve workflow", async () => {
     const data = await api("/api/capabilities/improve/source");
     assert.equal(data.available, true);

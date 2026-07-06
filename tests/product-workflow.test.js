@@ -121,8 +121,7 @@ describe("Product Workflow capability", () => {
     assert.match(src, /function assertResearchReady/);
     assert.match(src, /assertResearchReady\(normalizeResearch\(await hydratedStage\(research/);
     // The actionable error must name the workflow, the failing node, the
-    // schema, and the missing fields so the supervising watcher (and the
-    // operator) can act on it.
+    // schema, and the missing fields so the operator can act on it.
     assert.match(src, /product-workflow node 'researchReady'/);
     assert.match(src, /schema researchOut/);
     assert.match(src, /missing: competitors/);
@@ -220,14 +219,13 @@ describe("Product Workflow capability", () => {
     assert.deepEqual(oneCompetitor.openQuestions, []);
   });
 
-  it("queues directly without the run-smithers envelope", async () => {
+  it("queues directly without a wrapper envelope", async () => {
     const created = await api("/api/capabilities/product-workflow/run", {
       method: "POST",
       body: { input: { context: "tiny", maxFeatures: 1 } }
     });
     assert.equal(created.run.capabilitySlug, "product-workflow", "stays visible as the requested workflow");
     assert.equal(created.run.actualCapabilitySlug, undefined, "executes directly with no hidden wrapper");
-    assert.equal(created.supervising, undefined);
   });
 
   it("queues immediately without a separate visible start approval", async () => {

@@ -2221,54 +2221,6 @@ describe("Failure / cancellation diagnostics", () => {
     assert.doesNotMatch(text, /shub_AAAABBBBCCCCDDDDEEEE/);
   });
 
-  it("surfaces hub-supervisor self-heal lineage and counters on run detail", async () => {
-    const created = await api("/api/capabilities/hello/run", {
-      method: "POST",
-      body: { input: { goal: "self-heal visibility" } }
-    });
-    const runId = created.run.id;
-
-    // Fresh runs expose zeroed counters and an empty history.
-    const before = await api(`/api/runs/${runId}`);
-    assert.equal(before.run.attempt, 0);
-    assert.equal(before.run.repairCount, 0);
-    assert.deepEqual(before.lineage, []);
-
-    // Simulate two hub-supervisor decisions (what adjudicateRun records).
-    recordRunLineage(runId, {
-      attempt: 1,
-      action: "resume",
-      reason: "runner runner_a offline (no heartbeat)",
-      fingerprint: "",
-      prevRunnerId: "runner_a",
-      checkpoint: "run-12345"
-    });
-    recordRunLineage(runId, {
-      attempt: 1,
-      action: "escalate",
-      reason: "max attempts reached",
-      fingerprint: "TypeError: boom",
-      prevRunnerId: "runner_b",
-      checkpoint: null
-    });
-
-    const detail = await api(`/api/runs/${runId}`);
-    assert.equal(detail.lineage.length, 2);
-    // Both rows can land in the same millisecond, so look entries up by
-    // action instead of relying on created_at tiebreak order.
-    const resume = detail.lineage.find((entry) => entry.action === "resume");
-    const escalate = detail.lineage.find((entry) => entry.action === "escalate");
-    assert.ok(resume && escalate);
-    assert.equal(resume.runId, runId);
-    assert.equal(resume.action, "resume");
-    assert.equal(resume.attempt, 1);
-    assert.equal(resume.prevRunnerId, "runner_a");
-    assert.equal(resume.checkpoint, "run-12345");
-    assert.ok(resume.createdAt);
-    assert.equal(escalate.action, "escalate");
-    assert.equal(escalate.fingerprint, "TypeError: boom");
-  });
-
   it("surfaces approval comments as the cancellation reason when an approval rejected the run", async () => {
     const { created, approval } = await createCheckpointApproval("implement-change-gated", {
       workPrompt: "diagnostics for changes_requested",
@@ -2422,7 +2374,6 @@ describe("Smart Contract Audit capability", () => {
     assert.equal(created.run.status, "queued");
     assert.equal(created.run.capabilitySlug, "smart-contract-audit");
     assert.equal(created.run.actualCapabilitySlug, undefined);
-    assert.equal(created.supervising, undefined);
     assert.equal(created.run.supervision, undefined);
     assert.equal(created.run.input.target, smokeFixture);
     assert.equal(created.run.input.maxAgents, 1);
@@ -2487,7 +2438,7 @@ describe("Idea to Product capability", () => {
     assert.equal(cap.approvalPolicy.required, true);
   });
 
-  it("queues directly without a supervising run-smithers wrapper", async () => {
+  it("queues idea-to-product directly without a wrapper", async () => {
     const created = await api("/api/capabilities/idea-to-product/run", {
       method: "POST",
       body: { input: { idea: "A tiny dashboard for tracking launch chores", deploy: false } }
@@ -2495,12 +2446,10 @@ describe("Idea to Product capability", () => {
     assert.equal(created.run.status, "queued");
     assert.equal(created.run.capabilitySlug, "idea-to-product");
     assert.equal(created.run.actualCapabilitySlug, undefined);
-    assert.equal(created.supervising, undefined);
     assert.equal(created.run.supervision, undefined);
     assert.equal(created.run.input.idea, "A tiny dashboard for tracking launch chores");
     assert.equal(created.run.input.wrappedCapability, undefined);
     assert.equal(created.run.input.wrappedInput, undefined);
-    assert.equal(created.run.input.__supervisionToken, undefined);
     const approval = (await api("/api/approvals?status=pending")).approvals.find((item) => item.runId === created.run.id);
     assert.equal(approval, undefined);
   });
@@ -2583,7 +2532,6 @@ describe("App Skinner capability", () => {
     assert.equal(created.run.status, "queued");
     assert.equal(created.run.capabilitySlug, "app-skinner");
     assert.equal(created.run.actualCapabilitySlug, undefined);
-    assert.equal(created.supervising, undefined);
     assert.equal(created.run.supervision, undefined);
     const approval = (await api("/api/approvals?status=pending")).approvals.find((item) => item.runId === created.run.id);
     assert.equal(approval, undefined);
@@ -2655,7 +2603,6 @@ describe("Run Knowledge Builder capability", () => {
     assert.equal(created.run.status, "queued");
     assert.equal(created.run.capabilitySlug, "run-knowledge-builder");
     assert.equal(created.run.actualCapabilitySlug, undefined);
-    assert.equal(created.supervising, undefined);
     assert.equal(created.run.supervision, undefined);
     const approval = (await api("/api/approvals?status=pending")).approvals.find((item) => item.runId === created.run.id);
     assert.equal(approval, undefined);
@@ -2696,7 +2643,7 @@ describe("Improve capability", () => {
     assert.equal(cap.approvalPolicy.required, true);
   });
 
-  it("queues directly without a supervising run-smithers wrapper", async () => {
+  it("queues improve directly without a wrapper", async () => {
     const created = await api("/api/capabilities/improve/run", {
       method: "POST",
       body: { input: { target: "Run log usability", context: "Logs are too noisy" } }
@@ -2704,13 +2651,11 @@ describe("Improve capability", () => {
     assert.equal(created.run.status, "queued");
     assert.equal(created.run.capabilitySlug, "improve");
     assert.equal(created.run.actualCapabilitySlug, undefined);
-    assert.equal(created.supervising, undefined);
     assert.equal(created.run.supervision, undefined);
     assert.equal(created.run.input.target, "Run log usability");
     assert.equal(created.run.input.context, "Logs are too noisy");
     assert.equal(created.run.input.wrappedCapability, undefined);
     assert.equal(created.run.input.wrappedInput, undefined);
-    assert.equal(created.run.input.__supervisionToken, undefined);
     const approval = (await api("/api/approvals?status=pending")).approvals.find((item) => item.runId === created.run.id);
     assert.equal(approval, undefined);
   });
@@ -2847,20 +2792,6 @@ describe("Run log usability", () => {
     assert.match(styles.data, /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
   });
 
-  it("keeps supervised child attempts out of the default top-level runs view", async () => {
-    // The supervised-child filtering helpers now live in web/lib/runHelpers.js,
-    // and the "hidden child attempts" notice in web/views/Home.jsx.
-    const runHelpers = readFileSync(path.join(process.cwd(), "web", "lib", "runHelpers.js"), "utf8");
-    const home = readFileSync(path.join(process.cwd(), "web", "views", "Home.jsx"), "utf8");
-    assert.match(runHelpers, /isSupervisedChildRun/);
-    assert.match(runHelpers, /topLevelRuns/);
-    assert.match(runHelpers, /run-smithers wrapper/);
-    assert.match(home, /supervised child attempt/);
-
-    const styles = await raw("/public/styles.css");
-    assert.equal(styles.status, 200);
-    assert.match(styles.data, /supervised-child-summary/);
-  });
 });
 
 // --- Runner pool & queue visibility -----------------------------------------
@@ -2911,10 +2842,8 @@ describe("Runner pool capacity & queue visibility", () => {
       claims.push(await api(`/api/runners/${reg.runner.id}/next-run`));
     }
     // Work runs are capped at the runner's capacity. We count only the hello work
-    // runs we created here — the shared test DB may also have queued run-smithers
-    // supervisor runs, which draw from a SEPARATE pool (so a supervisor can't
-    // occupy a work slot its own child needs) and are intentionally not limited
-    // by the work capacity.
+    // runs we created here because the shared test DB may also have unrelated
+    // queued runs.
     const claimedHello = claims.filter((c) => c?.run && runs.includes(c.run.id)).map((c) => c.run.id);
     assert.equal(claimedHello.length, 3);
 

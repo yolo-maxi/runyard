@@ -62,7 +62,7 @@ describe("approval ask contract", () => {
 
   it("humanizes audiences for display", () => {
     assert.equal(humanizeApprovalAudience("admins"), "Admins");
-    assert.equal(humanizeApprovalAudience("operators"), "Anyone supervising runs");
-    assert.equal(humanizeApprovalAudience(""), "Anyone supervising runs");
+    assert.equal(humanizeApprovalAudience("operators"), "Anyone operating runs");
+    assert.equal(humanizeApprovalAudience(""), "Anyone operating runs");
   });
 });

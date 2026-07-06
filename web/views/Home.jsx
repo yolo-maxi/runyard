@@ -6,7 +6,6 @@ import { api } from "../lib/api.js";
 import { useHashRoute, useNavigate, deepLinks } from "../lib/router.js";
 import { useNow } from "../lib/storage.js";
 import {
-  topLevelRuns, supervisedChildRuns,
   timeRangeToSinceISO, truncate, RUN_STATUS_OPTIONS, TIME_RANGE_OPTIONS
 } from "../lib/runHelpers.js";
 import { groupRunsByEndedDate } from "../lib/runGrouping.js";
@@ -315,9 +314,7 @@ export function Home() {
     navigate("#onboarding");
   }, [filtersActive, dashQ.isSuccess, dashQ.data, runners.length, runs.length, navigate]);
 
-  const baseRuns = filtersActive ? runs : topLevelRuns(runs);
-  const visibleRuns = baseRuns;
-  const hiddenSupervised = filtersActive ? [] : supervisedChildRuns(runs);
+  const visibleRuns = runs;
   // Single chronological list — active + historical share row chrome.
   const allGroups = groupRunsByEndedDate(visibleRuns, now, filters.order);
   // Counts per status from the already-loaded runs — reactive to filter/refetch
@@ -362,11 +359,6 @@ export function Home() {
         </div>
       ) : (
         <>
-          {hiddenSupervised.length ? (
-            <p className="supervised-child-summary muted">
-              {hiddenSupervised.length} supervised child attempt{hiddenSupervised.length === 1 ? "" : "s"} hidden from this top-level view. Open the parent run to inspect wrapper retries and repair lineage.
-            </p>
-          ) : null}
           {filtersActive && !visibleRuns.length ? (
             <p className="muted">No runs match the current filters. <a href="#runs">Clear filters</a> to see everything.</p>
           ) : (

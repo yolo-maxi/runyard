@@ -41,8 +41,6 @@ export function editRerunRun(run) {
   }
   const input = run.input && typeof run.input === "object" && !Array.isArray(run.input) ? { ...run.input } : {};
   delete input.__origin;
-  delete input.__supervisionToken;
-  delete input.__supervisedChild;
   delete input.rerunOf;
   try {
     sessionStorage.setItem(

@@ -10,7 +10,7 @@
 // Instead we pass only the OS/toolchain baseline a child needs to run at all.
 // Everything a workflow legitimately needs beyond that reaches it through the
 // EXPLICIT channels the launch code already uses: the Hub-injected, allowlisted
-// per-run `secretEnv`, the supervisor hub URL/token, and the run identifiers.
+// per-run `secretEnv`, the Hub URL/token, and the run identifiers.
 // Ambient passthrough of the host's environment is exactly the leak we close.
 export const CHILD_ENV_ALLOWLIST = new Set([
   // Process/runtime basics — the shell and toolchain don't run without these.

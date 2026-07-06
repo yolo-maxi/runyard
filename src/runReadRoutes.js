@@ -16,7 +16,6 @@ export function createRunReadHandlers({
   hiddenRunSlugs = [],
   listArtifacts,
   listRunEvents,
-  listRunLineage = () => [],
   listRunResponseEndpointsForRun,
   listRuns,
   presentRunResponseEndpoint,
@@ -68,7 +67,6 @@ export function createRunReadHandlers({
         artifacts: linkedRunArtifacts(run),
         decorateSingleRun,
         events: runEvents(run),
-        lineage: listRunLineage(run.id),
         listRunResponseEndpointsForRun,
         presentRunResponseEndpoint,
         run,
@@ -137,7 +135,6 @@ export function runDetailPayload({
   artifacts,
   decorateSingleRun,
   events,
-  lineage = [],
   listRunResponseEndpointsForRun,
   presentRunResponseEndpoint,
   run,
@@ -147,15 +144,12 @@ export function runDetailPayload({
   const responseEndpoints = listRunResponseEndpointsForRun(run.id).map(presentRunResponseEndpoint);
   return {
     run: decorateSingleRun(run),
-    // True while a human decision is pending on this run (its own approval card
-    // or a supervised child in waiting_approval). Runners use this to defer
-    // their execution deadline instead of timing the run out under the human.
+    // True while a human decision is pending on this run. Runners use this to
+    // defer their execution deadline instead of timing the run out under the
+    // human.
     approvalHold: Boolean(approvalHold),
     events,
     artifacts,
-    // Hub-supervisor self-heal history (run_lineage rows): one entry per
-    // resume / repair / escalate / give_up decision, oldest first.
-    lineage,
     responseEndpoints,
     diagnostics: runDiagnostics(run, events, artifacts),
     logSummary: summarizeRunEvents(events),

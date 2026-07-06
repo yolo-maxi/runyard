@@ -14,7 +14,6 @@ import {
 import { executionIntentFromInput } from "./runExecution.js";
 import { quickFailedStep, quickReasonHint } from "./runDiagnostics.js";
 import { runOutcomeSummary } from "./runOutcomePresentation.js";
-import { SUPERVISOR_CAPABILITY_SLUG, stripSupervisionInternals } from "./supervision.js";
 
 export {
   cleanStringList,
@@ -57,55 +56,8 @@ export function normalizeSupervisionLineage(value) {
 
 export function runPresentation(run, deps = {}) {
   if (!run || typeof run !== "object") return { run, input: {}, output: null, supervision: null };
-  const storedInput = run.input && typeof run.input === "object" && !Array.isArray(run.input) ? run.input : {};
-  const rawInput = stripSupervisionInternals(run.input || {});
-  const rawOutput = run.output && typeof run.output === "object" && !Array.isArray(run.output) ? run.output : null;
-  const superviseOutput = rawOutput?.outputs?.supervise && typeof rawOutput.outputs.supervise === "object" && !Array.isArray(rawOutput.outputs.supervise)
-    ? rawOutput.outputs.supervise
-    : rawOutput;
-  const isHubSupervisionEnvelope = typeof storedInput.__supervisionToken === "string" && storedInput.__supervisionToken.trim();
-  const wrappedCapability = run.capabilitySlug === SUPERVISOR_CAPABILITY_SLUG && isHubSupervisionEnvelope && typeof rawInput.wrappedCapability === "string"
-    ? rawInput.wrappedCapability.trim()
-    : "";
-  if (!wrappedCapability) {
-    return { run, input: rawInput, output: run.output, supervision: null };
-  }
-
-  const wrappedInput = rawInput.wrappedInput && typeof rawInput.wrappedInput === "object" && !Array.isArray(rawInput.wrappedInput)
-    ? stripSupervisionInternals(rawInput.wrappedInput)
-    : {};
-  const wrappedCapabilityRecord = deps.getCapability?.(wrappedCapability);
-  const childRunId = typeof superviseOutput?.wrappedRunId === "string"
-    ? superviseOutput.wrappedRunId
-    : typeof superviseOutput?.wrapped_run_id === "string"
-      ? superviseOutput.wrapped_run_id
-      : "";
-  const childRun = childRunId ? deps.getRun?.(childRunId) : null;
-  const childOutput = childRun && childRun.output !== undefined ? childRun.output : null;
-  const lineage = normalizeSupervisionLineage(superviseOutput?.lineage);
-  const effectiveRun = {
-    ...run,
-    capabilitySlug: wrappedCapability,
-    capabilityName: wrappedCapabilityRecord?.name || wrappedCapability,
-    input: wrappedInput,
-    output: childOutput
-  };
-  return {
-    run: effectiveRun,
-    input: wrappedInput,
-    output: childOutput,
-    supervision: {
-      supervisorRunId: run.id,
-      supervisorCapabilitySlug: SUPERVISOR_CAPABILITY_SLUG,
-      childRunId,
-      wrappedCapability,
-      wrappedCapabilityName: wrappedCapabilityRecord?.name || wrappedCapability,
-      outcome: superviseOutput?.outcome || "",
-      attempts: lineage.length,
-      lineage,
-      ...(superviseOutput?.approval ? { approval: superviseOutput.approval } : {})
-    }
-  };
+  const rawInput = run.input && typeof run.input === "object" && !Array.isArray(run.input) ? run.input : {};
+  return { run, input: rawInput, output: run.output, supervision: null };
 }
 
 export function runOrigin(run) {

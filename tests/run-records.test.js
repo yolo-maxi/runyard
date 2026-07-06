@@ -1,7 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
-  activeSupervisorRunsQuery,
   approvalPolicyRequiresRunStartApproval,
   normalizeRun,
   normalizeRunEvent,
@@ -154,17 +153,10 @@ describe("run record helpers", () => {
     });
   });
 
-  it("builds run lookup and active supervisor queries", () => {
+  it("builds run lookup queries", () => {
     assert.deepEqual(runLookupQuery("run_1"), {
       sql: "SELECT * FROM runs WHERE id = ?",
       params: ["run_1"]
-    });
-    assert.deepEqual(activeSupervisorRunsQuery(), {
-      sql: `SELECT * FROM runs
-      WHERE capability_slug = 'run-smithers'
-        AND status NOT IN ('succeeded', 'failed', 'cancelled')
-      ORDER BY created_at DESC LIMIT 200`,
-      params: []
     });
   });
 

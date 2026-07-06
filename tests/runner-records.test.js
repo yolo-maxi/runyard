@@ -162,13 +162,12 @@ describe("runner record helpers", () => {
       sql: "DELETE FROM runners WHERE id = ?",
       params: ["runner_1"]
     });
-    assert.deepEqual(runnerLoadQuery({ runnerId: "runner_1", supervisorCapabilitySlug: "run-smithers" }), {
+    assert.deepEqual(runnerLoadQuery({ runnerId: "runner_1" }), {
       sql: `SELECT
-        COALESCE(SUM(CASE WHEN capability_slug = ? THEN 1 ELSE 0 END), 0) AS supervisors,
-        COALESCE(SUM(CASE WHEN capability_slug = ? THEN 0 ELSE 1 END), 0) AS work
+        COUNT(*) AS work
        FROM runs
       WHERE runner_id = ? AND status IN ('assigned','running')`,
-      params: ["run-smithers", "run-smithers", "runner_1"]
+      params: ["runner_1"]
     });
   });
 

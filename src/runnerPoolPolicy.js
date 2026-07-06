@@ -13,11 +13,6 @@ export function clampActiveRuns(value, capacity) {
   return Math.min(Math.max(Number(value) || 0, 0), capacity);
 }
 
-export function supervisorPoolSizeForCapacity(capacity, ratio = 1) {
-  const cap = normalizeRunnerCapacity(capacity, 1);
-  return Math.max(1, Math.ceil(cap * (ratio || 1)));
-}
-
 export function runnerHealthSummary({ live, capacity, load, authHealth }) {
   const issues = [];
   let score = 100;

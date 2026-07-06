@@ -1,59 +1,5 @@
 export const seedCoreCapabilities = [
   {
-    slug: "run-smithers",
-    name: "run-smithers (supervising wrapper)",
-    description:
-      "Retired supervising wrapper kept only for historical run compatibility. New RunYard workflows execute directly; do not start new runs through run-smithers.",
-    category: "Retired",
-    keywords: ["run-smithers", "watcher", "supervisor", "wrapper", "recovery", "lineage", "core", "smithers"],
-    inputSchema: {
-      type: "object",
-      required: ["wrappedCapability"],
-      properties: {
-        wrappedCapability: {
-          type: "string",
-          description: "Slug of the child capability/workflow to wrap (e.g. 'implement', 'research')."
-        },
-        wrappedInput: {
-          type: "object",
-          description: "Input object forwarded to the wrapped capability. Schema depends on the wrapped capability."
-        },
-        goal: {
-          type: "string",
-          description: "Plain-language description of the outcome the watcher is trying to finish."
-        },
-        maxAttempts: {
-          type: "number",
-          description: "Max child-run attempts before requesting approval (default 8, hard ceiling)."
-        },
-        fingerprintThreshold: {
-          type: "number",
-          description: "Number of identical normalized error fingerprints before requesting approval (default 3)."
-        },
-        maxCodeRepairs: {
-          type: "number",
-          description: "Max bounded workflow-code repairs per supervised child before escalating (default 1; 0 disables self-correction)."
-        }
-      }
-    },
-    outputSchema: {
-      type: "object",
-      properties: {
-        outcome: { type: "string", description: "succeeded | needs_recovery | abandoned" },
-        wrappedRunId: { type: "string", description: "The child run id that produced the final outcome." },
-        lineage: { type: "array", description: "Ordered child-run attempts the watcher recorded." },
-        repairs: { type: "array", description: "Workflow-code repair attempts the watcher made (file, synced, testPassed)." },
-        approval: { type: "object", description: "Approval request payload when the watcher escalated." }
-      }
-    },
-    requiredRunnerTags: ["smithers", "vps"],
-    requiredSkills: ["smithers-supervision"],
-    requiredAgents: ["smithers-watcher"],
-    approvalPolicy: { required: false },
-    enabled: false,
-    workflow: { engine: "smithers", entry: ".smithers/workflows/run-smithers.tsx" }
-  },
-  {
     slug: "hello",
     name: "Hello (Smithers proof)",
     description: "Minimal Smithers workflow: spawns the local Claude Code CLI and returns a structured answer. Proves real on-runner execution.",

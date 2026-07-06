@@ -34,13 +34,11 @@ describe("server composition", () => {
       startedAt: 123
     });
 
-    assert.equal(typeof composition.dispatchHubRepair, "function");
     assert.equal(typeof composition.fireDueSchedules, "function");
     assert.equal(typeof composition.notifyTelegram, "function");
     assert.equal(typeof composition.telegramApprovalTarget, "function");
     assert.equal(typeof composition.reapStuckRunsWithRetrospectives, "function");
     assert.equal(typeof composition.pruneDeadRunners, "function");
-    assert.equal(typeof composition.reconcileFailedRecoverable, "function");
     assert.equal(typeof composition.reconcileRunnerActiveRuns, "function");
 
     assert.deepEqual(Object.keys(composition.routes).sort(), [

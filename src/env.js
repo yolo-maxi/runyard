@@ -96,24 +96,11 @@ export const env = {
   runnerPruneMs: Number(process.env.SMITHERS_RUNNER_PRUNE_MS || 24 * 60 * 60_000),
   // Running/assigned runs are considered stalled if they emit no event within this window. 0 disables.
   runStallMs: Number(process.env.SMITHERS_RUN_STALL_MS || 15 * 60_000),
-  // Retired run-smithers compatibility: historical supervisor rows still use a
-  // separate pool so old in-flight wrappers cannot deadlock normal work during
-  // rollout. New runs are dispatched directly and should not consume this pool.
-  supervisorSlotRatio: (() => {
-    const raw = Number(process.env.SMITHERS_SUPERVISOR_SLOT_RATIO);
-    return Number.isFinite(raw) && raw > 0 ? raw : 1.0;
-  })(),
   // Express trust-proxy setting. Default 'loopback' so X-Forwarded-For can't be spoofed by clients.
   // Set to a proxy IP/subnet, a hop count, or 'true' only behind a trusted reverse proxy.
   trustProxy: parseTrustProxy(process.env.SMITHERS_TRUST_PROXY),
   // Optional max-runtime backstop for the reaper. Heartbeat/stall liveness is primary; 0 disables.
   runDeadlineMs: Number(process.env.SMITHERS_RUN_DEADLINE_MS || 0),
-  // Phase 2 hub-as-supervisor code repair. When ON, a deterministic workflow-code
-  // failure on a recoverable run triggers ONE bounded `implement-change-gated`
-  // repair before the hub resumes it. OFF (default) → such failures escalate to
-  // an operator approval card instead. Default off: the on-box Codex CLI auth is
-  // currently expired, so an auto-repair agent would just fail; escalate is safe.
-  hubSupervisorRepairEnabled: parseBool(process.env.HUB_SUPERVISOR_REPAIR_ENABLED, false),
   // Best-effort terminal run obstruction analysis. If no provider/API key is
   // configured, the artifact pass is skipped; deterministic retrospectives
   // still run normally.

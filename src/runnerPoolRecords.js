@@ -25,7 +25,6 @@ export function runnerPoolSummary({ counts, runners }) {
   const live = allRunners.filter((runner) => runner.online);
   const totalCapacity = live.reduce((sum, runner) => sum + (runner.capacity || 0), 0);
   const totalActive = live.reduce((sum, runner) => sum + (runner.workRuns || 0), 0);
-  const totalSupervisors = live.reduce((sum, runner) => sum + (runner.supervisorRuns || 0), 0);
   const unhealthyRunners = allRunners.filter((runner) => runner.health?.state === "unhealthy" || runner.health?.state === "offline").length;
   const degradedRunners = allRunners.filter((runner) => runner.health?.state === "degraded").length;
   return {
@@ -35,7 +34,6 @@ export function runnerPoolSummary({ counts, runners }) {
     waitingApproval: counts.waitingApproval,
     totalCapacity,
     totalActive,
-    totalSupervisors,
     availableSlots: Math.max(0, totalCapacity - totalActive),
     onlineRunners: live.length,
     runners: allRunners.length,

@@ -1,6 +1,4 @@
-import { parseMaybeJson } from "./dbNormalization.js";
 import {
-  activeSupervisorRunsQuery,
   normalizeRun,
   normalizeRunEvent,
   runEventInsertQuery,
@@ -20,19 +18,6 @@ export function createRunStore({ all, one, run, id, now, visibleRunWhere = "" })
   function getRun(runId) {
     const query = runLookupQuery(runId);
     return normalizeRun(one(query.sql, query.params));
-  }
-
-  function findActiveSupervisorByToken(token, wrappedCapability = "") {
-    const clean = String(token || "").trim();
-    if (!clean) return null;
-    const query = activeSupervisorRunsQuery();
-    for (const row of all(query.sql, query.params)) {
-      const input = parseMaybeJson(row.input, {});
-      if (input?.__supervisionToken !== clean) continue;
-      if (wrappedCapability && input?.wrappedCapability !== wrappedCapability) continue;
-      return normalizeRun(row);
-    }
-    return null;
   }
 
   function listRuns({
@@ -96,7 +81,6 @@ export function createRunStore({ all, one, run, id, now, visibleRunWhere = "" })
   return {
     addRunEvent,
     countRuns,
-    findActiveSupervisorByToken,
     getRun,
     listCapabilityVersionsFromRuns,
     listRunEvents,

@@ -11,7 +11,7 @@ import { truncate } from "./presentation.js";
 
 // Who is expected to answer. Enforcement is a later branch (verb parity /
 // scopes); today the audience is displayed so "who is being asked" stops being
-// unanswerable. `operators` is the default: anyone supervising runs.
+// unanswerable. `operators` is the default: anyone operating runs.
 export const APPROVAL_ASK_AUDIENCES = ["operators", "admins"];
 
 const ACTION_MAX = 500;
@@ -63,6 +63,6 @@ export function approvalAskIncomplete(approval) {
 
 export function humanizeApprovalAudience(audience) {
   if (audience === "admins") return "Admins";
-  if (audience === "operators") return "Anyone supervising runs";
-  return audience || "Anyone supervising runs";
+  if (audience === "operators") return "Anyone operating runs";
+  return audience || "Anyone operating runs";
 }

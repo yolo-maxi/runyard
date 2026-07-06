@@ -198,10 +198,8 @@ describe("schedules: CRUD over the API", () => {
 
 describe("schedules: due evaluation", () => {
   it("fires a due schedule by creating a run, and is idempotent across ticks", async () => {
-    // `hello` opts out of the supervision envelope, so the created run's slug is
-    // deterministic. (Supervised capabilities like `research` are wrapped in a
-    // run-smithers run instead — the same dispatch path a manual run takes,
-    // exercised by the run-now test below.)
+    // The created run's slug is deterministic because scheduled runs use the
+    // same direct dispatch path as manual runs.
     const created = await api("/api/schedules", {
       method: "POST",
       body: { name: "Due now", capabilitySlug: "hello", cron: "*/5 * * * *", input: { topic: "tick" } }

@@ -151,14 +151,13 @@ export function runnerActiveRunsAdjustmentQuery({ runnerId, delta }) {
   };
 }
 
-export function runnerLoadQuery({ runnerId, supervisorCapabilitySlug }) {
+export function runnerLoadQuery({ runnerId }) {
   return {
     sql: `SELECT
-        COALESCE(SUM(CASE WHEN capability_slug = ? THEN 1 ELSE 0 END), 0) AS supervisors,
-        COALESCE(SUM(CASE WHEN capability_slug = ? THEN 0 ELSE 1 END), 0) AS work
+        COUNT(*) AS work
        FROM runs
       WHERE runner_id = ? AND status IN ('assigned','running')`,
-    params: [supervisorCapabilitySlug, supervisorCapabilitySlug, runnerId]
+    params: [runnerId]
   };
 }
 
@@ -201,7 +200,6 @@ export function normalizeRunner(row, { live, load }) {
     capacity,
     activeRuns,
     workRuns: load.work,
-    supervisorRuns: load.supervisors,
     availableSlots: Math.max(0, capacity - load.work),
     health,
     // Per-runner CLI auth health (Codex/Claude). Booleans + expiry + account id

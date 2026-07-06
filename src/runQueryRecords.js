@@ -107,7 +107,6 @@ export function runReapReason(row, {
   runnerOfflineMs = 0,
   nowMs = Date.now(),
   hasPendingApproval = () => false,
-  hasWaitingApprovalSupervisedChild = () => false,
   hasEngineApprovalWait = () => false
 } = {}) {
   if (row.status === "waiting_approval") return null;
@@ -119,16 +118,14 @@ export function runReapReason(row, {
       reason: "runner_offline"
     };
   }
-  // A run blocked on a pending human decision — its own pending approval card,
-  // (run-smithers) a supervised child sitting in waiting_approval, or an
-  // engine-level Smithers <Approval> pause the runner surfaced via
+  // A run blocked on a pending human decision — its own pending approval card
+  // or an engine-level Smithers <Approval> pause the runner surfaced via
   // engine.approval.* events — is never reaped for age. Approvals are blocking
   // by contract: a human being late is a product signal, not a run failure, so
   // neither the stall window nor the max-runtime backstop applies while a
   // decision is pending. A dead runner (heartbeat expired, above) still wins:
-  // that is an infra fact the supervisor adjudicates, not an approval timeout.
+  // that is an infra fact, not an approval timeout.
   if (hasPendingApproval(row.id)) return null;
-  if (row.capability_slug === "run-smithers" && hasWaitingApprovalSupervisedChild(row.id)) return null;
   if (hasEngineApprovalWait(row.id)) return null;
   if (stallMs > 0) {
     const lastEventAt = row.last_event_at || row.started_at || row.assigned_at || row.created_at;
