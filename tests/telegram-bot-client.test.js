@@ -9,6 +9,11 @@ import {
   sendTelegramApprovalNotification
 } from "../src/telegramBotClient.js";
 
+const tinyPng = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
+  "base64"
+);
+
 function okFetch(calls) {
   return async (url, options) => {
     calls.push({ url, options, body: JSON.parse(options.body) });
@@ -68,10 +73,14 @@ describe("telegram bot client", () => {
           runTitle: "",
           kind: "External action"
         });
-        return Buffer.from("png");
+        return tinyPng;
       },
       fetchImpl: async (url, options) => {
-        calls.push({ url, options });
+        calls.push({
+          url,
+          options,
+          photoBytes: Buffer.from(await options.body.get("photo").arrayBuffer())
+        });
         return {
           ok: true,
           status: 200,
@@ -85,6 +94,9 @@ describe("telegram bot client", () => {
     assert.equal(calls[0].options.body.get("chat_id"), "42");
     assert.equal(calls[0].options.body.get("message_thread_id"), "7");
     assert.equal(calls[0].options.body.get("photo").type, "image/png");
+    assert.match(calls[0].photoBytes.toString("utf8"), /RunYard approval visual/);
+    assert.match(calls[0].photoBytes.toString("utf8"), /Workflow: Deploy production/);
+    assert.match(calls[0].photoBytes.toString("utf8"), /Repo\/project: runyard/);
     assert.match(calls[0].options.body.get("caption"), /<b>⏳ Deploy\?<\/b>/);
     assert.match(calls[0].options.body.get("reply_markup"), /approval:approve:appr_123/);
   });

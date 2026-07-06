@@ -2,6 +2,9 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { truncate } from "./presentation.js";
 
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+let crcTable;
+
 function escapeXml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (char) => {
     return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" }[char];
@@ -42,6 +45,16 @@ export function telegramApprovalVisualSummary(context = {}) {
     runTitle,
     kind: visualKindLabel(context)
   };
+}
+
+export function telegramApprovalVisualAltText(summary = {}) {
+  if (!summary) return "";
+  const parts = ["RunYard approval visual"];
+  if (summary.kind) parts.push(`Type: ${summary.kind}`);
+  if (summary.workflow) parts.push(`Workflow: ${summary.workflow}`);
+  if (summary.repo) parts.push(`Repo/project: ${summary.repo}`);
+  if (summary.runTitle) parts.push(`Run: ${summary.runTitle}`);
+  return `${parts.join(". ")}.`;
 }
 
 function splitLine(text = "", max = 34) {
@@ -96,6 +109,57 @@ export function renderSvgToPng(svg, { convertPath = process.env.RUNYARD_IMAGE_MA
     });
     child.stdin.end(svg);
   });
+}
+
+function crc32(buffer) {
+  if (!crcTable) {
+    crcTable = Array.from({ length: 256 }, (_, index) => {
+      let value = index;
+      for (let bit = 0; bit < 8; bit += 1) {
+        value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+      }
+      return value >>> 0;
+    });
+  }
+  let crc = 0xffffffff;
+  for (const byte of buffer) {
+    crc = crcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type, data = Buffer.alloc(0)) {
+  const typeBuffer = Buffer.from(type, "latin1");
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length, 0);
+  const checksum = Buffer.alloc(4);
+  checksum.writeUInt32BE(crc32(Buffer.concat([typeBuffer, data])), 0);
+  return Buffer.concat([length, typeBuffer, data, checksum]);
+}
+
+function pngTextChunk(keyword, text) {
+  const cleanKeyword = String(keyword || "").replace(/\0/g, "").slice(0, 79);
+  const cleanText = String(text || "").replace(/\0/g, "");
+  if (!cleanKeyword || !cleanText) return null;
+  return pngChunk("iTXt", Buffer.concat([
+    Buffer.from(cleanKeyword, "latin1"),
+    Buffer.from([0, 0, 0, 0, 0]),
+    Buffer.from(cleanText, "utf8")
+  ]));
+}
+
+export function embedPngTextMetadata(png, metadata = {}) {
+  const buffer = Buffer.isBuffer(png) ? png : Buffer.from(png || []);
+  if (buffer.length < 33 || !buffer.subarray(0, 8).equals(PNG_SIGNATURE)) return buffer;
+  const firstLength = buffer.readUInt32BE(8);
+  const firstType = buffer.subarray(12, 16).toString("latin1");
+  if (firstType !== "IHDR") return buffer;
+  const insertAt = 8 + 12 + firstLength;
+  const chunks = Object.entries(metadata)
+    .map(([keyword, text]) => pngTextChunk(keyword, text))
+    .filter(Boolean);
+  if (!chunks.length) return buffer;
+  return Buffer.concat([buffer.subarray(0, insertAt), ...chunks, buffer.subarray(insertAt)]);
 }
 
 export async function renderTelegramApprovalVisual(summary, options = {}) {

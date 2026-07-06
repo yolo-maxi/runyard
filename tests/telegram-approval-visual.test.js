@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  embedPngTextMetadata,
   renderTelegramApprovalVisual,
+  telegramApprovalVisualAltText,
   telegramApprovalVisualSummary,
   telegramApprovalVisualSvg
 } from "../src/telegramApprovalVisual.js";
@@ -39,6 +41,18 @@ describe("telegram approval visual", () => {
     assert.doesNotMatch(svg, /Deploy <prod>/);
   });
 
+  it("describes the visual for accessibility metadata", () => {
+    assert.equal(
+      telegramApprovalVisualAltText({
+        kind: "External action",
+        workflow: "Hello (Smithers proof)",
+        repo: "runyard",
+        runTitle: "Verify attached approval visual"
+      }),
+      "RunYard approval visual. Type: External action. Workflow: Hello (Smithers proof). Repo/project: runyard. Run: Verify attached approval visual."
+    );
+  });
+
   it("renders deterministic SVG to a PNG buffer", async () => {
     const png = await renderTelegramApprovalVisual({
       workflow: "Deploy production",
@@ -46,5 +60,20 @@ describe("telegram approval visual", () => {
       kind: "Side effect"
     });
     assert.equal(png.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
+  });
+
+  it("embeds image text metadata in PNG output", async () => {
+    const png = await renderTelegramApprovalVisual({
+      workflow: "Deploy production",
+      repo: "runyard",
+      kind: "External action"
+    });
+    const withMetadata = embedPngTextMetadata(png, {
+      Title: "Deploy production",
+      Description: "RunYard approval visual. Workflow: Deploy production."
+    });
+    assert.ok(withMetadata.length > png.length);
+    assert.match(withMetadata.toString("utf8"), /Deploy production/);
+    assert.match(withMetadata.toString("utf8"), /RunYard approval visual/);
   });
 });

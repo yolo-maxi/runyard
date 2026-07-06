@@ -5,7 +5,9 @@ import {
   telegramApprovalMessagePayload
 } from "./telegramApprovals.js";
 import {
+  embedPngTextMetadata,
   renderTelegramApprovalVisual,
+  telegramApprovalVisualAltText,
   telegramApprovalVisualSummary
 } from "./telegramApprovalVisual.js";
 
@@ -79,7 +81,13 @@ export async function sendTelegramApprovalPhotoNotification(options = {}) {
   const summary = telegramApprovalVisualSummary(approvalContext(approval));
   if (!summary) return false;
   const message = approvalNotificationPayload(options);
-  const png = await renderApprovalVisual(summary);
+  const renderedPng = await renderApprovalVisual(summary);
+  const visualDescription = telegramApprovalVisualAltText(summary);
+  const png = embedPngTextMetadata(renderedPng, {
+    Title: summary.workflow || summary.repo || "RunYard approval",
+    Description: visualDescription,
+    Comment: visualDescription
+  });
   if (!png?.length) return false;
   const photo = new Blob([png], { type: "image/png" });
   photo.name = "approval.png";
