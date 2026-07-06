@@ -24,7 +24,7 @@ describe("workflow endpoint record helpers", () => {
       name: "Feedback",
       description: "Trusted feedback",
       secret_hash: "hash_1",
-      capability_slug: "improve-no-deploy",
+      capability_slug: "improve",
       project: "runyard",
       repo: "runyard",
       repo_dir: "apps/web",
@@ -40,7 +40,7 @@ describe("workflow endpoint record helpers", () => {
 
     const endpoint = normalizeWorkflowEndpoint(row);
     assert.equal(endpoint.slug, "feedback");
-    assert.equal(endpoint.capabilitySlug, "improve-no-deploy");
+    assert.equal(endpoint.capabilitySlug, "improve");
     assert.deepEqual(endpoint.config, { target: "mobile" });
     assert.equal(endpoint.secretConfigured, true);
     assert.equal("secretHash" in endpoint, false);
@@ -52,7 +52,7 @@ describe("workflow endpoint record helpers", () => {
     const payload = workflowEndpointPayload({
       input: {
         slug: "feedback",
-        capabilitySlug: "improve-no-deploy",
+        capabilitySlug: "improve",
         maxPayloadBytes: 5,
         rateLimitCount: 0,
         rateLimitWindowMs: 100,
@@ -136,7 +136,7 @@ describe("workflow endpoint record helpers", () => {
 
   it("builds endpoint upsert queries", () => {
     const payload = workflowEndpointPayload({
-      input: { slug: "feedback", capabilitySlug: "improve-no-deploy" },
+      input: { slug: "feedback", capabilitySlug: "improve" },
       secretHash: "hash",
       timestamp: "2026-01-01T00:00:00.000Z"
     });

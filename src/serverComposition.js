@@ -76,6 +76,7 @@ export function createServerComposition({
     getSchedule,
     updateSchedule,
     setScheduleEnabled,
+    deleteCapability,
     deleteSchedule,
     listDueSchedules,
     claimScheduleFire,
@@ -251,6 +252,7 @@ export function createServerComposition({
     publishWorkflowBundle,
     recordAudit,
     root: env.root,
+    deleteCapability,
     upsertCapability,
     env
   });

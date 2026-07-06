@@ -8,7 +8,7 @@ import { Toolbar } from "../components/ui.jsx";
 
 // Starter workflows offered at the end of the wizard. Inlined from the legacy
 // WORKFLOW_TEMPLATES list — "Use template" POSTs the full template to
-// /api/capabilities, then routes to the new workflow.
+// /api/workflows, then routes to the new workflow.
 const WORKFLOW_TEMPLATES = [
   {
     slug: "hello-world",
@@ -54,7 +54,7 @@ function TemplateCard({ template }) {
   async function use() {
     setBusy(true);
     try {
-      await api("/api/capabilities", { method: "POST", body: template });
+      await api("/api/workflows", { method: "POST", body: template });
       toast(`Created ${template.name}`, "ok");
       navigate(`#workflows/${template.slug}`);
     } catch (error) {

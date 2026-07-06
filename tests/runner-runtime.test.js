@@ -37,7 +37,7 @@ describe("runner runtime helpers", () => {
   it("preflights workflow entry, auth, and improve repo resolution", () => {
     const temp = mkdtempSync(path.join(os.tmpdir(), "runner-runtime-"));
     assert.deepEqual(preflightAssignment({}, { slug: "hello" }, "", { workspace: temp, health: {} }), [
-      "capability hello has no workflow.entry"
+      "workflow hello has no workflow.entry"
     ]);
     assert.match(preflightAssignment({}, { slug: "hello" }, "missing.tsx", { workspace: temp, health: {} })[0], /workflow file not found/);
     assert.match(preflightImproveRepo({ input: {} }, { slug: "improve" }, {
@@ -135,7 +135,7 @@ describe("runner runtime helpers", () => {
     // Payload carrying a different bundle than the capability references.
     assert.throws(
       () => materializeWorkflowBundle({ id: "run_1" }, capability, { ...bundle, id: "wfb_other" }, { workspace: temp }),
-      /capability deploy references wfb_1/
+      /workflow deploy references wfb_1/
     );
     // Stored hash disagreeing with the shipped bytes blocks execution.
     assert.throws(

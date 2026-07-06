@@ -2,6 +2,7 @@ import { cpSync, existsSync, mkdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { WORKFLOW_TEMPLATE_INCLUDE_PATHS } from "./workflowTemplateIncludes.js";
 
 export const RUNNER_SETUP_COMMANDS = ["node", "bun", "smithers", "claude", "codex", "pi"];
 
@@ -54,9 +55,15 @@ export function setupRunnerWorkspace(
   }
 
   if (existsSyncFn(templateRoot)) {
-    cpSyncFn(path.join(templateRoot, "workflows"), path.join(ws, ".smithers", "workflows"), { recursive: true });
-    cpSyncFn(path.join(templateRoot, "examples"), path.join(ws, ".smithers", "examples"), { recursive: true });
-    log("Added Hub workflow templates (hello, fan-out-fan-in).");
+    const appRoot = path.dirname(templateRoot);
+    for (const relative of WORKFLOW_TEMPLATE_INCLUDE_PATHS) {
+      const source = path.join(appRoot, relative);
+      if (!existsSyncFn(source)) continue;
+      const target = path.join(ws, relative.replace(/^workflow-templates\//, ".smithers/"));
+      mkdirSyncFn(path.dirname(target), { recursive: true });
+      cpSyncFn(source, target);
+    }
+    log("Added release-candidate workflow templates.");
   }
 
   log(`\n✓ Workspace ready. Start the runner:\n  runyard runner start --workspace ${ws} --location ${location}`);

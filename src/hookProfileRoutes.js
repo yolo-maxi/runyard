@@ -27,15 +27,15 @@ export function createHookProfileHandlers({
     // Discovery. Admins (with ?all=1) see every profile including disabled
     // ones, with full config + readiness. Everyone else sees enabled profiles
     // in the caller shape only — no paths, remotes, URLs, or secret names.
-    // ?capability=<slug> narrows to profiles that capability may select.
+    // ?workflow=<slug> narrows to profiles that workflow may select.
     listHookProfiles(req, res) {
       const admin = isAdmin(req);
       const includeDisabled = admin && req.query.all === "1";
       let profiles = listHookProfiles({ includeDisabled });
-      const capabilitySlug = String(req.query.capability || "").trim();
+      const capabilitySlug = String(req.query.workflow || req.query.capability || "").trim();
       if (capabilitySlug) {
         const capability = getCapability(capabilitySlug);
-        if (!capability) return res.status(404).json({ error: "capability not found" });
+        if (!capability) return res.status(404).json({ error: "workflow not found" });
         profiles = eligibleHookProfiles({ capability, profiles });
       }
       res.json({
@@ -47,8 +47,7 @@ export function createHookProfileHandlers({
       const profile = getHookProfile(req.params.slug);
       if (!profile) return res.status(404).json({ error: "hook profile not found" });
       if (isAdmin(req)) return res.json({ hookProfile: withReadiness(profile) });
-      // Disabled profiles are invisible to non-admin callers, same as
-      // disabled capabilities.
+      // Disabled profiles are invisible to non-admin callers.
       if (!profile.enabled) return res.status(404).json({ error: "hook profile not found" });
       res.json({ hookProfile: presentHookProfileForCaller(profile) });
     },

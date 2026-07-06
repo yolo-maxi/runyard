@@ -6,6 +6,7 @@ import {
   runnerPrerequisiteSummary,
   setupRunnerWorkspace
 } from "../src/cliRunnerSetup.js";
+import { WORKFLOW_TEMPLATE_INCLUDE_PATHS } from "../src/workflowTemplateIncludes.js";
 
 function output() {
   const lines = [];
@@ -95,7 +96,7 @@ describe("CLI runner setup helpers", () => {
           spawns.push(args);
           return { status: 0 };
         },
-        existsSyncFn: (file) => file === templateRoot,
+        existsSyncFn: (file) => file === templateRoot || WORKFLOW_TEMPLATE_INCLUDE_PATHS.some((relative) => file === path.join("/repo", relative)),
         cpSyncFn: (...args) => copies.push(args),
         templateRoot,
         log: logs.write
@@ -103,13 +104,13 @@ describe("CLI runner setup helpers", () => {
     );
 
     assert.deepEqual(result, { ok: true, workspace });
-    assert.deepEqual(mkdirs, [[workspace, { recursive: true }]]);
+    assert.deepEqual(mkdirs[0], [workspace, { recursive: true }]);
     assert.deepEqual(spawns, [["smithers", ["init"], { cwd: workspace, stdio: "inherit" }]]);
-    assert.deepEqual(copies, [
-      [path.join(templateRoot, "workflows"), path.join(workspace, ".smithers", "workflows"), { recursive: true }],
-      [path.join(templateRoot, "examples"), path.join(workspace, ".smithers", "examples"), { recursive: true }]
-    ]);
-    assert.ok(logs.lines.some((line) => line.includes("Added Hub workflow templates")));
+    assert.deepEqual(copies, WORKFLOW_TEMPLATE_INCLUDE_PATHS.map((relative) => [
+      path.join("/repo", relative),
+      path.join(workspace, relative.replace(/^workflow-templates\//, ".smithers/"))
+    ]));
+    assert.ok(logs.lines.some((line) => line.includes("Added release-candidate workflow templates")));
     assert.ok(logs.lines.some((line) => line.includes(`runyard runner start --workspace ${workspace} --location local`)));
   });
 

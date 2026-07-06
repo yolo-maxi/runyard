@@ -48,14 +48,14 @@ async function hubGet(apiPath) {
 }
 
 // Pull the live Hub data relevant to this turn: the workflow catalog (always —
-// small + high value), the full definition of any capability the operator named,
+// small + high value), the full definition of any workflow the operator named,
 // and any run id they referenced. Returned as a text block appended to the
 // prompt so the model has real data to answer from.
 async function gatherRelevantHubData(input) {
   if (!READ_ENABLED) return "";
   // Match against what the operator actually asked (their last message) plus a
   // few focused context fields — NOT the whole context blob, which mentions many
-  // capabilities from recent runs and would pull in the wrong/too-many defs and
+  // workflows from recent runs and would pull in the wrong/too-many defs and
   // bloat the prompt (slowing the model badly).
   const lastUser = [...(input.messages || [])].reverse().find((m) => m?.role === "user");
   const ctx = input.context || {};
@@ -63,11 +63,11 @@ async function gatherRelevantHubData(input) {
   const haystack = `${typeof lastUser?.content === "string" ? lastUser.content : ""} ${focus}`;
   const blocks = [];
 
-  const capsRaw = await hubGet("capabilities");
+  const capsRaw = await hubGet("workflows");
   let caps = [];
   if (capsRaw) {
     try {
-      caps = (JSON.parse(capsRaw).capabilities || []).filter((c) => c?.slug);
+      caps = (JSON.parse(capsRaw).workflows || []).filter((c) => c?.slug);
     } catch {
       /* ignore */
     }
@@ -76,10 +76,10 @@ async function gatherRelevantHubData(input) {
   const matched = caps.filter((c) => new RegExp(`\\b${c.slug.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&")}\\b`, "i").test(haystack));
   const runIds = [...new Set(haystack.match(/run_[0-9a-f]{6,}/g) || [])].slice(0, 2);
 
-  // Inject the FULL definition of any capability the operator named.
+  // Inject the FULL definition of any workflow the operator named.
   for (const c of matched.slice(0, 2)) {
-    const def = await hubGet(`capabilities/${encodeURIComponent(c.slug)}`);
-    if (def) blocks.push(`Full definition of capability "${c.slug}":\n${def.slice(0, 4500)}`);
+    const def = await hubGet(`workflows/${encodeURIComponent(c.slug)}`);
+    if (def) blocks.push(`Full definition of workflow "${c.slug}":\n${def.slice(0, 4500)}`);
   }
   for (const rid of runIds) {
     const run = await hubGet(`runs/${rid}`);
@@ -92,7 +92,7 @@ async function gatherRelevantHubData(input) {
     const list = caps
       .map((c) => `- ${c.slug}: ${(c.name || "").trim()}${c.description ? ` — ${String(c.description).slice(0, 80)}` : ""}`)
       .join("\n");
-    blocks.push(`Workflow catalog (${caps.length} capabilities):\n${list.slice(0, 2500)}`);
+    blocks.push(`Workflow catalog (${caps.length} workflows):\n${list.slice(0, 2500)}`);
   }
 
   return blocks.length ? `\n\nLive Hub data fetched for this question:\n${blocks.join("\n\n")}` : "";

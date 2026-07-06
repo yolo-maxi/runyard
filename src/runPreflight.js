@@ -7,8 +7,8 @@
 // registered-runner tags); no agent, no supervisor, no network calls.
 //
 // The result is the negotiation contract shared by:
-//   POST /api/capabilities/:id/preflight        (stateless report)
-//   POST /api/capabilities/:id/run  {negotiate}  (enqueue only when ready)
+//   POST /api/workflows/:id/preflight        (stateless report)
+//   POST /api/workflows/:id/run  {negotiate}  (enqueue only when ready)
 //   /api/run-drafts                               (create → patch → submit)
 //
 //   status     ready | needs_input | blocked
@@ -57,8 +57,8 @@ export function normalizeRunTitle(value) {
     .slice(0, MAX_TITLE_LENGTH);
 }
 
-// Deterministic advisory title: "<Capability name>: <first schema'd string
-// input value>" when one exists, else "<Capability name> run". Never random,
+// Deterministic advisory title: "<Workflow name>: <first schema'd string
+// input value>" when one exists, else "<Workflow name> run". Never random,
 // never model-generated — the caller can accept or replace it.
 export function suggestRunTitle(capability, input = {}) {
   const name = capability?.name || capability?.slug || "Run";
@@ -116,15 +116,15 @@ export function evaluateRunPreflight({ capability, input, options = {}, context 
     check(`input_${field}`, "needs_input", ask);
   };
 
-  // --- capability -------------------------------------------------------------
+  // --- workflow ---------------------------------------------------------------
   if (!capability) {
-    blocker("capability_not_found", "capability not found");
+    blocker("workflow_not_found", "workflow not found");
     return finalize({ capability: null, input: {}, options, checks, questions, blockers, warnings, suggestedDefaults });
   }
   if (!capability.enabled) {
-    blocker("capability_disabled", `capability ${capability.slug} is disabled; an admin can re-enable it via PATCH /api/capabilities/${capability.slug}`);
+    blocker("workflow_disabled", `workflow ${capability.slug} is disabled; an admin can re-enable it via PATCH /api/workflows/${capability.slug}`);
   } else {
-    check("capability_enabled", "pass", `capability ${capability.slug} exists and is enabled`);
+    check("workflow_enabled", "pass", `workflow ${capability.slug} exists and is enabled`);
   }
 
   // --- input shape ------------------------------------------------------------
@@ -263,7 +263,7 @@ export function evaluateRunPreflight({ capability, input, options = {}, context 
     const eligibleSlugs = new Set(eligible.map((profile) => profile.slug));
     const blockedHooks = requestedHooks.filter((slug) => !eligibleSlugs.has(slug));
     if (blockedHooks.length) {
-      blocker("hook_blocked", `requested post-run hook profiles are not enabled/allowed for this capability: ${blockedHooks.join(", ")}. An admin manages hook profiles via /api/hooks.`, {
+      blocker("hook_blocked", `requested post-run hook profiles are not enabled/allowed for this workflow: ${blockedHooks.join(", ")}. An admin manages hook profiles via /api/hooks.`, {
         blocked: blockedHooks,
         eligible: [...eligibleSlugs]
       });
@@ -276,7 +276,7 @@ export function evaluateRunPreflight({ capability, input, options = {}, context 
   const bundleId = workflowBundleReference(capability);
   const entry = String(capability.workflow?.entry || "").trim();
   if (!bundleId && !entry) {
-    blocker("workflow_entry_missing", `capability ${capability.slug} has no workflow.entry and no workflow.bundleId; the runner would fail preflight`);
+    blocker("workflow_entry_missing", `workflow ${capability.slug} has no workflow.entry and no workflow.bundleId; the runner would fail preflight`);
   } else {
     let source = null;
     let bundleMissing = false;
@@ -312,7 +312,7 @@ function finalize({ capability, input, execution = null, checks, questions, bloc
       ? RUN_PREFLIGHT_NEEDS_INPUT
       : RUN_PREFLIGHT_READY;
   const nextAction = status === RUN_PREFLIGHT_READY
-    ? "Preflight is green: enqueue via POST /api/capabilities/{id}/run, or submit the draft via POST /api/run-drafts/{id}/submit."
+    ? "Preflight is green: enqueue via POST /api/workflows/{id}/run, or submit the draft via POST /api/run-drafts/{id}/submit."
     : status === RUN_PREFLIGHT_NEEDS_INPUT
       ? "Answer questions[] (PATCH the draft input, or amend the request input) and re-run preflight."
       : "Resolve blockers[] first — these are operator/config problems that more input cannot fix.";

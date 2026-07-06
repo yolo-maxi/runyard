@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLiveQuery } from "@tanstack/react-db";
-import { capabilitiesCollection } from "../lib/collections.js";
+import { workflowsCollection } from "../lib/collections.js";
 import { api } from "../lib/api.js";
 import { deepLinks, useNavigate } from "../lib/router.js";
 import { useMe, meIsAdmin } from "../lib/me.js";
@@ -16,7 +16,7 @@ import { Toolbar, ShareButton } from "../components/ui.jsx";
 // Ported 1:1 from legacy AGENT_TABS. `link` builds the deep link for an item.
 const AGENT_TABS = [
   { key: "agents", label: "Agents", endpoint: "agents", blurb: "Personas that combine skills + knowledge to handle workflows.", link: (slug) => deepLinks.agent(slug) },
-  { key: "skills", label: "Skills", endpoint: "skills", blurb: "Reusable capabilities your agents can call on.", link: (slug) => deepLinks.skill(slug) },
+  { key: "skills", label: "Skills", endpoint: "skills", blurb: "Reusable workflow skills your agents can call on.", link: (slug) => deepLinks.skill(slug) },
   { key: "knowledge", label: "Knowledge", endpoint: "knowledge", blurb: "Documents and references agents draw from.", link: (slug) => deepLinks.knowledgeItem(slug) }
 ];
 
@@ -172,8 +172,8 @@ export function Agents({ tab = "agents", slug }) {
   });
   const items = listQuery.data?.[listKey(meta.endpoint)] || [];
 
-  // Live capabilities for the "Used by" backlinks (knowledge has none).
-  const { data: capabilities = [] } = useLiveQuery((q) => capabilitiesCollection);
+  // Live workflows for the "Used by" backlinks (knowledge has none).
+  const { data: capabilities = [] } = useLiveQuery((q) => workflowsCollection);
   const caps = meta.key === "knowledge" ? [] : capabilities;
 
   const singular = meta.label.replace(/s$/, "");

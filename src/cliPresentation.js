@@ -10,7 +10,7 @@ export function renderMenu(data, { json = false, all = false } = {}) {
   const caps = data.capabilities || [];
   const shown = all ? caps : caps.slice(0, 5);
   if (shown.length) {
-    lines.push("", "Capabilities:");
+    lines.push("", "Workflows:");
     shown.forEach((cap, index) => lines.push(`  ${index + 1}. ${cap.slug}\t${cap.name}`));
     if (!all && caps.length > shown.length) {
       lines.push(`  …${caps.length - shown.length} more — run \`runyard menu --all\` for the full catalog`);

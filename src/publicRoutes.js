@@ -38,7 +38,7 @@ export function createPublicHandlers({
   function hubMenuPayload(req) {
     return buildHubMenuPayload({
       baseUrl: publicUrl(req),
-      capabilities: listCapabilities().map(withCapabilityLinks),
+      workflows: listCapabilities().map(withCapabilityLinks),
       pool: runnerPoolStats()
     });
   }

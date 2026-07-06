@@ -1,6 +1,7 @@
 import {
   capabilityDefinitionHash,
   capabilityDefinitionHashUpdateQuery,
+  capabilityDisableQuery,
   capabilityIdQuery,
   capabilityInsertQuery,
   capabilityListQuery,
@@ -16,7 +17,9 @@ import {
 export function createCapabilityStore({ all, one, run, id, now }) {
   function listCapabilities({ q = "", includeDisabled = false } = {}) {
     const query = capabilityListQuery({ q, includeDisabled });
-    return all(query.sql, query.params).map(normalizeCapability);
+    return all(query.sql, query.params)
+      .map(normalizeCapability)
+      .filter((capability) => includeDisabled || !capability.supervision?.internal);
   }
 
   function getCapability(slugOrId) {
@@ -72,7 +75,18 @@ export function createCapabilityStore({ all, one, run, id, now }) {
     return getCapability(input.slug);
   }
 
+  function deleteCapability(slugOrId) {
+    const existing = getCapability(slugOrId);
+    if (!existing) return null;
+    if (!existing.enabled) return existing;
+    const query = capabilityDisableQuery({ slug: existing.slug, updatedAt: now() });
+    run(query.sql, query.params);
+    snapshotCapability(existing.id);
+    return getCapability(existing.slug);
+  }
+
   return {
+    deleteCapability,
     getCapability,
     listCapabilities,
     upsertCapability

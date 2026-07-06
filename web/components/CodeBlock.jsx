@@ -27,7 +27,7 @@ function ensureRegistered() {
   hljs.registerLanguage("markdown", markdown);
 }
 
-// Map a source `language` value (as returned by /api/capabilities/:id/source)
+// Map a source `language` value (as returned by /api/workflows/:id/source)
 // onto a registered hljs grammar — ts/tsx → typescript, js/jsx → javascript.
 function resolveLanguage(language) {
   if (language === "tsx" || language === "ts") return "typescript";

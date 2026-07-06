@@ -50,7 +50,7 @@ export function Content({ me }) {
   if (view === "home" || view === "runs" || view === "dashboard") {
     return <Home />;
   }
-  if (view === "workflows" || view === "capabilities") {
+  if (view === "workflows" || view === "workflows") {
     return segments[1] ? (
       <WorkflowDetail key={segments[1]} slug={segments[1]} sub={segments[2] || ""} />
     ) : (

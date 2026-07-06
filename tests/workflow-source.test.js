@@ -64,7 +64,7 @@ describe("Workflow source + code viewer", () => {
   });
 
   it("returns source, parsed metadata, sections, and a graph for a real workflow", async () => {
-    const data = await api("/api/capabilities/implement-change-gated/source");
+    const data = await api("/api/workflows/implement-change-gated/source");
     assert.equal(data.available, true);
     assert.equal(data.slug, "implement-change-gated");
     assert.match(data.path, /workflow-templates\/workflows\/implement-change-gated\.tsx$/);
@@ -93,7 +93,7 @@ describe("Workflow source + code viewer", () => {
   });
 
   it("returns a metadata-only graph when source is missing", async () => {
-    const data = await api("/api/capabilities/hello/source");
+    const data = await api("/api/workflows/hello/source");
     if (!data.available) {
       assert.equal(data.slug, "hello");
       assert.ok(data.graph.nodes.length >= 2);
@@ -104,21 +104,22 @@ describe("Workflow source + code viewer", () => {
     assert.ok(data.graph.nodes.find((node) => node.kind === "entry"));
   });
 
-  it("returns source and graph metadata for the run knowledge builder workflow", async () => {
-    const data = await api("/api/capabilities/run-knowledge-builder/source");
+  it("returns source and graph metadata for the idea-to-product workflow", async () => {
+    const data = await api("/api/workflows/idea-to-product/source");
     assert.equal(data.available, true);
-    assert.equal(data.slug, "run-knowledge-builder");
-    assert.match(data.path, /workflow-templates\/workflows\/run-knowledge-builder\.tsx$/);
-    assert.equal(data.metadata.displayName, "Run Knowledge Builder");
+    assert.equal(data.slug, "idea-to-product");
+    assert.match(data.path, /workflow-templates\/workflows\/idea-to-product\.tsx$/);
+    assert.equal(data.metadata.displayName, "Idea to Product");
     const taskIds = data.graph.nodes.filter((node) => node.kind !== "entry").map((node) => node.id);
-    assert.ok(taskIds.includes("gather"));
-    assert.ok(taskIds.includes("analyze"));
-    assert.ok(taskIds.includes("report"));
-    assert.ok(data.code.includes("run-knowledge-report.md"));
+    assert.ok(taskIds.includes("expand"));
+    assert.ok(taskIds.includes("narrow"));
+    assert.ok(taskIds.includes("build"));
+    assert.ok(taskIds.includes("verify"));
+    assert.ok(data.code.includes("server-backed"));
   });
 
   it("returns a PM-then-builder graph for the improve workflow", async () => {
-    const data = await api("/api/capabilities/improve/source");
+    const data = await api("/api/workflows/improve/source");
     assert.equal(data.available, true);
     assert.equal(data.slug, "improve");
     assert.equal(data.metadata.displayName, "Improve");
@@ -128,15 +129,15 @@ describe("Workflow source + code viewer", () => {
     assert.ok(taskIds.includes("test") && taskIds.includes("commit") && taskIds.includes("push"));
   });
 
-  it("rejects unknown capabilities with 404", async () => {
-    const res = await fetch(`${baseUrl}/api/capabilities/does-not-exist/source`, {
+  it("rejects unknown workflows with 404", async () => {
+    const res = await fetch(`${baseUrl}/api/workflows/does-not-exist/source`, {
       headers: { authorization: `Bearer ${token}` }
     });
     assert.equal(res.status, 404);
   });
 
   it("requires authentication", async () => {
-    const res = await fetch(`${baseUrl}/api/capabilities/hello/source`);
+    const res = await fetch(`${baseUrl}/api/workflows/hello/source`);
     assert.equal(res.status, 401);
   });
 });
@@ -161,7 +162,7 @@ describe("Code viewer + ReactFlow asset surface", () => {
 
     // WorkflowDetail.jsx drives the source endpoint, the tab table, and the
     // "Visual graph" label.
-    assert.match(workflowDetail, /\/api\/capabilities\/.+\/source/);
+    assert.match(workflowDetail, /\/api\/workflows\/.+\/source/);
     assert.match(workflowDetail, /WORKFLOW_TABS/);
     assert.match(workflowDetail, /Visual graph/);
     // The graph canvas renders via @xyflow/react (formerly the vendored ReactFlow bundle).

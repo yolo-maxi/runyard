@@ -161,8 +161,8 @@ describe("public route helpers", () => {
     assert.equal(openApi.body.servers[0].url, "https://hub.example/api");
     assert.equal(menu.body.hub.status, "https://hub.example/api/runs/{runId}");
     assert.deepEqual(menu.body.pool, { idle: 1 });
-    assert.equal(menu.body.capabilities[0].slug, "demo");
-    assert.equal(menu.body.capabilities[0].runWithCli, "runyard run demo --where local --input '{\"title\":\"Short human-readable run title\"}'");
+    assert.equal(menu.body.workflows[0].slug, "demo");
+    assert.equal(menu.body.workflows[0].runWithCli, "runyard run demo --where local --input '{\"title\":\"Short human-readable run title\"}'");
     assert.match(menu.body.runInputGuidance.title, /input\.title/);
   });
 });

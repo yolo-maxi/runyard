@@ -7,11 +7,11 @@ import {
 } from "../src/discoveryDocs.js";
 
 describe("discovery docs", () => {
-  it("builds a menu payload with runnable capability examples", () => {
+  it("builds a menu payload with runnable workflow examples", () => {
     const menu = hubMenuPayload({
       baseUrl: "https://hub.example",
       pool: { online: 1 },
-      capabilities: [{
+      workflows: [{
         slug: "hello",
         name: "Hello",
         description: "Says hi",
@@ -22,9 +22,9 @@ describe("discovery docs", () => {
     });
 
     assert.equal(menu.hub.status, "https://hub.example/api/runs/{runId}");
-    assert.equal(menu.capabilities[0].runWithCli, "runyard run hello --where local --input '{\"title\":\"Short human-readable run title\"}'");
-    assert.deepEqual(menu.capabilities[0].runWithMcp, {
-      tool: "run_capability",
+    assert.equal(menu.workflows[0].runWithCli, "runyard run hello --where local --input '{\"title\":\"Short human-readable run title\"}'");
+    assert.deepEqual(menu.workflows[0].runWithMcp, {
+      tool: "run_workflow",
       arguments: { id: "hello", input: { title: "Short human-readable run title" }, executionMode: "local" }
     });
     assert.match(menu.runInputGuidance.title, /input\.title/);
@@ -46,9 +46,9 @@ describe("discovery docs", () => {
   it("keeps deployment-private details out of the unauthenticated llms.txt", () => {
     const text = renderLlmsTxt("https://hub.example");
 
-    // The live capability catalog is private per-deployment: authenticate first.
+    // The live workflow catalog is private per-deployment: authenticate first.
     assert.match(text, /catalog is private/i);
-    assert.doesNotMatch(text, /Capabilities \(mirrors get_menu\)/);
+    assert.doesNotMatch(text, /Workflows \(mirrors get_menu\)/);
     // No secret-file locations or operator env-var names for anonymous visitors.
     assert.doesNotMatch(text, /bootstrap-token/);
     assert.doesNotMatch(text, /TELEGRAM_BOT_TOKEN/);

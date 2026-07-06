@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLiveQuery } from "@tanstack/react-db";
 import { api } from "../lib/api.js";
-import { capabilitiesCollection } from "../lib/collections.js";
+import { workflowsCollection } from "../lib/collections.js";
 import { deepLinks, navigate } from "../lib/router.js";
 import { relativeTime, formatTimestamp } from "../lib/format.js";
 import { toast } from "../lib/toast.js";
@@ -87,8 +87,8 @@ export function ScheduleEditor({ id = "", onClose }) {
     enabled: editing
   });
 
-  // Workflow picker options via the shared capabilities collection.
-  const { data: capabilities = [] } = useLiveQuery((q) => capabilitiesCollection);
+  // Workflow picker options via the shared workflow collection.
+  const { data: capabilities = [] } = useLiveQuery((q) => workflowsCollection);
 
   const [draft, setDraft] = useState(null);
 

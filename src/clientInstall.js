@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
+import { WORKFLOW_TEMPLATE_INCLUDE_PATHS } from "./workflowTemplateIncludes.js";
 
 export function createCliTarballBuilder({ root, dataDir, exists = existsSync, execFile = execFileSync } = {}) {
   let cliTarballPath = null;
@@ -8,7 +9,9 @@ export function createCliTarballBuilder({ root, dataDir, exists = existsSync, ex
     if (cliTarballPath && exists(cliTarballPath)) return cliTarballPath;
     const out = path.join(dataDir, "cli.tgz");
     const paths = ["bin", "src", "package.json"];
-    if (exists(path.join(root, "workflow-templates"))) paths.push("workflow-templates");
+    for (const file of WORKFLOW_TEMPLATE_INCLUDE_PATHS) {
+      if (exists(path.join(root, file))) paths.push(file);
+    }
     if (exists(path.join(root, "node_modules", "commander"))) paths.push("node_modules/commander");
     execFile("tar", ["czhf", out, "-C", root, ...paths]);
     cliTarballPath = out;
@@ -62,7 +65,7 @@ case ":$PATH:" in
 esac
 echo ""
 echo "Installed. Next:"
-echo "  runyard capabilities      # see what you can run"
+echo "  runyard workflows         # see what you can run"
 echo "  runyard tail <run-id>     # watch a run's unified timeline"
 echo "  runyard mcp install --all # connect every AI agent on this machine"
 `;

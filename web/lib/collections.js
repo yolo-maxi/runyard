@@ -51,11 +51,11 @@ export const runnersCollection = createCollection(
   })
 );
 
-export const capabilitiesCollection = createCollection(
+export const workflowsCollection = createCollection(
   queryCollectionOptions({
     queryClient,
-    queryKey: ["capabilities"],
-    queryFn: async () => (await api("/api/capabilities")).capabilities ?? [],
+    queryKey: ["workflows"],
+    queryFn: async () => (await api("/api/workflows")).workflows ?? [],
     getKey: (c) => c.slug ?? c.id,
     refetchInterval: 60_000
   })

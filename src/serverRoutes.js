@@ -77,6 +77,7 @@ export function registerServerRoutes(app, {
   app.post("/api/workflow-bundles", requireAuth, requireScopes("admin"), workflowBundleHandlers.publishWorkflowBundle);
   app.get("/api/workflow-bundles/:id", requireAuth, workflowBundleHandlers.getWorkflowBundle);
 
+  app.get("/api/workflow-packages/workflows/:id/export", requireAuth, requireScopes("admin"), workflowPackageHandlers.exportWorkflowPackage);
   app.get("/api/workflow-packages/capabilities/:id/export", requireAuth, requireScopes("admin"), workflowPackageHandlers.exportWorkflowPackage);
   app.post("/api/workflow-packages/validate", requireAuth, requireScopes("admin"), workflowPackageHandlers.validateWorkflowPackage);
   app.post("/api/workflow-packages/preview", requireAuth, requireScopes("admin"), workflowPackageHandlers.previewWorkflowPackageImport);
@@ -93,6 +94,16 @@ export function registerServerRoutes(app, {
   app.post("/api/hooks", requireAuth, requireScopes("admin"), hookProfileHandlers.upsertHookProfile);
   app.patch("/api/hooks/:slug", requireAuth, requireScopes("admin"), hookProfileHandlers.upsertHookProfile);
   app.post("/api/hooks/:slug/validate", requireAuth, requireScopes("admin"), hookProfileHandlers.validateHookProfile);
+
+  app.get("/api/workflows", requireAuth, capabilityHandlers.listWorkflows);
+  app.post("/api/workflows", requireAuth, requireScopes("admin"), capabilityHandlers.createWorkflow);
+  app.get("/api/workflows/:id", requireAuth, capabilityHandlers.getWorkflow);
+  app.get("/api/workflows/:name/versions", requireAuth, capabilityHandlers.getWorkflowVersions);
+  app.get("/api/workflows/:id/source", requireAuth, capabilityHandlers.getWorkflowSource);
+  app.patch("/api/workflows/:id", requireAuth, requireScopes("admin"), capabilityHandlers.updateWorkflow);
+  app.delete("/api/workflows/:id", requireAuth, requireScopes("admin"), capabilityHandlers.deleteWorkflow);
+  app.post("/api/workflows/:id/run", requireAuth, requireScopes("api", "mcp"), asyncHandler(capabilityHandlers.runWorkflow));
+  app.post("/api/workflows/:id/preflight", requireAuth, requireScopes("api", "mcp"), capabilityHandlers.preflightWorkflow);
 
   app.get("/api/capabilities", requireAuth, capabilityHandlers.listCapabilities);
   app.post("/api/capabilities", requireAuth, requireScopes("admin"), capabilityHandlers.createCapability);

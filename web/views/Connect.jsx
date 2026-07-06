@@ -89,7 +89,7 @@ export function Connect() {
       <Toolbar title="Connect & Tokens" shareHash={deepLinks.connect()} />
       <section className="panel">
         <h2>Connect agents</h2>
-        <p className="muted">Now that your first capability has run, wire any of these channels. Bin names match the current build — copy and paste verbatim.</p>
+        <p className="muted">Now that your first workflow has run, wire any of these channels. Bin names match the current build — copy and paste verbatim.</p>
         <div className="setup-grid">
           <article className="setup-step">
             <h3>MCP</h3>

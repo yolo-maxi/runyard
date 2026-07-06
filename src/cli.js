@@ -165,20 +165,21 @@ program.command("status").description("Show current Hub identity").action(async 
 program
   .command("menu")
   .alias("discover")
-  .description("Show the next-action menu (top 5 capabilities)")
-  .option("--all", "show the full capability catalog instead of the top 5")
+  .description("Show the next-action menu (top 5 workflows)")
+  .option("--all", "show the full workflow catalog instead of the top 5")
   .action(async (opts) => {
     printMenu(await client(program.opts()).get("/api/menu"), program.opts().json, { all: Boolean(opts.all) });
   });
 
 program
   .command("hooks")
-  .description("List post-run hook profiles (optional side effects run after a capability's gates pass)")
-  .option("--capability <slug>", "show only profiles this capability may select via input.postRunHooks")
+  .description("List post-run hook profiles (optional side effects run after a workflow's gates pass)")
+  .option("--workflow <slug>", "show only profiles this workflow may select via input.postRunHooks")
+  .option("--capability <slug>", "legacy alias for --workflow")
   .option("--all", "include disabled profiles (admin)")
   .action(async (opts) => {
     const query = new URLSearchParams();
-    if (opts.capability) query.set("capability", opts.capability);
+    if (opts.workflow || opts.capability) query.set("workflow", opts.workflow || opts.capability);
     if (opts.all) query.set("all", "1");
     const qs = query.toString();
     const data = await client(program.opts()).get(`/api/hooks${qs ? `?${qs}` : ""}`);
@@ -199,37 +200,38 @@ hookCommand
     print(await client(program.opts()).post(`/api/hooks/${encodeURIComponent(slug)}/validate`, {}), program.opts().json);
   });
 
-program.command("capabilities").description("List capabilities").option("-q, --query <query>").action(async (opts) => {
-  const data = await client(program.opts()).get(`/api/capabilities${opts.query ? `?q=${encodeURIComponent(opts.query)}` : ""}`);
-  print(data.capabilities, program.opts().json);
-});
+function workflowListAction(opts) {
+  return async () => {
+    const data = await client(program.opts()).get(`/api/workflows${opts.query ? `?q=${encodeURIComponent(opts.query)}` : ""}`);
+    print(data.workflows, program.opts().json);
+  };
+}
 
-// `capability` is now a parent command with subcommands so we can hang the
-// new `rollback` action off it cleanly. `describe` keeps the old `capability
-// <id>` behavior; we register a top-level alias below so existing operator
-// muscle memory (`runyard capability <id>`) keeps working.
-const capabilityCommand = program.command("capability").description("Capability commands");
-capabilityCommand
+program.command("workflows").description("List workflows").option("-q, --query <query>").action((opts) => workflowListAction(opts)());
+program.command("capabilities").description("Legacy alias for workflows").option("-q, --query <query>").action((opts) => workflowListAction(opts)());
+
+const workflowCommand = program.command("workflow").description("Workflow commands");
+workflowCommand
   .command("describe <id>")
-  .description("Describe a capability")
+  .description("Describe a workflow")
   .action(async (id) => {
-    print(await client(program.opts()).get(`/api/capabilities/${id}`), program.opts().json);
+    print(await client(program.opts()).get(`/api/workflows/${id}`), program.opts().json);
   });
-capabilityCommand
-  .command("versions <capability>")
-  .description("List capability SHAs seen across runs (RUNYARD_CAPABILITY_VERSIONING)")
-  .action(async (capability) => {
-    print(await client(program.opts()).get(`/api/capabilities/${capability}/versions`), program.opts().json);
+workflowCommand
+  .command("versions <workflow>")
+  .description("List workflow SHAs seen across runs (RUNYARD_CAPABILITY_VERSIONING)")
+  .action(async (workflow) => {
+    print(await client(program.opts()).get(`/api/workflows/${workflow}/versions`), program.opts().json);
   });
-capabilityCommand
-  .command("rollback <capability> <sha>")
-  .description("Re-run a capability pinned to a prior git SHA (requires RUNYARD_CAPABILITY_VERSIONING)")
+workflowCommand
+  .command("rollback <workflow> <sha>")
+  .description("Re-run a workflow pinned to a prior git SHA (requires RUNYARD_CAPABILITY_VERSIONING)")
   .option("--from-run <id>", "mark the new run as a rollback of an existing run id (parentRunId)")
   .option("-i, --input <json>", "JSON input", "{}")
   .option("--where <mode>", "execution mode: local | remote")
   .option("--execution-mode <mode>", "execution mode alias: local | remote")
   .option("--runner-location <location>", "specific runner location tag")
-  .action(async (capability, sha, opts) => {
+  .action(async (workflow, sha, opts) => {
     const input = parseJsonOption(opts.input, "--input");
     const remote = resolveRemote(program.opts().remote);
     const body = {
@@ -239,7 +241,7 @@ capabilityCommand
         type: "cli",
         label: `CLI${remote.name ? `: ${remote.name}` : ""}`,
         remote: remote.name || "",
-        command: "runyard capability rollback",
+        command: "runyard workflow rollback",
         pin: sha,
         ...(opts.fromRun ? { rollbackOf: opts.fromRun } : {})
       }
@@ -247,20 +249,25 @@ capabilityCommand
     if (opts.fromRun) body.parentRunId = opts.fromRun;
     if (opts.where || opts.executionMode) body.executionMode = opts.where || opts.executionMode;
     if (opts.runnerLocation) body.runnerLocation = opts.runnerLocation;
-    printRunCreated(await client(program.opts()).post(`/api/capabilities/${capability}/run`, body), program.opts().json);
+    printRunCreated(await client(program.opts()).post(`/api/workflows/${workflow}/run`, body), program.opts().json);
   });
 
+const capabilityCommand = program.command("capability").description("Legacy workflow alias");
+capabilityCommand.command("describe <id>").action(async (id) => {
+  print(await client(program.opts()).get(`/api/workflows/${id}`), program.opts().json);
+});
+
 program
-  .command("run <capability>")
-  .description("Run a capability with JSON input")
+  .command("run <workflow>")
+  .description("Run a workflow with JSON input")
   .option("-i, --input <json>", "JSON input", "{}")
-  .option("--chain <json>", "JSON array of next capability steps to queue after each run succeeds")
+  .option("--chain <json>", "JSON array of next workflow steps to queue after each run succeeds")
   .option("--where <mode>", "execution mode: local | remote")
   .option("--execution-mode <mode>", "execution mode alias: local | remote")
   .option("--runner-location <location>", "specific runner location tag")
-  .option("--pin <sha>", "pin this run to a specific capability git SHA (RUNYARD_CAPABILITY_VERSIONING)")
+  .option("--pin <sha>", "pin this run to a specific workflow git SHA (RUNYARD_CAPABILITY_VERSIONING)")
   .option("--negotiate", "preflight first: enqueue only when ready; otherwise print the negotiation state (and saved draft) without creating a run")
-  .action(async (capability, opts) => {
+  .action(async (workflow, opts) => {
     const input = parseJsonOption(opts.input, "--input");
     const remote = resolveRemote(program.opts().remote);
     const body = {
@@ -281,7 +288,7 @@ program
     }
     if (opts.negotiate) body.negotiate = true;
     try {
-      printRunCreated(await client(program.opts()).post(`/api/capabilities/${capability}/run`, body), program.opts().json);
+      printRunCreated(await client(program.opts()).post(`/api/workflows/${workflow}/run`, body), program.opts().json);
     } catch (error) {
       // In negotiate mode a non-ready preflight is a structured negotiation
       // response (422 needs_input / 409 blocked), not a CLI crash.
@@ -295,26 +302,26 @@ program
   });
 
 program
-  .command("preflight <capability>")
+  .command("preflight <workflow>")
   .description("Dry-run the deterministic run-creation preflight: report ready/needs_input/blocked without creating anything")
   .option("-i, --input <json>", "JSON input", "{}")
   .option("--where <mode>", "execution mode: local | remote")
   .option("--execution-mode <mode>", "execution mode alias: local | remote")
   .option("--runner-location <location>", "specific runner location tag")
-  .action(async (capability, opts) => {
+  .action(async (workflow, opts) => {
     const body = { input: parseJsonOption(opts.input, "--input") };
     if (opts.where || opts.executionMode) body.executionMode = opts.where || opts.executionMode;
     if (opts.runnerLocation) body.runnerLocation = opts.runnerLocation;
-    printNegotiation(await client(program.opts()).post(`/api/capabilities/${capability}/preflight`, body), program.opts().json);
+    printNegotiation(await client(program.opts()).post(`/api/workflows/${workflow}/preflight`, body), program.opts().json);
   });
 
 const workflowPackageCommand = program.command("workflow-package").description("Export/import portable workflow files");
 workflowPackageCommand
-  .command("export <capability>")
-  .description("Export a capability workflow as a .runyard-workflow.json file")
+  .command("export <workflow>")
+  .description("Export a workflow as a .runyard-workflow.json file")
   .option("-o, --output <path>", "write to this file instead of stdout")
-  .action(async (capability, opts) => {
-    const data = await client(program.opts()).get(`/api/workflow-packages/capabilities/${encodeURIComponent(capability)}/export`);
+  .action(async (workflow, opts) => {
+    const data = await client(program.opts()).get(`/api/workflow-packages/workflows/${encodeURIComponent(workflow)}/export`);
     const pkg = data.workflowPackage;
     const json = JSON.stringify(pkg, null, 2);
     if (opts.output) {
@@ -336,16 +343,16 @@ workflowPackageCommand
   });
 workflowPackageCommand
   .command("preview <file>")
-  .description("Preview import requirements and disabled capability shape")
-  .option("--slug <slug>", "import under a different capability slug")
+  .description("Preview import requirements and disabled workflow shape")
+  .option("--slug <slug>", "import under a different workflow slug")
   .action(async (file, opts) => {
     const workflowPackage = JSON.parse(readFileSync(file, "utf8"));
     print(await client(program.opts()).post("/api/workflow-packages/preview", { workflowPackage, slug: opts.slug || "" }), program.opts().json);
   });
 workflowPackageCommand
   .command("import <file>")
-  .description("Import a workflow package as a disabled capability")
-  .option("--slug <slug>", "import under a different capability slug")
+  .description("Import a workflow package as a disabled workflow")
+  .option("--slug <slug>", "import under a different workflow slug")
   .action(async (file, opts) => {
     const workflowPackage = JSON.parse(readFileSync(file, "utf8"));
     print(await client(program.opts()).post("/api/workflow-packages/import", { workflowPackage, slug: opts.slug || "" }), program.opts().json);

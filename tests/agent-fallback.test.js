@@ -202,17 +202,12 @@ describe("workflow agent fallback", () => {
 
   it("ships fallback wiring in agent-backed workflow templates", () => {
     for (const file of [
-      "app-skinner.tsx",
       "idea-to-product.tsx",
       "implement.tsx",
       "implement-change-gated.tsx",
       "improve.tsx",
-      "improve-no-deploy.tsx",
-      "product-workflow.tsx",
-      "run-knowledge-builder.tsx",
       "runyard-support-agent.tsx",
-      "smart-contract-audit.tsx",
-      "workflow-doctor.tsx"
+      "smart-contract-audit.tsx"
     ]) {
       const src = readFileSync(path.join(process.cwd(), "workflow-templates", "workflows", file), "utf8");
       assert.match(src, /agent-fallback\.js|withAgentFallback|createAgentFallbackPair/, file);

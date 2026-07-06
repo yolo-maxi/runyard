@@ -2,7 +2,7 @@ import { useCallback, useRef } from "react";
 import { ReactFlow, ReactFlowProvider, Background, Controls, MiniMap } from "@xyflow/react";
 
 // Visual graph tab renderer. The graph data comes from
-// GET /api/capabilities/:id/source → `.graph` (nodes/edges/sideNodes). We
+// GET /api/workflows/:id/source → `.graph` (nodes/edges/sideNodes). We
 // replicate the legacy layout (BFS rank → columns), node-color-by-kind palette,
 // and edge styling (parallel = animated/dashed cyan, sequence = solid grey)
 // exactly so the canvas reads identically to the vanilla build.

@@ -178,7 +178,7 @@ export const seedKnowledge = [
     slug: "runyard-mental-model",
     title: "RunYard Mental Model",
     type: "doc",
-    body: "Agents consume capabilities. Capabilities are backed by workflows, agents, skills, and knowledge. Runners execute locally or remotely. The Hub records runs, logs, artifacts, and approvals centrally.",
+    body: "Agents consume workflows backed by agents, skills, and knowledge. Runners execute locally or remotely. The Hub records runs, logs, artifacts, and approvals centrally.",
     tags: ["hub", "architecture", "agents"]
   }
 ];

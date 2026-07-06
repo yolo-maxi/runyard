@@ -358,6 +358,10 @@ export function upsertCapability(input) {
   return capabilityStore.upsertCapability(input);
 }
 
+export function deleteCapability(slugOrId) {
+  return capabilityStore.deleteCapability(slugOrId);
+}
+
 // --- Post-run hook profiles ---------------------------------------------
 // Admin-authored recipes for optional post-run side effects. Mutations are
 // admin-gated at the route layer; discovery filters to enabled profiles.

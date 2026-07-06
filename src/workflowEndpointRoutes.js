@@ -35,7 +35,7 @@ export function createWorkflowEndpointHandlers({
           {
             ...req.body,
             slug: requireBodySlug(req.body, "workflow-endpoint"),
-            capabilitySlug: req.body.capabilitySlug || req.body.capability_slug || "improve-no-deploy"
+            capabilitySlug: req.body.capabilitySlug || req.body.capability_slug || "improve"
           },
           workflowEndpointSecretOptions(req.body)
         );

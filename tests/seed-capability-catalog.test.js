@@ -22,13 +22,8 @@ describe("seed capability catalog", () => {
       "smart-contract-audit",
       "implement-change-gated",
       "idea-to-product",
-      "app-skinner",
-      "gobbler-comic-pipeline",
-      "run-knowledge-builder",
-      "workflow-doctor",
-      "improve-no-deploy",
       "improve",
-      "product-workflow",
+      "national-spirit-question-factory",
       "reauth-cli"
     ]);
   });

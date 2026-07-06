@@ -12,8 +12,8 @@ export const defaultWorkflowEndpointSeeds = [
   {
     slug: "runyard-mobile-feedback",
     name: "Runyard mobile/app feedback",
-    description: "Accepts trusted app-server feedback submissions and queues a constrained improve-no-deploy run for Runyard.",
-    capabilitySlug: "improve-no-deploy",
+    description: "Accepts trusted app-server feedback submissions and queues a constrained improve run for Runyard.",
+    capabilitySlug: "improve",
     project: "runyard",
     repo: "runyard",
     maxPayloadBytes: 32 * 1024,

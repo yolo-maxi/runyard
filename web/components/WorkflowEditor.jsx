@@ -4,8 +4,7 @@ import { deepLinks, navigate } from "../lib/router.js";
 import { toast } from "../lib/toast.js";
 import { refreshCollection } from "../lib/collections.js";
 
-// Default shape for a brand-new workflow. Ported from editCapability()'s
-// fallback object.
+// Default shape for a brand-new workflow.
 function blankCap() {
   return {
     name: "", slug: "", description: "", category: "General", keywords: [],
@@ -14,8 +13,8 @@ function blankCap() {
   };
 }
 
-// Inline editor modal for creating (POST /api/capabilities) or updating
-// (PATCH /api/capabilities/:slug) a workflow. Ported from editCapability().
+// Inline editor modal for creating (POST /api/workflows) or updating
+// (PATCH /api/workflows/:slug) a workflow.
 // `slug` empty ⇒ "New Workflow". On save, returns to the workflow detail when
 // editing from a detail page, else back to the list. `onClose` lets the host
 // dismiss the editor; `onSaved` lets it react locally.
@@ -25,7 +24,7 @@ export function WorkflowEditor({ slug = "", onClose, onSaved }) {
   const [loadError, setLoadError] = useState("");
   const editorRef = useRef(null);
 
-  // Field state — initialized once the capability loads.
+  // Field state — initialized once the workflow loads.
   const [form, setForm] = useState({
     name: "", slug: "", description: "", category: "General", keywords: "",
     tags: "", enabled: true, approval: false, approvalReason: "", advancedJson: "{}"
@@ -42,10 +41,10 @@ export function WorkflowEditor({ slug = "", onClose, onSaved }) {
       seedForm(c);
       return undefined;
     }
-    api(`/api/capabilities/${slug}`)
+    api(`/api/workflows/${slug}`)
       .then((data) => {
         if (!alive) return;
-        const c = data.capability;
+        const c = data.workflow;
         setCap(c);
         seedForm(c);
       })
@@ -103,12 +102,12 @@ export function WorkflowEditor({ slug = "", onClose, onSaved }) {
     };
     try {
       const saved = slug
-        ? await api(`/api/capabilities/${slug}`, { method: "PATCH", body: payload })
-        : await api("/api/capabilities", { method: "POST", body: payload });
+        ? await api(`/api/workflows/${slug}`, { method: "PATCH", body: payload })
+        : await api("/api/workflows", { method: "POST", body: payload });
       toast("Workflow saved", "ok");
-      await refreshCollection("capabilities");
+      await refreshCollection("workflows");
       if (typeof onSaved === "function") onSaved(saved);
-      const targetSlug = saved?.capability?.slug || slug;
+      const targetSlug = saved?.workflow?.slug || slug;
       // Editing from a detail page returns there with the editor closed; a new
       // workflow created from the list lands on the list.
       const { segments } = deepLinks.parse();

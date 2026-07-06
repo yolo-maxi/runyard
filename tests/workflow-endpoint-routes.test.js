@@ -18,7 +18,7 @@ function harness(overrides = {}) {
     id: "wep_1",
     slug: "feedback",
     name: "Feedback",
-    capabilitySlug: "improve-no-deploy",
+    capabilitySlug: "improve",
     config: { target: "Product feedback" },
     secretHash: hashToken("secret"),
     maxPayloadBytes: 10_000,
@@ -27,7 +27,7 @@ function harness(overrides = {}) {
     dedupeWindowMs: 60_000,
     ...overrides.endpoint
   };
-  const run = { id: "run_1", capabilitySlug: "improve-no-deploy", input: {} };
+  const run = { id: "run_1", capabilitySlug: "improve", input: {} };
   const handlers = createWorkflowEndpointHandlers({
     addRunEvent: (runId, type, message, detail) => events.push({ runId, type, message, detail }),
     countWorkflowEndpointInvocations: overrides.countWorkflowEndpointInvocations || (() => 0),
@@ -38,7 +38,7 @@ function harness(overrides = {}) {
     },
     findRecentWorkflowEndpointInvocation: overrides.findRecentWorkflowEndpointInvocation || (() => null),
     getCapability: overrides.getCapability || ((slug) => ({ slug, enabled: true })),
-    getRun: overrides.getRun || ((id) => ({ id, capabilitySlug: "improve-no-deploy" })),
+    getRun: overrides.getRun || ((id) => ({ id, capabilitySlug: "improve" })),
     getWorkflowEndpoint: overrides.getWorkflowEndpoint || (() => endpoint),
     listWorkflowEndpoints: overrides.listWorkflowEndpoints || (() => [endpoint]),
     recordAudit: (actor, action, target, detail) => audits.push({ actor, action, target, detail }),
@@ -91,7 +91,7 @@ describe("workflow endpoint route handlers", () => {
       body: { name: "Mobile Feedback", apiKey: "new-secret" }
     }, upsertRes);
     assert.equal(upsertRes.body.endpoint.slug, "mobile-feedback");
-    assert.equal(upsertRes.body.endpoint.capabilitySlug, "improve-no-deploy");
+    assert.equal(upsertRes.body.endpoint.capabilitySlug, "improve");
     assert.equal(upsertRes.body.endpoint.secret, "new-secret");
     assert.equal(audits[0].action, "workflow_endpoint.upserted");
   });

@@ -40,7 +40,7 @@ export function preflightImproveRepo(run, capability, { workspace, env = process
 }
 
 export function preflightAssignment(run, capability, entry, { workspace, health, env = process.env, gitBin = "git", gitEnv = env } = {}) {
-  if (!entry) return [`capability ${capability?.slug || "unknown"} has no workflow.entry`];
+  if (!entry) return [`workflow ${capability?.slug || "unknown"} has no workflow.entry`];
   const workflowPath = path.isAbsolute(entry) ? entry : path.join(workspace, entry);
   const failures = [];
   if (!existsSync(workflowPath)) failures.push(`workflow file not found: ${workflowPath}`);
@@ -68,15 +68,15 @@ export function materializeWorkflowBundle(run, capability, bundle, { workspace }
   // The bundle id becomes part of the materialized file name — reject anything
   // outside the store's id alphabet so it can never traverse out of bundleDir.
   if (!/^[A-Za-z0-9_-]+$/.test(bundleId)) {
-    throw new Error(`capability ${slug} references workflow bundle id with unsupported characters; refusing to materialize`);
+    throw new Error(`workflow ${slug} references workflow bundle id with unsupported characters; refusing to materialize`);
   }
   if (!bundle || typeof bundle.code !== "string") {
     throw new Error(
-      `capability ${slug} references workflow bundle ${bundleId}, but the claim payload carried no bundle code; refusing to fall back to a workflow template`
+      `workflow ${slug} references workflow bundle ${bundleId}, but the claim payload carried no bundle code; refusing to fall back to a workflow template`
     );
   }
   if (bundle.id && bundle.id !== bundleId) {
-    throw new Error(`claim payload carried workflow bundle ${bundle.id}, but capability ${slug} references ${bundleId}`);
+    throw new Error(`claim payload carried workflow bundle ${bundle.id}, but workflow ${slug} references ${bundleId}`);
   }
   const sha256 = workflowBundleSha256(bundle.code);
   if (sha256 !== bundle.sha256) {

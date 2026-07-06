@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { createCliTarballBuilder, installScript } from "../src/clientInstall.js";
+import { WORKFLOW_TEMPLATE_INCLUDE_PATHS } from "../src/workflowTemplateIncludes.js";
 
 describe("client install helpers", () => {
   it("builds the CLI tarball with optional workflow and commander paths", () => {
@@ -9,7 +10,7 @@ describe("client install helpers", () => {
     const root = "/repo";
     const dataDir = "/data";
     const exists = (file) =>
-      file === path.join(root, "workflow-templates")
+      WORKFLOW_TEMPLATE_INCLUDE_PATHS.some((relative) => file === path.join(root, relative))
       || file === path.join(root, "node_modules", "commander");
     const build = createCliTarballBuilder({
       root,
@@ -21,7 +22,7 @@ describe("client install helpers", () => {
     assert.equal(build(), path.join(dataDir, "cli.tgz"));
     assert.deepEqual(calls, [[
       "tar",
-      ["czhf", path.join(dataDir, "cli.tgz"), "-C", root, "bin", "src", "package.json", "workflow-templates", "node_modules/commander"]
+      ["czhf", path.join(dataDir, "cli.tgz"), "-C", root, "bin", "src", "package.json", ...WORKFLOW_TEMPLATE_INCLUDE_PATHS, "node_modules/commander"]
     ]]);
   });
 

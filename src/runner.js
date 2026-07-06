@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // RunYard runner — executes real Smithers workflows.
 //
-// A "capability" is a Smithers workflow file in a local .smithers workspace. This runner claims
+// A workflow is a Smithers file in a local .smithers workspace. This runner claims
 // queued runs from the Hub, executes `smithers up <workflow> --input <json> -d` (which spawns the
 // local Claude Code / Codex CLI as the worker), streams Smithers events back to the Hub as run
 // events, and uploads the workflow's outputs + event trace as artifacts. Nothing is faked: the
@@ -389,7 +389,7 @@ async function executeAssignment(assignment) {
     });
     if (handledSpecialRun) return;
 
-    // DB-backed workflow capabilities: write the Hub-shipped, hash-verified
+    // DB-backed workflows: write the Hub-shipped, hash-verified
     // bundle to a per-run file and point THIS run's entry at it (the stored
     // capability is untouched). Any materialization gap is a preflight failure
     // — a configured bundle never falls back to a checked-in template.

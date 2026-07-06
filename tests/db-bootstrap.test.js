@@ -17,7 +17,7 @@ function createHarness({
   workflowEndpointSeeds = [
     {
       slug: "feedback",
-      capabilitySlug: "improve-no-deploy",
+      capabilitySlug: "improve",
       name: "Feedback"
     }
   ]
@@ -139,6 +139,6 @@ describe("db bootstrap", () => {
 
   it("keeps the mobile feedback endpoint as the default seed", () => {
     assert.equal(defaultWorkflowEndpointSeeds[0].slug, "runyard-mobile-feedback");
-    assert.equal(defaultWorkflowEndpointSeeds[0].capabilitySlug, "improve-no-deploy");
+    assert.equal(defaultWorkflowEndpointSeeds[0].capabilitySlug, "improve");
   });
 });

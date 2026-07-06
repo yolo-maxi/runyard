@@ -85,10 +85,10 @@ function supportQuickReplies(route) {
   if (view === "home" || view === "runs" || view === "dashboard") {
     return ["What's broken?", "Summarize today's runs", "Show me failing runs"];
   }
-  if ((view === "workflows" || view === "capabilities") && seg[1]) {
+  if ((view === "workflows" || view === "workflows") && seg[1]) {
     return ["What does this workflow do?", "Show recent runs", "How do I run this?"];
   }
-  if (view === "workflows" || view === "capabilities") {
+  if (view === "workflows" || view === "workflows") {
     return ["Which workflow should I use?", "What can I run here?"];
   }
   if (view === "approvals") return ["What needs my approval?", "Explain this approval"];
@@ -405,7 +405,7 @@ function ChatBody({ tab, busy, onStarter, onActivate, bodyRef }) {
     const starters = [
       "Open the most recent failed run",
       "Summarize today's runs",
-      "Why did the last capability fail?"
+      "Why did the last workflow fail?"
     ];
     return (
       <div className="support-chat-body" aria-live="polite" ref={bodyRef}>

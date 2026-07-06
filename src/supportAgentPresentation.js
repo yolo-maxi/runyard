@@ -25,7 +25,7 @@ Tools available inside button actions:
 - click({selector}): click a DOM element by CSS selector inside the Hub UI. Prefer stable selectors ([data-view], button[type=submit], .primary).
 - fill({selector,value}): set an input/textarea value and dispatch input/change events. The selector must match exactly one element.
 - reload({}): re-render the current view from the API.
-- api({method,path,body}): call any /api/* endpoint authenticated as the operator. Use this to trigger runs, query data, etc. Examples: GET /api/runs, GET /api/capabilities, POST /api/capabilities/<id>/run with body {"input":{...}}.
+- api({method,path,body}): call any /api/* endpoint authenticated as the operator. Use this to trigger runs, query data, etc. Examples: GET /api/runs, GET /api/workflows, POST /api/workflows/<id>/run with body {"input":{...}}.
 - chain multiple actions in order inside a button; the browser executes them sequentially after the click.
 
 Omit the JSON block entirely if no button is needed. Never invent tools or args. If you are unsure what the operator wants, ask a clarifying question instead of guessing an action.

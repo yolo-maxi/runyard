@@ -267,8 +267,8 @@ describe("Smithers Hub API", () => {
     const agents = await api("/api/agents");
     const skills = await api("/api/skills");
     const knowledge = await api("/api/knowledge");
-    assert.ok(caps.capabilities.find((cap) => cap.slug === "hello"));
-    assert.ok(caps.capabilities.find((cap) => cap.slug === "runyard-support-agent"));
+    assert.ok(caps.capabilities.find((cap) => cap.slug === "research"));
+    assert.ok(caps.capabilities.find((cap) => cap.slug === "improve"));
     assert.ok(agents.agents.length >= 4);
     assert.ok(skills.skills.length >= 4);
     assert.ok(knowledge.knowledge.length >= 1);
@@ -2046,7 +2046,7 @@ describe("Authenticated workflow endpoints", () => {
     const listed = await api("/api/workflow-endpoints");
     const endpoint = listed.endpoints.find((entry) => entry.slug === "runyard-mobile-feedback");
     assert.ok(endpoint, "seeded feedback endpoint should be discoverable to admins");
-    assert.equal(endpoint.capabilitySlug, "improve-no-deploy");
+    assert.equal(endpoint.capabilitySlug, "improve");
     assert.equal(endpoint.repo, "runyard");
     assert.equal(endpoint.project, "runyard");
     assert.equal(endpoint.secretConfigured, true);
@@ -2070,7 +2070,7 @@ describe("Authenticated workflow endpoints", () => {
     assert.equal(invalid.status, 401);
   });
 
-  it("queues authorized feedback as a constrained improve-no-deploy run and records audit metadata", async () => {
+  it("queues authorized feedback as a constrained improve run and records audit metadata", async () => {
     const feedback = "Please make the approval screen easier to scan on mobile.";
     const created = await raw(
       "/api/workflow-endpoints/runyard-mobile-feedback",
@@ -2098,11 +2098,11 @@ describe("Authenticated workflow endpoints", () => {
     );
     assert.equal(created.status, 202);
     assert.equal(created.data.deduped, false);
-    assert.equal(created.data.run.capabilitySlug, "improve-no-deploy");
+    assert.equal(created.data.run.capabilitySlug, "improve");
     assert.match(created.data.payloadHash, /^sha256:[a-f0-9]{64}$/);
 
     const detail = await api(`/api/runs/${created.data.run.id}`);
-    assert.equal(detail.run.capabilitySlug, "improve-no-deploy");
+    assert.equal(detail.run.capabilitySlug, "improve");
     assert.equal(detail.run.status, "queued");
     assert.equal(detail.run.input.project, "runyard");
     assert.equal(detail.run.input.repo, "runyard");
@@ -2169,7 +2169,7 @@ describe("Authenticated workflow endpoints", () => {
         slug: "rate-limit-feedback",
         name: "Rate limit feedback",
         secret: rateSecret,
-        capabilitySlug: "improve-no-deploy",
+        capabilitySlug: "improve",
         project: "runyard",
         repo: "runyard",
         maxPayloadBytes: 4096,
@@ -2195,28 +2195,6 @@ describe("Authenticated workflow endpoints", () => {
     assert.equal(second.status, 429);
   });
 
-  it("seeds improve-no-deploy as a recommendation-only workflow without deploy behavior", async () => {
-    const { capabilities } = await api("/api/capabilities");
-    const cap = capabilities.find((entry) => entry.slug === "improve-no-deploy");
-    assert.ok(cap, "improve-no-deploy capability should be seeded");
-    assert.equal(cap.workflow.engine, "smithers");
-    assert.equal(cap.workflow.entry, ".smithers/workflows/improve-no-deploy.tsx");
-    assert.equal(cap.approvalPolicy.required, false);
-    assert.equal(cap.inputSchema.properties.deploy, undefined);
-    assert.equal(cap.inputSchema.properties.untrustedFeedback.type, "object");
-    assert.deepEqual(cap.requiredRunnerTags, ["smithers"]);
-    assert.ok(cap.requiredSkills.includes("product-review"));
-
-    const tpl = path.join(process.cwd(), "workflow-templates", "workflows", "improve-no-deploy.tsx");
-    assert.ok(existsSync(tpl), "bundled improve-no-deploy workflow should exist");
-    const src = readFileSync(tpl, "utf8");
-    assert.match(src, /UNTRUSTED FEEDBACK DATA/);
-    assert.match(src, /id="review"/);
-    assert.match(src, /id="patch-suggestions"/);
-    assert.match(src, /id="report"/);
-    assert.doesNotMatch(src, /id="(?:implement|test|commit|push|deploy)"/);
-    assert.doesNotMatch(src, /git\s+push|push",\s*"origin"|systemctl|GATED_/);
-  });
 });
 
 describe("Failure / cancellation diagnostics", () => {
@@ -2556,42 +2534,6 @@ describe("Idea to Product capability", () => {
   });
 });
 
-describe("App Skinner capability", () => {
-  it("is seeded as an approval-checkpoint Smithers workflow", async () => {
-    const { capabilities } = await api("/api/capabilities");
-    const cap = capabilities.find((c) => c.slug === "app-skinner");
-    assert.ok(cap, "app-skinner capability should be in the catalog");
-    assert.equal(cap.workflow.engine, "smithers");
-    assert.equal(cap.workflow.entry, ".smithers/workflows/app-skinner.tsx");
-    assert.ok(cap.inputSchema.required.includes("appIdea"));
-    assert.equal(cap.inputSchema.properties.skinCount.type, "number");
-    assert.deepEqual(cap.requiredRunnerTags, ["smithers", "vps"]);
-    assert.equal(cap.approvalPolicy.required, true);
-  });
-
-  it("queues immediately and relies on the skin approval checkpoint", async () => {
-    const created = await api("/api/capabilities/app-skinner/run", {
-      method: "POST",
-      body: { input: { appIdea: "A/B cat compass miniapp", skinCount: 3 } }
-    });
-    assert.equal(created.run.status, "queued");
-    assert.equal(created.run.capabilitySlug, "app-skinner");
-    assert.equal(created.run.actualCapabilitySlug, undefined);
-    assert.equal(created.run.supervision, undefined);
-    const approval = (await api("/api/approvals?status=pending")).approvals.find((item) => item.runId === created.run.id);
-    assert.equal(approval, undefined);
-  });
-
-  it("ships the app-skinner workflow template in the runner bundle", () => {
-    const tpl = path.join(process.cwd(), "workflow-templates", "workflows", "app-skinner.tsx");
-    assert.ok(existsSync(tpl));
-    const src = readFileSync(tpl, "utf8");
-    assert.match(src, /Approve app skin direction/);
-    assert.match(src, /visual skins/);
-    assert.match(src, /ClaudeCodeAgent/);
-  });
-});
-
 describe("Catalog referential integrity", () => {
   it("resolves every capability and agent catalog reference", async () => {
     const { capabilities } = await api("/api/capabilities");
@@ -2621,54 +2563,6 @@ describe("Catalog referential integrity", () => {
   });
 });
 
-describe("Run Knowledge Builder capability", () => {
-  it("is seeded as a recommendation-only Smithers workflow", async () => {
-    const { capabilities } = await api("/api/capabilities");
-    const cap = capabilities.find((c) => c.slug === "run-knowledge-builder");
-    assert.ok(cap, "run-knowledge-builder capability should be in the catalog");
-    assert.equal(cap.workflow.engine, "smithers");
-    assert.equal(cap.workflow.entry, ".smithers/workflows/run-knowledge-builder.tsx");
-    assert.equal(cap.category, "Knowledge");
-    assert.equal(cap.inputSchema.properties.capabilitySlug.type, "string");
-    assert.equal(cap.inputSchema.properties.status.type, "string");
-    assert.equal(cap.inputSchema.properties.lookbackHours.type, "number");
-    assert.equal(cap.inputSchema.properties.count.type, "number");
-    assert.equal(cap.inputSchema.properties.focusArea.type, "string");
-    assert.deepEqual(cap.requiredRunnerTags, ["smithers"]);
-    assert.ok(cap.requiredSkills.includes("run-knowledge-loop"));
-    assert.ok(cap.requiredAgents.includes("run-knowledge-analyst"));
-    assert.equal(cap.approvalPolicy.required, false);
-  });
-
-  it("queues through the API without creating a start approval", async () => {
-    const created = await api("/api/capabilities/run-knowledge-builder/run", {
-      method: "POST",
-      body: { input: { capabilitySlug: "hello", status: "failed,cancelled", count: 5, focusArea: "failure patterns" } }
-    });
-    assert.equal(created.run.status, "queued");
-    assert.equal(created.run.capabilitySlug, "run-knowledge-builder");
-    assert.equal(created.run.actualCapabilitySlug, undefined);
-    assert.equal(created.run.supervision, undefined);
-    const approval = (await api("/api/approvals?status=pending")).approvals.find((item) => item.runId === created.run.id);
-    assert.equal(approval, undefined);
-  });
-
-  it("ships the workflow template and report artifact contract", () => {
-    const tpl = path.join(process.cwd(), "workflow-templates", "workflows", "run-knowledge-builder.tsx");
-    assert.ok(existsSync(tpl), "bundled workflow template should exist");
-    const src = readFileSync(tpl, "utf8");
-    assert.match(src, /recurringFailureModes/);
-    assert.match(src, /suggestedSkillUpdates/);
-    assert.match(src, /suggestedAgentInstructionUpdates/);
-    assert.match(src, /suggestedWorkflowTemplateImprovements/);
-    assert.match(src, /recommendedNextActions/);
-    assert.match(src, /\/api\/runs/);
-    assert.match(src, /\/diagnostics/);
-    assert.match(src, /redactText/);
-    assert.match(src, /run-knowledge-report\.md/);
-    assert.match(src, /ClaudeCodeAgent/);
-  });
-});
 
 describe("Improve capability", () => {
   it("is seeded as an approval-gated PM-led Smithers workflow", async () => {

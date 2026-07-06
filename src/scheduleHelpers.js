@@ -18,9 +18,9 @@ export function validateScheduleBody(body = {}, { partial = false, getCapability
 
   if (!partial || has("capabilitySlug") || has("capability")) {
     const slug = String(body.capabilitySlug || body.capability || "").trim();
-    if (!slug) return { ok: false, error: "capabilitySlug is required" };
+    if (!slug) return { ok: false, error: "workflow is required" };
     const capability = getCapability?.(slug);
-    if (!capability || !capability.enabled) return { ok: false, error: `unknown or disabled capability "${slug}"` };
+    if (!capability || !capability.enabled) return { ok: false, error: `unknown or disabled workflow "${slug}"` };
     out.capabilitySlug = capability.slug;
   }
 

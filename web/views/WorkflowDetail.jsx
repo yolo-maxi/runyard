@@ -5,6 +5,8 @@ import { deepLinks, navigate } from "../lib/router.js";
 import { copyText } from "../lib/clipboard.js";
 import { useMe, meIsAdmin } from "../lib/me.js";
 import { formatBytes } from "../lib/runHelpers.js";
+import { refreshCollection } from "../lib/collections.js";
+import { toast } from "../lib/toast.js";
 import { Toolbar, Breadcrumbs, ShareButton, JsonBlock } from "../components/ui.jsx";
 import { Pills, WorkflowRunsList, Empty, CopyRow } from "../components/WorkflowParts.jsx";
 import { CodeBlock } from "../components/CodeBlock.jsx";
@@ -33,18 +35,18 @@ function resolveWorkflowTab(sub) {
 }
 
 // --- Visual graph tab -------------------------------------------------------
-// Loads /api/capabilities/:id/source → `.graph` and mounts ReactFlow. A
+// Loads /api/workflows/:id/source → `.graph` and mounts ReactFlow. A
 // "Fit view" button bumps a signal the canvas reacts to.
 function GraphTab({ slug, cap }) {
   const [fitSignal, setFitSignal] = useState(0);
   const { data, isLoading, error } = useQuery({
-    queryKey: ["capability-source", slug],
-    queryFn: () => api(`/api/capabilities/${encodeURIComponent(slug)}/source`)
+    queryKey: ["workflow-source", slug],
+    queryFn: () => api(`/api/workflows/${encodeURIComponent(slug)}/source`)
   });
 
   const graph = useMemo(() => {
     if (data?.graph) return data.graph;
-    // Client fallback graph derived from the capability, mirroring
+    // Client fallback graph derived from the workflow, mirroring
     // deriveClientGraphFallback().
     return {
       name: cap?.name || cap?.slug || "Workflow",
@@ -85,13 +87,13 @@ function GraphTab({ slug, cap }) {
 }
 
 // --- Code tab (highlight.js viewer) -----------------------------------------
-// Loads /api/capabilities/:id/source and renders syntax-highlighted code, with
+// Loads /api/workflows/:id/source and renders syntax-highlighted code, with
 // Code / Agents / workflowGraph sub-tabs when those sections are present.
 function CodeTab({ slug, cap }) {
   const [section, setSection] = useState("code");
   const { data, isLoading, error } = useQuery({
-    queryKey: ["capability-source", slug],
-    queryFn: () => api(`/api/capabilities/${encodeURIComponent(slug)}/source`)
+    queryKey: ["workflow-source", slug],
+    queryFn: () => api(`/api/workflows/${encodeURIComponent(slug)}/source`)
   });
 
   const payload = data || {};
@@ -154,7 +156,7 @@ function CodeTab({ slug, cap }) {
             <p className="muted">Fetching the workflow source…</p>
           ) : !payload.available ? (
             <>
-              <p className="muted">{payload.message || "No workflow source file shipped for this capability."}</p>
+              <p className="muted">{payload.message || "No workflow source file shipped for this workflow."}</p>
               <p className="muted">Registered entry: <code>{cap?.workflow?.entry || "—"}</code></p>
             </>
           ) : def ? (
@@ -239,8 +241,8 @@ export function WorkflowDetail({ slug, sub = "" }) {
   // Workflow editing is admin-only server-side; hide the levers that 403.
   const canEdit = meIsAdmin(me);
   const capQuery = useQuery({
-    queryKey: ["capability", slug],
-    queryFn: () => api(`/api/capabilities/${slug}`)
+    queryKey: ["workflow", slug],
+    queryFn: () => api(`/api/workflows/${slug}`)
   });
   const runsQuery = useQuery({
     queryKey: ["runs", "for-workflow", slug],
@@ -271,9 +273,20 @@ export function WorkflowDetail({ slug, sub = "" }) {
     return <section className="panel"><p className="muted">Loading workflow…</p></section>;
   }
 
-  const cap = capQuery.data.capability;
+  const cap = capQuery.data.workflow;
   const runs = runsQuery.data ?? [];
   const approval = cap.approvalPolicy || {};
+  const deleteWorkflow = async () => {
+    if (!confirm(`Delete workflow "${cap.name || slug}"? Historical runs stay available, but the workflow will disappear from the active catalog.`)) return;
+    try {
+      await api(`/api/workflows/${encodeURIComponent(slug)}`, { method: "DELETE" });
+      await refreshCollection("workflows");
+      toast("Workflow deleted", "ok");
+      navigate(deepLinks.workflows());
+    } catch (error) {
+      toast(error.message || "Could not delete workflow", "error");
+    }
+  };
 
   const tabsHtml = WORKFLOW_TABS.map((tab) => (
     <a
@@ -299,6 +312,7 @@ export function WorkflowDetail({ slug, sub = "" }) {
       <Toolbar title={cap.name} shareHash={deepLinks.workflow(slug)}>
         <button id="wf-run" className="primary" onClick={() => navigate(deepLinks.workflowRun(slug))}>Run this workflow</button>
         {canEdit ? <button id="wf-edit" onClick={() => navigate(deepLinks.workflowEdit(slug))}>Edit</button> : null}
+        {canEdit ? <button id="wf-delete" className="danger" onClick={deleteWorkflow}>Delete</button> : null}
         <a className="button" href={deepLinks.workflows()}>All workflows</a>
       </Toolbar>
       <p className="muted workflow-detail-desc">{cap.description || "No description."}</p>

@@ -9,7 +9,7 @@ const endpointRow = {
   name: "Feedback",
   description: "",
   secret_hash: "hash_secret",
-  capability_slug: "improve-no-deploy",
+  capability_slug: "improve",
   project: "runyard",
   repo: "runyard",
   repo_dir: "",
@@ -60,7 +60,7 @@ describe("workflow endpoint store", () => {
 
     const endpoint = store.upsertWorkflowEndpoint({
       slug: "feedback",
-      capabilitySlug: "improve-no-deploy"
+      capabilitySlug: "improve"
     }, { secret: "secret" });
 
     assert.equal(endpoint.slug, "feedback");
@@ -74,7 +74,7 @@ describe("workflow endpoint store", () => {
 
     store.upsertWorkflowEndpoint({
       slug: "feedback",
-      capabilitySlug: "improve-no-deploy",
+      capabilitySlug: "improve",
       name: "New name"
     });
 
@@ -87,7 +87,7 @@ describe("workflow endpoint store", () => {
     const { store } = createHarness({ oneRows: [null] });
 
     assert.throws(
-      () => store.upsertWorkflowEndpoint({ slug: "feedback", capabilitySlug: "improve-no-deploy" }),
+      () => store.upsertWorkflowEndpoint({ slug: "feedback", capabilitySlug: "improve" }),
       /workflow endpoint secret is required/
     );
   });

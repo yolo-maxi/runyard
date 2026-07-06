@@ -26,7 +26,7 @@ const PRIMARY_VIEWS = new Map([
   ["runs", "home"],
   ["dashboard", "home"],
   ["workflows", "workflows"],
-  ["capabilities", "workflows"],
+  ["workflows", "workflows"],
   ["schedules", "schedules"],
   ["approvals", "approvals"],
   ["agents", "agents"],

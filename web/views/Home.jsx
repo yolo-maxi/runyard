@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useLiveQuery } from "@tanstack/react-db";
 import { useQuery } from "@tanstack/react-query";
-import { runsCollection, runnersCollection, capabilitiesCollection } from "../lib/collections.js";
+import { runsCollection, runnersCollection, workflowsCollection } from "../lib/collections.js";
 import { api } from "../lib/api.js";
 import { useHashRoute, useNavigate, deepLinks } from "../lib/router.js";
 import { useNow } from "../lib/storage.js";
@@ -26,7 +26,6 @@ function parseWorkflowParam(value = "") {
 
 function workflowParamFromParams(params) {
   if (params.has("workflows")) return params.get("workflows") || "";
-  if (params.has("capabilities")) return params.get("capabilities") || "";
   if (params.has("capability")) return params.get("capability") || "";
   return null;
 }
@@ -262,7 +261,7 @@ export function Home() {
   // Live, reactive collections — replace the legacy 30s/4s setInterval polls.
   const { data: liveRuns = [] } = useLiveQuery((q) => runsCollection);
   const { data: runners = [] } = useLiveQuery((q) => runnersCollection);
-  const { data: capabilities = [] } = useLiveQuery((q) => capabilitiesCollection);
+  const { data: capabilities = [] } = useLiveQuery((q) => workflowsCollection);
 
   const dashQ = useQuery({
     queryKey: ["dashboard"],

@@ -31,11 +31,16 @@ describe("server route registration", () => {
     assertRoute(app, "patch", "/api/hooks/:slug", [deps.requireAuth, deps.scopes.admin, deps.hookProfileHandlers.upsertHookProfile]);
     assertRoute(app, "post", "/api/hooks/:slug/validate", [deps.requireAuth, deps.scopes.admin, deps.hookProfileHandlers.validateHookProfile]);
     assertRoute(app, "get", "/api/workflow-bundles/:id", [deps.requireAuth, deps.workflowBundleHandlers.getWorkflowBundle]);
+    assertRoute(app, "get", "/api/workflow-packages/workflows/:id/export", [deps.requireAuth, deps.scopes.admin, deps.workflowPackageHandlers.exportWorkflowPackage]);
     assertRoute(app, "get", "/api/workflow-packages/capabilities/:id/export", [deps.requireAuth, deps.scopes.admin, deps.workflowPackageHandlers.exportWorkflowPackage]);
     assertRoute(app, "post", "/api/workflow-packages/validate", [deps.requireAuth, deps.scopes.admin, deps.workflowPackageHandlers.validateWorkflowPackage]);
     assertRoute(app, "post", "/api/workflow-packages/preview", [deps.requireAuth, deps.scopes.admin, deps.workflowPackageHandlers.previewWorkflowPackageImport]);
     assertRoute(app, "post", "/api/workflow-packages/import", [deps.requireAuth, deps.scopes.admin, deps.workflowPackageHandlers.importWorkflowPackage]);
-    assertRoute(app, "post", "/api/capabilities/:id/preflight", [deps.requireAuth, deps.scopes["api,mcp"], deps.capabilityHandlers.preflightCapability]);
+    assertRoute(app, "get", "/api/workflows", [deps.requireAuth, deps.capabilityHandlers.listWorkflows]);
+    assertRoute(app, "post", "/api/workflows", [deps.requireAuth, deps.scopes.admin, deps.capabilityHandlers.createWorkflow]);
+    assertRoute(app, "patch", "/api/workflows/:id", [deps.requireAuth, deps.scopes.admin, deps.capabilityHandlers.updateWorkflow]);
+    assertRoute(app, "delete", "/api/workflows/:id", [deps.requireAuth, deps.scopes.admin, deps.capabilityHandlers.deleteWorkflow]);
+    assertRoute(app, "post", "/api/workflows/:id/preflight", [deps.requireAuth, deps.scopes["api,mcp"], deps.capabilityHandlers.preflightWorkflow]);
     // Run drafts: reads are any-auth; mutations carry the same api/mcp scopes as starting a run.
     assertRoute(app, "get", "/api/run-drafts", [deps.requireAuth, deps.runDraftHandlers.listRunDrafts]);
     assertRoute(app, "post", "/api/run-drafts", [deps.requireAuth, deps.scopes["api,mcp"], deps.runDraftHandlers.createRunDraft]);
@@ -71,7 +76,25 @@ function routeDeps() {
     approvalHandlers: handlers(["listApprovals", "getApproval", "createApproval", "approve", "reject", "requestChanges", "telegramWebhook"]),
     artifactHandlers: handlers(["listRunArtifacts", "createRunArtifact", "listArtifacts", "downloadArtifact"]),
     authHandlers: handlers(["setup", "tokenLogin", "telegramWebAppLogin", "logout", "me"]),
-    capabilityHandlers: handlers(["listCapabilities", "createCapability", "getCapability", "getCapabilityVersions", "getCapabilitySource", "updateCapability", "runCapability", "preflightCapability"]),
+    capabilityHandlers: handlers([
+      "listCapabilities",
+      "createCapability",
+      "getCapability",
+      "getCapabilityVersions",
+      "getCapabilitySource",
+      "updateCapability",
+      "runCapability",
+      "preflightCapability",
+      "listWorkflows",
+      "createWorkflow",
+      "getWorkflow",
+      "getWorkflowVersions",
+      "getWorkflowSource",
+      "updateWorkflow",
+      "deleteWorkflow",
+      "runWorkflow",
+      "preflightWorkflow"
+    ]),
     catalogHandlers: {
       agents: handlers(["list", "create", "update"], "agents"),
       skills: handlers(["list", "create", "update"], "skills"),

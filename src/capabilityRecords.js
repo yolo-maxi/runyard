@@ -152,3 +152,10 @@ export function capabilityIdQuery(capabilityId) {
     params: [capabilityId]
   };
 }
+
+export function capabilityDisableQuery({ slug, updatedAt }) {
+  return {
+    sql: "UPDATE capabilities SET enabled = 0, updated_at = ? WHERE slug = ?",
+    params: [updatedAt, slug]
+  };
+}

@@ -15,12 +15,40 @@ const client = new HubClient({
 
 const tools = [
   { name: "get_menu", description: "Show the Runyard menu: discovery steps, local vs remote execution choices, and Hub output/artifact follow-up paths.", inputSchema: { type: "object", properties: {} } },
-  { name: "list_capabilities", description: "List available RunYard capabilities.", inputSchema: { type: "object", properties: {} } },
-  { name: "search_capabilities", description: "Search capabilities by query.", inputSchema: { type: "object", properties: { query: { type: "string" } } } },
-  { name: "describe_capability", description: "Describe a capability, schemas, permissions, skills, agents, and workflow.", inputSchema: { type: "object", required: ["id"], properties: { id: { type: "string" } } } },
+  { name: "list_workflows", description: "List available RunYard workflows.", inputSchema: { type: "object", properties: {} } },
+  { name: "search_workflows", description: "Search workflows by query.", inputSchema: { type: "object", properties: { query: { type: "string" } } } },
+  { name: "describe_workflow", description: "Describe a workflow, schemas, permissions, skills, agents, and source configuration.", inputSchema: { type: "object", required: ["id"], properties: { id: { type: "string" } } } },
   {
-    name: "run_capability",
-    description: "Run a capability with JSON input. For agent-created runs, include input.title when practical: a short human-readable title for run lists, approval cards, and handoff. Pass executionMode 'local' to target a local runner or 'remote' to target the shared remote/VPS runner pool. Outputs and artifacts are fetched from the Hub. For improve, input.repoDir selects an allowlisted runner-local git repo to edit. Pass negotiate: true to preflight first — a non-ready request then returns the negotiation state (questions/blockers/warnings + a saved draft) instead of creating a run; fix the input and call again.",
+    name: "create_workflow",
+    description: "Create a workflow definition. Requires an admin-scoped token. Body should include name, optional slug/description/category/schema fields, runner requirements, approval policy, and workflow source reference.",
+    inputSchema: {
+      type: "object",
+      required: ["workflow"],
+      properties: {
+        workflow: { type: "object", description: "Workflow definition payload." }
+      }
+    }
+  },
+  {
+    name: "update_workflow",
+    description: "Edit an existing workflow definition. Requires an admin-scoped token. The slug/id is stable; payload fields are merged into the existing definition.",
+    inputSchema: {
+      type: "object",
+      required: ["id", "workflow"],
+      properties: {
+        id: { type: "string" },
+        workflow: { type: "object", description: "Partial workflow definition payload." }
+      }
+    }
+  },
+  {
+    name: "delete_workflow",
+    description: "Delete a workflow from the active catalog by disabling it. Historical runs remain intact. Requires an admin-scoped token.",
+    inputSchema: { type: "object", required: ["id"], properties: { id: { type: "string" } } }
+  },
+  {
+    name: "run_workflow",
+    description: "Run a workflow with JSON input. For agent-created runs, include input.title when practical: a short human-readable title for run lists, approval cards, and handoff. Pass executionMode 'local' to target a local runner or 'remote' to target the shared remote/VPS runner pool. Outputs and artifacts are fetched from the Hub. For improve, input.repoDir selects an allowlisted runner-local git repo to edit. Pass negotiate: true to preflight first — a non-ready request then returns the negotiation state (questions/blockers/warnings + a saved draft) instead of creating a run; fix the input and call again.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -34,8 +62,8 @@ const tools = [
     }
   },
   {
-    name: "preflight_capability",
-    description: "Dry-run the deterministic run-creation preflight for a capability with JSON input. Returns ready | needs_input | blocked with questions, blockers, warnings, suggested defaults, and the normalized input — nothing is created or enqueued. Use before run_capability when the input is rough or unverified.",
+    name: "preflight_workflow",
+    description: "Dry-run the deterministic run-creation preflight for a workflow with JSON input. Returns ready | needs_input | blocked with questions, blockers, warnings, suggested defaults, and the normalized input — nothing is created or enqueued. Use before run_workflow when the input is rough or unverified.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -54,8 +82,8 @@ const tools = [
   { name: "list_pending_approvals", description: "List pending approval cards. Each item carries its ask (who is asked, what approving does, why a human is needed), kind, deadline/fallback, and deep links; resolve one with approve_run / reject_run / request_changes_run using its approvalId.", inputSchema: { type: "object", properties: {} } },
   {
     name: "list_hooks",
-    description: "List post-run hook profiles (optional side effects like static publish or git push, run after a capability's gates pass). Pass capability to see which profiles that capability may select via input.postRunHooks.",
-    inputSchema: { type: "object", properties: { capability: { type: "string" } } }
+    description: "List post-run hook profiles (optional side effects like static publish or git push, run after a workflow's gates pass). Pass workflow to see which profiles that workflow may select via input.postRunHooks.",
+    inputSchema: { type: "object", properties: { workflow: { type: "string" } } }
   },
   { name: "approve_run", description: "Resolve a Hub approval card as approved (takes an approvalId from list_pending_approvals, not a runId). What happens next depends on the card's kind: a held run is released, an engine gate resumes on the runner, an escalation records the go-ahead.", inputSchema: { type: "object", required: ["approvalId"], properties: { approvalId: { type: "string" }, comment: { type: "string" } } } },
   { name: "reject_run", description: "Resolve a Hub approval card as rejected (takes an approvalId, not a runId). A run held on the card is cancelled — never failed; an engine gate takes its deny path.", inputSchema: { type: "object", required: ["approvalId"], properties: { approvalId: { type: "string" }, comment: { type: "string" } } } },
@@ -71,14 +99,21 @@ function result(content) {
   return { content: [{ type: "text", text: typeof content === "string" ? content : JSON.stringify(content, null, 2) }] };
 }
 
+function workflowId(args = {}) {
+  return args.id || args.workflow || args.capability || args.slug;
+}
+
 async function callTool(name, args = {}) {
   if (name === "get_menu") return result(await client.get("/api/menu"));
-  if (name === "list_capabilities") return result(await client.get("/api/capabilities"));
-  if (name === "search_capabilities") return result(await client.get(`/api/capabilities?q=${encodeURIComponent(args.query || "")}`));
-  if (name === "describe_capability") return result(await client.get(`/api/capabilities/${encodeURIComponent(args.id)}`));
-  if (name === "run_capability") {
+  if (name === "list_workflows" || name === "list_capabilities") return result(await client.get("/api/workflows"));
+  if (name === "search_workflows" || name === "search_capabilities") return result(await client.get(`/api/workflows?q=${encodeURIComponent(args.query || "")}`));
+  if (name === "describe_workflow" || name === "describe_capability") return result(await client.get(`/api/workflows/${encodeURIComponent(workflowId(args))}`));
+  if (name === "create_workflow") return result(await client.post("/api/workflows", args.workflow || args.definition || args));
+  if (name === "update_workflow") return result(await client.patch(`/api/workflows/${encodeURIComponent(workflowId(args))}`, args.workflow || args.patch || args));
+  if (name === "delete_workflow") return result(await client.delete(`/api/workflows/${encodeURIComponent(workflowId(args))}`));
+  if (name === "run_workflow" || name === "run_capability") {
     try {
-      return result(await client.post(`/api/capabilities/${encodeURIComponent(args.id)}/run`, {
+      return result(await client.post(`/api/workflows/${encodeURIComponent(workflowId(args))}/run`, {
         input: args.input || {},
         executionMode: args.executionMode || args.where || undefined,
         runnerLocation: args.runnerLocation || undefined,
@@ -86,7 +121,7 @@ async function callTool(name, args = {}) {
         origin: {
           type: "mcp",
           label: "MCP: runyard",
-          tool: "run_capability"
+          tool: "run_workflow"
         }
       }));
     } catch (error) {
@@ -97,8 +132,8 @@ async function callTool(name, args = {}) {
       throw error;
     }
   }
-  if (name === "preflight_capability") {
-    return result(await client.post(`/api/capabilities/${encodeURIComponent(args.id)}/preflight`, {
+  if (name === "preflight_workflow" || name === "preflight_capability") {
+    return result(await client.post(`/api/workflows/${encodeURIComponent(workflowId(args))}/preflight`, {
       input: args.input || {},
       executionMode: args.executionMode || args.where || undefined,
       runnerLocation: args.runnerLocation || undefined
@@ -113,7 +148,8 @@ async function callTool(name, args = {}) {
   if (name === "list_runners") return result(await client.get("/api/runners"));
   if (name === "list_pending_approvals") return result(await client.get("/api/approvals?status=pending"));
   if (name === "list_hooks") {
-    return result(await client.get(`/api/hooks${args.capability ? `?capability=${encodeURIComponent(args.capability)}` : ""}`));
+    const slug = args.workflow || args.capability;
+    return result(await client.get(`/api/hooks${slug ? `?workflow=${encodeURIComponent(slug)}` : ""}`));
   }
   if (name === "approve_run") return result(await client.post(`/api/approvals/${encodeURIComponent(args.approvalId)}/approve`, { comment: args.comment || "Approved through MCP" }));
   if (name === "reject_run") return result(await client.post(`/api/approvals/${encodeURIComponent(args.approvalId)}/reject`, { comment: args.comment || "Rejected through MCP" }));

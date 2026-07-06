@@ -100,7 +100,7 @@ function ReauthControls({ runner }) {
     shownVerificationRef.current = false;
     deadlineRef.current = Date.now() + REAUTH_DEADLINE_MS;
     try {
-      const res = await api("/api/capabilities/reauth-cli/run", {
+      const res = await api("/api/workflows/reauth-cli/run", {
         method: "POST",
         body: { input: { provider: "codex", runnerTag: "reauth" }, runnerId: runner.id }
       });
@@ -132,7 +132,7 @@ function ReauthControls({ runner }) {
         }
       });
       setClaudeToken("");
-      const res = await api("/api/capabilities/reauth-cli/run", {
+      const res = await api("/api/workflows/reauth-cli/run", {
         method: "POST",
         body: {
           input: {
@@ -577,7 +577,7 @@ export function Secrets({ embedded = false } = {}) {
         <h2>Reusable secrets</h2>
         <p className="muted">
           Admin-managed, encrypted at rest, injected into runs as env only for
-          the secret names a capability/run opts into. Values are write-only.
+          the secret names a workflow/run opts into. Values are write-only.
         </p>
         <SecretsBlock />
       </section>

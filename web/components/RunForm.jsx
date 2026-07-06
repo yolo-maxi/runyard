@@ -245,7 +245,7 @@ export function RunForm({ cap, slug }) {
     try {
       const result = draft?.previousRunId
         ? await api(`/api/runs/${draft.previousRunId}/rerun`, { method: "POST", body: { input } })
-        : await api(`/api/capabilities/${slug}/run`, { method: "POST", body: { input } });
+        : await api(`/api/workflows/${slug}/run`, { method: "POST", body: { input } });
       if (draft) clearRerunDraft();
       toast(draft ? "Edited re-run queued" : "Run created", "ok");
       await refreshCollection("runs");

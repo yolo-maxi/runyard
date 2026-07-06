@@ -11,9 +11,9 @@ import { Pills } from "../components/WorkflowParts.jsx";
 import { WorkflowEditor } from "../components/WorkflowEditor.jsx";
 
 // --- Sample workflow templates ----------------------------------------------
-// Cheap starter capabilities seeded into the tenant when a user clicks
+// Cheap starter workflows seeded into the tenant when a user clicks
 // "Use template" on the empty workflows page. POSTed through the existing
-// /api/capabilities upsert path. Ported 1:1 from legacy WORKFLOW_TEMPLATES.
+// /api/workflows upsert path.
 const WORKFLOW_TEMPLATES = [
   {
     slug: "hello-world",
@@ -82,8 +82,8 @@ function OnboardingCard() {
     setBusy(true);
     setLabel("Starting…");
     try {
-      try { await api("/api/capabilities", { method: "POST", body: template }); } catch { /* already exists */ }
-      const result = await api(`/api/capabilities/${encodeURIComponent(template.slug)}/run`, { method: "POST", body: { input: {} } });
+      try { await api("/api/workflows", { method: "POST", body: template }); } catch { /* already exists */ }
+      const result = await api(`/api/workflows/${encodeURIComponent(template.slug)}/run`, { method: "POST", body: { input: {} } });
       const runId = result?.run?.id;
       toast("Sample run queued", "ok");
       await refreshCollection("runs");
@@ -100,7 +100,7 @@ function OnboardingCard() {
     {
       n: 1,
       title: "Browse workflow templates",
-      body: "Start from a curated capability. Each one ships with a sample input and a runner profile.",
+      body: "Start from a curated workflow. Each one ships with a sample input and a runner profile.",
       cta: <a className="button" href="/workflow-templates/" target="_blank" rel="noopener">Browse templates ↗</a>
     },
     {
@@ -178,7 +178,7 @@ function WorkflowCard({ cap, stats, canEdit = false }) {
   );
 }
 
-// Workflows / capabilities list. Ported from legacy renderCapabilities():
+// Workflows list.
 // cards with a last-run chip + success rate, onboarding + starter templates
 // when empty, and the "New Workflow" editor.
 export function Workflows() {
@@ -188,8 +188,8 @@ export function Workflows() {
   const canEdit = meIsAdmin(me);
 
   const capsQuery = useQuery({
-    queryKey: ["capabilities"],
-    queryFn: async () => (await api("/api/capabilities")).capabilities ?? [],
+    queryKey: ["workflows"],
+    queryFn: async () => (await api("/api/workflows")).workflows ?? [],
     refetchInterval: 60_000
   });
   const runsQuery = useQuery({
@@ -227,9 +227,9 @@ export function Workflows() {
 
   const useTemplate = async (template) => {
     try {
-      await api("/api/capabilities", { method: "POST", body: template });
+      await api("/api/workflows", { method: "POST", body: template });
       toast(`Created ${template.name}`, "ok");
-      await refreshCollection("capabilities");
+      await refreshCollection("workflows");
       navigate(deepLinks.workflow(template.slug));
       return true;
     } catch (error) {
@@ -245,7 +245,7 @@ export function Workflows() {
       <Toolbar title="Workflows" shareHash={deepLinks.workflows()}>
         {canEdit ? <button id="new-cap" onClick={() => setEditing({ slug: "" })}>New Workflow</button> : null}
       </Toolbar>
-      <p className="muted">A workflow is a capability your agents can invoke. They appear as MCP tools and as launchable buttons here. Each workflow has a shareable link — open 🔗 to copy.</p>
+      <p className="muted">Workflows are the actions agents and humans can invoke. They appear as MCP tools and as launchable buttons here. Each workflow has a shareable link — open 🔗 to copy.</p>
       {capabilities.length ? (
         <div className="grid">
           {capabilities.map((cap) => <WorkflowCard key={cap.slug} cap={cap} stats={statsFor(cap.slug)} canEdit={canEdit} />)}
