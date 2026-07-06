@@ -16,6 +16,7 @@ export function registerServerRoutes(app, {
   requireAuth,
   requireRunOwnerOrAdmin,
   requireScopes,
+  runDraftHandlers,
   runLifecycleHandlers,
   runPromotionHandlers,
   runReadHandlers,
@@ -94,6 +95,17 @@ export function registerServerRoutes(app, {
   app.get("/api/capabilities/:id/source", requireAuth, capabilityHandlers.getCapabilitySource);
   app.patch("/api/capabilities/:id", requireAuth, requireScopes("admin"), capabilityHandlers.updateCapability);
   app.post("/api/capabilities/:id/run", requireAuth, requireScopes("api", "mcp"), asyncHandler(capabilityHandlers.runCapability));
+  app.post("/api/capabilities/:id/preflight", requireAuth, requireScopes("api", "mcp"), capabilityHandlers.preflightCapability);
+
+  // Run-creation negotiation drafts: create/validate -> patch answers -> submit
+  // only when preflight is ready. Reads are any-auth (like /api/runs); every
+  // mutation needs the same api/mcp scopes as starting a run.
+  app.get("/api/run-drafts", requireAuth, runDraftHandlers.listRunDrafts);
+  app.post("/api/run-drafts", requireAuth, requireScopes("api", "mcp"), runDraftHandlers.createRunDraft);
+  app.get("/api/run-drafts/:id", requireAuth, runDraftHandlers.getRunDraft);
+  app.patch("/api/run-drafts/:id", requireAuth, requireScopes("api", "mcp"), runDraftHandlers.patchRunDraft);
+  app.post("/api/run-drafts/:id/submit", requireAuth, requireScopes("api", "mcp"), asyncHandler(runDraftHandlers.submitRunDraft));
+  app.post("/api/run-drafts/:id/discard", requireAuth, requireScopes("api", "mcp"), runDraftHandlers.discardRunDraft);
 
   app.get("/api/schedules", requireAuth, scheduleHandlers.listSchedules);
   app.get("/api/schedules/preview", requireAuth, scheduleHandlers.previewSchedule);

@@ -2936,3 +2936,64 @@ describe("Runner pool capacity & queue visibility", () => {
     assert.match(runners, /SMITHERS_RUNNER_CONCURRENCY/);
   });
 });
+
+describe("Run-creation negotiation (preflight + drafts)", () => {
+  it("negotiates end to end: preflight, 422 draft, patch answers, submit, and ready enqueue", async () => {
+    await api("/api/runners/register", {
+      method: "POST",
+      body: { name: "nego-runner", hostname: "nego", tags: ["smithers", "node"] }
+    });
+
+    // Stateless preflight: nothing created, questions + suggested title returned.
+    const preflight = await raw("/api/capabilities/hello/preflight", { method: "POST", body: { input: {} } });
+    assert.equal(preflight.status, 200);
+    assert.equal(preflight.data.negotiation.status, "needs_input");
+    assert.ok(preflight.data.negotiation.questions.some((question) => question.field === "topic"));
+    assert.ok(preflight.data.negotiation.suggestedDefaults.title);
+
+    // Negotiate mode: underspecified input becomes a 422 draft, never a run.
+    const runsBefore = countRuns({ includeInternal: true });
+    const negotiated = await raw("/api/capabilities/hello/run", {
+      method: "POST",
+      body: { negotiate: true, input: {} }
+    });
+    assert.equal(negotiated.status, 422);
+    assert.equal(negotiated.data.negotiation.status, "needs_input");
+    assert.equal(countRuns({ includeInternal: true }), runsBefore);
+    const draftId = negotiated.data.draft.id;
+    assert.ok(draftId);
+
+    // Answer the question, re-preflight to ready, then submit the real run.
+    const patched = await raw(`/api/run-drafts/${draftId}`, {
+      method: "PATCH",
+      body: { input: { topic: "negotiation", title: "Negotiation end-to-end" } }
+    });
+    assert.equal(patched.status, 200);
+    assert.equal(patched.data.draft.status, "ready");
+
+    const submitted = await raw(`/api/run-drafts/${draftId}/submit`, { method: "POST", body: {} });
+    assert.equal(submitted.status, 202);
+    const runId = submitted.data.run.id;
+    assert.equal(submitted.data.draft.status, "submitted");
+    assert.equal(submitted.data.draft.runId, runId);
+    const run = await api(`/api/runs/${runId}`);
+    assert.equal(run.run.capabilitySlug, "hello");
+    assert.equal(run.run.input.title, "Negotiation end-to-end");
+
+    // A submitted draft has left negotiation: patch and resubmit both 409.
+    const resubmit = await raw(`/api/run-drafts/${draftId}/submit`, { method: "POST", body: {} });
+    assert.equal(resubmit.status, 409);
+
+    // Negotiate mode with ready input enqueues normally and attaches the report.
+    const direct = await api("/api/capabilities/hello/run", {
+      method: "POST",
+      body: { negotiate: true, input: { topic: "direct", title: "Direct negotiate run" } }
+    });
+    assert.equal(direct.negotiation.status, "ready");
+    assert.ok(direct.run.id);
+
+    // Drafts are listable and readable.
+    const listed = await api(`/api/run-drafts?capability=hello`);
+    assert.ok(listed.drafts.some((entry) => entry.id === draftId && entry.status === "submitted"));
+  });
+});

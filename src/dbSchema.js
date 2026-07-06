@@ -321,6 +321,24 @@ export const DB_SCHEMA_SQL = `
     updated_at TEXT NOT NULL
   );
 
+  -- Run-creation negotiation drafts: proposed runs that have NOT been
+  -- enqueued. status mirrors the latest deterministic preflight (ready /
+  -- needs_input / blocked) until the draft is submitted (run_id records the
+  -- run it became) or discarded. Additive: older code never reads this table,
+  -- so rollbacks boot cleanly against a migrated DB.
+  CREATE TABLE IF NOT EXISTS run_drafts (
+    id TEXT PRIMARY KEY,
+    capability_slug TEXT NOT NULL,
+    input TEXT NOT NULL DEFAULT '{}',
+    options TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'needs_input',
+    preflight TEXT NOT NULL DEFAULT '{}',
+    created_by TEXT NOT NULL DEFAULT '',
+    run_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS secrets (
     key TEXT PRIMARY KEY,
     value_encrypted BLOB NOT NULL,
@@ -356,6 +374,7 @@ export const DB_SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_run_response_endpoints_run ON run_response_endpoints(run_id);
   CREATE INDEX IF NOT EXISTS idx_run_response_endpoints_status ON run_response_endpoints(delivery_status);
   CREATE INDEX IF NOT EXISTS idx_schedules_due ON schedules(enabled, next_run_at);
+  CREATE INDEX IF NOT EXISTS idx_run_drafts_status ON run_drafts(status, updated_at);
   CREATE INDEX IF NOT EXISTS idx_run_lineage_run ON run_lineage(run_id, created_at);
   -- Status/recency lookups are common in maintenance and run-history paths.
   CREATE INDEX IF NOT EXISTS idx_runs_status_updated ON runs(status, updated_at);

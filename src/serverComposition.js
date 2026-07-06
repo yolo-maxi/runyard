@@ -16,6 +16,8 @@ import {
 } from "./telegramWebAppAuth.js";
 import { sanitizeForDisplay } from "./approvalPresentation.js";
 import { createRunDispatcher } from "./runDispatch.js";
+import { createRunPreflightEvaluator } from "./runPreflight.js";
+import { createRunDraftHandlers } from "./runDraftRoutes.js";
 import { createSecretHandlers } from "./secretsRoutes.js";
 import { createTokenHandlers } from "./tokenRoutes.js";
 import { maybeRecordFailureClassAlert as maybeRecordFailureAlert } from "./failureAlerts.js";
@@ -66,6 +68,7 @@ export function createServerComposition({
     getWorkflowBundle,
     getWorkflowEndpoint,
     countRuns,
+    createRunDraft,
     createRunResponseEndpoint,
     createSchedule,
     listSchedules,
@@ -77,8 +80,14 @@ export function createServerComposition({
     claimScheduleFire,
     recordScheduleFireResult,
     getRun,
+    getRunDraft,
+    discardRunDraft,
+    listRunDrafts,
+    markRunDraftSubmitted,
+    updateRunDraft,
     getHookProfile,
     listHookProfiles,
+    listRunners,
     upsertHookProfile,
     listRunResponseEndpointsForRun,
     listAccessTokens,
@@ -169,6 +178,18 @@ export function createServerComposition({
 
   const dispatchRun = createRunDispatcher({
     createRun
+  });
+
+  // Deterministic run-creation preflight shared by /preflight, negotiate-mode
+  // create, and the run-draft negotiation flow. Binds live Hub state once.
+  const evaluatePreflight = createRunPreflightEvaluator({
+    listRunners,
+    listHookProfiles,
+    secretExists,
+    secretsEnabled,
+    getWorkflowBundle,
+    root: env.root,
+    env: processEnv
   });
 
   const {
@@ -278,8 +299,10 @@ export function createServerComposition({
 
   const capabilityHandlers = createCapabilityHandlers({
     addRunEvent,
+    createRunDraft,
     createRunResponseEndpoint,
     dispatchRun,
+    evaluatePreflight,
     getCapability,
     getWorkflowBundle,
     listApprovals,
@@ -293,6 +316,22 @@ export function createServerComposition({
     withCapabilityLinks,
     withRunLinks,
     env: processEnv
+  });
+
+  const runDraftHandlers = createRunDraftHandlers({
+    createRunDraft,
+    discardRunDraft,
+    dispatchRun,
+    evaluatePreflight,
+    getCapability,
+    getRunDraft,
+    listApprovals,
+    listRunDrafts,
+    markRunDraftSubmitted,
+    notifyTelegram,
+    recordAudit,
+    updateRunDraft,
+    withRunLinks
   });
 
   const scheduleHandlers = createScheduleHandlers({
@@ -466,6 +505,7 @@ export function createServerComposition({
       requireAuth,
       requireRunOwnerOrAdmin,
       requireScopes,
+      runDraftHandlers,
       runLifecycleHandlers,
       runPromotionHandlers,
       runReadHandlers,

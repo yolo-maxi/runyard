@@ -68,6 +68,29 @@ The `improve` workflow edits the runner's default repo by default: `IMPROVE_REPO
 
 The selected repo is where the PM review, builder, tests, commit, push, and deploy run. The Hub remains the source of truth for run status, logs, outputs, and artifacts.
 
+## Run-creation negotiation (preflight + drafts)
+
+Invalid or underspecified run requests should not become failed runs. Before
+enqueueing, RunYard can run a deterministic preflight — required input-schema
+fields, title recommendation, capability enabled, runner tags registered/online,
+obvious repo/repoDir checks, required secrets stored, hook eligibility, and
+workflow source (entry/bundle) — and answer `ready`, `needs_input`, or
+`blocked` with questions, blockers, warnings, and suggested defaults.
+
+- `POST /api/capabilities/{id}/preflight` (CLI: `runyard preflight <capability>`,
+  MCP: `preflight_capability`) — stateless dry-run; nothing is created.
+- `POST /api/capabilities/{id}/run` with `negotiate: true` (CLI:
+  `runyard run --negotiate`) — enqueues only when preflight is ready; otherwise
+  returns `422` (needs_input) or `409` (blocked) with the negotiation state and
+  a saved draft instead of creating a doomed run.
+- Run drafts: `POST /api/run-drafts` creates and preflights a draft,
+  `PATCH /api/run-drafts/{id}` merges answers into the input and re-preflights,
+  `POST /api/run-drafts/{id}/submit` enqueues the real run once green, and
+  `POST /api/run-drafts/{id}/discard` abandons the negotiation.
+
+Plain `POST /api/capabilities/{id}/run` without `negotiate` is unchanged for
+existing clients. The preflight is deterministic — no agent, no supervisor.
+
 ## Agent-created run titles
 
 When an agent starts a run, it should include `input.title` when practical:

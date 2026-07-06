@@ -31,6 +31,14 @@ describe("server route registration", () => {
     assertRoute(app, "patch", "/api/hooks/:slug", [deps.requireAuth, deps.scopes.admin, deps.hookProfileHandlers.upsertHookProfile]);
     assertRoute(app, "post", "/api/hooks/:slug/validate", [deps.requireAuth, deps.scopes.admin, deps.hookProfileHandlers.validateHookProfile]);
     assertRoute(app, "get", "/api/workflow-bundles/:id", [deps.requireAuth, deps.workflowBundleHandlers.getWorkflowBundle]);
+    assertRoute(app, "post", "/api/capabilities/:id/preflight", [deps.requireAuth, deps.scopes["api,mcp"], deps.capabilityHandlers.preflightCapability]);
+    // Run drafts: reads are any-auth; mutations carry the same api/mcp scopes as starting a run.
+    assertRoute(app, "get", "/api/run-drafts", [deps.requireAuth, deps.runDraftHandlers.listRunDrafts]);
+    assertRoute(app, "post", "/api/run-drafts", [deps.requireAuth, deps.scopes["api,mcp"], deps.runDraftHandlers.createRunDraft]);
+    assertRoute(app, "get", "/api/run-drafts/:id", [deps.requireAuth, deps.runDraftHandlers.getRunDraft]);
+    assertRoute(app, "patch", "/api/run-drafts/:id", [deps.requireAuth, deps.scopes["api,mcp"], deps.runDraftHandlers.patchRunDraft]);
+    assertRoute(app, "post", "/api/run-drafts/:id/submit", [deps.requireAuth, deps.scopes["api,mcp"]]);
+    assertRoute(app, "post", "/api/run-drafts/:id/discard", [deps.requireAuth, deps.scopes["api,mcp"], deps.runDraftHandlers.discardRunDraft]);
     assertRoute(app, "post", "/api/runners/register", [deps.requireAuth, deps.scopes.runner]);
     assertRoute(app, "post", "/api/chat", [deps.requireAuth, deps.rateLimits["support-chat"]]);
     assertRoute(app, "use", "/public");
@@ -59,7 +67,7 @@ function routeDeps() {
     approvalHandlers: handlers(["listApprovals", "getApproval", "createApproval", "approve", "reject", "requestChanges", "telegramWebhook"]),
     artifactHandlers: handlers(["listRunArtifacts", "createRunArtifact", "listArtifacts", "downloadArtifact"]),
     authHandlers: handlers(["setup", "tokenLogin", "telegramWebAppLogin", "logout", "me"]),
-    capabilityHandlers: handlers(["listCapabilities", "createCapability", "getCapability", "getCapabilityVersions", "getCapabilitySource", "updateCapability", "runCapability"]),
+    capabilityHandlers: handlers(["listCapabilities", "createCapability", "getCapability", "getCapabilityVersions", "getCapabilitySource", "updateCapability", "runCapability", "preflightCapability"]),
     catalogHandlers: {
       agents: handlers(["list", "create", "update"], "agents"),
       skills: handlers(["list", "create", "update"], "skills"),
@@ -71,6 +79,7 @@ function routeDeps() {
       ...handlers(["healthz", "readyz", "apiVersion", "version", "cliTarball", "installScript", "landing", "app", "docs", "llmsTxt", "openApi", "menu"]),
       publicDir: "/tmp/runyard-public"
     },
+    runDraftHandlers: handlers(["listRunDrafts", "createRunDraft", "getRunDraft", "patchRunDraft", "submitRunDraft", "discardRunDraft"]),
     runLifecycleHandlers: handlers(["recordRunEvent", "startRun", "completeRun", "failRun", "cancelRun"]),
     runPromotionHandlers: handlers(["promoteRun"]),
     runReadHandlers: handlers(["listRuns", "getRun", "listRunEvents", "streamRunEvents", "getRunLogSummary", "getRunDiagnostics", "getRunLogs", "getRunTimeline"]),

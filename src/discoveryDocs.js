@@ -4,6 +4,7 @@ const HUB_TOOL_NAMES = [
   "get_menu",
   "list_capabilities",
   "describe_capability",
+  "preflight_capability",
   "run_capability",
   "get_run_status",
   "get_run_logs",
@@ -14,6 +15,8 @@ const HUB_TOOL_NAMES = [
 ];
 
 const RUN_TITLE_RECOMMENDATION = "For agent-created runs, include input.title: a short human-readable title that explains the specific job.";
+
+const RUN_PREFLIGHT_RECOMMENDATION = "When the input is rough or unverified, preflight first (preflight_capability / POST /api/capabilities/{id}/preflight or run_capability with negotiate: true): a non-ready request comes back as ready|needs_input|blocked with questions and blockers instead of becoming a failed run.";
 
 export function hubMenuPayload({ baseUrl, capabilities = [], pool = null } = {}) {
   const linkedCapabilities = capabilities.map((linked) => ({
@@ -65,7 +68,8 @@ export function hubMenuPayload({ baseUrl, capabilities = [], pool = null } = {})
       }
     ],
     runInputGuidance: {
-      title: RUN_TITLE_RECOMMENDATION
+      title: RUN_TITLE_RECOMMENDATION,
+      preflight: RUN_PREFLIGHT_RECOMMENDATION
     },
     tools: [...HUB_TOOL_NAMES],
     capabilities: linkedCapabilities,
@@ -121,6 +125,8 @@ export function renderLlmsTxt(baseUrl) {
   lines.push("2. Choose local or remote execution.");
   lines.push("3. Start with run_capability or `runyard run --where local|remote`.");
   lines.push("   For agent-created runs, set input.title when practical.");
+  lines.push("   Rough or unverified input? Preflight first: preflight_capability,");
+  lines.push("   `runyard preflight <capability>`, or POST /api/capabilities/{id}/preflight.");
   lines.push("4. Fetch status, logs, outputs, artifacts, and the unified timeline from the Hub.");
   lines.push("5. Operators can run `runyard tail <run-id>` for an NDJSON timeline stream.");
   lines.push("");
@@ -136,6 +142,20 @@ export function renderLlmsTxt(baseUrl) {
   lines.push("  Telegram integration to be configured. Delivery state (status /");
   lines.push("  attempts / last_error / delivered_at) is visible on GET /api/runs/:id");
   lines.push("  under responseEndpoints[].");
+  lines.push("");
+  lines.push("Run-creation negotiation (preflight + drafts):");
+  lines.push("- POST /api/capabilities/{id}/preflight dry-runs the deterministic");
+  lines.push("  preflight (required input fields, runner tags, secrets, hooks,");
+  lines.push("  workflow source) and returns ready | needs_input | blocked with");
+  lines.push("  questions[], blockers[], warnings[], and suggestedDefaults —");
+  lines.push("  nothing is created or enqueued.");
+  lines.push("- POST /api/capabilities/{id}/run with negotiate: true enqueues only");
+  lines.push("  when preflight is ready; otherwise it returns 422 (needs_input) or");
+  lines.push("  409 (blocked) with the negotiation state and a saved run draft");
+  lines.push("  instead of creating a run that would fail.");
+  lines.push("- Drafts: POST /api/run-drafts creates one, PATCH /api/run-drafts/{id}");
+  lines.push("  merges answers into the input and re-preflights, and");
+  lines.push("  POST /api/run-drafts/{id}/submit enqueues the real run once ready.");
   lines.push("");
   lines.push("Post-run hooks (optional):");
   lines.push("- Side effects after a run's gates pass (static publish, git push,");
@@ -169,7 +189,18 @@ export function openApiDocument({ baseUrl, version }) {
       "/menu": { get: { summary: "Discover the Runyard MCP/CLI menu: tools, capability catalog, and local/remote execution modes (same source as get_menu and /llms.txt)" } },
       "/capabilities": { get: { summary: "List capabilities" }, post: { summary: "Create/update capability (admin)" } },
       "/capabilities/{id}": { get: { summary: "Describe capability and its input schema" }, patch: { summary: "Update capability (admin)" } },
-      "/capabilities/{id}/run": { post: { summary: "Run capability. Body: {input, executionMode: local|remote}. For agent-created runs, input.title is recommended as a short human-readable run title for run lists, approval cards, and handoff. improve.repoDir selects an allowlisted runner-local repo while logs/artifacts stay in the Hub. Accepts an optional responseEndpoint ({type: http|telegram, config}) so the caller can have the terminal-state reply delivered when the run finishes (http endpoints receive a sanitized JSON payload; telegram endpoints receive a concise message and require TELEGRAM_BOT_TOKEN on the Hub). Polling /runs/{id} remains the canonical fallback; delivery state is exposed on /runs/{id}.responseEndpoints[]." } },
+      "/capabilities/{id}/run": { post: { summary: "Run capability. Body: {input, executionMode: local|remote}. For agent-created runs, input.title is recommended as a short human-readable run title for run lists, approval cards, and handoff. improve.repoDir selects an allowlisted runner-local repo while logs/artifacts stay in the Hub. Accepts an optional responseEndpoint ({type: http|telegram, config}) so the caller can have the terminal-state reply delivered when the run finishes (http endpoints receive a sanitized JSON payload; telegram endpoints receive a concise message and require TELEGRAM_BOT_TOKEN on the Hub). Polling /runs/{id} remains the canonical fallback; delivery state is exposed on /runs/{id}.responseEndpoints[]. Pass negotiate: true to preflight first — a non-ready request returns 422 (needs_input) or 409 (blocked) with the negotiation state and a saved run draft instead of creating a run." } },
+      "/capabilities/{id}/preflight": { post: { summary: "Dry-run the deterministic run-creation preflight. Body: {input, executionMode}. Returns {negotiation: {status: ready|needs_input|blocked, input (normalized), questions, blockers, warnings, suggestedDefaults, checks, nextAction}}; nothing is created or enqueued." } },
+      "/run-drafts": {
+        get: { summary: "List run drafts (filter: status, capability). A draft is a proposed run that has NOT been enqueued; its status mirrors the latest preflight until submitted or discarded." },
+        post: { summary: "Create a run draft and preflight it. Body: {capability, input, executionMode}. Returns 201 with the draft (status ready|needs_input|blocked, preflight report, questions to answer)." }
+      },
+      "/run-drafts/{id}": {
+        get: { summary: "Get a run draft with its latest preflight report" },
+        patch: { summary: "Answer questions / edit a draft: body.input is shallow-merged into the draft input (null deletes a key; replaceInput: true replaces it), executionMode/runnerLocation update options; the draft is re-preflighted and its status updated." }
+      },
+      "/run-drafts/{id}/submit": { post: { summary: "Submit a run draft: re-preflights and enqueues the real run only when ready (202 with {run, draft}); otherwise 422 (needs_input) or 409 (blocked) with the refreshed negotiation state and no run created." } },
+      "/run-drafts/{id}/discard": { post: { summary: "Discard an open run draft (abandon the negotiation)" } },
       "/runs": { get: { summary: "List runs (filter by status, q, capability)" } },
       "/runs/{id}": { get: { summary: "Get run: status, outputs, error, and responseEndpoints[] delivery state" } },
       "/runs/{id}/events": { get: { summary: "Get run events" }, post: { summary: "Append run event (runner)" } },

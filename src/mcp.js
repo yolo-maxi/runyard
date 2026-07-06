@@ -20,7 +20,22 @@ const tools = [
   { name: "describe_capability", description: "Describe a capability, schemas, permissions, skills, agents, and workflow.", inputSchema: { type: "object", required: ["id"], properties: { id: { type: "string" } } } },
   {
     name: "run_capability",
-    description: "Run a capability with JSON input. For agent-created runs, include input.title when practical: a short human-readable title for run lists, approval cards, and handoff. Pass executionMode 'local' to target a local runner or 'remote' to target the shared remote/VPS runner pool. Outputs and artifacts are fetched from the Hub. For improve, input.repoDir selects an allowlisted runner-local git repo to edit.",
+    description: "Run a capability with JSON input. For agent-created runs, include input.title when practical: a short human-readable title for run lists, approval cards, and handoff. Pass executionMode 'local' to target a local runner or 'remote' to target the shared remote/VPS runner pool. Outputs and artifacts are fetched from the Hub. For improve, input.repoDir selects an allowlisted runner-local git repo to edit. Pass negotiate: true to preflight first — a non-ready request then returns the negotiation state (questions/blockers/warnings + a saved draft) instead of creating a run; fix the input and call again.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: {
+        id: { type: "string" },
+        input: { type: "object" },
+        executionMode: { type: "string", enum: ["local", "remote", "auto"] },
+        runnerLocation: { type: "string" },
+        negotiate: { type: "boolean" }
+      }
+    }
+  },
+  {
+    name: "preflight_capability",
+    description: "Dry-run the deterministic run-creation preflight for a capability with JSON input. Returns ready | needs_input | blocked with questions, blockers, warnings, suggested defaults, and the normalized input — nothing is created or enqueued. Use before run_capability when the input is rough or unverified.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -62,15 +77,31 @@ async function callTool(name, args = {}) {
   if (name === "search_capabilities") return result(await client.get(`/api/capabilities?q=${encodeURIComponent(args.query || "")}`));
   if (name === "describe_capability") return result(await client.get(`/api/capabilities/${encodeURIComponent(args.id)}`));
   if (name === "run_capability") {
-    return result(await client.post(`/api/capabilities/${encodeURIComponent(args.id)}/run`, {
+    try {
+      return result(await client.post(`/api/capabilities/${encodeURIComponent(args.id)}/run`, {
+        input: args.input || {},
+        executionMode: args.executionMode || args.where || undefined,
+        runnerLocation: args.runnerLocation || undefined,
+        ...(args.negotiate === true ? { negotiate: true } : {}),
+        origin: {
+          type: "mcp",
+          label: "MCP: runyard",
+          tool: "run_capability"
+        }
+      }));
+    } catch (error) {
+      // Negotiate mode reports non-ready preflight as structured 422/409
+      // bodies; surface them as tool output so the agent can answer the
+      // questions and retry, instead of a bare protocol error.
+      if (args.negotiate === true && error.response?.negotiation) return result(error.response);
+      throw error;
+    }
+  }
+  if (name === "preflight_capability") {
+    return result(await client.post(`/api/capabilities/${encodeURIComponent(args.id)}/preflight`, {
       input: args.input || {},
       executionMode: args.executionMode || args.where || undefined,
-      runnerLocation: args.runnerLocation || undefined,
-      origin: {
-        type: "mcp",
-        label: "MCP: runyard",
-        tool: "run_capability"
-      }
+      runnerLocation: args.runnerLocation || undefined
     }));
   }
   if (name === "get_run_status") return result(await client.get(`/api/runs/${encodeURIComponent(args.runId)}`));

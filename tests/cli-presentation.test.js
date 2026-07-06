@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   renderData,
   renderMenu,
+  renderNegotiation,
   renderRunCreated
 } from "../src/cliPresentation.js";
 
@@ -26,6 +27,29 @@ describe("CLI presentation helpers", () => {
     });
     assert.ok(guided.includes("Run input: For agent-created runs, include input.title."));
     assert.equal(renderMenu({ capabilities }, { all: true }).some((line) => line.includes("more")), false);
+  });
+
+  it("renders negotiation reports with questions, blockers, warnings, and the saved draft", () => {
+    assert.deepEqual(renderNegotiation({
+      negotiation: {
+        status: "needs_input",
+        capability: "research",
+        questions: [{ field: "prompt", question: "The research question or topic.", expected: "string" }],
+        blockers: [{ code: "no_matching_runner", message: "no registered runner matches" }],
+        warnings: [{ code: "title_missing", message: "input.title is recommended" }],
+        suggestedDefaults: { title: "Research run" },
+        nextAction: "Answer questions[]."
+      },
+      draft: { id: "draft_1" }
+    }), [
+      "Preflight: needs_input (research)",
+      "  needs input: prompt — The research question or topic. [string]",
+      "  blocked: no_matching_runner — no registered runner matches",
+      "  warning: title_missing — input.title is recommended",
+      "  suggested title: Research run",
+      "Draft saved: draft_1 (PATCH /api/run-drafts/draft_1, then POST /api/run-drafts/draft_1/submit)",
+      "Next: Answer questions[]."
+    ]);
   });
 
   it("renders run-created next steps and improve repo selector", () => {

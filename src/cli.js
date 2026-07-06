@@ -10,7 +10,7 @@ import { HubClient } from "./apiClient.js";
 import { readConfig, writeConfig, setRemote, resolveRemote } from "./config.js";
 import { resolveHubUrl, resolveHubToken } from "./hubConnection.js";
 import { parseJsonOption } from "./cliJson.js";
-import { renderData, renderMenu, renderRunCreated } from "./cliPresentation.js";
+import { renderData, renderMenu, renderNegotiation, renderRunCreated } from "./cliPresentation.js";
 import { normalizeRunnerTags } from "./runExecution.js";
 import {
   installMcpClients,
@@ -43,6 +43,12 @@ function printMenu(data, json, { all = false } = {}) {
 function printRunCreated(data, json) {
   if (json) return print(data, true);
   for (const line of renderRunCreated(data)) console.log(line);
+  if (data?.negotiation) for (const line of renderNegotiation(data)) console.log(line);
+}
+
+function printNegotiation(data, json) {
+  if (json) return print(data, true);
+  for (const line of renderNegotiation(data)) console.log(line);
 }
 
 function ask(query, { hidden = false } = {}) {
@@ -253,6 +259,7 @@ program
   .option("--execution-mode <mode>", "execution mode alias: local | remote")
   .option("--runner-location <location>", "specific runner location tag")
   .option("--pin <sha>", "pin this run to a specific capability git SHA (RUNYARD_CAPABILITY_VERSIONING)")
+  .option("--negotiate", "preflight first: enqueue only when ready; otherwise print the negotiation state (and saved draft) without creating a run")
   .action(async (capability, opts) => {
     const input = parseJsonOption(opts.input, "--input");
     const remote = resolveRemote(program.opts().remote);
@@ -272,7 +279,33 @@ program
       body.pin = opts.pin;
       body.origin.pin = opts.pin;
     }
-    printRunCreated(await client(program.opts()).post(`/api/capabilities/${capability}/run`, body), program.opts().json);
+    if (opts.negotiate) body.negotiate = true;
+    try {
+      printRunCreated(await client(program.opts()).post(`/api/capabilities/${capability}/run`, body), program.opts().json);
+    } catch (error) {
+      // In negotiate mode a non-ready preflight is a structured negotiation
+      // response (422 needs_input / 409 blocked), not a CLI crash.
+      if (opts.negotiate && error.response?.negotiation) {
+        printNegotiation(error.response, program.opts().json);
+        process.exitCode = 1;
+        return;
+      }
+      throw error;
+    }
+  });
+
+program
+  .command("preflight <capability>")
+  .description("Dry-run the deterministic run-creation preflight: report ready/needs_input/blocked without creating anything")
+  .option("-i, --input <json>", "JSON input", "{}")
+  .option("--where <mode>", "execution mode: local | remote")
+  .option("--execution-mode <mode>", "execution mode alias: local | remote")
+  .option("--runner-location <location>", "specific runner location tag")
+  .action(async (capability, opts) => {
+    const body = { input: parseJsonOption(opts.input, "--input") };
+    if (opts.where || opts.executionMode) body.executionMode = opts.where || opts.executionMode;
+    if (opts.runnerLocation) body.runnerLocation = opts.runnerLocation;
+    printNegotiation(await client(program.opts()).post(`/api/capabilities/${capability}/preflight`, body), program.opts().json);
   });
 
 program.command("runs").description("List runs").option("-s, --status <status>").action(async (opts) => {

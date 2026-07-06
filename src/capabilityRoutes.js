@@ -17,12 +17,15 @@ import {
 } from "./workflowSource.js";
 import { normalizeCapabilityDefinition } from "./capabilityRecords.js";
 import { eligibleHookProfiles } from "./hookProfileRecords.js";
-import { requireBodySlug } from "./requestContext.js";
+import { requestOrigin, requireBodySlug } from "./requestContext.js";
 import {
+  capabilityRunInput,
   capabilityRunResponse,
   prepareCapabilityRunRequest,
   registerRunResponseEndpoint
 } from "./capabilityRun.js";
+import { draftOptionsFromBody, negotiationStatusCode, presentRunDraft } from "./runDraftRoutes.js";
+import { RUN_PREFLIGHT_READY } from "./runPreflight.js";
 
 export {
   capabilityRunDispatchOptions,
@@ -31,8 +34,10 @@ export {
 
 export function createCapabilityHandlers({
   addRunEvent,
+  createRunDraft = null,
   createRunResponseEndpoint,
   dispatchRun,
+  evaluatePreflight = null,
   getCapability,
   getWorkflowBundle,
   listApprovals,
@@ -169,6 +174,38 @@ export function createCapabilityHandlers({
       const responseEndpointResult = parseResponseEndpoint(req.body.responseEndpoint);
       if (!responseEndpointResult.ok) return res.status(400).json({ error: responseEndpointResult.error });
 
+      // Negotiation mode (opt-in via body.negotiate): run the deterministic
+      // preflight first. A non-ready request never becomes a run — it comes
+      // back as a structured negotiation state plus an editable draft the
+      // caller can PATCH and submit. Without the flag, create semantics are
+      // unchanged for existing clients.
+      let negotiation = null;
+      if (req.body?.negotiate === true && evaluatePreflight) {
+        const draftOptions = draftOptionsFromBody(req.body || {});
+        negotiation = evaluatePreflight({
+          capability,
+          input: capabilityRunInput(req.body || {}),
+          options: draftOptions
+        });
+        if (negotiation.status !== RUN_PREFLIGHT_READY) {
+          const draft = createRunDraft
+            ? createRunDraft({
+              capabilitySlug: capability.slug,
+              input: negotiation.input,
+              options: draftOptions,
+              status: negotiation.status,
+              preflight: negotiation,
+              createdBy: requestOrigin(req, negotiation.input).requestedBy
+            })
+            : null;
+          return res.status(negotiationStatusCode(negotiation.status)).json({
+            error: `preflight is ${negotiation.status}; no run was created`,
+            negotiation,
+            ...(draft ? { draft: presentRunDraft(draft) } : {})
+          });
+        }
+      }
+
       // Post-run hooks are opt-in twice over: the capability must permit the
       // profile (workflow.hooks.allowedProfiles) AND the admin-authored
       // profile must be enabled and allow the capability. Reject ineligible
@@ -204,12 +241,35 @@ export function createCapabilityHandlers({
         token: req.token
       });
       await notifyPendingApprovalForRun(run.id, { listApprovals, notifyTelegram });
-      res.status(202).json(capabilityRunResponse({
-        dispatched,
-        registeredResponseEndpoint,
-        run,
-        withRunLinks
-      }));
+      res.status(202).json({
+        ...capabilityRunResponse({
+          dispatched,
+          registeredResponseEndpoint,
+          run,
+          withRunLinks
+        }),
+        ...(negotiation ? { negotiation } : {})
+      });
+    },
+
+    // Stateless negotiation report: same deterministic checks as negotiate
+    // mode and draft submission, but nothing is stored and nothing is
+    // enqueued. Safe to call repeatedly while composing a request.
+    preflightCapability(req, res) {
+      const capability = enabledCapabilityOr404(res, req.params.id);
+      if (!capability) return;
+      if (capability.workflow?.adminOnly && !(req.token?.scopes || []).includes("admin")) {
+        return res.status(403).json({ error: "admin scope required", capability: capability.slug });
+      }
+      if (!evaluatePreflight) {
+        return res.status(503).json({ error: "preflight is not available on this Hub" });
+      }
+      const negotiation = evaluatePreflight({
+        capability,
+        input: capabilityRunInput(req.body || {}),
+        options: draftOptionsFromBody(req.body || {})
+      });
+      res.json({ negotiation });
     }
   };
 }

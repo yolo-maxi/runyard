@@ -46,6 +46,7 @@ import { createScheduleStore } from "./scheduleStore.js";
 import { createRunStore } from "./runStore.js";
 import { createRunnerStore } from "./runnerStore.js";
 import { createRunCreateStore } from "./runCreateStore.js";
+import { createRunDraftStore } from "./runDraftStore.js";
 import { createRunMutationStore } from "./runMutationStore.js";
 import { createRunClaimStore } from "./runClaimStore.js";
 
@@ -112,6 +113,14 @@ const runCreateStore = createRunCreateStore({
   addRunEvent,
   createApproval,
   getRun
+});
+const runDraftStore = createRunDraftStore({
+  all,
+  one,
+  run,
+  id,
+  now,
+  scrubStoredSecrets
 });
 const runnerStore = createRunnerStore({
   all,
@@ -526,6 +535,35 @@ export function autoQueueLegacyRunStartApprovals() {
 
 export function createRun(capability, input, options = {}) {
   return runCreateStore.createRun(capability, input, options);
+}
+
+// --- Run drafts (run-creation negotiation) -----------------------------------
+// Proposed runs that have NOT been enqueued; see runDraftStore.js. Draft input
+// passes through scrubStoredSecrets like run input, so a pasted secret never
+// persists in a draft either.
+
+export function createRunDraft(input) {
+  return runDraftStore.createRunDraft(input);
+}
+
+export function getRunDraft(draftId) {
+  return runDraftStore.getRunDraft(draftId);
+}
+
+export function listRunDrafts(options = {}) {
+  return runDraftStore.listRunDrafts(options);
+}
+
+export function updateRunDraft(draftId, patch = {}) {
+  return runDraftStore.updateRunDraft(draftId, patch);
+}
+
+export function markRunDraftSubmitted(draftId, options = {}) {
+  return runDraftStore.markRunDraftSubmitted(draftId, options);
+}
+
+export function discardRunDraft(draftId) {
+  return runDraftStore.discardRunDraft(draftId);
 }
 
 export function getRun(runId) {

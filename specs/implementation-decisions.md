@@ -452,6 +452,36 @@ Reasoning:
 - Tokens and Telegram credentials must not be committed.
 - The repo remains reusable for another private deployment.
 
+### Decision: Run creation negotiates via deterministic preflight, not a supervisor
+
+Workflow/run creation supports a first-class negotiation flow so invalid or
+underspecified requests become editable drafts instead of failed runs:
+
+- `POST /api/capabilities/{id}/preflight` — stateless deterministic preflight
+  returning `ready | needs_input | blocked` with `questions[]`, `blockers[]`,
+  `warnings[]`, `suggestedDefaults`, the normalized input, and a `nextAction`.
+- `POST /api/capabilities/{id}/run` with `negotiate: true` — enqueues only when
+  preflight is ready; otherwise 422 (needs_input) / 409 (blocked) with the
+  negotiation state plus a saved run draft. Without the flag, create semantics
+  are byte-compatible for existing clients.
+- Run drafts (`run_drafts` table, `/api/run-drafts` CRUD + submit/discard) —
+  create/validate, PATCH answers (shallow merge, null deletes), submit
+  re-preflights and enqueues only when green.
+
+Reasoning:
+
+- The checks are exactly the conditions that previously surfaced as runner-side
+  `blocked_by_preflight` failures or doomed queue entries: required input-schema
+  fields, capability enabled, runner tags registered/online, harness selection,
+  required secrets stored, repo/repoDir shape and catalog membership, post-run
+  hook eligibility, and workflow entry/bundle resolution.
+- Deliberately deterministic — schema and config lookups only. This is NOT a
+  resurrection of the run-smithers/supervisor wrapper; no agent evaluates the
+  request and nothing executes at negotiation time.
+- Hook problems stay config-gated (`hook_blocked`) and secrets are referenced
+  by NAME only in blockers; draft input passes through the same stored-secret
+  scrubbing as run input.
+
 ## Known Follow-Up Decisions
 
 These were intentionally left as future decisions:
