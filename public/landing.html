@@ -837,7 +837,7 @@
                 <span class="status succeeded">succeeded</span>
               </div>
               <pre aria-hidden="true"><span class="c-prompt">$ runyard tail run_01JDQ8</span>
-<span class="c-dim">[22:41:07]</span> <span class="c-info">▶</span> queued          capability=improve
+<span class="c-dim">[22:41:07]</span> <span class="c-info">▶</span> queued          workflow=improve
 <span class="c-dim">[22:41:09]</span> <span class="c-info">●</span> claimed         runner=hetzner-1
 <span class="c-dim">[22:41:14]</span> <span class="c-ok">✓</span> workspace ready @ 3f9c2ab
 <span class="c-dim">[22:43:52]</span> <span class="c-info">→</span> 214 files scanned · patch drafted
@@ -880,7 +880,7 @@
             <p class="lp-eyebrow blue">MCP · CLI · HTTP API · Web</p>
             <h2>Built for agents to drive — and for you to inspect.</h2>
             <p>
-              Runyard treats AI agents as first-class operators. The capability catalog, runs,
+              Runyard treats AI agents as first-class operators. The workflow catalog, runs,
               logs, artifacts, and approvals are one product exposed over four surfaces — same
               data, same token, no drift between what your agent sees and what you see.
             </p>
@@ -893,7 +893,7 @@
                 <strong>MCP</strong>
                 <span class="tag">runyard-mcp</span>
               </div>
-              <pre><span class="c-info">▸</span> run_capability <span class="c-dim">{ id: "improve",
+              <pre><span class="c-info">▸</span> run_workflow <span class="c-dim">{ id: "improve",
     executionMode: "remote" }</span>
 <span class="c-ok">✓</span> run_01JDQ8 queued
   <span class="c-dim">deepLink /app#runs/run_01JDQ8</span>
@@ -935,7 +935,7 @@ appr_7F2K · improve · pending
               </div>
               <pre><span class="c-prompt">$</span> curl -s -X POST \
   <span class="c-dim">-H "authorization: Bearer $TOKEN"</span> \
-  $HUB/api/capabilities/improve/run
+  $HUB/api/workflows/improve/run
 <span class="c-dim">{</span>
   "id": <span class="c-ok">"run_01JDQ8"</span>,
   "status": <span class="c-warn">"queued"</span>,
@@ -1011,7 +1011,7 @@ appr_7F2K · improve · pending
                   <dd class="hold">10 h 13 m · held</dd>
                 </div>
                 <div>
-                  <dt>Capability</dt>
+                  <dt>Workflow</dt>
                   <dd>improve</dd>
                 </div>
                 <div>

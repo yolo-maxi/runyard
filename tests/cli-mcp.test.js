@@ -168,10 +168,45 @@ describe("CLI/MCP discovery and execution intent", () => {
 
       const listed = await mcp.call("tools/list");
       assert.ok(listed.result.tools.find((tool) => tool.name === "get_menu"));
+      for (const name of [
+        "create_workflow",
+        "update_workflow",
+        "delete_workflow",
+        "get_workflow_source",
+        "list_workflow_versions",
+        "export_workflow_package",
+        "import_workflow_package",
+        "list_run_drafts",
+        "list_runs",
+        "get_run_timeline",
+        "rerun_workflow_run",
+        "promote_run",
+        "list_repo_options",
+        "list_workflow_endpoints",
+        "list_tokens",
+        "list_secrets"
+      ]) {
+        assert.ok(listed.result.tools.find((tool) => tool.name === name), `${name} should be advertised`);
+      }
 
       const menu = parseToolText(await mcp.call("tools/call", { name: "get_menu", arguments: {} }));
       assert.equal(menu.hub.sourceOfTruth, true);
       assert.ok(menu.executionModes.find((mode) => mode.id === "remote"));
+
+      const workflows = parseToolText(await mcp.call("tools/call", { name: "list_workflows", arguments: {} }));
+      assert.ok(Array.isArray(workflows.workflows || workflows.capabilities));
+
+      const source = parseToolText(await mcp.call("tools/call", { name: "get_workflow_source", arguments: { id: "hello" } }));
+      assert.equal((source.workflow || source.capability).slug, "hello");
+
+      const versions = parseToolText(await mcp.call("tools/call", { name: "list_workflow_versions", arguments: { id: "hello" } }));
+      assert.ok(Array.isArray(versions.versions));
+
+      const runs = parseToolText(await mcp.call("tools/call", { name: "list_runs", arguments: { limit: 5 } }));
+      assert.ok(Array.isArray(runs.runs));
+
+      const repos = parseToolText(await mcp.call("tools/call", { name: "list_repo_options", arguments: {} }));
+      assert.ok(Array.isArray(repos.repositories || repos.options || repos.repos));
 
       const run = parseToolText(await mcp.call("tools/call", {
         name: "run_capability",
@@ -181,6 +216,12 @@ describe("CLI/MCP discovery and execution intent", () => {
       assert.equal(run.run.execution.runnerLocation, "vps");
       assert.equal(run.run.origin.type, "mcp");
       assert.equal(run.outputsLocation, "hub");
+
+      const events = parseToolText(await mcp.call("tools/call", { name: "get_run_events", arguments: { runId: run.run.id } }));
+      assert.ok(Array.isArray(events.events));
+
+      const timeline = parseToolText(await mcp.call("tools/call", { name: "get_run_timeline", arguments: { runId: run.run.id } }));
+      assert.ok(Array.isArray(timeline.entries));
     } finally {
       mcp.stop();
     }

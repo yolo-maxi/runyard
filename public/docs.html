@@ -58,17 +58,17 @@
 
         <h1 id="quickstart">Quickstart</h1>
         <p>This page is the canonical Runyard quickstart — install, run, topology, CLI, MCP, runner pool, security, env vars, and verification, all in one place. The README points here so docs and code never drift.</p>
-        <p>If you just want to see Runyard work, open <a href="/app">the hub</a> and run the <code>hello</code> capability. Come back here when you want to wire MCP, CLI, API, or a runner pool to a real deployment.</p>
+        <p>If you just want to see Runyard work, open <a href="/app">the hub</a> and run the <code>hello</code> workflow. Come back here when you want to wire MCP, CLI, API, or a runner pool to a real deployment.</p>
 
         <h1 id="what">What is Runyard</h1>
-        <p>Runyard is a self-hosted control plane for agent runs. It exposes a capability catalog over MCP, CLI, HTTP API, and a Web Hub; dispatches work to local or remote runners; and stores logs, events, artifacts, approvals, skills, agents, and knowledge centrally. The codebase ships as the <code>runyard</code> package; the legacy <code>SMITHERS_HUB_*</code> environment variables are still honored as fallbacks so existing deployments keep working.</p>
+        <p>Runyard is a self-hosted control plane for agent runs. It exposes a workflow catalog over MCP, CLI, HTTP API, and a Web Hub; dispatches work to local or remote runners; and stores logs, events, artifacts, approvals, skills, agents, and knowledge centrally. The codebase ships as the <code>runyard</code> package; the legacy <code>SMITHERS_HUB_*</code> environment variables are still honored as fallbacks so existing deployments keep working.</p>
 
         <h1 id="concepts">Concepts</h1>
         <p>A handful of objects describe everything Runyard does. The Hub is the durable source of truth for all of them.</p>
         <ul>
-          <li><strong>Capability.</strong> A public, named action an agent or operator can discover and run (for example <code>hello</code>, <code>improve</code>). Capabilities are what show up in the catalog over MCP, CLI, and the Web Hub. In the app and API they are surfaced under <em>workflows</em>.</li>
-          <li><strong>Workflow.</strong> The implementation behind a capability — the Smithers steps and agents that actually do the work. Most users interact with capabilities; workflows are the editable internals.</li>
-          <li><strong>Run.</strong> One durable execution of a capability. A run moves through states: <code>queued</code> → <code>running</code> → <code>succeeded</code>/<code>failed</code>/<code>cancelled</code>, and pauses in <code>waiting_approval</code> when a human checkpoint is required. Every run keeps its logs, events, outputs, artifacts, and a unified timeline.</li>
+          <li><strong>Workflow.</strong> A public, named action an agent or operator can discover, inspect, edit, package, import, and run (for example <code>hello</code>, <code>improve</code>). Workflows are what show up in the catalog over MCP, CLI, API, and the Web Hub.</li>
+          <li><strong>Workflow source.</strong> The implementation behind a workflow — the Smithers steps and agents that actually do the work. Source, parsed metadata, graph, versions, and portable packages are available through the API and MCP.</li>
+          <li><strong>Run.</strong> One durable execution of a workflow. A run moves through states: <code>queued</code> → <code>running</code> → <code>succeeded</code>/<code>failed</code>/<code>cancelled</code>, and pauses in <code>waiting_approval</code> when a human checkpoint is required. Every run keeps its logs, events, outputs, artifacts, and a unified timeline.</li>
           <li><strong>Runner.</strong> A registered execution environment — a process on a VPS or laptop that polls the Hub, claims matching queued runs, executes them, streams events, and uploads artifacts. Runners are disposable; the Hub holds the state.</li>
           <li><strong>Approval.</strong> A human checkpoint. A run that needs sign-off enters <code>waiting_approval</code> and is resolved (approve / reject / request changes) from Web, API, CLI, MCP, or Telegram — recorded once no matter the surface.</li>
           <li><strong>Artifact.</strong> A persistent file output attached to a run, stored on the Hub under <code>data/artifacts/runs/&lt;run-id&gt;/</code> and downloadable from the run detail page or API.</li>
@@ -117,8 +117,8 @@ open http://127.0.0.1:43117/app</pre>
         <h2 id="cli">CLI</h2>
         <pre class="json">runyard login --url https://hub.example.com --token shub_...
 runyard menu
-runyard capabilities
-runyard capability hello
+runyard workflows
+runyard workflow hello
 runyard run hello --where local --input '{"topic":"Prepare a rollout spec"}'
 runyard run hello --where remote --input '{"topic":"Prepare a rollout spec"}'
 runyard runs
@@ -142,18 +142,18 @@ runyard remotes</pre>
   }
 }</pre>
         <p class="muted">From a running Hub, <code>runyard mcp install --all</code> writes this config into every detected agent — Claude Code/Desktop, Codex, Cursor, Windsurf, Gemini, VS Code.</p>
-        <p class="muted">MCP agents should call <code>get_menu</code>, choose <code>executionMode: "local"</code> or <code>"remote"</code> on <code>run_capability</code>, then fetch status, logs, artifacts, and timeline entries from the Hub tools.</p>
+        <p class="muted">MCP agents should call <code>get_menu</code>, choose <code>executionMode: "local"</code> or <code>"remote"</code> on <code>run_workflow</code>, then fetch status, logs, artifacts, and timeline entries from the Hub tools.</p>
 
         <h2 id="api">HTTP API</h2>
         <p>Everything the Web Hub, CLI, and MCP server do runs over the same JSON API under <code>/api</code>. Authenticate every request with <code>Authorization: Bearer shub_...</code>. The machine-readable contract lives at <a href="/openapi.json"><code>/openapi.json</code></a> and the agent-facing summary at <a href="/llms.txt"><code>/llms.txt</code></a>; both are generated from the live Hub so they never drift.</p>
         <pre class="json"># Discovery (no drift — same source as get_menu)
-GET  /api/menu                       # tools, capabilities, execution modes
-GET  /api/capabilities               # catalog
-GET  /api/capabilities/:id           # one capability + input schema
+GET  /api/menu                       # tools, workflows, execution modes
+GET  /api/workflows               # catalog
+GET  /api/workflows/:id           # one workflow + input schema
 
 # Runs
-POST /api/capabilities/:id/run       # body {input, executionMode: "local"|"remote", responseEndpoint?}
-GET  /api/runs                       # list (filter by status, q, capability)
+POST /api/workflows/:id/run       # body {input, executionMode: "local"|"remote", responseEndpoint?}
+GET  /api/runs                       # list (filter by status, q, workflow)
 GET  /api/runs/:id                   # status, outputs, responseEndpoints[]
 GET  /api/runs/:id/timeline          # unified ascending NDJSON-style timeline (since, limit)
 GET  /api/runs/:id/logs              # log lines
@@ -177,7 +177,7 @@ POST /api/chat                       # { messages, context } → reply (+ option
 
 # Liveness (unauthenticated)
 GET  /healthz  /readyz  /api/version</pre>
-        <p class="muted">Most run, capability, artifact, and approval responses include a <code>deepLink</code> field — a stable <code>/app#…</code> URL you can hand an operator. A run can carry an optional <code>responseEndpoint</code> (<code>{type: "http"|"telegram", config}</code>) so the Hub delivers the terminal-state reply when the run finishes; polling <code>/api/runs/:id</code> always stays canonical and delivery state shows up under <code>responseEndpoints[]</code>.</p>
+        <p class="muted">Most run, workflow, artifact, and approval responses include a <code>deepLink</code> field — a stable <code>/app#…</code> URL you can hand an operator. A run can carry an optional <code>responseEndpoint</code> (<code>{type: "http"|"telegram", config}</code>) so the Hub delivers the terminal-state reply when the run finishes; polling <code>/api/runs/:id</code> always stays canonical and delivery state shows up under <code>responseEndpoints[]</code>.</p>
 
         <h2 id="runners">Runner pool</h2>
         <p>Runners are stateless processes that poll the Hub for queued work. Each runner advertises a tag set and an optional capacity:</p>
@@ -258,7 +258,7 @@ runyard run improve --where remote --input '{"target":"pricing page","repo":"web
           <li><strong>Static public docs.</strong> If you publish a marketing/setup site, make it static. Do not expose `/app`, access tokens, SQLite files, artifacts, or environment files.</li>
           <li><strong>Bootstrap token.</strong> The first token is written to <code>data/bootstrap-token.txt</code>; rotate it via the Connect tab once you are logged in.</li>
           <li><strong>Scopes.</strong> Access tokens carry scopes — <code>api</code>, <code>mcp</code>, <code>runner</code>, and <code>admin</code> (issue them from the Connect tab) — so a pool host or approver gets only the access it needs. <code>admin</code> is required for token, audit, and workflow-endpoint management and implies the others; the bootstrap token is full admin. Approval-only sessions (e.g. Telegram web-app login) hold just the <code>approvals</code> scope.</li>
-          <li><strong>Permissive runners.</strong> Runners execute work on behalf of authenticated requests. Treat the runner host as if it has the privileges of any operator who can submit a capability run; isolate sensitive runners with restricted tag sets.</li>
+          <li><strong>Permissive runners.</strong> Runners execute work on behalf of authenticated requests. Treat the runner host as if it has the privileges of any operator who can submit a workflow run; isolate sensitive runners with restricted tag sets.</li>
           <li><strong>Headers.</strong> The server sets strict <code>content-security-policy</code>, <code>x-content-type-options</code>, <code>referrer-policy</code>, and <code>strict-transport-security</code> (when served over HTTPS).</li>
           <li><strong>Rate limiting.</strong> Login and general API buckets are enforced to discourage credential stuffing and scraping.</li>
         </ul>
@@ -276,7 +276,7 @@ curl -s http://127.0.0.1:43117/openapi.json | head</pre>
           <li>Start a runner and confirm the run succeeds.</li>
           <li>Open the run detail page and download the generated artifact.</li>
           <li>Run <strong>Implement</strong>; approve it via Web or MCP; confirm it queues and executes.</li>
-          <li>Configure a local MCP client with <code>runyard-mcp</code> and call <code>list_capabilities</code>.</li>
+          <li>Configure a local MCP client with <code>runyard-mcp</code> and call <code>list_workflows</code>.</li>
         </ol>
 
         <h2 id="oss">Open source &amp; contributions</h2>
@@ -303,7 +303,7 @@ curl -s http://127.0.0.1:43117/openapi.json | head</pre>
 /app#agents/knowledge/&lt;slug&gt;              # a knowledge entry
 /app#approvals/&lt;id&gt;                       # an approval
 /app#tokens | #runners | #audit | #connect | #settings</pre>
-        <p>The same URLs come back as <code>deepLink</code> fields on most API responses (runs, capabilities, artifacts, approvals) so MCP/CLI clients can hand operators a clickable link with zero extra work.</p>
+        <p>The same URLs come back as <code>deepLink</code> fields on most API responses (runs, workflows, artifacts, approvals) so MCP/CLI clients can hand operators a clickable link with zero extra work.</p>
       </div>
     </main>
   </body>

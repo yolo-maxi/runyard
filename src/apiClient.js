@@ -41,6 +41,10 @@ export class HubClient {
     return this.request(path, { method: "PATCH", body });
   }
 
+  put(path, body) {
+    return this.request(path, { method: "PUT", body });
+  }
+
   delete(path) {
     return this.request(path, { method: "DELETE" });
   }
