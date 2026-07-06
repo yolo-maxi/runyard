@@ -42,6 +42,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Telegram approval visuals shell out to ImageMagick's `convert`
+      # (telegramApprovalVisual.js); production hosts have it, ubuntu-latest
+      # runners do not. Install it so the visual-attachment tests exercise the
+      # real path instead of failing with spawn ENOENT.
+      - name: Install ImageMagick (approval visuals)
+        run: sudo apt-get update && sudo apt-get install -y imagemagick
+
       - name: Run tests
         run: pnpm test
 
