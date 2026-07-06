@@ -46,6 +46,99 @@ export const seedCoreCapabilities = [
     workflow: { engine: "smithers", entry: ".smithers/workflows/runyard-smoke-check.tsx" }
   },
   {
+    slug: "skillmarket-quote-sidecar",
+    name: "SkillMarket Quote Sidecar",
+    description: "Live test quote sidecar for SkillMarket packages. Produces a bounded price estimate through real RunYard execution.",
+    category: "SkillMarket",
+    keywords: ["skillmarket", "quote", "marketplace", "sidecar", "smoke"],
+    inputSchema: {
+      type: "object",
+      required: ["packageId", "packageVersion", "inputBytes", "declaredInputHash", "requestedAt"],
+      properties: {
+        packageId: { type: "string" },
+        packageVersion: { type: "string" },
+        inputBytes: { type: "number" },
+        declaredInputHash: { type: "string" },
+        requestedAt: { type: "string" }
+      }
+    },
+    outputSchema: {
+      type: "object",
+      properties: {
+        priceMinMicros: { type: "string" },
+        priceMaxMicros: { type: "string" },
+        assumptions: { type: "array" },
+        completedAt: { type: "string" }
+      }
+    },
+    requiredRunnerTags: ["smithers"],
+    requiredAgents: [],
+    approvalPolicy: { required: false },
+    supervision: { default: false, internal: false },
+    workflow: { engine: "smithers", entry: ".smithers/workflows/skillmarket-quote-sidecar.tsx" }
+  },
+  {
+    slug: "skillmarket-package-audit",
+    name: "SkillMarket Package Audit",
+    description: "Live test package audit for SkillMarket manifests. Returns marketplace compatibility checks through real RunYard execution.",
+    category: "SkillMarket",
+    keywords: ["skillmarket", "audit", "marketplace", "compatibility", "smoke"],
+    inputSchema: {
+      type: "object",
+      required: ["packageId", "packageVersion", "manifestHash", "manifest"],
+      properties: {
+        packageId: { type: "string" },
+        packageVersion: { type: "string" },
+        manifestHash: { type: "string" },
+        manifest: { type: "object" }
+      }
+    },
+    outputSchema: {
+      type: "object",
+      properties: {
+        checks: { type: "array" },
+        completedAt: { type: "string" }
+      }
+    },
+    requiredRunnerTags: ["smithers"],
+    requiredAgents: [],
+    approvalPolicy: { required: false },
+    supervision: { default: false, internal: false },
+    workflow: { engine: "smithers", entry: ".smithers/workflows/skillmarket-package-audit.tsx" }
+  },
+  {
+    slug: "skillmarket-paid-run",
+    name: "SkillMarket Paid Run",
+    description: "Live test paid-run executor for SkillMarket packages. Produces a receiptable output hash through real RunYard execution.",
+    category: "SkillMarket",
+    keywords: ["skillmarket", "paid-run", "marketplace", "receipt", "smoke"],
+    inputSchema: {
+      type: "object",
+      required: ["orderId", "packageId", "packageVersion", "quoteId", "inputHash", "maxAuthorizedSpend"],
+      properties: {
+        orderId: { type: "string" },
+        packageId: { type: "string" },
+        packageVersion: { type: "string" },
+        quoteId: { type: "string" },
+        inputHash: { type: "string" },
+        maxAuthorizedSpend: { type: "object" }
+      }
+    },
+    outputSchema: {
+      type: "object",
+      properties: {
+        outputHash: { type: "string" },
+        completedAt: { type: "string" },
+        summary: { type: "string" }
+      }
+    },
+    requiredRunnerTags: ["smithers"],
+    requiredAgents: [],
+    approvalPolicy: { required: false },
+    supervision: { default: false, internal: false },
+    workflow: { engine: "smithers", entry: ".smithers/workflows/skillmarket-paid-run.tsx" }
+  },
+  {
     slug: "runyard-support-agent",
     name: "Runyard Support Agent",
     description:
