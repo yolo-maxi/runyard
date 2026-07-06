@@ -24,6 +24,7 @@ import { maybeRecordFailureClassAlert as maybeRecordFailureAlert } from "./failu
 import { createWorkflowEndpointHandlers } from "./workflowEndpointRoutes.js";
 import { createHookProfileHandlers } from "./hookProfileRoutes.js";
 import { createWorkflowBundleHandlers } from "./workflowBundleRoutes.js";
+import { createWorkflowPackageHandlers } from "./workflowPackageRoutes.js";
 import { createRunLifecycleHandlers } from "./runLifecycleRoutes.js";
 import { createRunReadHandlers } from "./runReadRoutes.js";
 import { createRunPromotionHandlers } from "./runPromotionRoutes.js";
@@ -242,6 +243,16 @@ export function createServerComposition({
     listWorkflowBundles,
     publishWorkflowBundle,
     recordAudit
+  });
+
+  const workflowPackageHandlers = createWorkflowPackageHandlers({
+    getCapability,
+    getWorkflowBundle,
+    publishWorkflowBundle,
+    recordAudit,
+    root: env.root,
+    upsertCapability,
+    env
   });
 
   const runLifecycleHandlers = createRunLifecycleHandlers({
@@ -516,6 +527,7 @@ export function createServerComposition({
       tokenHandlers,
       updateHandlers,
       workflowBundleHandlers,
+      workflowPackageHandlers,
       workflowEndpointHandlers
     },
     telegramApprovalTarget

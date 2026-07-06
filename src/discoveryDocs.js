@@ -157,6 +157,14 @@ export function renderLlmsTxt(baseUrl) {
   lines.push("  merges answers into the input and re-preflights, and");
   lines.push("  POST /api/run-drafts/{id}/submit enqueues the real run once ready.");
   lines.push("");
+  lines.push("Workflow package files:");
+  lines.push("- Admins can export a capability workflow as a portable");
+  lines.push("  .runyard-workflow.json file, then validate/preview/import it on another");
+  lines.push("  Hub. Imports publish the source as a DB workflow bundle and install the");
+  lines.push("  capability disabled until local secrets/runners/config are ready.");
+  lines.push("- CLI: runyard workflow-package export <capability> -o file.runyard-workflow.json");
+  lines.push("  then runyard workflow-package preview|import file.runyard-workflow.json.");
+  lines.push("");
   lines.push("Post-run hooks (optional):");
   lines.push("- Side effects after a run's gates pass (static publish, git push,");
   lines.push("  webhook) are explicit hook invocations, never implicit workflow magic.");
@@ -230,6 +238,10 @@ export function openApiDocument({ baseUrl, version }) {
       "/hooks/{slug}/validate": { post: { summary: "Dry-run readiness check for a hook profile (admin): reports hook_config_required with missing secret names only" } },
       "/workflow-endpoints": { get: { summary: "List configured authenticated workflow endpoints (admin)" }, post: { summary: "Create/update an authenticated workflow endpoint (admin)" } },
       "/workflow-endpoints/{slug}": { get: { summary: "Describe a workflow endpoint (admin)" }, post: { summary: "Submit data to a fixed authenticated workflow endpoint (per-endpoint secret, rate-limited, deduped)" } },
+      "/workflow-packages/capabilities/{id}/export": { get: { summary: "Export a capability workflow as a portable .runyard-workflow.json package file (admin). The file contains workflow source bytes, capability metadata, requirements, and content/workflow hashes; secret values are never included." } },
+      "/workflow-packages/validate": { post: { summary: "Validate a workflow package file without importing it (admin). Accepts {workflowPackage} or the raw package JSON and checks schema, source hash, content hash, and size limits." } },
+      "/workflow-packages/preview": { post: { summary: "Preview importing a workflow package (admin). Accepts optional slug/targetSlug and returns the disabled capability shape plus requirements report; no rows are written." } },
+      "/workflow-packages/import": { post: { summary: "Import a workflow package file (admin). Publishes source as an immutable DB workflow bundle and upserts the capability disabled by default for local configuration/preflight before enabling." } },
       "/schedules": {
         get: { summary: "List schedules (cron jobs) with next/last run and a human-readable preview" },
         post: { summary: "Create a schedule (admin). Body: {name, capabilitySlug, cron|runAt, timezone, input, enabled}. Cron schedules fire recurringly; runAt fires once. Fires honor the capability's approval policy." }

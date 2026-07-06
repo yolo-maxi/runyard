@@ -65,7 +65,8 @@ describe("server composition", () => {
       "tokenHandlers",
       "updateHandlers",
       "workflowBundleHandlers",
-      "workflowEndpointHandlers"
+      "workflowEndpointHandlers",
+      "workflowPackageHandlers"
     ]);
   });
 

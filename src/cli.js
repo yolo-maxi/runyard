@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
@@ -306,6 +306,49 @@ program
     if (opts.where || opts.executionMode) body.executionMode = opts.where || opts.executionMode;
     if (opts.runnerLocation) body.runnerLocation = opts.runnerLocation;
     printNegotiation(await client(program.opts()).post(`/api/capabilities/${capability}/preflight`, body), program.opts().json);
+  });
+
+const workflowPackageCommand = program.command("workflow-package").description("Export/import portable workflow files");
+workflowPackageCommand
+  .command("export <capability>")
+  .description("Export a capability workflow as a .runyard-workflow.json file")
+  .option("-o, --output <path>", "write to this file instead of stdout")
+  .action(async (capability, opts) => {
+    const data = await client(program.opts()).get(`/api/workflow-packages/capabilities/${encodeURIComponent(capability)}/export`);
+    const pkg = data.workflowPackage;
+    const json = JSON.stringify(pkg, null, 2);
+    if (opts.output) {
+      writeFileSync(opts.output, `${json}\n`);
+      if (!program.opts().json) {
+        console.log(`Exported ${pkg.capability.slug} to ${opts.output}`);
+        console.log(`contentHash ${pkg.contentHash}`);
+        return;
+      }
+    }
+    console.log(json);
+  });
+workflowPackageCommand
+  .command("validate <file>")
+  .description("Validate a .runyard-workflow.json file without importing it")
+  .action(async (file) => {
+    const workflowPackage = JSON.parse(readFileSync(file, "utf8"));
+    print(await client(program.opts()).post("/api/workflow-packages/validate", { workflowPackage }), program.opts().json);
+  });
+workflowPackageCommand
+  .command("preview <file>")
+  .description("Preview import requirements and disabled capability shape")
+  .option("--slug <slug>", "import under a different capability slug")
+  .action(async (file, opts) => {
+    const workflowPackage = JSON.parse(readFileSync(file, "utf8"));
+    print(await client(program.opts()).post("/api/workflow-packages/preview", { workflowPackage, slug: opts.slug || "" }), program.opts().json);
+  });
+workflowPackageCommand
+  .command("import <file>")
+  .description("Import a workflow package as a disabled capability")
+  .option("--slug <slug>", "import under a different capability slug")
+  .action(async (file, opts) => {
+    const workflowPackage = JSON.parse(readFileSync(file, "utf8"));
+    print(await client(program.opts()).post("/api/workflow-packages/import", { workflowPackage, slug: opts.slug || "" }), program.opts().json);
   });
 
 program.command("runs").description("List runs").option("-s, --status <status>").action(async (opts) => {

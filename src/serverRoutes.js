@@ -27,6 +27,7 @@ export function registerServerRoutes(app, {
   tokenHandlers,
   updateHandlers,
   workflowBundleHandlers,
+  workflowPackageHandlers,
   workflowEndpointHandlers
 }) {
   app.get("/healthz", publicHandlers.healthz);
@@ -75,6 +76,11 @@ export function registerServerRoutes(app, {
   app.get("/api/workflow-bundles", requireAuth, workflowBundleHandlers.listWorkflowBundles);
   app.post("/api/workflow-bundles", requireAuth, requireScopes("admin"), workflowBundleHandlers.publishWorkflowBundle);
   app.get("/api/workflow-bundles/:id", requireAuth, workflowBundleHandlers.getWorkflowBundle);
+
+  app.get("/api/workflow-packages/capabilities/:id/export", requireAuth, requireScopes("admin"), workflowPackageHandlers.exportWorkflowPackage);
+  app.post("/api/workflow-packages/validate", requireAuth, requireScopes("admin"), workflowPackageHandlers.validateWorkflowPackage);
+  app.post("/api/workflow-packages/preview", requireAuth, requireScopes("admin"), workflowPackageHandlers.previewWorkflowPackageImport);
+  app.post("/api/workflow-packages/import", requireAuth, requireScopes("admin"), workflowPackageHandlers.importWorkflowPackage);
 
   app.get("/api/dashboard", requireAuth, operatorReadHandlers.dashboard);
   app.get("/api/repo-options", requireAuth, operatorReadHandlers.repoOptions);

@@ -1399,6 +1399,51 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
     assert.match(apiSpec.data.paths["/runs/{id}/timeline"].get.summary, /unified ascending run timeline/);
   });
 
+  it("exports, previews, and imports workflow package files as disabled DB-backed capabilities", async () => {
+    const exported = await raw("/api/workflow-packages/capabilities/hello/export");
+    assert.equal(exported.status, 200);
+    const workflowPackage = exported.data.workflowPackage;
+    assert.equal(workflowPackage.schema, "runyard.workflow-package.v1");
+    assert.equal(workflowPackage.capability.slug, "hello");
+    assert.equal(workflowPackage.capability.enabled, false);
+    assert.equal(workflowPackage.capability.workflow.bundleId, undefined);
+    assert.match(workflowPackage.workflow.sha256, /^[0-9a-f]{64}$/);
+    assert.match(exported.headers.get("content-disposition") || "", /hello-.*\.runyard-workflow\.json/);
+
+    const validation = await raw("/api/workflow-packages/validate", {
+      method: "POST",
+      body: { workflowPackage }
+    });
+    assert.equal(validation.status, 200);
+    assert.equal(validation.data.report.valid, true);
+
+    const preview = await raw("/api/workflow-packages/preview", {
+      method: "POST",
+      body: { workflowPackage, slug: "hello-imported" }
+    });
+    assert.equal(preview.status, 200);
+    assert.equal(preview.data.report.targetSlug, "hello-imported");
+    assert.equal(preview.data.capability.enabled, false);
+    assert.equal(preview.data.capability.workflow.bundleId, "__WORKFLOW_BUNDLE_ID__");
+
+    const imported = await raw("/api/workflow-packages/import", {
+      method: "POST",
+      body: { workflowPackage, slug: "hello-imported" }
+    });
+    assert.equal(imported.status, 201);
+    assert.equal(imported.data.capability.slug, "hello-imported");
+    assert.equal(imported.data.capability.enabled, false);
+    assert.equal(imported.data.bundle.capabilitySlug, "hello-imported");
+    assert.match(imported.data.capability.workflow.bundleId, /^wfb_/);
+    assert.equal(imported.data.capability.workflow.sharedPackage.importedFrom, "hello");
+
+    const capability = await api("/api/capabilities/hello-imported");
+    assert.equal(capability.capability.enabled, false);
+    assert.equal(capability.capability.workflow.bundleId, imported.data.bundle.id);
+    const bundle = await api(`/api/workflow-bundles/${imported.data.bundle.id}`);
+    assert.equal(bundle.bundle.code, workflowPackage.workflow.code);
+  });
+
   it("rejects unconfigured / unauthenticated Telegram webhook calls", async () => {
     // No TELEGRAM_WEBHOOK_SECRET configured in the test env -> endpoint disabled.
     const res = await raw("/api/telegram/webhook", { method: "POST", body: { callback_query: { data: "approve:appr_x" } } }, null);

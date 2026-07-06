@@ -31,6 +31,10 @@ describe("server route registration", () => {
     assertRoute(app, "patch", "/api/hooks/:slug", [deps.requireAuth, deps.scopes.admin, deps.hookProfileHandlers.upsertHookProfile]);
     assertRoute(app, "post", "/api/hooks/:slug/validate", [deps.requireAuth, deps.scopes.admin, deps.hookProfileHandlers.validateHookProfile]);
     assertRoute(app, "get", "/api/workflow-bundles/:id", [deps.requireAuth, deps.workflowBundleHandlers.getWorkflowBundle]);
+    assertRoute(app, "get", "/api/workflow-packages/capabilities/:id/export", [deps.requireAuth, deps.scopes.admin, deps.workflowPackageHandlers.exportWorkflowPackage]);
+    assertRoute(app, "post", "/api/workflow-packages/validate", [deps.requireAuth, deps.scopes.admin, deps.workflowPackageHandlers.validateWorkflowPackage]);
+    assertRoute(app, "post", "/api/workflow-packages/preview", [deps.requireAuth, deps.scopes.admin, deps.workflowPackageHandlers.previewWorkflowPackageImport]);
+    assertRoute(app, "post", "/api/workflow-packages/import", [deps.requireAuth, deps.scopes.admin, deps.workflowPackageHandlers.importWorkflowPackage]);
     assertRoute(app, "post", "/api/capabilities/:id/preflight", [deps.requireAuth, deps.scopes["api,mcp"], deps.capabilityHandlers.preflightCapability]);
     // Run drafts: reads are any-auth; mutations carry the same api/mcp scopes as starting a run.
     assertRoute(app, "get", "/api/run-drafts", [deps.requireAuth, deps.runDraftHandlers.listRunDrafts]);
@@ -90,6 +94,7 @@ function routeDeps() {
     tokenHandlers: handlers(["listTokens", "createToken", "revokeToken"]),
     updateHandlers: handlers(["status", "apply"]),
     workflowBundleHandlers: handlers(["listWorkflowBundles", "publishWorkflowBundle", "getWorkflowBundle"]),
+    workflowPackageHandlers: handlers(["exportWorkflowPackage", "validateWorkflowPackage", "previewWorkflowPackageImport", "importWorkflowPackage"]),
     workflowEndpointHandlers: handlers(["listWorkflowEndpoints", "upsertWorkflowEndpoint", "getWorkflowEndpoint", "submitWorkflowEndpoint"])
   };
 }

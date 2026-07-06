@@ -91,6 +91,24 @@ workflow source (entry/bundle) — and answer `ready`, `needs_input`, or
 Plain `POST /api/capabilities/{id}/run` without `negotiate` is unchanged for
 existing clients. The preflight is deterministic — no agent, no supervisor.
 
+## Workflow package files
+
+Admins can share a workflow without links by exporting a capability as a
+portable `.runyard-workflow.json` file:
+
+```bash
+runyard workflow-package export hello -o hello.runyard-workflow.json
+runyard workflow-package validate hello.runyard-workflow.json
+runyard workflow-package preview hello.runyard-workflow.json --slug hello-cvm
+runyard workflow-package import hello.runyard-workflow.json --slug hello-cvm
+```
+
+The package contains capability metadata, workflow source bytes, requirements,
+and content/source hashes. It never includes secret values. Import publishes the
+source into the target Hub's DB-backed workflow bundle store and creates the
+capability disabled by default, so the target deployment can configure secrets,
+runners, hooks, and local preflight before enabling it.
+
 ## Agent-created run titles
 
 When an agent starts a run, it should include `input.title` when practical:
