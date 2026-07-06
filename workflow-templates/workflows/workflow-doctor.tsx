@@ -10,8 +10,8 @@ import { z } from "zod/v4";
 import { syncWorkflowToWorkspace } from "./workflow-repair.js";
 import { createAgentFallbackPair, resolveAgentCli } from "./agent-fallback.js";
 
-const HUB_URL = String(process.env.RUN_KNOWLEDGE_HUB_URL || process.env.SMITHERS_HUB_URL || process.env.HUB_URL || "http://127.0.0.1:43117").replace(/\/$/, "");
-const HUB_TOKEN = process.env.RUN_KNOWLEDGE_HUB_TOKEN || process.env.SMITHERS_HUB_TOKEN || process.env.HUB_TOKEN || "";
+const HUB_URL = String(process.env.RUN_KNOWLEDGE_HUB_URL || process.env.RUNYARD_HUB_URL || process.env.SMITHERS_HUB_URL || process.env.HUB_URL || "http://127.0.0.1:43117").replace(/\/$/, "");
+const HUB_TOKEN = process.env.RUN_KNOWLEDGE_HUB_TOKEN || process.env.RUNYARD_HUB_TOKEN || process.env.SMITHERS_HUB_TOKEN || process.env.HUB_TOKEN || "";
 
 const REDACTION_RULES = [
   { re: /(authorization\s*[:=]\s*)(?:Bearer\s+)?[^\s,"'`]+/gi, replace: "$1[redacted]" },
@@ -258,7 +258,7 @@ function failedNodeIds(diagnostics: any, logs: string) {
 }
 
 async function hubJson(pathname: string) {
-  if (!HUB_TOKEN) throw new Error("Workflow Doctor needs SMITHERS_HUB_TOKEN or RUN_KNOWLEDGE_HUB_TOKEN on the runner.");
+  if (!HUB_TOKEN) throw new Error("Workflow Doctor needs RUNYARD_HUB_TOKEN (or legacy SMITHERS_HUB_TOKEN / RUN_KNOWLEDGE_HUB_TOKEN) on the runner.");
   const response = await fetch(`${HUB_URL}${pathname}`, {
     headers: { authorization: `Bearer ${HUB_TOKEN}`, "content-type": "application/json" }
   });
@@ -268,7 +268,7 @@ async function hubJson(pathname: string) {
 }
 
 async function hubText(pathname: string, cap = 12000) {
-  if (!HUB_TOKEN) throw new Error("Workflow Doctor needs SMITHERS_HUB_TOKEN or RUN_KNOWLEDGE_HUB_TOKEN on the runner.");
+  if (!HUB_TOKEN) throw new Error("Workflow Doctor needs RUNYARD_HUB_TOKEN (or legacy SMITHERS_HUB_TOKEN / RUN_KNOWLEDGE_HUB_TOKEN) on the runner.");
   const response = await fetch(`${HUB_URL}${pathname}`, { headers: { authorization: `Bearer ${HUB_TOKEN}` } });
   const text = await response.text();
   if (!response.ok) return "";

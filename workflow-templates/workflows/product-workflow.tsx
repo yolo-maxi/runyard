@@ -15,12 +15,14 @@ import { createAgentFallbackPair, resolveAgentCli } from "./agent-fallback.js";
 // missing token only blocks actual dispatch.
 const HUB_URL = String(
   process.env.PRODUCT_WORKFLOW_HUB_URL ||
+    process.env.RUNYARD_HUB_URL ||
     process.env.SMITHERS_HUB_URL ||
     process.env.HUB_URL ||
     "http://127.0.0.1:43117"
 ).replace(/\/$/, "");
 const HUB_TOKEN =
   process.env.PRODUCT_WORKFLOW_HUB_TOKEN ||
+  process.env.RUNYARD_HUB_TOKEN ||
   process.env.SMITHERS_HUB_TOKEN ||
   process.env.HUB_TOKEN ||
   "";
@@ -206,7 +208,7 @@ function parseNamedList(raw) {
 async function hubJson(pathname, options = {}) {
   if (!HUB_TOKEN) {
     throw new Error(
-      "product-workflow execute=true needs SMITHERS_HUB_TOKEN (or PRODUCT_WORKFLOW_HUB_TOKEN) on the runner to queue implementation runs."
+      "product-workflow execute=true needs RUNYARD_HUB_TOKEN (or PRODUCT_WORKFLOW_HUB_TOKEN) on the runner to queue implementation runs."
     );
   }
   const response = await fetch(`${HUB_URL}${pathname}`, {

@@ -7,8 +7,8 @@ import { z } from "zod/v4";
 import { createAgentFallbackPair, resolveAgentCli } from "./agent-fallback.js";
 
 const DEFAULT_STATUSES = ["succeeded", "failed", "cancelled", "waiting_approval", "error", "rejected"];
-const HUB_URL = String(process.env.RUN_KNOWLEDGE_HUB_URL || process.env.SMITHERS_HUB_URL || process.env.HUB_URL || "http://127.0.0.1:43117").replace(/\/$/, "");
-const HUB_TOKEN = process.env.RUN_KNOWLEDGE_HUB_TOKEN || process.env.SMITHERS_HUB_TOKEN || process.env.HUB_TOKEN || "";
+const HUB_URL = String(process.env.RUN_KNOWLEDGE_HUB_URL || process.env.RUNYARD_HUB_URL || process.env.SMITHERS_HUB_URL || process.env.HUB_URL || "http://127.0.0.1:43117").replace(/\/$/, "");
+const HUB_TOKEN = process.env.RUN_KNOWLEDGE_HUB_TOKEN || process.env.RUNYARD_HUB_TOKEN || process.env.SMITHERS_HUB_TOKEN || process.env.HUB_TOKEN || "";
 
 const REDACTION_RULES = [
   { re: /(authorization\s*[:=]\s*)(?:Bearer\s+)?[^\s,"'`]+/gi, replace: "$1[redacted]" },
@@ -163,7 +163,7 @@ function absoluteDeepLink(link = "") {
 }
 
 async function hubJson(path: string) {
-  if (!HUB_TOKEN) throw new Error("Run Knowledge Builder needs SMITHERS_HUB_TOKEN or RUN_KNOWLEDGE_HUB_TOKEN on the runner.");
+  if (!HUB_TOKEN) throw new Error("Run Knowledge Builder needs RUNYARD_HUB_TOKEN (or legacy SMITHERS_HUB_TOKEN / RUN_KNOWLEDGE_HUB_TOKEN) on the runner.");
   const response = await fetch(`${HUB_URL}${path}`, {
     headers: { authorization: `Bearer ${HUB_TOKEN}`, "content-type": "application/json" }
   });
@@ -173,7 +173,7 @@ async function hubJson(path: string) {
 }
 
 async function hubText(path: string, cap = 2000) {
-  if (!HUB_TOKEN) throw new Error("Run Knowledge Builder needs SMITHERS_HUB_TOKEN or RUN_KNOWLEDGE_HUB_TOKEN on the runner.");
+  if (!HUB_TOKEN) throw new Error("Run Knowledge Builder needs RUNYARD_HUB_TOKEN (or legacy SMITHERS_HUB_TOKEN / RUN_KNOWLEDGE_HUB_TOKEN) on the runner.");
   const response = await fetch(`${HUB_URL}${path}`, {
     headers: { authorization: `Bearer ${HUB_TOKEN}` }
   });
