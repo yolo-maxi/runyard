@@ -29,7 +29,7 @@
 
 const PI_ENV_SUFFIXES = ["PROVIDER", "MODEL", "BASE_URL", "API_KEY_ENV"];
 
-// "gobbler-comic" / "Gobbler Comic" -> "GOBBLER_COMIC"
+// "smart-contract-audit" / "Smart Contract Audit" -> "SMART_CONTRACT_AUDIT"
 export function normalizeWorkflowKey(workflow = "") {
   return String(workflow)
     .trim()

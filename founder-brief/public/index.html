@@ -705,7 +705,7 @@
           <div class="arrow">↓</div>
           <div class="node-row">
             <div class="node">
-              <strong>Capability Catalog</strong>
+              <strong>Workflow Catalog</strong>
               <span>Public contract: what agents can ask RunYard to do.</span>
             </div>
             <div class="node">
@@ -780,15 +780,15 @@
             <div class="flow-step">
               <span class="num">1</span>
               <div>
-                <strong>Agent or human starts a capability</strong>
-                <span>Via Web, CLI, MCP, API, or a supervising workflow such as run-smithers.</span>
+                <strong>Agent or human starts a workflow</strong>
+                <span>Via Web, CLI, MCP, API, or a schedule.</span>
               </div>
             </div>
             <div class="flow-step">
               <span class="num">2</span>
               <div>
                 <strong>Hub records a durable run</strong>
-                <span>Inputs, capability, workflow source, status, runner requirements, and approvals are tracked centrally.</span>
+                <span>Inputs, workflow source, status, runner requirements, and approvals are tracked centrally.</span>
               </div>
             </div>
             <div class="flow-step">
@@ -817,7 +817,7 @@
           <div class="grid">
             <article class="panel">
               <h3>Hub</h3>
-              <p>Express/Node service backed by SQLite today. Stores runs, events, artifacts, approvals, tokens, runners, capabilities, agents, skills, and knowledge.</p>
+              <p>Express/Node service backed by SQLite today. Stores runs, events, artifacts, approvals, tokens, runners, workflows, agents, skills, and knowledge.</p>
             </article>
             <article class="panel">
               <h3>Runner</h3>

@@ -14,12 +14,11 @@ Tagline: **Self-hosted control plane for agent runs.**
 
 ## Summary
 
-Runyard is a private, self-hosted company capability platform. Agents discover capabilities through MCP and CLI. Humans supervise through Web, Telegram, CLI, API, and MCP approvals. Runners execute work on the Hub VPS or local machines while the Hub stores the durable record.
+Runyard is a private, self-hosted company workflow platform. Agents discover workflows through MCP and CLI. Humans supervise through Web, Telegram, CLI, API, and MCP approvals. Runners execute work on the Hub VPS or local machines while the Hub stores the durable record.
 
 ## Product Objects
 
-- Capability: public action agents can inspect and run.
-- Workflow: implementation detail behind a capability.
+- Workflow: public action agents can inspect and run. (Stored internally as a "capability" record; that name survives only in storage/compat paths and is never advertised.)
 - Run: durable execution record.
 - Artifact: persistent output associated with a run.
 - Approval: human checkpoint resolved through shared channels.
@@ -32,9 +31,9 @@ Runyard is a private, self-hosted company capability platform. Agents discover c
 ## Required Interfaces
 
 - Web Hub: landing page, docs, catalog, editors, runs, artifacts, approvals, runners, tokens, in-app support agent chat.
-- HTTP API: auth, capabilities, runs, logs, artifacts, approvals, agents, skills, knowledge, runners.
-- CLI: login, capabilities, run, runs, logs, artifacts, approvals, tokens, runners.
-- MCP: capability discovery, run creation/status/logs/artifacts, approvals, agents, skills, knowledge.
+- HTTP API: auth, workflows, runs, logs, artifacts, approvals, schedules, agents, skills, knowledge, runners.
+- CLI: login, workflows, run, runs, logs, artifacts, approvals, tokens, runners.
+- MCP: workflow discovery, run creation/status/logs/artifacts, schedules, approvals, agents, skills, knowledge.
 - Telegram: optional approval notifications and callback resolution.
 
 ## Execution Model

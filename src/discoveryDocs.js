@@ -14,7 +14,11 @@ const HUB_TOOL_NAMES = [
   "get_run_artifacts",
   "list_runners",
   "list_pending_approvals",
-  "list_hooks"
+  "list_approvals",
+  "list_hooks",
+  "list_schedules",
+  "create_schedule",
+  "download_artifact"
 ];
 
 const RUN_TITLE_RECOMMENDATION = "For agent-created runs, include input.title: a short human-readable title that explains the specific job.";
@@ -223,7 +227,11 @@ export function openApiDocument({ baseUrl, version }) {
       "/runs/{id}/promote": { post: { summary: "Merge a successful isolated worktree run into its target branch, run gates, push, and clean up the branch/worktree" } },
       "/runs/{id}/cancel": { post: { summary: "Cancel a queued or running run" } },
       "/artifacts/{id}/download": { get: { summary: "Download an artifact's bytes" } },
-      "/approvals": { get: { summary: "List approvals" } },
+      "/approvals": {
+        get: { summary: "List approvals. ?status=pending|resolved filters; resolved cards carry the decision in their resolution field." },
+        post: { summary: "Create an approval card for a human decision. Body: {title, description, runId?, ask: {action, reason, audience}, timeoutMs?/timeoutAt? + fallback? for timed approvals}." }
+      },
+      "/approvals/{id}": { get: { summary: "Get a single approval card" } },
       "/approvals/{id}/approve": { post: { summary: "Approve request" } },
       "/approvals/{id}/reject": { post: { summary: "Reject request" } },
       "/approvals/{id}/request-changes": { post: { summary: "Request changes" } },
@@ -232,6 +240,10 @@ export function openApiDocument({ baseUrl, version }) {
       "/knowledge": { get: { summary: "List knowledge resources" }, post: { summary: "Create/update knowledge resource (admin)" } },
       "/tokens": { get: { summary: "List access tokens (admin)" }, post: { summary: "Issue a scoped access token (admin)" } },
       "/audit": { get: { summary: "Read the audit log (admin)" } },
+      "/alerts": { get: { summary: "List failure alerts (admin)" } },
+      "/me": { get: { summary: "Describe the authenticated token: name and scopes" } },
+      "/secrets": { get: { summary: "List secret names and metadata, never values (admin)" } },
+      "/secrets/{key}": { put: { summary: "Create/update an encrypted secret (admin). Body: {value, description?}" }, delete: { summary: "Delete a secret (admin)" } },
       "/chat/status": { get: { summary: "In-app Assistant status: resolved provider (runner|anthropic|openai) and whether it is configured" } },
       "/chat": { post: { summary: "Ask the in-app Assistant. Body: {messages, context}. Answers first; any app-changing action is returned as a confirmation button, never executed server-side." } },
       "/hooks": {

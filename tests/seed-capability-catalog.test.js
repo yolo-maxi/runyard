@@ -16,6 +16,9 @@ describe("seed capability catalog", () => {
     assert.deepEqual(seedCapabilities.map((capability) => capability.slug), [
       "hello",
       "runyard-smoke-check",
+      "skillmarket-quote-sidecar",
+      "skillmarket-package-audit",
+      "skillmarket-paid-run",
       "runyard-support-agent",
       "research",
       "implement",

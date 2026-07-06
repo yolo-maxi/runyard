@@ -184,7 +184,24 @@ describe("CLI/MCP discovery and execution intent", () => {
         "list_repo_options",
         "list_workflow_endpoints",
         "list_tokens",
-        "list_secrets"
+        "list_secrets",
+        "whoami",
+        "list_schedules",
+        "get_schedule",
+        "preview_schedule",
+        "create_schedule",
+        "update_schedule",
+        "delete_schedule",
+        "run_schedule_now",
+        "download_artifact",
+        "list_approvals",
+        "get_approval",
+        "create_approval",
+        "get_hook",
+        "upsert_hook",
+        "validate_hook",
+        "get_audit_log",
+        "list_alerts"
       ]) {
         assert.ok(listed.result.tools.find((tool) => tool.name === name), `${name} should be advertised`);
       }
@@ -222,6 +239,92 @@ describe("CLI/MCP discovery and execution intent", () => {
 
       const timeline = parseToolText(await mcp.call("tools/call", { name: "get_run_timeline", arguments: { runId: run.run.id } }));
       assert.ok(Array.isArray(timeline.entries));
+      assert.ok("nextSince" in timeline);
+      const page = parseToolText(await mcp.call("tools/call", {
+        name: "get_run_timeline",
+        arguments: { runId: run.run.id, since: timeline.nextSince, limit: 5 }
+      }));
+      assert.equal(page.since, timeline.nextSince);
+    } finally {
+      mcp.stop();
+    }
+  });
+
+  // A CVM operator has only MCP: identity, schedules, approvals, artifact
+  // content, and admin reads must all be reachable without the web UI.
+  it("MCP alone covers identity, schedules, approvals, and artifact download", async () => {
+    const mcp = startMcp();
+    try {
+      const me = parseToolText(await mcp.call("tools/call", { name: "whoami", arguments: {} }));
+      assert.ok(Array.isArray(me.scopes || me.token?.scopes));
+
+      const preview = parseToolText(await mcp.call("tools/call", {
+        name: "preview_schedule",
+        arguments: { cron: "0 9 * * *", timezone: "UTC" }
+      }));
+      assert.ok(Array.isArray(preview.nextRuns));
+
+      const created = parseToolText(await mcp.call("tools/call", {
+        name: "create_schedule",
+        arguments: { name: "mcp daily hello", workflow: "hello", cron: "0 9 * * *", input: { topic: "scheduled" } }
+      }));
+      assert.equal(created.schedule.workflow, "hello");
+      const scheduleId = created.schedule.id;
+
+      const listed = parseToolText(await mcp.call("tools/call", { name: "list_schedules", arguments: {} }));
+      assert.ok(listed.schedules.find((schedule) => schedule.id === scheduleId));
+
+      const fired = parseToolText(await mcp.call("tools/call", { name: "run_schedule_now", arguments: { scheduleId } }));
+      assert.equal(fired.run.origin.type, "schedule");
+
+      const updated = parseToolText(await mcp.call("tools/call", {
+        name: "update_schedule",
+        arguments: { scheduleId, enabled: false }
+      }));
+      assert.equal(updated.schedule.enabled, false);
+
+      const fetched = parseToolText(await mcp.call("tools/call", { name: "get_schedule", arguments: { scheduleId } }));
+      assert.equal(fetched.schedule.enabled, false);
+
+      const deleted = parseToolText(await mcp.call("tools/call", { name: "delete_schedule", arguments: { scheduleId } }));
+      assert.equal(deleted.deleted, true);
+
+      const ask = parseToolText(await mcp.call("tools/call", {
+        name: "create_approval",
+        arguments: {
+          title: "MCP escalation",
+          description: "raised through MCP",
+          ask: { action: "Confirm the MCP escalation path", reason: "parity test", audience: "operator" }
+        }
+      }));
+      const approvalId = ask.approval.id;
+      const pending = parseToolText(await mcp.call("tools/call", { name: "list_approvals", arguments: { status: "pending" } }));
+      assert.ok(pending.approvals.find((approval) => approval.id === approvalId));
+      const card = parseToolText(await mcp.call("tools/call", { name: "get_approval", arguments: { approvalId } }));
+      assert.equal(card.approval.id, approvalId);
+      parseToolText(await mcp.call("tools/call", { name: "approve_run", arguments: { approvalId, comment: "ok" } }));
+      const resolved = parseToolText(await mcp.call("tools/call", { name: "list_approvals", arguments: { status: "resolved" } }));
+      const resolvedCard = resolved.approvals.find((approval) => approval.id === approvalId);
+      assert.equal(resolvedCard.resolution, "approved");
+
+      const artifactRun = parseToolText(await mcp.call("tools/call", {
+        name: "run_workflow",
+        arguments: { id: "hello", input: { topic: "artifact download" } }
+      }));
+      const stored = await api(`/api/runs/${artifactRun.run.id}/artifacts`, {
+        method: "POST",
+        body: { name: "report.txt", mimeType: "text/plain", content: "artifact body via mcp" }
+      });
+      const downloadResponse = await mcp.call("tools/call", {
+        name: "download_artifact",
+        arguments: { artifactId: stored.artifact.id }
+      });
+      assert.equal(downloadResponse.result.content[0].text, "artifact body via mcp");
+
+      const audit = parseToolText(await mcp.call("tools/call", { name: "get_audit_log", arguments: { limit: 20 } }));
+      assert.ok(Array.isArray(audit.audit));
+      const alerts = parseToolText(await mcp.call("tools/call", { name: "list_alerts", arguments: {} }));
+      assert.ok(Array.isArray(alerts.alerts));
     } finally {
       mcp.stop();
     }

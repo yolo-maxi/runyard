@@ -58,6 +58,17 @@ describe("schedule helpers", () => {
     });
   });
 
+  it("accepts the advertised workflow/workflowSlug field names", () => {
+    assert.deepEqual(validateScheduleBody({ workflowSlug: "research" }, { partial: true, getCapability }), {
+      ok: true,
+      value: { capabilitySlug: "research" }
+    });
+    assert.deepEqual(validateScheduleBody({ workflow: "research" }, { partial: true, getCapability }), {
+      ok: true,
+      value: { capabilitySlug: "research" }
+    });
+  });
+
   it("builds cron previews for routes and schedules", () => {
     const from = new Date("2026-06-22T10:15:00.000Z");
     assert.deepEqual(schedulePreview("0 9 * * 1-5", "UTC", 2, from), {

@@ -90,30 +90,99 @@ const tools = [
   { name: "list_runs", description: "List workflow runs with optional status/query/workflow filters.", inputSchema: { type: "object", properties: { status: { type: "string" }, query: { type: "string" }, workflow: { type: "string" }, limit: { type: "number" } } } },
   { name: "get_run_status", description: "Get run status and summary.", inputSchema: { type: "object", required: ["runId"], properties: { runId: { type: "string" } } } },
   { name: "get_run_events", description: "Get structured events for a run.", inputSchema: { type: "object", required: ["runId"], properties: { runId: { type: "string" } } } },
-  { name: "get_run_timeline", description: "Get normalized timeline entries for a run.", inputSchema: { type: "object", required: ["runId"], properties: { runId: { type: "string" }, cursor: { type: "string" }, limit: { type: "number" } } } },
+  { name: "get_run_timeline", description: "Get normalized timeline entries for a run. Pass since (the nextSince value from a previous call) to page forward.", inputSchema: { type: "object", required: ["runId"], properties: { runId: { type: "string" }, since: { type: "string" }, limit: { type: "number" } } } },
   { name: "get_run_diagnostics", description: "Get diagnostics and log summary for a run.", inputSchema: { type: "object", required: ["runId"], properties: { runId: { type: "string" } } } },
   { name: "get_run_logs", description: "Get run event log text.", inputSchema: { type: "object", required: ["runId"], properties: { runId: { type: "string" } } } },
   { name: "get_run_artifacts", description: "List artifacts for a run.", inputSchema: { type: "object", required: ["runId"], properties: { runId: { type: "string" } } } },
+  { name: "download_artifact", description: "Download an artifact's content by artifact id (from get_run_artifacts or search_artifacts). Text artifacts return their content directly; binary artifacts return base64 with the mime type noted.", inputSchema: { type: "object", required: ["artifactId"], properties: { artifactId: { type: "string" } } } },
   { name: "rerun_workflow_run", description: "Create a linked rerun from a previous run, optionally overriding input.", inputSchema: { type: "object", required: ["runId"], properties: { runId: { type: "string" }, input: { type: "object" }, executionMode: { type: "string", enum: ["local", "remote", "auto"] }, runnerLocation: { type: "string" } } } },
   { name: "promote_run", description: "Promote a successful run's mutation/artifact according to server policy.", inputSchema: { type: "object", required: ["runId"], properties: { runId: { type: "string" }, note: { type: "string" } } } },
   { name: "list_runners", description: "List registered runners, heartbeat state, capacity, active slots, and pool summary.", inputSchema: { type: "object", properties: {} } },
+  { name: "whoami", description: "Show the authenticated identity: token name and granted scopes.", inputSchema: { type: "object", properties: {} } },
+  { name: "list_schedules", description: "List scheduled workflow runs (cron or one-shot), including next fire times.", inputSchema: { type: "object", properties: {} } },
+  { name: "get_schedule", description: "Inspect a schedule: workflow, cron/runAt, timezone, input, enabled state, and recent fire result.", inputSchema: { type: "object", required: ["scheduleId"], properties: { scheduleId: { type: "string" } } } },
+  { name: "preview_schedule", description: "Preview a cron expression: human description and next fire times in the given timezone. Nothing is created.", inputSchema: { type: "object", required: ["cron"], properties: { cron: { type: "string" }, timezone: { type: "string" } } } },
+  {
+    name: "create_schedule",
+    description: "Create a schedule that runs a workflow on a cron cadence or once at runAt. Requires an admin-scoped token.",
+    inputSchema: {
+      type: "object",
+      required: ["name", "workflow"],
+      properties: {
+        name: { type: "string" },
+        workflow: { type: "string", description: "Workflow slug to run." },
+        cron: { type: "string", description: "Cron expression (5 fields). Provide cron or runAt." },
+        runAt: { type: "string", description: "ISO timestamp for a one-shot run. Provide cron or runAt." },
+        timezone: { type: "string" },
+        input: { type: "object", description: "Workflow input for each fire." },
+        description: { type: "string" },
+        enabled: { type: "boolean" }
+      }
+    }
+  },
+  {
+    name: "update_schedule",
+    description: "Edit a schedule (any subset of name, workflow, cron, runAt, timezone, input, description, enabled). Requires an admin-scoped token.",
+    inputSchema: {
+      type: "object",
+      required: ["scheduleId"],
+      properties: {
+        scheduleId: { type: "string" },
+        name: { type: "string" },
+        workflow: { type: "string" },
+        cron: { type: "string" },
+        runAt: { type: "string" },
+        timezone: { type: "string" },
+        input: { type: "object" },
+        description: { type: "string" },
+        enabled: { type: "boolean" }
+      }
+    }
+  },
+  { name: "delete_schedule", description: "Delete a schedule. Requires an admin-scoped token.", inputSchema: { type: "object", required: ["scheduleId"], properties: { scheduleId: { type: "string" } } } },
+  { name: "run_schedule_now", description: "Fire a schedule immediately, creating a run outside its normal cadence. Requires an admin-scoped token.", inputSchema: { type: "object", required: ["scheduleId"], properties: { scheduleId: { type: "string" } } } },
   { name: "list_repo_options", description: "List allowlisted repos/projects this Hub can target without exposing raw paths.", inputSchema: { type: "object", properties: {} } },
   { name: "list_workflow_endpoints", description: "List fixed-purpose authenticated workflow endpoints. Requires an admin-scoped token.", inputSchema: { type: "object", properties: {} } },
   { name: "get_workflow_endpoint", description: "Inspect a fixed-purpose authenticated workflow endpoint. Requires an admin-scoped token.", inputSchema: { type: "object", required: ["endpointSlug"], properties: { endpointSlug: { type: "string" } } } },
   { name: "upsert_workflow_endpoint", description: "Create or edit a fixed-purpose authenticated workflow endpoint. Requires an admin-scoped token.", inputSchema: { type: "object", required: ["endpoint"], properties: { endpoint: { type: "object" } } } },
   { name: "submit_workflow_endpoint", description: "Submit payload to a fixed-purpose workflow endpoint using that endpoint's secret.", inputSchema: { type: "object", required: ["endpointSlug"], properties: { endpointSlug: { type: "string" }, payload: { type: "object" }, secret: { type: "string" } } } },
   { name: "list_tokens", description: "List Hub access tokens. Requires an admin-scoped token.", inputSchema: { type: "object", properties: {} } },
-  { name: "create_token", description: "Create a Hub access token. Requires an admin-scoped token.", inputSchema: { type: "object", required: ["name"], properties: { name: { type: "string" }, scopes: { type: "array", items: { type: "string" } } } } },
+  { name: "create_token", description: "Create a Hub access token. Requires an admin-scoped token.", inputSchema: { type: "object", required: ["name"], properties: { name: { type: "string" }, scopes: { type: "array", items: { type: "string" } }, expiresInDays: { type: "number", description: "Days until the token expires. Omit for a non-expiring token." } } } },
   { name: "revoke_token", description: "Revoke a Hub access token. Requires an admin-scoped token.", inputSchema: { type: "object", required: ["tokenId"], properties: { tokenId: { type: "string" } } } },
   { name: "list_secrets", description: "List configured secret names and metadata, never values. Requires an admin-scoped token.", inputSchema: { type: "object", properties: {} } },
-  { name: "set_secret", description: "Create or update an encrypted secret value. Requires an admin-scoped token.", inputSchema: { type: "object", required: ["key", "value"], properties: { key: { type: "string" }, value: { type: "string" } } } },
+  { name: "set_secret", description: "Create or update an encrypted secret value. Requires an admin-scoped token.", inputSchema: { type: "object", required: ["key", "value"], properties: { key: { type: "string" }, value: { type: "string" }, description: { type: "string" } } } },
   { name: "delete_secret", description: "Delete an encrypted secret. Requires an admin-scoped token.", inputSchema: { type: "object", required: ["key"], properties: { key: { type: "string" } } } },
   { name: "list_pending_approvals", description: "List pending approval cards. Each item carries its ask (who is asked, what approving does, why a human is needed), kind, deadline/fallback, and deep links; resolve one with approve_run / reject_run / request_changes_run using its approvalId.", inputSchema: { type: "object", properties: {} } },
+  { name: "list_approvals", description: "List approval cards. Pass status 'pending' or 'resolved' to filter; omit it for recent history. Resolved cards carry the decision in their resolution field (approved | rejected | changes_requested).", inputSchema: { type: "object", properties: { status: { type: "string", enum: ["pending", "resolved"] } } } },
+  { name: "get_approval", description: "Inspect a single approval card by approvalId: ask, kind, status, resolution, and linked run.", inputSchema: { type: "object", required: ["approvalId"], properties: { approvalId: { type: "string" } } } },
+  {
+    name: "create_approval",
+    description: "Raise an approval card for a human decision. Use ask to say who is asked, what approving does, and why a human is needed. Optional timeoutMs/timeoutAt with fallback ('approve' | 'reject') makes it a timed approval.",
+    inputSchema: {
+      type: "object",
+      required: ["title"],
+      properties: {
+        title: { type: "string" },
+        description: { type: "string" },
+        runId: { type: "string", description: "Run to hold on this approval, if any." },
+        ask: { type: "object", description: "Ask contract: { action, reason, audience }." },
+        payload: { type: "object" },
+        timeoutMs: { type: "number" },
+        timeoutAt: { type: "string" },
+        fallback: { type: "string" }
+      }
+    }
+  },
   {
     name: "list_hooks",
     description: "List post-run hook profiles (optional side effects like static publish or git push, run after a workflow's gates pass). Pass workflow to see which profiles that workflow may select via input.postRunHooks.",
     inputSchema: { type: "object", properties: { workflow: { type: "string" } } }
   },
+  { name: "get_hook", description: "Inspect a post-run hook profile: config, allowed workflows, and validation state.", inputSchema: { type: "object", required: ["hookSlug"], properties: { hookSlug: { type: "string" } } } },
+  { name: "upsert_hook", description: "Create or edit a post-run hook profile. Requires an admin-scoped token.", inputSchema: { type: "object", required: ["hook"], properties: { hook: { type: "object", description: "Hook profile payload including slug." } } } },
+  { name: "validate_hook", description: "Validate a post-run hook profile's configuration without running it. Requires an admin-scoped token.", inputSchema: { type: "object", required: ["hookSlug"], properties: { hookSlug: { type: "string" } } } },
+  { name: "get_audit_log", description: "Read the Hub audit trail (who did what, most recent first). Requires an admin-scoped token.", inputSchema: { type: "object", properties: { limit: { type: "number" } } } },
+  { name: "list_alerts", description: "List failure alerts recorded by the Hub. Requires an admin-scoped token.", inputSchema: { type: "object", properties: { kind: { type: "string" }, limit: { type: "number" } } } },
   { name: "approve_run", description: "Resolve a Hub approval card as approved (takes an approvalId from list_pending_approvals, not a runId). What happens next depends on the card's kind: a held run is released, an engine gate resumes on the runner, an escalation records the go-ahead.", inputSchema: { type: "object", required: ["approvalId"], properties: { approvalId: { type: "string" }, comment: { type: "string" } } } },
   { name: "reject_run", description: "Resolve a Hub approval card as rejected (takes an approvalId, not a runId). A run held on the card is cancelled — never failed; an engine gate takes its deny path.", inputSchema: { type: "object", required: ["approvalId"], properties: { approvalId: { type: "string" }, comment: { type: "string" } } } },
   { name: "request_changes_run", description: "Resolve a Hub approval card as changes_requested (takes an approvalId, not a runId). Use comment to describe the changes; a run held on the card is cancelled so it can be re-run with new input.", inputSchema: { type: "object", required: ["approvalId"], properties: { approvalId: { type: "string" }, comment: { type: "string" } } } },
@@ -209,13 +278,24 @@ async function callTool(name, args = {}) {
   })}`));
   if (name === "get_run_status") return result(await client.get(`/api/runs/${encodeURIComponent(args.runId)}`));
   if (name === "get_run_events") return result(await client.get(`/api/runs/${encodeURIComponent(args.runId)}/events`));
-  if (name === "get_run_timeline") return result(await client.get(`/api/runs/${encodeURIComponent(args.runId)}/timeline${queryString({ cursor: args.cursor, limit: args.limit })}`));
+  if (name === "get_run_timeline") return result(await client.get(`/api/runs/${encodeURIComponent(args.runId)}/timeline${queryString({ since: args.since || args.cursor, limit: args.limit })}`));
   if (name === "get_run_diagnostics") return result(await client.get(`/api/runs/${encodeURIComponent(args.runId)}/diagnostics`));
   if (name === "get_run_logs") {
     const response = await fetch(`${client.baseUrl}/api/runs/${encodeURIComponent(args.runId)}/logs`, { headers: { authorization: `Bearer ${client.token}` } });
     return result(await response.text());
   }
   if (name === "get_run_artifacts") return result(await client.get(`/api/runs/${encodeURIComponent(args.runId)}/artifacts`));
+  if (name === "download_artifact") {
+    const response = await fetch(`${client.baseUrl}/api/artifacts/${encodeURIComponent(args.artifactId || args.id)}/download`, {
+      headers: { authorization: `Bearer ${client.token}` }
+    });
+    if (!response.ok) return result(await response.text());
+    const mimeType = response.headers.get("content-type") || "application/octet-stream";
+    const bytes = Buffer.from(await response.arrayBuffer());
+    const isText = /^text\/|[/+](json|xml|yaml|javascript)\b|^application\/(json|xml|yaml|javascript)/.test(mimeType);
+    if (isText) return result(bytes.toString("utf8"));
+    return result({ mimeType, encoding: "base64", sizeBytes: bytes.length, data: bytes.toString("base64") });
+  }
   if (name === "rerun_workflow_run" || name === "rerun_run") return result(await client.post(`/api/runs/${encodeURIComponent(args.runId)}/rerun`, {
     input: args.input || undefined,
     executionMode: args.executionMode || args.where || undefined,
@@ -223,6 +303,25 @@ async function callTool(name, args = {}) {
   }));
   if (name === "promote_run") return result(await client.post(`/api/runs/${encodeURIComponent(args.runId)}/promote`, { note: args.note || "" }));
   if (name === "list_runners") return result(await client.get("/api/runners"));
+  if (name === "whoami") return result(await client.get("/api/me"));
+  if (name === "list_schedules") return result(await client.get("/api/schedules"));
+  if (name === "get_schedule") return result(await client.get(`/api/schedules/${encodeURIComponent(args.scheduleId || args.id)}`));
+  if (name === "preview_schedule") return result(await client.get(`/api/schedules/preview${queryString({ cron: args.cron, timezone: args.timezone })}`));
+  if (name === "create_schedule" || name === "update_schedule") {
+    const body = {};
+    if (args.name !== undefined) body.name = args.name;
+    if (args.workflow !== undefined || args.capability !== undefined) body.workflowSlug = args.workflow || args.capability;
+    if (args.cron !== undefined) body.cron = args.cron;
+    if (args.runAt !== undefined) body.runAt = args.runAt;
+    if (args.timezone !== undefined) body.timezone = args.timezone;
+    if (args.input !== undefined) body.input = args.input;
+    if (args.description !== undefined) body.description = args.description;
+    if (args.enabled !== undefined) body.enabled = args.enabled;
+    if (name === "create_schedule") return result(await client.post("/api/schedules", body));
+    return result(await client.patch(`/api/schedules/${encodeURIComponent(args.scheduleId || args.id)}`, body));
+  }
+  if (name === "delete_schedule") return result(await client.delete(`/api/schedules/${encodeURIComponent(args.scheduleId || args.id)}`));
+  if (name === "run_schedule_now") return result(await client.post(`/api/schedules/${encodeURIComponent(args.scheduleId || args.id)}/run-now`, {}));
   if (name === "list_repo_options") return result(await client.get("/api/repo-options"));
   if (name === "list_workflow_endpoints") return result(await client.get("/api/workflow-endpoints"));
   if (name === "get_workflow_endpoint") return result(await client.get(`/api/workflow-endpoints/${encodeURIComponent(args.endpointSlug || args.slug)}`));
@@ -238,16 +337,40 @@ async function callTool(name, args = {}) {
     return result(await response.json());
   }
   if (name === "list_tokens") return result(await client.get("/api/tokens"));
-  if (name === "create_token") return result(await client.post("/api/tokens", { name: args.name, scopes: args.scopes || ["api", "mcp"] }));
+  if (name === "create_token") return result(await client.post("/api/tokens", {
+    name: args.name,
+    scopes: args.scopes || ["api", "mcp"],
+    ...(args.expiresInDays ? { expiresInDays: args.expiresInDays } : {})
+  }));
   if (name === "revoke_token") return result(await client.delete(`/api/tokens/${encodeURIComponent(args.tokenId || args.id)}`));
   if (name === "list_secrets") return result(await client.get("/api/secrets"));
-  if (name === "set_secret") return result(await client.put(`/api/secrets/${encodeURIComponent(args.key)}`, { value: args.value }));
+  if (name === "set_secret") return result(await client.put(`/api/secrets/${encodeURIComponent(args.key)}`, {
+    value: args.value,
+    ...(args.description !== undefined ? { description: args.description } : {})
+  }));
   if (name === "delete_secret") return result(await client.delete(`/api/secrets/${encodeURIComponent(args.key)}`));
   if (name === "list_pending_approvals") return result(await client.get("/api/approvals?status=pending"));
+  if (name === "list_approvals") return result(await client.get(`/api/approvals${queryString({ status: args.status })}`));
+  if (name === "get_approval") return result(await client.get(`/api/approvals/${encodeURIComponent(args.approvalId || args.id)}`));
+  if (name === "create_approval") return result(await client.post("/api/approvals", {
+    title: args.title,
+    description: args.description || "",
+    runId: args.runId || undefined,
+    ask: args.ask || undefined,
+    payload: args.payload || undefined,
+    timeoutMs: args.timeoutMs ?? undefined,
+    timeoutAt: args.timeoutAt || undefined,
+    fallback: args.fallback || undefined
+  }));
   if (name === "list_hooks") {
     const slug = args.workflow || args.capability;
     return result(await client.get(`/api/hooks${slug ? `?workflow=${encodeURIComponent(slug)}` : ""}`));
   }
+  if (name === "get_hook") return result(await client.get(`/api/hooks/${encodeURIComponent(args.hookSlug || args.slug)}`));
+  if (name === "upsert_hook") return result(await client.post("/api/hooks", args.hook || args));
+  if (name === "validate_hook") return result(await client.post(`/api/hooks/${encodeURIComponent(args.hookSlug || args.slug)}/validate`, {}));
+  if (name === "get_audit_log") return result(await client.get(`/api/audit${queryString({ limit: args.limit })}`));
+  if (name === "list_alerts") return result(await client.get(`/api/alerts${queryString({ kind: args.kind, limit: args.limit })}`));
   if (name === "approve_run") return result(await client.post(`/api/approvals/${encodeURIComponent(args.approvalId)}/approve`, { comment: args.comment || "Approved through MCP" }));
   if (name === "reject_run") return result(await client.post(`/api/approvals/${encodeURIComponent(args.approvalId)}/reject`, { comment: args.comment || "Rejected through MCP" }));
   if (name === "request_changes_run") return result(await client.post(`/api/approvals/${encodeURIComponent(args.approvalId)}/request-changes`, { comment: args.comment || "Changes requested through MCP" }));

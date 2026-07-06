@@ -13,5 +13,8 @@ export const WORKFLOW_TEMPLATE_INCLUDE_PATHS = [
   "workflow-templates/workflows/runyard-runtime.js",
   "workflow-templates/workflows/runyard-smoke-check.tsx",
   "workflow-templates/workflows/runyard-support-agent.tsx",
+  "workflow-templates/workflows/skillmarket-package-audit.tsx",
+  "workflow-templates/workflows/skillmarket-paid-run.tsx",
+  "workflow-templates/workflows/skillmarket-quote-sidecar.tsx",
   "workflow-templates/workflows/smart-contract-audit.tsx"
 ];

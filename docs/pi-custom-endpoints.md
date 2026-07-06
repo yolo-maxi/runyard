@@ -17,9 +17,9 @@ the default harness**.
 1. **Pi CLI on the runner host** defines the endpoint as a provider in
    `~/.pi/agent/models.json`: base URL, wire API, model list, and an
    *environment-variable reference* for the API key.
-2. **RunYard selection** picks the provider/model per run or per capability
+2. **RunYard selection** picks the provider/model per run or per workflow
    (`agentHarness`/`piProvider`/`piModel`/`piApiKeyEnv` in run input or
-   capability workflow config; `src/runHarnessSelection.js`), with
+   the workflow definition's `workflow` config; `src/runHarnessSelection.js`), with
    `RUNYARD_PI_*` env config as the install-wide fallback. These are labels
    and names — never credentials — and reach the workflow child through the
    runner's `runEnv` channel plus the child-env allowlist (`src/childEnv.js`,
@@ -88,15 +88,15 @@ package yourself. `runyard runner setup` reports `pi` in its prerequisites line.
 Create one secret per endpoint, named exactly like its `$ENV_VAR` reference
 (`FUGU_API_KEY`, `VENICE_API_KEY`, `ZAI_API_KEY`, ...) on the Hub Secrets page
 (requires `SECRETS_ENC_KEY`). Keys are set up once and then *selected* per
-run or per capability — you never edit runner environment to switch
+run or per workflow — you never edit runner environment to switch
 providers. A key reaches a workflow child only through the encrypted per-run
 `secretEnv` channel, and only when that run asked for it by name: via the
-capability's `workflow.secrets`, the run input's `secretNames`, or the run's
+workflow definition's `workflow.secrets`, the run input's `secretNames`, or the run's
 `piApiKeyEnv` selection (below).
 
 ### 4. Pick per run / per workflow
 
-With every key stored, each run or capability selects its harness and
+With every key stored, each run or workflow selects its harness and
 endpoint **by name**. Run input fields (validated by the runner; labels and
 env-var names only, never credentials):
 
@@ -112,7 +112,7 @@ env-var names only, never credentials):
 ```
 
 ```jsonc
-// The next run switches to GLM — same capability, no env edits anywhere.
+// The next run switches to GLM — same workflow, no env edits anywhere.
 {
   "prompt": "Audit the contract",
   "piProvider": "glm",
@@ -126,11 +126,11 @@ env-var names only, never credentials):
 { "prompt": "Quick fix", "agentHarness": "codex" }
 ```
 
-The same fields work as capability defaults in the capability's `workflow`
-config (run input wins field-wise):
+The same fields work as workflow-level defaults in the workflow definition's
+`workflow` config (run input wins field-wise):
 
 ```jsonc
-// capability.workflow
+// workflow definition — the "workflow" block
 {
   "entry": "workflows/smart-contract-audit.tsx",
   "agentHarness": "pi",
@@ -157,7 +157,7 @@ variables (`RUNYARD_RUN_AGENT_CLI`, `RUNYARD_RUN_PI_PROVIDER`,
 ### 5. Env defaults (optional fallback)
 
 Existing installs keep working unchanged: runner (or hub-managed runner)
-environment remains the fallback when a run/capability selects nothing.
+environment remains the fallback when a run/workflow selects nothing.
 
 ```bash
 # Global: every workflow defaults to Pi on this endpoint
@@ -171,7 +171,7 @@ Selection precedence (`resolveAgentCli` in
 `workflow-templates/workflows/pi-harness.js`):
 
 1. `RUNYARD_RUN_AGENT_CLI` — the run's own selection (`agentHarness` in run
-   input or capability workflow config, injected by the runner)
+   input or the workflow definition's `workflow` config, injected by the runner)
 2. `RUNYARD_<WORKFLOW>_AGENT_CLI` (e.g. `RUNYARD_IMPLEMENT_AGENT_CLI=codex`)
 3. `RUNYARD_AGENT_CLI` (`pi` | `claude` | `codex`)
 4. `pi`, if a Pi endpoint is configured (this is what makes Pi the default)
@@ -210,7 +210,7 @@ this document.
   variable. Anything ending in `API_KEY`, `TOKEN`, or `SECRET` matches none
   of the child-env passthrough patterns; keys ride the encrypted per-run
   `secretEnv` channel.
-- Run/capability selection fields are validated by the runner: a value that
+- Run/workflow selection fields are validated by the runner: a value that
   is not label-shaped (e.g. a pasted key where a name belongs) fails
   preflight, and the error never echoes the value.
 - The key is never passed as `--api-key` argv (visible in process listings);

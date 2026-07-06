@@ -16,8 +16,8 @@ export function validateScheduleBody(body = {}, { partial = false, getCapability
   }
   if (has("description")) out.description = String(body.description || "").slice(0, 2000);
 
-  if (!partial || has("capabilitySlug") || has("capability")) {
-    const slug = String(body.capabilitySlug || body.capability || "").trim();
+  if (!partial || has("workflowSlug") || has("workflow") || has("capabilitySlug") || has("capability")) {
+    const slug = String(body.workflowSlug || body.workflow || body.capabilitySlug || body.capability || "").trim();
     if (!slug) return { ok: false, error: "workflow is required" };
     const capability = getCapability?.(slug);
     if (!capability || !capability.enabled) return { ok: false, error: `unknown or disabled workflow "${slug}"` };
@@ -113,5 +113,6 @@ export function withScheduleView(schedule, { from = new Date() } = {}) {
       nextRuns: schedule.enabled && schedule.nextRunAt ? [schedule.nextRunAt] : []
     };
   }
-  return { ...schedule, preview, deepLink: `/app#schedules/${encodeURIComponent(schedule.id)}` };
+  // `workflow` is the advertised field name; capabilitySlug stays for legacy readers.
+  return { ...schedule, workflow: schedule.capabilitySlug, preview, deepLink: `/app#schedules/${encodeURIComponent(schedule.id)}` };
 }

@@ -1,6 +1,6 @@
 // smithers-source: authored
 // smithers-display-name: Workflow Doctor
-// smithers-description: Diagnoses failed Smithers workflows from redacted Hub run evidence, proposes the smallest workflow-source fix, and optionally applies it behind capability approval.
+// smithers-description: Diagnoses failed Smithers workflows from redacted Hub run evidence, proposes the smallest workflow-source fix, and optionally applies it behind workflow approval.
 /** @jsxImportSource smithers-orchestrator */
 import { createSmithers, Sequence, ClaudeCodeAgent, CodexAgent, PiAgent } from "smithers-orchestrator";
 import { existsSync, realpathSync, readFileSync } from "node:fs";
@@ -31,7 +31,7 @@ const FAILED_STATUSES = new Set(["failed", "error", "errored", "cancelled", "rej
 const WORKFLOW_SLUG_RE = /^[a-zA-Z0-9_.-]+$/;
 
 const inputSchema = z.object({
-  targetWorkflow: z.string().min(1).describe("Workflow/capability slug to diagnose."),
+  targetWorkflow: z.string().min(1).describe("Workflow slug to diagnose."),
   lookbackHours: z.number().min(1).max(24 * 90).default(168).describe("How far back to sample runs."),
   count: z.number().int().min(1).max(50).default(20).describe("Maximum failed/error runs to inspect."),
   apply: z.boolean().default(false).describe("If true, apply the smallest deterministic fix to the target workflow file after approval."),
@@ -194,7 +194,7 @@ function coerceJson(value: any) {
 function safeWorkflowFile(slug: string) {
   const clean = inputText(slug);
   if (!WORKFLOW_SLUG_RE.test(clean) || clean.includes("..") || clean.includes("/") || clean.includes("\\")) {
-    throw new Error(`Invalid targetWorkflow '${redactText(clean, 120)}'. Use a single capability/workflow slug.`);
+    throw new Error(`Invalid targetWorkflow '${redactText(clean, 120)}'. Use a single workflow slug.`);
   }
   return clean.endsWith(".tsx") ? clean : `${clean}.tsx`;
 }

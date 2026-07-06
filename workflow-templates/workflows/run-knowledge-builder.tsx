@@ -26,7 +26,7 @@ const REDACTION_RULES = [
 const SECRET_FIELD_RE = /(token|secret|password|passwd|credential|authorization|cookie|api[_-]?key|private[_-]?key)/i;
 
 const inputSchema = z.object({
-  capabilitySlug: z.string().default("").describe("Optional capability/workflow slug to focus on."),
+  capabilitySlug: z.string().default("").describe("Optional workflow slug to focus on."),
   status: z.string().default("").describe("Optional comma-separated statuses to include."),
   lookbackHours: z.number().min(1).max(24 * 90).default(168).describe("How far back to sample runs."),
   count: z.number().int().min(1).max(50).default(20).describe("Maximum runs to inspect."),
@@ -339,7 +339,7 @@ function renderReport(gather: any, analysis: any) {
 Recommendation-only output. This run did not mutate live skills, agents, workflows, templates, or knowledge resources.
 
 ## Filters
-- Capability: ${filters.capabilitySlug || "any"}
+- Workflow: ${filters.capabilitySlug || "any"}
 - Statuses: ${(filters.statuses || []).join(", ") || "default completed/waiting statuses"}
 - Lookback hours: ${filters.lookbackHours}
 - Requested count: ${filters.count}

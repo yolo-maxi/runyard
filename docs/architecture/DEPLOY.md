@@ -26,7 +26,7 @@ RunYard has one production hub: `hub.repo.box` on the repo.box VPS. Treat this H
 
 ## Source Of Truth
 
-Capability definitions are git-authored seed data. On boot, the Hub applies those definitions idempotently by content hash: unchanged seed content must not bump capability versions, while changed seed content updates the DB cache and records a new version snapshot.
+Workflow definitions are git-authored seed data. On boot, the Hub applies those definitions idempotently by content hash: unchanged seed content must not bump workflow versions, while changed seed content updates the DB cache and records a new version snapshot.
 
 Admin/Web edits to workflow definitions are operational overrides only. They are not the source of truth and can be replaced by the next git-seeded definition change.
 
