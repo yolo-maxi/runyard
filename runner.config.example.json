@@ -1,0 +1,26 @@
+{
+  "improve": {
+    "defaultRepo": "/srv/runyard",
+    "allowedRepoRoots": [
+      "/srv/runyard",
+      "/srv/projects/example-app"
+    ],
+    "repoMap": {
+      "runyard": "/srv/runyard",
+      "example-app": "/srv/projects/example-app"
+    },
+    "projectMap": {}
+  },
+  "repoCatalog": [
+    {
+      "value": "runyard",
+      "label": "RunYard",
+      "selector": "repo"
+    },
+    {
+      "value": "example-app",
+      "label": "Example App",
+      "selector": "repo"
+    }
+  ]
+}

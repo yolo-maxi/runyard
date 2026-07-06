@@ -1,4 +1,5 @@
 import { buildRepoCatalog } from "./repoCatalog.js";
+import { loadRunnerConfigEnv } from "./runnerConfig.js";
 import { buildQueueIndex } from "./runPresentation.js";
 
 export function dashboardPayload({
@@ -45,7 +46,7 @@ export function createOperatorReadHandlers({
     repoOptions(_req, res) {
       // The catalog helper owns all sanitization: friendly selector keys only,
       // no runner-local path scans or secret material in API responses.
-      res.json(buildRepoCatalog(env));
+      res.json(buildRepoCatalog({ ...loadRunnerConfigEnv({ env }), ...env }));
     }
   };
 }

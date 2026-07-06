@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, it } from "node:test";
 import {
   createOperatorReadHandlers,
@@ -65,5 +68,31 @@ describe("operator read route helpers", () => {
     assert.equal(dashboard.body.recentRuns.length, 2);
     assert.ok(repoOptions.body.options.some((option) => option.value === "app"));
     assert.equal(repoOptions.body.options.find((option) => option.value === "app").repoDir, undefined);
+  });
+
+  it("merges repo-options from runner config without exposing paths", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "runyard-operator-repo-config-"));
+    const configFile = path.join(dir, "runner.config.json");
+    writeFileSync(
+      configFile,
+      JSON.stringify({
+        improve: {
+          repoMap: { skillmarket: "/srv/skillmarket" },
+          allowedRepoRoots: ["/srv/skillmarket"]
+        },
+        repoCatalog: [{ value: "skillmarket", label: "SkillMarket", selector: "repo" }]
+      })
+    );
+    const handlers = createOperatorReadHandlers({
+      ...deps(),
+      env: { RUNYARD_RUNNER_CONFIG: configFile }
+    });
+    const repoOptions = response();
+
+    handlers.repoOptions({}, repoOptions);
+
+    const option = repoOptions.body.options.find((entry) => entry.value === "skillmarket");
+    assert.equal(option.label, "SkillMarket");
+    assert.equal(option.repoDir, undefined);
   });
 });

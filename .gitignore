@@ -3,6 +3,7 @@ data/
 .env
 test-artifacts/
 runner.env
+runner.config.json
 .runtime/
 support-runner.env
 

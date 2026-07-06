@@ -48,8 +48,11 @@ import {
 } from "./runnerRuntime.js";
 import { handleRunnerSpecialRun } from "./runnerSpecialRuns.js";
 import { harnessSelectionRunEnv, resolveHarnessSelection } from "./runHarnessSelection.js";
+import { loadRunnerConfigEnv } from "./runnerConfig.js";
 
 const execFileAsync = promisify(execFile);
+const runnerConfigEnv = loadRunnerConfigEnv();
+const runnerBaseEnv = { ...process.env, ...runnerConfigEnv };
 
 // Resolve once at startup: env override → pinned bun global install → PATH.
 // Keeps the pinned smithers-orchestrator engine deterministic on dstack images.
@@ -328,6 +331,7 @@ async function launch(entry, input, secretEnv = {}, resume = null, hubRunId = ""
     runSmithers: smithers,
     entry,
     input,
+    baseEnv: runnerBaseEnv,
     secretEnv,
     resume,
     workspace,

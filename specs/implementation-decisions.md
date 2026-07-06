@@ -295,12 +295,12 @@ Reasoning:
 
 ### Decision: Improve can target allowlisted runner-local repos
 
-The Improve workflow accepts `repoDir` as an absolute runner-local git repo path. Runners may also expose friendly `repo` or `project` keys through JSON env maps. The selected repo controls the PM cwd, builder cwd, baseline, tests, commit, push, and deploy; the Hub remains the source of truth for logs, outputs, and artifacts.
+The Improve workflow accepts `repoDir` as an absolute runner-local git repo path. Runners may also expose friendly `repo` or `project` keys through the runner repo policy config (`runner.config.json` by default). The selected repo controls the PM cwd, builder cwd, baseline, tests, commit, push, and deploy; the Hub remains the source of truth for logs, outputs, and artifacts.
 
 Reasoning:
 
 - Improve should not be tied to the Runyard/Hub repo when the operator wants to improve another project.
-- Repository paths are execution authority, so runners enforce an allowlist rooted at the default repo plus `IMPROVE_ALLOWED_REPO_ROOTS`.
+- Repository paths are execution authority, so runners enforce an allowlist rooted at the configured default repo plus the configured allowed repo roots.
 - Keeping logs and artifacts in the Hub preserves the product's control-plane model even when edits happen elsewhere on the runner.
 
 ### Decision: CLI mirrors operational concepts

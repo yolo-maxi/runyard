@@ -15,15 +15,15 @@ export const seedProductCapabilities = [
         commitMessage: { type: "string", description: "Optional commit message." },
         repoDir: {
           type: "string",
-          description: "Absolute runner-local git repo path to edit. Must be inside allowed improve repo roots."
+          description: "Absolute runner-local git repo path to edit. Must be inside configured allowed improve repo roots."
         },
         repo: {
           type: "string",
-          description: "Optional friendly repo key resolved on the runner from IMPROVE_REPO_MAP JSON."
+          description: "Optional friendly repo key resolved from the runner repo policy config."
         },
         project: {
           type: "string",
-          description: "Optional friendly project key resolved from IMPROVE_PROJECT_MAP or IMPROVE_REPO_MAP."
+          description: "Optional friendly project key resolved from the runner repo policy config."
         },
         mutationMode: {
           type: "string",
@@ -309,15 +309,15 @@ export const seedProductCapabilities = [
         },
         repoDir: {
           type: "string",
-          description: "Absolute runner-local git repo path to inspect. Must be inside allowed improve repo roots."
+          description: "Absolute runner-local git repo path to inspect. Must be inside configured allowed improve repo roots."
         },
         repo: {
           type: "string",
-          description: "Optional friendly repo key resolved on the runner from IMPROVE_REPO_MAP JSON."
+          description: "Optional friendly repo key resolved from the runner repo policy config."
         },
         project: {
           type: "string",
-          description: "Optional friendly project key resolved from IMPROVE_PROJECT_MAP or IMPROVE_REPO_MAP."
+          description: "Optional friendly project key resolved from the runner repo policy config."
         },
         maxImprovements: {
           type: "number",
@@ -364,15 +364,15 @@ export const seedProductCapabilities = [
         },
         repoDir: {
           type: "string",
-          description: "Absolute runner-local git repo path to inspect/edit. Must be inside the default repo root or IMPROVE_ALLOWED_REPO_ROOTS."
+          description: "Absolute runner-local git repo path to inspect/edit. Must be inside configured allowed improve repo roots."
         },
         repo: {
           type: "string",
-          description: "Optional friendly repo key resolved on the runner from IMPROVE_REPO_MAP JSON."
+          description: "Optional friendly repo key resolved from the runner repo policy config."
         },
         project: {
           type: "string",
-          description: "Optional friendly project key resolved on the runner from IMPROVE_PROJECT_MAP or IMPROVE_REPO_MAP JSON."
+          description: "Optional friendly project key resolved from the runner repo policy config."
         },
         maxImprovements: {
           type: "number",
@@ -445,15 +445,15 @@ export const seedProductCapabilities = [
         },
         repoDir: {
           type: "string",
-          description: "Absolute runner-local git repo path to inspect/build. Must be inside allowed improve repo roots. Defaults to the Runyard repo."
+          description: "Absolute runner-local git repo path to inspect/build. Must be inside configured allowed improve repo roots. Defaults to the Runyard repo."
         },
         repo: {
           type: "string",
-          description: "Friendly repo key resolved on the runner from IMPROVE_REPO_MAP. Defaults to runyard."
+          description: "Friendly repo key resolved from the runner repo policy config. Defaults to runyard."
         },
         project: {
           type: "string",
-          description: "Optional friendly project key resolved from IMPROVE_PROJECT_MAP or IMPROVE_REPO_MAP."
+          description: "Optional friendly project key resolved from the runner repo policy config."
         }
       }
     },

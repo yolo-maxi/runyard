@@ -128,6 +128,7 @@ export async function launchSmithers({
   runSmithers,
   entry,
   input,
+  baseEnv = process.env,
   secretEnv = {},
   resume = null,
   workspace,
@@ -139,7 +140,7 @@ export async function launchSmithers({
 }) {
   const request = smithersLaunchRequest({ entry, input, workspace, resume, maxInlineInputBytes });
   const { stdout } = await runSmithers(request.args, {
-    env: runyardChildEnv({ token, baseUrl, secretEnv, claudeOauthToken, runEnv }),
+    env: runyardChildEnv({ baseEnv, token, baseUrl, secretEnv, claudeOauthToken, runEnv }),
     ...(request.stdin ? { stdin: request.stdin } : {})
   });
   return parseSmithersRunId(stdout);

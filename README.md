@@ -64,7 +64,7 @@ The tail command streams the unified run timeline as NDJSON: lifecycle status tr
 
 ## Improve target repos
 
-The `improve` workflow edits the runner's default repo by default: `IMPROVE_REPO_DIR || GATED_REPO_DIR || process.cwd()`. To improve another repo, pass `repoDir` as an absolute runner-local git repo path and allow it with `IMPROVE_ALLOWED_REPO_ROOTS`, or pass a friendly `repo`/`project` key from `IMPROVE_REPO_MAP` / `IMPROVE_PROJECT_MAP`.
+The `improve` workflow edits the runner's configured default repo by default. To improve another repo, add it to the runner's repo policy config (`runner.config.json` by default), then pass `repoDir` as an absolute runner-local git repo path or pass a friendly `repo`/`project` key from that config.
 
 The selected repo is where the PM review, builder, tests, commit, push, and deploy run. The Hub remains the source of truth for run status, logs, outputs, and artifacts.
 

@@ -194,6 +194,10 @@ describe("runner Smithers runtime helpers", () => {
       input: { prompt: "hello" },
       workspace: "/tmp/ws",
       maxInlineInputBytes: 1000,
+      baseEnv: {
+        PATH: "/usr/bin",
+        IMPROVE_ALLOWED_REPO_ROOTS: "/srv/runyard,/srv/skillmarket"
+      },
       token: "hub-token",
       baseUrl: "http://hub",
       runEnv: { RUNYARD_RUN_ID: "run_hub_1" }
@@ -203,5 +207,6 @@ describe("runner Smithers runtime helpers", () => {
     assert.deepEqual(calls[0].args.slice(0, 2), ["up", "/abs/workflow.tsx"]);
     assert.equal(calls[0].opts.env.RUNYARD_HUB_TOKEN, "hub-token");
     assert.equal(calls[0].opts.env.RUNYARD_RUN_ID, "run_hub_1");
+    assert.equal(calls[0].opts.env.IMPROVE_ALLOWED_REPO_ROOTS, "/srv/runyard,/srv/skillmarket");
   });
 });
