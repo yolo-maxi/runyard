@@ -23,7 +23,6 @@ describe("seed capability catalog", () => {
       "implement-change-gated",
       "idea-to-product",
       "improve",
-      "national-spirit-question-factory",
       "reauth-cli"
     ]);
   });

@@ -6,7 +6,6 @@ export const WORKFLOW_TEMPLATE_INCLUDE_PATHS = [
   "workflow-templates/workflows/implement-change-gated.tsx",
   "workflow-templates/workflows/improve-repo.js",
   "workflow-templates/workflows/improve.tsx",
-  "workflow-templates/workflows/national-spirit-question-factory.tsx",
   "workflow-templates/workflows/pi-harness.js",
   "workflow-templates/workflows/reauth-cli.tsx",
   "workflow-templates/workflows/research.tsx",
