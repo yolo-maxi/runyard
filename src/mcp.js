@@ -22,7 +22,7 @@ const tools = [
   { name: "list_workflow_versions", description: "List versions seen from previous runs for a workflow.", inputSchema: { type: "object", required: ["id"], properties: { id: { type: "string" } } } },
   {
     name: "create_workflow",
-    description: "Create a workflow definition. Requires an admin-scoped token. Body should include name, optional slug/description/category/schema fields, runner requirements, approval policy, and workflow source reference.",
+    description: "Create a workflow definition. Requires an admin-scoped token. Custom workflows must include workflow source bytes (workflow.source/sourceBytes/code) or an existing workflow.bundleId; bare workflow.entry file paths are rejected unless explicitly trusted internal/dev.",
     inputSchema: {
       type: "object",
       required: ["workflow"],
@@ -33,7 +33,7 @@ const tools = [
   },
   {
     name: "update_workflow",
-    description: "Edit an existing workflow definition. Requires an admin-scoped token. The slug/id is stable; payload fields are merged into the existing definition.",
+    description: "Edit an existing workflow definition. Requires an admin-scoped token. Source updates must include workflow source bytes or an existing workflow.bundleId; bare workflow.entry file paths are rejected unless explicitly trusted internal/dev.",
     inputSchema: {
       type: "object",
       required: ["id", "workflow"],

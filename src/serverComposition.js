@@ -318,6 +318,7 @@ export function createServerComposition({
     evaluatePreflight,
     getCapability,
     getWorkflowBundle,
+    publishWorkflowBundle,
     listApprovals,
     listCapabilities,
     listCapabilityVersionsFromRuns,

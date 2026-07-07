@@ -297,7 +297,7 @@ export function evaluateRunPreflight({ capability, input, options = {}, context 
       } else if (source) {
         check("workflow_source", "pass", `workflow source resolved (${source.relativePath})`);
       } else {
-        warning("workflow_source_unverified", `workflow.entry "${entry}" was not found under the Hub root; the runner verifies it again at claim time and fails closed if it is missing there too`);
+        blocker("workflow_source_missing", `workflow.entry "${entry}" was not found under the Hub root; provide workflow source bytes or workflow.bundleId so the runner can execute DB-backed source`);
       }
     }
   }

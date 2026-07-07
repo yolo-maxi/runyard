@@ -16,6 +16,7 @@ function harness(overrides = {}) {
   const responseEndpoints = [];
   const notifications = [];
   const upserts = [];
+  const bundles = new Map(Object.entries(overrides.bundles || {}));
   const capabilities = new Map([
     ["hello", { slug: "hello", name: "Hello", enabled: true, workflow: {} }],
     ["disabled", { slug: "disabled", name: "Disabled", enabled: false, workflow: {} }],
@@ -41,13 +42,26 @@ function harness(overrides = {}) {
       return { run };
     },
     getCapability: (slug) => capabilities.get(slug) || null,
-    getWorkflowBundle: (bundleId) => (overrides.bundles || {})[bundleId] || null,
+    getWorkflowBundle: (bundleId) => bundles.get(bundleId) || null,
     listApprovals: () => overrides.pendingApprovals || [],
     listCapabilities: (options) => [{ slug: "hello", options }],
     listCapabilityVersionsFromRuns: (slug) => [`${slug}:v1`],
     notifyTelegram: async (approval) => { notifications.push(approval); },
     recordAudit: (actor, action, target, detail) => audits.push({ actor, action, target, detail }),
     root: overrides.root || process.cwd(),
+    publishWorkflowBundle: ({ capabilitySlug, code, language = "tsx" }) => {
+      const bundle = {
+        id: `wfb_${bundles.size + 1}`,
+        capabilitySlug,
+        version: 1,
+        language,
+        sizeBytes: Buffer.byteLength(code, "utf8"),
+        sha256: "test-sha",
+        code
+      };
+      bundles.set(bundle.id, bundle);
+      return { ...bundle, code: undefined };
+    },
     upsertCapability: (body) => {
       upserts.push(body);
       return { ...body, upserted: true };
@@ -56,7 +70,7 @@ function harness(overrides = {}) {
     withRunLinks: (run) => ({ ...run, deepLink: `#/runs/${run.id}` }),
     env: overrides.env || {}
   });
-  return { audits, dispatched, events, handlers, notifications, responseEndpoints, upserts };
+  return { audits, bundles, dispatched, events, handlers, notifications, responseEndpoints, upserts };
 }
 
 function bundleCapRoot() {
@@ -90,11 +104,18 @@ describe("capability route helpers", () => {
     assert.equal(listRes.body.capabilities[0].deepLink, "#/capabilities/hello");
 
     const createRes = response();
-    handlers.createCapability(req({ body: { name: "My Capability" }, scopes: ["admin"] }), createRes);
+    handlers.createCapability(req({
+      body: { name: "My Capability", workflow: { source: "export default null;\n" } },
+      scopes: ["admin"]
+    }), createRes);
     assert.equal(createRes.body.capability.slug, "my-capability");
 
     const updateRes = response();
-    handlers.updateCapability(req({ params: { id: "hello" }, body: { name: "New" }, scopes: ["admin"] }), updateRes);
+    handlers.updateCapability(req({
+      params: { id: "hello" },
+      body: { name: "New", workflow: { trustedFileBacked: true, entry: "hello.tsx" } },
+      scopes: ["admin"]
+    }), updateRes);
     assert.equal(updateRes.body.capability.slug, "hello");
     assert.equal(updateRes.body.capability.name, "New");
 
@@ -104,20 +125,44 @@ describe("capability route helpers", () => {
     assert.deepEqual(versionsRes.body.versions, ["hello:v1"]);
   });
 
-  it("publishes capabilities whose workflow bundle is under the 500 KB cap", () => {
-    const { handlers, upserts } = harness({ root: bundleCapRoot() });
+  it("publishes API-created workflows with source bytes as DB-backed bundles", () => {
+    const { bundles, handlers, upserts } = harness();
     const res = response();
-    handlers.createCapability(req({ body: { slug: "small", name: "Small" }, scopes: ["admin"] }), res);
+    const code = "// smithers-display-name: Small\nexport default null;\n";
+    handlers.createCapability(req({
+      body: { slug: "small", name: "Small", workflow: { source: code, language: "tsx" } },
+      scopes: ["admin"]
+    }), res);
 
     assert.equal(res.statusCode, 200);
     assert.equal(res.body.capability.upserted, true);
     assert.equal(upserts.length, 1);
+    assert.equal(upserts[0].workflow.bundleId, "wfb_1");
+    assert.equal(upserts[0].workflow.source, undefined);
+    assert.equal(bundles.get("wfb_1").code, code);
+  });
+
+  it("rejects custom API workflows that only provide a file entry", () => {
+    const { handlers, upserts } = harness({ root: bundleCapRoot() });
+    const res = response();
+    handlers.createCapability(req({
+      body: { slug: "small", name: "Small", workflow: { entry: ".smithers/workflows/small.tsx" } },
+      scopes: ["admin"]
+    }), res);
+
+    assert.equal(res.statusCode, 400);
+    assert.equal(res.body.code, "workflow_source_required");
+    assert.match(res.body.error, /source bytes or an existing workflow\.bundleId/);
+    assert.equal(upserts.length, 0);
   });
 
   it("rejects oversized workflow bundles with 413 before anything is stored", () => {
     const { handlers, upserts } = harness({ root: bundleCapRoot() });
     const res = response();
-    handlers.createCapability(req({ body: { slug: "huge", name: "Huge" }, scopes: ["admin"] }), res);
+    handlers.createCapability(req({
+      body: { slug: "huge", name: "Huge", workflow: { trustedFileBacked: true, entry: ".smithers/workflows/huge.tsx" } },
+      scopes: ["admin"]
+    }), res);
 
     assert.equal(res.statusCode, 413);
     assert.equal(upserts.length, 0);
@@ -134,7 +179,7 @@ describe("capability route helpers", () => {
     const res = response();
     handlers.updateCapability(req({
       params: { id: "hello" },
-      body: { workflow: { entry: ".smithers/workflows/huge.tsx" } },
+      body: { workflow: { trustedFileBacked: true, entry: ".smithers/workflows/huge.tsx" } },
       scopes: ["admin"]
     }), res);
 

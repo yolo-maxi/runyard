@@ -67,7 +67,8 @@ describe("Workflow source + code viewer", () => {
     const data = await api("/api/workflows/implement-change-gated/source");
     assert.equal(data.available, true);
     assert.equal(data.slug, "implement-change-gated");
-    assert.match(data.path, /workflow-templates\/workflows\/implement-change-gated\.tsx$/);
+    assert.match(data.path, /^db:\/\/workflow-bundles\/wfb_/);
+    assert.match(data.bundleId, /^wfb_/);
     assert.equal(data.language, "tsx");
     assert.ok(data.code.includes("smithers-display-name"));
     assert.ok(data.code.includes("<Workflow"));
@@ -108,7 +109,8 @@ describe("Workflow source + code viewer", () => {
     const data = await api("/api/workflows/idea-to-product/source");
     assert.equal(data.available, true);
     assert.equal(data.slug, "idea-to-product");
-    assert.match(data.path, /workflow-templates\/workflows\/idea-to-product\.tsx$/);
+    assert.match(data.path, /^db:\/\/workflow-bundles\/wfb_/);
+    assert.match(data.bundleId, /^wfb_/);
     assert.equal(data.metadata.displayName, "Idea to Product");
     const taskIds = data.graph.nodes.filter((node) => node.kind !== "entry").map((node) => node.id);
     assert.ok(taskIds.includes("expand"));

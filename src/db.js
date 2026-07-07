@@ -159,6 +159,8 @@ const dbBootstrap = createDbBootstrap({
   upsertAgent,
   upsertKnowledge,
   upsertCapability,
+  publishWorkflowBundle,
+  listWorkflowBundles,
   upsertWorkflowEndpoint
 });
 

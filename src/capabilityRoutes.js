@@ -15,6 +15,7 @@ import {
   sliceWorkflowSections,
   workflowBundleSizeError
 } from "./workflowSource.js";
+import { normalizePublicWorkflowDefinition } from "./workflowBundlePublishing.js";
 import { normalizeCapabilityDefinition } from "./capabilityRecords.js";
 import { eligibleHookProfiles } from "./hookProfileRecords.js";
 import { requestOrigin, requireBodySlug } from "./requestContext.js";
@@ -40,6 +41,7 @@ export function createCapabilityHandlers({
   evaluatePreflight = null,
   getCapability,
   getWorkflowBundle,
+  publishWorkflowBundle,
   deleteCapability,
   listApprovals,
   listCapabilities,
@@ -74,32 +76,71 @@ export function createCapabilityHandlers({
 
   const workflowPayload = (capability) => withCapabilityLinks(capability);
 
-  // Reject definitions whose workflow bundle can't be published: a DB bundle
-  // reference that doesn't exist (400 — publish the bundle first) or a bundle
-  // that exceeds the publish-time cap (413) — before anything is stored, so
-  // broken or oversized bundles never reach dispatch.
-  const workflowBundlePublishBlocked = (res, definition) => {
-    const normalized = normalizeCapabilityDefinition(definition);
+  // Normalize public workflow definitions into the production runtime shape:
+  // source bytes are published as immutable DB bundles, existing bundle ids are
+  // validated, and bare file entries are rejected unless explicitly trusted.
+  const normalizeWorkflowForPublish = (req, res, definition) => {
+    let normalized;
+    try {
+      const base = normalizeCapabilityDefinition(definition);
+      normalized = normalizePublicWorkflowDefinition({
+        definition: {
+          ...base,
+          workflow: { ...base.workflow, ...(definition.workflow || {}) },
+          workflowSource: definition.workflowSource,
+          sourceBytes: definition.sourceBytes,
+          code: definition.code,
+          workflowLanguage: definition.workflowLanguage
+        },
+        getWorkflowBundle,
+        publishWorkflowBundle,
+        createdBy: requestOrigin(req, definition).requestedBy || req.token?.name || ""
+      });
+    } catch (cause) {
+      if (cause.code === "workflow_bundle_missing") {
+        res.status(400).json({
+          error: `workflow bundle ${cause.bundleId} not found; provide workflow source bytes or publish the bundle via POST /api/workflow-bundles before referencing it`,
+          bundleId: cause.bundleId
+        });
+        return null;
+      }
+      if (cause.code === "workflow_source_required") {
+        res.status(400).json({
+          error: cause.message,
+          code: cause.code
+        });
+        return null;
+      }
+      if (cause.code === "workflow_bundle_too_large") {
+        res.status(413).json({
+          error: cause.message,
+          sizeBytes: cause.sizeBytes,
+          maxWorkflowBundleBytes: cause.maxWorkflowBundleBytes
+        });
+        return null;
+      }
+      throw cause;
+    }
     let source;
     try {
       source = loadWorkflowSource(normalized, { root, getWorkflowBundle });
     } catch (cause) {
       if (cause.code !== "workflow_bundle_missing") throw cause;
       res.status(400).json({
-        error: `workflow bundle ${cause.bundleId} not found; publish the bundle via POST /api/workflow-bundles before referencing it`,
+        error: `workflow bundle ${cause.bundleId} not found; provide workflow source bytes or publish the bundle via POST /api/workflow-bundles before referencing it`,
         bundleId: cause.bundleId
       });
-      return true;
+      return null;
     }
     const error = workflowBundleSizeError(source);
-    if (!error) return false;
+    if (!error) return normalized;
     res.status(413).json({
       error,
       sizeBytes: source.sizeBytes,
       maxWorkflowBundleBytes: MAX_WORKFLOW_BUNDLE_BYTES,
       path: source.relativePath
     });
-    return true;
+    return null;
   };
 
   const handlers = {
@@ -110,8 +151,9 @@ export function createCapabilityHandlers({
 
     createWorkflow(req, res) {
       const body = { ...req.body, slug: requireBodySlug(req.body, "workflow") };
-      if (workflowBundlePublishBlocked(res, body)) return;
-      res.json({ workflow: upsertCapability(body) });
+      const normalized = normalizeWorkflowForPublish(req, res, body);
+      if (!normalized) return;
+      res.json({ workflow: upsertCapability(normalized) });
     },
 
     getWorkflow(req, res) {
@@ -140,8 +182,9 @@ export function createCapabilityHandlers({
       const existing = capabilityOr404(res, req.params.id, "workflow");
       if (!existing) return;
       const merged = { ...existing, ...req.body, slug: existing.slug };
-      if (workflowBundlePublishBlocked(res, merged)) return;
-      res.json({ workflow: upsertCapability(merged) });
+      const normalized = normalizeWorkflowForPublish(req, res, merged);
+      if (!normalized) return;
+      res.json({ workflow: upsertCapability(normalized) });
     },
 
     deleteWorkflow(req, res) {
@@ -166,8 +209,9 @@ export function createCapabilityHandlers({
 
     createCapability(req, res) {
       const body = { ...req.body, slug: requireBodySlug(req.body, "capability") };
-      if (workflowBundlePublishBlocked(res, body)) return;
-      res.json({ capability: upsertCapability(body) });
+      const normalized = normalizeWorkflowForPublish(req, res, body);
+      if (!normalized) return;
+      res.json({ capability: upsertCapability(normalized) });
     },
 
     getCapability(req, res) {
@@ -196,8 +240,9 @@ export function createCapabilityHandlers({
       const existing = capabilityOr404(res, req.params.id);
       if (!existing) return;
       const merged = { ...existing, ...req.body, slug: existing.slug };
-      if (workflowBundlePublishBlocked(res, merged)) return;
-      res.json({ capability: upsertCapability(merged) });
+      const normalized = normalizeWorkflowForPublish(req, res, merged);
+      if (!normalized) return;
+      res.json({ capability: upsertCapability(normalized) });
     },
 
     async runCapability(req, res) {

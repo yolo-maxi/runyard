@@ -13,7 +13,8 @@ process.env.SMITHERS_HUB_BOOTSTRAP_TOKEN = "shub_seed_token";
 process.env.SMITHERS_OBSTRUCTION_ANALYSIS_ENABLED = "0";
 
 const { seedCapabilities } = await import("../src/seeds.js");
-const { db, getCapability, upsertCapability } = await import("../src/db.js");
+const { publishTrustedSeedWorkflowSource } = await import("../src/workflowBundlePublishing.js");
+const { db, getCapability, listWorkflowBundles, publishWorkflowBundle, upsertCapability } = await import("../src/db.js");
 
 function seed(slug) {
   return seedCapabilities.find((capability) => capability.slug === slug);
@@ -23,12 +24,22 @@ function snapshotCount(capabilityId) {
   return db.prepare("SELECT COUNT(*) AS count FROM capability_versions WHERE capability_id = ?").get(capabilityId).count;
 }
 
+function bundledSeed(slug) {
+  return publishTrustedSeedWorkflowSource({
+    definition: seed(slug),
+    root: process.cwd(),
+    publishWorkflowBundle,
+    listWorkflowBundles,
+    createdBy: "test-seed"
+  }).definition;
+}
+
 describe("capability seed idempotency", () => {
   it("does not bump version or snapshot when a seed definition is unchanged", () => {
     const before = getCapability("hello");
     const beforeSnapshots = snapshotCount(before.id);
 
-    const after = upsertCapability(seed("hello"));
+    const after = upsertCapability(bundledSeed("hello"));
 
     assert.equal(after.version, before.version);
     assert.equal(after.updatedAt, before.updatedAt);
@@ -38,7 +49,7 @@ describe("capability seed idempotency", () => {
   });
 
   it("treats equivalent nested object key order as the same content", () => {
-    const hello = seed("hello");
+    const hello = bundledSeed("hello");
     const before = getCapability("hello");
 
     const after = upsertCapability({
@@ -55,7 +66,7 @@ describe("capability seed idempotency", () => {
   });
 
   it("bumps version and snapshots when seed content changes", () => {
-    const hello = seed("hello");
+    const hello = bundledSeed("hello");
     const before = getCapability("hello");
     const beforeSnapshots = snapshotCount(before.id);
 

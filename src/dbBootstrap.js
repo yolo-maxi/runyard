@@ -7,6 +7,7 @@ import {
 } from "./settingsRecords.js";
 import { seedAgents, seedCapabilities, seedKnowledge, seedSkills } from "./seedCatalog.js";
 import { workflowEndpointSeedLookupQuery } from "./workflowEndpointRecords.js";
+import { publishTrustedSeedWorkflowSource } from "./workflowBundlePublishing.js";
 
 export const defaultWorkflowEndpointSeeds = [
   {
@@ -39,6 +40,8 @@ export function createDbBootstrap({
   upsertAgent,
   upsertKnowledge,
   upsertCapability,
+  publishWorkflowBundle = null,
+  listWorkflowBundles = null,
   upsertWorkflowEndpoint,
   readOrCreateTokenFileFn = readOrCreateTokenFile,
   log = console.log,
@@ -75,7 +78,16 @@ export function createDbBootstrap({
     for (const skill of catalogSeeds.skills) upsertSkill(skill);
     for (const agent of catalogSeeds.agents) upsertAgent(agent);
     for (const item of catalogSeeds.knowledge) upsertKnowledge(item);
-    for (const capability of catalogSeeds.capabilities) upsertCapability(capability);
+    for (const capability of catalogSeeds.capabilities) {
+      const published = publishTrustedSeedWorkflowSource({
+        definition: capability,
+        root: env.root,
+        publishWorkflowBundle,
+        listWorkflowBundles,
+        createdBy: "seed"
+      });
+      upsertCapability(published.definition);
+    }
   }
 
   function seededEndpointSecretPath(slug) {

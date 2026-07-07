@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 
 import { createDbBootstrap, defaultWorkflowEndpointSeeds } from "../src/dbBootstrap.js";
+import { workflowBundleSha256 } from "../src/workflowBundleRecords.js";
 
 function createHarness({
   oneRows = [],
@@ -12,8 +15,9 @@ function createHarness({
     skills: [{ slug: "skill" }],
     agents: [{ slug: "agent" }],
     knowledge: [{ slug: "knowledge" }],
-    capabilities: [{ slug: "capability" }]
+    capabilities: [{ slug: "capability", workflow: { bundleId: "wfb_seed" } }]
   },
+  workflowBundles = [],
   workflowEndpointSeeds = [
     {
       slug: "feedback",
@@ -24,6 +28,7 @@ function createHarness({
 } = {}) {
   const calls = [];
   const rows = [...oneRows];
+  const bundles = [...workflowBundles];
   const bootstrap = createDbBootstrap({
     one: (sql, params) => {
       calls.push({ fn: "one", sql, params });
@@ -46,6 +51,20 @@ function createHarness({
     upsertAgent: (input) => calls.push({ fn: "upsertAgent", input }),
     upsertKnowledge: (input) => calls.push({ fn: "upsertKnowledge", input }),
     upsertCapability: (input) => calls.push({ fn: "upsertCapability", input }),
+    listWorkflowBundles: ({ capabilitySlug }) => bundles.filter((bundle) => bundle.capabilitySlug === capabilitySlug),
+    publishWorkflowBundle: (input) => {
+      calls.push({ fn: "publishWorkflowBundle", input });
+      const bundle = {
+        id: `wfb_${bundles.length + 1}`,
+        capabilitySlug: input.capabilitySlug,
+        version: bundles.length + 1,
+        sha256: "published-sha",
+        language: input.language || "tsx",
+        sizeBytes: Buffer.byteLength(input.code, "utf8")
+      };
+      bundles.push(bundle);
+      return bundle;
+    },
     upsertWorkflowEndpoint: (input, options) => calls.push({ fn: "upsertWorkflowEndpoint", input, options }),
     readOrCreateTokenFileFn: (file, options) => {
       calls.push({ fn: "readOrCreateTokenFile", file, hasOnCreate: Boolean(options.onCreate) });
@@ -55,7 +74,7 @@ function createHarness({
     catalogSeeds,
     workflowEndpointSeeds
   });
-  return { bootstrap, calls };
+  return { bootstrap, bundles, calls };
 }
 
 describe("db bootstrap", () => {
@@ -105,6 +124,32 @@ describe("db bootstrap", () => {
     bootstrap.seedCatalog();
 
     assert.deepEqual(calls.map((call) => call.fn), ["upsertSkill", "upsertAgent", "upsertKnowledge", "upsertCapability"]);
+  });
+
+  it("publishes seeded workflow source idempotently and upserts the bundle id", () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "runyard-seed-bundle-"));
+    mkdirSync(path.join(root, "workflow-templates", "workflows"), { recursive: true });
+    const code = "// smithers-display-name: Seeded\nexport default null;\n";
+    writeFileSync(path.join(root, "workflow-templates", "workflows", "seeded.tsx"), code);
+    const expectedSha = workflowBundleSha256(code);
+    const { bootstrap, calls } = createHarness({
+      env: { root },
+      workflowBundles: [{ id: "wfb_existing", capabilitySlug: "seeded", version: 7, sha256: expectedSha }],
+      catalogSeeds: {
+        skills: [],
+        agents: [],
+        knowledge: [],
+        capabilities: [{ slug: "seeded", name: "Seeded", workflow: { engine: "smithers", entry: ".smithers/workflows/seeded.tsx" } }]
+      }
+    });
+
+    bootstrap.seedCatalog();
+
+    assert.equal(calls.some((call) => call.fn === "publishWorkflowBundle"), false);
+    const upsert = calls.find((call) => call.fn === "upsertCapability");
+    assert.equal(upsert.input.workflow.bundleId, "wfb_existing");
+    assert.equal(upsert.input.workflow.entry, ".smithers/workflows/seeded.tsx");
+    assert.equal(upsert.input.workflow.code, undefined);
   });
 
   it("creates secrets only for new seeded workflow endpoints", () => {
