@@ -1,0 +1,81 @@
+---
+title: Approvals
+description: Approval cards - kinds, the ask contract, resolutions, timed approvals with fallbacks, and per-kind consequences.
+---
+
+An **approval** is a declared question with a declared consequence, presented to a human as a card in the web app, over Telegram, or through the API/MCP. Cards can hold a [run](./runs.mdx) before it executes (`waiting_approval`), pause a workflow mid-run at an engine gate, or simply record a decision. A run held on an approval waits indefinitely — waiting never fails it.
+
+## Kinds
+
+| Kind | What it represents |
+| --- | --- |
+| `workflow_gate` | A workflow paused at a gate; the decision releases or denies that step. |
+| `escalation` | Autonomous recovery gave up; a human records how to proceed. |
+| `side_effect` | A gated side effect asking permission before it runs. |
+| `custom` | Any ad-hoc approval raised via the API. |
+
+## The ask contract
+
+The creator of a card states the ask up front, and every surface renders it verbatim:
+
+```json
+{
+  "action": "Queue the release workflow for runner execution.",
+  "reason": "This run publishes to the public site.",
+  "audience": "operators",
+  "options": [{ "id": "ship", "label": "Ship it", "effect": "Publishes immediately" }]
+}
+```
+
+- `action` — what exactly happens on approve.
+- `reason` — why a human is needed.
+- `audience` — who is asked: `operators` (default) or `admins`.
+- `options` — optional named choices (up to 8).
+
+An ask without both `action` and `reason` is treated as absent; such cards fall back to a heuristic ask explicitly marked `derived: true`, so a guessed question is never presented as an authored one.
+
+## Status and resolution
+
+A card's `status` is only ever `pending` or `resolved`. What was decided and by what live in separate fields:
+
+| Field | Values |
+| --- | --- |
+| `resolution` | `approved`, `rejected`, `changes_requested`, `superseded` (the run ended first), or `option:<id>` |
+| `resolvedVia` | `human`, `fallback_timer` (autopilot), `engine` (decided on the runner), `policy` (auto-approved by policy), `system` |
+
+## Timed approvals with fallback
+
+By default a card is blocking: nothing happens until someone decides. Supplying `timeoutMs` or `timeoutAt` at creation makes it a **timed approval**:
+
+- With a `fallback` decision (`approve` or `reject`), the configured decision is applied automatically when the timer elapses, recorded with `resolvedVia: "fallback_timer"`.
+- Without a fallback, the elapsed card is flagged `fallback_required` and keeps waiting — no decision is invented, and the linked run is never failed by an elapsed timer.
+
+## Per-kind consequences
+
+Every card answers "what will my decision do" honestly, computed from what resolving actually performs:
+
+- **`workflow_gate`** — approving a card holding a `waiting_approval` run releases it; approving a mid-run gate applies the decision to the paused workflow on the runner, which resumes past the gate. Reject/changes-requested cancel a held run, or take the workflow's own deny path mid-run.
+- **`escalation`** — the run already ended: any decision records the call but does not restart the run (re-run it from the run page).
+- **`side_effect`** — approve allows the gated side effect; reject or changes-requested skip it. The run's completed work is unchanged either way.
+- **`custom`** — approving a held run releases it to the queue; reject/changes-requested cancel it. On a card without a held run, the decision is simply recorded.
+
+The API exposes these as `whatHappensIfApproved` / `whatHappensIfRejected` / `whatHappensIfChangesRequested` / `whatHappensIfIgnored` in each card's `context`, alongside the ask, the linked run, and deep links.
+
+## API & MCP
+
+| Endpoint | MCP tool | Notes |
+| --- | --- | --- |
+| `GET /api/approvals` | `list_approvals`, `list_pending_approvals` | `?status=pending\|resolved`. |
+| `GET /api/approvals/{id}` | `get_approval` | Full card with context. |
+| `POST /api/approvals` | `create_approval` | `{title, description, runId?, ask, timeoutMs?/timeoutAt?, fallback?}`. |
+| `POST /api/approvals/{id}/approve` | `approve_run` | Takes an approval id, not a run id. |
+| `POST /api/approvals/{id}/reject` | `reject_run` | A held run is cancelled, never failed. |
+| `POST /api/approvals/{id}/request-changes` | `request_changes_run` | Comment describes the requested changes. |
+
+```bash
+curl -X POST -H "Authorization: Bearer $RUNYARD_TOKEN" -H "Content-Type: application/json" \
+  -d '{"comment": "Looks good, ship it."}' \
+  https://hub.example.com/api/approvals/appr_123/approve
+```
+
+Resolving approvals requires the `api`, `mcp`, or `approvals` scope; Telegram WebApp sessions are approvals-scoped by design (see [Tokens & scopes](./tokens-and-scopes.mdx)).

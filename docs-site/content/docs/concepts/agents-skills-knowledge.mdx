@@ -1,0 +1,47 @@
+---
+title: Agents, Skills & Knowledge
+description: The shared catalog of reusable agent roles, skills, and knowledge resources that workflows reference.
+---
+
+Alongside [workflows](./workflows.mdx), the Hub maintains a shared catalog of reusable building blocks. They live in the database, are readable by any authenticated token, and are edited only by admins — so every workflow on the Hub draws from the same curated set.
+
+## The three catalogs
+
+| Catalog | What it is |
+| --- | --- |
+| **Agents** | Reusable agent *roles*: a slug, name, description, instructions, a tool list, linked skill slugs, and tags. A role captures "how this kind of agent should behave" once, instead of restating it per workflow. |
+| **Skills** | Named, versioned instruction bodies (a slug, description, and body text) that agents and workflows can pull in by slug. |
+| **Knowledge** | Reference resources — documents or links with a type, body/URL, and tags — searchable with `?q=` / `search_knowledge`. |
+
+All three are versioned and can be individually enabled/disabled.
+
+## How workflows reference them
+
+A workflow definition declares `requiredAgents` and `requiredSkills` as lists of catalog slugs; `describe_workflow` reports them alongside the schemas so a caller can see what a workflow depends on before running it. Workflow package exports record these requirements, and import preview reports whether the target Hub satisfies them.
+
+## Who can edit
+
+Reading any catalog requires only an authenticated token. Creating and updating entries requires the `admin` scope — the catalogs are part of the Hub's trusted configuration, like secrets and hook profiles.
+
+```bash
+# Browse the catalogs
+curl -H "Authorization: Bearer $RUNYARD_TOKEN" https://hub.example.com/api/agents
+curl -H "Authorization: Bearer $RUNYARD_TOKEN" https://hub.example.com/api/skills
+curl -H "Authorization: Bearer $RUNYARD_TOKEN" "https://hub.example.com/api/knowledge?q=release"
+```
+
+In the web app the three catalogs share one section with deep links `#agents/agents`, `#agents/skills`, and `#agents/knowledge` (see [Deep links](./deep-links.mdx)).
+
+## API & MCP
+
+| Endpoint | MCP tool | Notes |
+| --- | --- | --- |
+| `GET /api/agents` | `list_agents` | |
+| `POST /api/agents` | `create_agent` | Admin. |
+| `PATCH /api/agents/{slug}` | `update_agent` | Admin. |
+| `GET /api/skills` | `list_skills` | |
+| `POST /api/skills` | `create_skill` | Admin. |
+| `PATCH /api/skills/{slug}` | `update_skill` | Admin. |
+| `GET /api/knowledge` | `search_knowledge` | `?q=` searches. |
+| `POST /api/knowledge` | `create_knowledge` | Admin. |
+| `PATCH /api/knowledge/{slug}` | `update_knowledge` | Admin. |

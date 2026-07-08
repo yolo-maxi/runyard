@@ -1,0 +1,86 @@
+---
+title: Approvals and Telegram
+description: Operate human checkpoints — where approval cards appear, what each decision does, timed approvals, and the Telegram integration.
+---
+
+An approval is a declared question with a declared consequence. Cards carry an *ask* — who is asked, what approving does, and why a human is needed — and every surface renders that stored ask verbatim. A run held on a card sits in `waiting_approval` and is never failed or age-reaped for waiting.
+
+## Where approvals appear
+
+| Surface | How |
+| --- | --- |
+| Web app | The **Approvals** view lists pending cards with their ask, consequences, and buttons. |
+| MCP | `list_pending_approvals` (or `list_approvals` with a `status` filter), `get_approval`. |
+| CLI | `runyard approvals` lists pending cards. |
+| HTTP | `GET /api/approvals?status=pending`, `GET /api/approvals/{id}`. |
+| Telegram | Cards are posted to the configured chat with inline buttons (see below). |
+
+## Resolving a card
+
+Each card takes one of three decisions:
+
+```bash
+runyard approve <approval-id> -c "looks right"
+runyard request-changes <approval-id> -c "narrow the scope to the checkout flow"
+runyard reject <approval-id> -c "not this quarter"
+```
+
+HTTP: `POST /api/approvals/{id}/approve|reject|request-changes`. MCP: `approve_run`, `reject_run`, `request_changes_run` — all take an **approvalId**, not a runId. These need a token with the `api`, `mcp`, or `approvals` scope (admin always qualifies).
+
+What each decision does depends on the card's kind:
+
+| Kind | Approve | Request changes | Reject |
+| --- | --- | --- | --- |
+| Run hold (default / `custom`) | The held run is released to the queue and executes. | The run is cancelled; your note tells the requester what to change. | The run is cancelled — a human "no" is a decision, not a failure. |
+| `workflow_gate` (mid-run engine gate) | The decision is applied to the paused workflow on the runner and it resumes past the gate. | Applied as a deny with your note attached; the workflow's own deny path decides what happens next. | Applied as a deny; the workflow's deny path decides what happens next. |
+| `escalation` (run already ended) | Records your go-ahead on the card; the run is not restarted — re-run it from the run page. | Records that the workflow or input needs fixing; your note is the guidance. | Records that the run should be left as it ended. |
+| `side_effect` | The gated side effect is allowed to run. | The side effect is skipped; your note explains what to change. | The side effect is skipped; the run's completed work is unaffected. |
+
+Resolved cards keep the decision in their `resolution` field (`approved`, `rejected`, `changes_requested`) plus how it was decided (`resolvedVia`: human, fallback timer, engine, policy, or system).
+
+## Timed approvals and fallback
+
+Approvals are blocking by default: with no timer configured, nothing happens until someone decides, and a linked run is held open indefinitely.
+
+A creator can make a card timed by supplying `timeoutMs` or `timeoutAt`, optionally with a `fallback` decision (`approve` or `reject`) — via `POST /api/approvals` or the `create_approval` MCP tool:
+
+- **Timer + fallback** — if nobody decides before the deadline, the Hub applies the fallback decision on the human's behalf, fully audited (`resolvedVia: fallback_timer`).
+- **Timer without fallback** — when the timer elapses the card is flagged `fallback_required` and **stays pending**: it is surfaced as urgent, but no decision is ever invented.
+
+`timeoutMs` is clamped to between 1 second and 30 days.
+
+## Telegram integration
+
+The Hub can post approval cards to a Telegram chat and accept decisions from the buttons on them.
+
+### Bot setup
+
+Create a bot with Telegram's BotFather, then configure the Hub through environment variables (values belong in your env file or secret store — never in code or docs):
+
+| Variable | Purpose |
+| --- | --- |
+| `TELEGRAM_BOT_TOKEN` | The bot's API token. |
+| `TELEGRAM_APPROVAL_CHAT_ID` | Chat (group or DM) where approval cards are posted. |
+| `TELEGRAM_APPROVAL_USER_IDS` | Comma-separated Telegram user ids allowed to resolve approvals. |
+| `TELEGRAM_WEBHOOK_SECRET` | Secret Telegram echoes back so the Hub can verify webhook calls. |
+| `TELEGRAM_CHAT_ID` / `TELEGRAM_THREAD_ID` | Optional default chat/thread for non-approval notifications. |
+
+### Webhook
+
+Point the bot's webhook at the Hub:
+
+```bash
+curl -sS "https://api.telegram.org/bot<bot-token>/setWebhook" \
+  -d "url=https://hub.example.com/api/telegram/webhook" \
+  -d "secret_token=<webhook-secret>"
+```
+
+`POST /api/telegram/webhook` is the only Telegram-facing route. It is verified against the configured bot and webhook secret and is not a general API.
+
+### Approval cards with buttons
+
+Each pending card is posted as a message carrying the ask (what approving does, why a human is needed), a sanitized input summary, and inline buttons: **Approve**, **Request changes**, **Reject**. Only the configured approval user ids can act; a button press resolves the card exactly like the web or API would, and the message is edited to show the resolution ("Approved by ... at ...") with the buttons removed.
+
+### Telegram WebApp login
+
+Cards can deep-link into the Hub as a Telegram WebApp. `POST /api/auth/telegram-webapp` exchanges the WebApp's signed init data for a browser session that is limited to the `approvals` scope — a Telegram identity can review and resolve approval cards, and nothing else. Full app access always requires a real access token.

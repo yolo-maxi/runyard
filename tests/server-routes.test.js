@@ -103,7 +103,7 @@ function routeDeps() {
     hookProfileHandlers: handlers(["listHookProfiles", "getHookProfile", "upsertHookProfile", "validateHookProfile"]),
     operatorReadHandlers: handlers(["dashboard", "repoOptions"]),
     publicHandlers: {
-      ...handlers(["healthz", "readyz", "apiVersion", "version", "cliTarball", "installScript", "landing", "app", "docs", "llmsTxt", "openApi", "menu"]),
+      ...handlers(["healthz", "readyz", "apiVersion", "version", "cliTarball", "installScript", "landing", "app", "docsSite", "llmsTxt", "openApi", "menu"]),
       publicDir: "/tmp/runyard-public"
     },
     runDraftHandlers: handlers(["listRunDrafts", "createRunDraft", "getRunDraft", "patchRunDraft", "submitRunDraft", "discardRunDraft"]),

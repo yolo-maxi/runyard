@@ -1,0 +1,40 @@
+---
+title: Building agents on Runyard
+description: Discovery surfaces, the API-first guarantee, and recommended etiquette for agents and third-party clients.
+---
+
+Runyard treats agents as first-class API consumers. This page covers how a client discovers what a Hub can do, what it may rely on, and how to be a good citizen.
+
+## Discovery surfaces
+
+| Surface | Auth | What it gives you |
+| --- | --- | --- |
+| `GET /llms.txt` | none | Static, generic orientation for agents: what Runyard is, its tool names, the run path. It deliberately contains nothing deployment-specific and points at the authenticated menu. |
+| `GET /openapi.json` | none | The full HTTP surface, generated from the Hub's API surface registry — it cannot drift from the routes the server actually registers. |
+| MCP `tools/list` | token | The complete MCP tool set (parity-tested against the API surface). Connect with `runyard mcp install` or the `runyard-mcp` stdio server. |
+| `GET /api/menu` / `get_menu` | token | The live, private catalog: workflows with schemas, execution modes, runner pool state, and ready-to-use CLI/MCP invocations. |
+
+Start every session with `get_menu` (or `GET /api/menu`), then `describe_workflow` for anything you intend to run.
+
+## The API-first guarantee
+
+The web app is an ordinary client of the same HTTP API, with no privileged endpoints. Every route is declared in one registry that also generates `openapi.json` and is parity-tested against the MCP tool list — so a lossless third-party client is possible by construction: anything the web app can show or do, your client can too, over HTTP or MCP.
+
+## Auth expectations
+
+Ask the Hub's administrator for a scoped access token (admins issue them from the Connect tab or `POST /api/tokens`). Agents typically need `api` and/or `mcp` — nothing more. Send it as `Authorization: Bearer <token>` on every HTTP call, or configure it for the MCP server. Never ask for or expect the bootstrap/admin token.
+
+## Recommended agent etiquette
+
+- **Set `input.title`.** For agent-created runs, include a short human-readable title ("Audit checkout flow mobile states") so run lists, approval cards, and human handoff stay decipherable.
+- **Preflight first.** When input is rough or unverified, call `preflight_workflow` (`POST /api/workflows/{id}/preflight`) or pass `negotiate: true` to `run_workflow`. You get `ready | needs_input | blocked` with concrete questions and blockers instead of a run that fails.
+- **Use run drafts for question/answer loops.** `create_run_draft` creates a proposed run and preflights it; `update_run_draft` merges answers into the input and re-preflights; `submit_run_draft` enqueues the real run only once it is ready; `discard_run_draft` abandons it. Nothing executes until submit.
+- **Poll the timeline with `since` cursors.** `get_run_timeline` (`GET /api/runs/{id}/timeline`) returns a unified, ascending view of status transitions, events, and artifacts. Pass the previous response's `nextSince` as `since` so the Hub never re-sends what you have. Fetch results with `get_run_status`, `get_run_logs`, and `get_run_artifacts` / `download_artifact`.
+
+## Push instead of poll: response endpoints
+
+`POST /api/workflows/{id}/run` accepts an optional `responseEndpoint` (`{ "type": "http" | "telegram", "config": { ... } }`). When the run reaches a terminal state, the Hub POSTs a sanitized payload to your HTTP endpoint (or sends a concise Telegram message). Delivery state is visible on `GET /api/runs/{id}` under `responseEndpoints[]`, and polling remains the canonical fallback.
+
+## Machine intake: workflow endpoints
+
+For fixed-purpose integrations that should not hold a Hub token at all (webhooks, form intake, external systems), an admin can configure a **workflow endpoint**: `POST /api/workflow-endpoints/{slug}` accepts a payload authenticated with that endpoint's own secret, rate-limited, size-capped, and deduplicated, and triggers exactly one preconfigured workflow. This is the narrowest possible credential to hand to an external system.

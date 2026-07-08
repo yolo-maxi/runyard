@@ -1,0 +1,124 @@
+---
+title: Authoring workflows
+description: Create and edit workflows by sending source bytes over the API or MCP; the Hub stores them as immutable, versioned bundles.
+---
+
+Workflows are stored in the Hub database as immutable, versioned source bundles. You create or update a workflow by sending its definition — **including the workflow source bytes** — over HTTP (`POST /api/workflows`, `PATCH /api/workflows/{id}`) or MCP (`create_workflow` / `update_workflow`). The Hub publishes the source as a hash-addressed bundle and records its id on the definition as `workflow.bundleId`.
+
+Do NOT write workflow files to disk: custom workflow definitions that reference bare `workflow.entry` file paths without source bytes are rejected (`workflow_source_required`). Repository-authored workflow files are reserved for the shipped internal/dev seed catalog only. The web app's workflow editor is not an exception — it calls these same API endpoints.
+
+Both operations require an admin-scoped token.
+
+## Definition anatomy
+
+| Field | Meaning |
+| --- | --- |
+| `slug` | Stable identifier used in URLs, the CLI, and MCP (`runyard run <slug>`). |
+| `name` | Human-readable display name. |
+| `description` | What the workflow does; shown in the catalog and menus. |
+| `category` | Catalog grouping (for example `Examples`, `Operations`). |
+| `inputSchema` | JSON Schema for run input. Required fields drive preflight questions. |
+| `outputSchema` | JSON Schema for the structured run output. |
+| `requiredRunnerTags` | Tags a runner must advertise to claim runs (for example `["smithers"]`). |
+| `approvalPolicy` | Whether runs hold for a human approval before executing (`{ "required": true }`). |
+| `workflow.engine` | Execution engine; `"smithers"`. |
+| `workflow.source` | The workflow source bytes, sent inline as a string (aliases: `workflow.sourceBytes`, `workflow.code`). |
+| `workflow.language` | Source language, defaults to `tsx`. |
+
+## A minimal, real example
+
+The source is a small Smithers TSX workflow (modeled on the seeded `hello` workflow): one task, structured output validated with Zod.
+
+```tsx
+/** @jsxImportSource smithers-orchestrator */
+import { createSmithers } from "smithers-orchestrator";
+import { z } from "zod/v4";
+import { providers } from "../agents";
+
+const output = z.looseObject({
+  answer: z.string(),
+  wordCount: z.number(),
+});
+
+const inputSchema = z.object({
+  topic: z.string().default("durable AI workflows"),
+});
+
+const { Workflow, Task, smithers } = createSmithers({
+  input: inputSchema,
+  greet: output,
+});
+
+export default smithers((ctx) => (
+  <Workflow name="team-hello">
+    <Task id="greet" output={output} agent={providers.claude}>
+      {`Write a single vivid sentence about ${ctx.input.topic}. ` +
+        `Return JSON with "answer" (the sentence) and "wordCount" (number of words in it).`}
+    </Task>
+  </Workflow>
+));
+```
+
+Create the workflow by sending that source inline as `workflow.source` (a JSON string — the TSX above, escaped):
+
+```bash
+curl -sS -X POST https://hub.example.com/api/workflows \
+  -H "Authorization: Bearer $RUNYARD_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "slug": "team-hello",
+    "name": "Team hello",
+    "description": "One-sentence proof workflow for our team.",
+    "category": "Examples",
+    "inputSchema": {
+      "type": "object",
+      "required": ["topic"],
+      "properties": { "topic": { "type": "string" } }
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": { "answer": { "type": "string" }, "wordCount": { "type": "number" } }
+    },
+    "requiredRunnerTags": ["smithers"],
+    "approvalPolicy": { "required": false },
+    "workflow": {
+      "engine": "smithers",
+      "language": "tsx",
+      "source": "<the TSX above, as one JSON-escaped string>"
+    }
+  }'
+```
+
+Over MCP the same payload goes to `create_workflow` as the `workflow` argument. The response definition carries `workflow.bundleId` instead of the inline source — the bytes now live in the Hub DB. Runners fetch the bundle at execution time; nothing needs to exist on any runner's filesystem beforehand.
+
+## Updating a workflow
+
+Send the changed definition — again with source bytes inline — via `PATCH /api/workflows/{id}` or `update_workflow`. The Hub publishes a **new** bundle version and repoints `workflow.bundleId`; existing bundles are never mutated, so historical runs keep an exact record of what they executed. Identical bytes are deduplicated by hash rather than republished.
+
+Inspect what is stored:
+
+```bash
+curl -sS https://hub.example.com/api/workflows/team-hello/source \
+  -H "Authorization: Bearer $RUNYARD_TOKEN"        # parsed source, metadata, graph
+curl -sS "https://hub.example.com/api/workflow-bundles?capability=team-hello" \
+  -H "Authorization: Bearer $RUNYARD_TOKEN"        # bundle versions (never source bytes)
+```
+
+The corresponding MCP tools are `get_workflow_source`, `list_workflow_bundles`, and `get_workflow_bundle` (which does include the source). You can also publish a bundle directly with `POST /api/workflow-bundles` / `publish_workflow_bundle` and reference it by `workflow.bundleId`, but prefer inline source — the Hub publishes the bundle for you.
+
+## Moving workflows between Hubs: workflow packages
+
+Admins can export a workflow as a portable `.runyard-workflow.json` package file. It contains the workflow source bytes, metadata, requirements, and content hashes — never secret values.
+
+```bash
+runyard workflow-package export team-hello -o team-hello.runyard-workflow.json
+runyard workflow-package validate team-hello.runyard-workflow.json   # schema + hash checks, no writes
+runyard workflow-package preview team-hello.runyard-workflow.json    # requirements + resulting shape, no writes
+runyard workflow-package import team-hello.runyard-workflow.json     # installs it disabled
+```
+
+Imports publish the package's source as a DB workflow bundle and install the workflow **disabled** until the receiving Hub's secrets, runners, and configuration are ready; an admin enables it with `PATCH /api/workflows/{id}`. The HTTP equivalents live under `/api/workflow-packages/*`, and MCP exposes `export_workflow_package`, `validate_workflow_package`, `preview_workflow_import`, and `import_workflow_package`.
+
+## The web editor
+
+The web app's workflow create/edit screens are ordinary clients of `POST /api/workflows` and `PATCH /api/workflows/{id}`: they submit the definition with inline source bytes and the Hub publishes the bundle, exactly as above. There is no separate, privileged authoring path.

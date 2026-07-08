@@ -109,3 +109,44 @@ jobs:
           generate_release_notes: true
           draft: false
           prerelease: false
+
+  # 4. Docs currency: after the release publishes, trigger the Hub's
+  #    docs-update workflow through its authenticated workflow endpoint. The
+  #    workflow inspects only the git diff between the previous and released
+  #    tags and proposes docs updates (approval-gated before anything lands).
+  #    Required repo secret: RUNYARD_DOCS_UPDATE_ENDPOINT_SECRET (the seeded
+  #    release-docs-update endpoint secret, written on the Hub to
+  #    data/workflow-endpoints/release-docs-update-secret.txt).
+  #    Optional repo variable: RUNYARD_DOCS_UPDATE_ENDPOINT_URL to point at a
+  #    different Hub. This job fails loudly — never silently — when the
+  #    trigger is missing or rejected, without unpublishing the release.
+  docs-update:
+    name: Trigger docs-update workflow
+    needs: [release]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Runyard docs-update workflow
+        env:
+          ENDPOINT_URL: ${{ vars.RUNYARD_DOCS_UPDATE_ENDPOINT_URL || 'https://runyard.repo.box/api/workflow-endpoints/release-docs-update' }}
+          ENDPOINT_SECRET: ${{ secrets.RUNYARD_DOCS_UPDATE_ENDPOINT_SECRET }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ -z "$ENDPOINT_SECRET" ]; then
+            echo "::error::RUNYARD_DOCS_UPDATE_ENDPOINT_SECRET is not configured, so the release docs-update workflow was NOT triggered. Add the secret (from data/workflow-endpoints/release-docs-update-secret.txt on the Hub) or remove this job."
+            exit 1
+          fi
+          payload=$(jq -n \
+            --arg tag "$RELEASE_TAG" \
+            --arg repo "$REPOSITORY" \
+            --arg url "https://github.com/$REPOSITORY/releases/tag/$RELEASE_TAG" \
+            '{title: ("Docs update for " + $tag), release: {tag_name: $tag, html_url: $url}, repository: {full_name: $repo}}')
+          echo "Triggering docs-update for $RELEASE_TAG"
+          response=$(curl --fail-with-body -sS -X POST \
+            -H "Authorization: Bearer $ENDPOINT_SECRET" \
+            -H "content-type: application/json" \
+            -d "$payload" \
+            "$ENDPOINT_URL")
+          echo "$response" | jq '{run: (.run.id // null), status: (.run.status // .status // null), deduped: (.deduped // false)}'

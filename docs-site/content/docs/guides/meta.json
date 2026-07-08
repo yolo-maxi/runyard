@@ -1,0 +1,15 @@
+{
+  "title": "Guides",
+  "pages": [
+    "installation",
+    "api",
+    "mcp",
+    "cli",
+    "workflows-authoring",
+    "approvals-telegram",
+    "security",
+    "releases",
+    "troubleshooting",
+    "agent-consumers"
+  ]
+}

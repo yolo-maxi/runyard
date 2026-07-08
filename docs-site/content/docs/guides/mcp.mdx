@@ -1,0 +1,139 @@
+---
+title: MCP
+description: Connect AI agents to a Runyard Hub with the runyard-mcp stdio server and its 85-tool surface.
+---
+
+`runyard-mcp` is a stdio [Model Context Protocol](https://modelcontextprotocol.io)
+server that ships with the Runyard CLI. It runs locally next to your AI client
+(Claude Code, Claude Desktop, Codex, Cursor, and others), and translates every
+tool call into an authenticated HTTP request against your Hub. No workflow
+logic runs in the MCP server itself — it is a thin, faithful client of the
+[HTTP API](./api.mdx).
+
+## Install and configure
+
+Install the CLI first (it bundles `runyard-mcp`) and log in — see the
+[CLI guide](./cli.mdx):
+
+```bash
+curl -fsSL https://hub.example.com/install.sh | bash
+runyard login --url https://hub.example.com
+```
+
+Then let the CLI write your AI client's MCP config:
+
+```bash
+# Configure Claude Code in the current project (writes .mcp.json)
+runyard mcp install
+
+# Or configure a specific client
+runyard mcp install --client claude-desktop
+
+# Or auto-detect and configure every AI client found on this machine
+runyard mcp install --all
+
+# Claude Code, user-level instead of per-project
+runyard mcp install --client claude-code --global
+
+# Bind the server to a specific saved remote (org)
+runyard mcp install --remote staging
+```
+
+Supported `--client` values: `claude-code`, `claude-desktop`, `codex`,
+`cursor`, `windsurf`, `gemini`, `vscode`. Each writes the appropriate config
+file (for example `.mcp.json` for Claude Code, `~/.codex/config.toml` for
+Codex, `.vscode/mcp.json` for VS Code) and prints how to activate it.
+
+To configure a client by hand, print the snippet instead:
+
+```bash
+runyard mcp config     # alias: runyard mcp-config
+```
+
+```json
+{
+  "mcpServers": {
+    "runyard": {
+      "command": "node",
+      "args": ["/path/to/runyard/src/mcp.js", "--remote", "default"]
+    }
+  }
+}
+```
+
+## Hub URL and token resolution
+
+The server name is `runyard` for the default remote and `runyard-<remote>` for
+others, so one client can talk to several Hubs. **No token is stored in client
+configs.** At startup the server resolves its target in this order:
+
+1. `RUNYARD_HUB_URL` / `RUNYARD_HUB_TOKEN` environment variables
+   (legacy `SMITHERS_HUB_URL` / `SMITHERS_HUB_TOKEN` and `HUB_URL` / `HUB_TOKEN`
+   still work)
+2. The `--remote <name>` argument, resolved against the saved remotes in
+   `~/.runyard/config.json` (written by `runyard login`)
+3. The current saved remote
+
+The token's scopes decide what the tools may do — a token with `mcp` scope can
+discover, preflight, and run workflows; `admin` unlocks the admin tools listed
+below.
+
+## The tool surface
+
+The server exposes **85 tools**, generated from the same API surface registry
+the Hub's routes and `/openapi.json` come from. Grouped by resource:
+
+| Group | Tools |
+| ----- | ----- |
+| Discovery & identity | `get_menu`, `whoami`, `get_dashboard`, `list_repo_options` |
+| Workflows | `list_workflows`, `search_workflows`, `describe_workflow`, `get_workflow_source`, `list_workflow_versions`, `create_workflow`†, `update_workflow`†, `delete_workflow`† |
+| Running | `preflight_workflow`, `run_workflow`, `rerun_workflow_run`, `promote_run`, `cancel_run` |
+| Runs (observe) | `list_runs`, `get_run_status`, `get_run_events`, `get_run_timeline`, `get_run_diagnostics`, `get_run_logs` |
+| Run drafts | `list_run_drafts`, `get_run_draft`, `create_run_draft`, `update_run_draft`, `submit_run_draft`, `discard_run_draft` |
+| Schedules | `list_schedules`, `get_schedule`, `preview_schedule`, `create_schedule`†, `update_schedule`†, `enable_schedule`†, `disable_schedule`†, `delete_schedule`†, `run_schedule_now`† |
+| Approvals | `list_pending_approvals`, `list_approvals`, `get_approval`, `create_approval`, `approve_run`, `reject_run`, `request_changes_run` |
+| Artifacts | `get_run_artifacts`, `search_artifacts`, `download_artifact` |
+| Runners | `list_runners` |
+| Tokens | `list_tokens`†, `create_token`†, `revoke_token`† |
+| Secrets | `list_secrets`†, `set_secret`†, `delete_secret`† (names and metadata only — values are never readable) |
+| Hooks | `list_hooks`, `get_hook`, `upsert_hook`†, `validate_hook`† |
+| Workflow endpoints | `list_workflow_endpoints`†, `get_workflow_endpoint`†, `upsert_workflow_endpoint`†, `submit_workflow_endpoint` |
+| Workflow bundles | `list_workflow_bundles`, `get_workflow_bundle`, `publish_workflow_bundle`† |
+| Workflow packages | `export_workflow_package`†, `validate_workflow_package`†, `preview_workflow_import`†, `import_workflow_package`† |
+| Catalog | `list_agents`, `list_skills`, `search_knowledge`, `create_agent`†, `update_agent`†, `create_skill`†, `update_skill`†, `create_knowledge`†, `update_knowledge`† |
+| Admin & updates | `get_audit_log`†, `list_alerts`†, `get_update_status`†, `apply_update`† |
+| Assistant | `get_assistant_status`, `ask_assistant` |
+
+Tools marked † require an admin-scoped token.
+
+Workflow source is always created and edited **through these tools** —
+`create_workflow` / `update_workflow` take inline source bytes or an existing
+`workflow.bundleId`, and `import_workflow_package` installs a portable package
+as a disabled workflow. Bare file paths on the runner are rejected.
+
+## The parity guarantee
+
+The tool list, the HTTP routes, and `/openapi.json` are all generated from one
+registry, and a test fails the build when they drift: **every Hub API operation
+is either exposed as an MCP tool or carries a documented exemption** (exempt
+operations are browser pages, install assets, the runner-to-Hub machine
+protocol, SSE streams that tools cover by polling, and legacy aliases). If you
+can do it in the web UI or over HTTP, your agent can do it over MCP.
+
+## Recommended agent flow
+
+1. **`get_menu`** — orient: catalog, execution modes, follow-up paths.
+2. **`preflight_workflow`** — dry-run your input; resolve `needs_input`
+   questions and `blocked` blockers before creating anything (or use
+   `run_workflow` with `negotiate: true`, or the run-draft tools for a
+   multi-turn negotiation).
+3. **`run_workflow`** — include a short human-readable `input.title` so run
+   lists and approval cards read well; choose `executionMode` `local` or
+   `remote`.
+4. **`get_run_timeline`** — poll with the returned `nextSince` cursor to page
+   forward; drop to `get_run_logs` / `get_run_diagnostics` when something looks
+   wrong, and fetch results with `get_run_artifacts` + `download_artifact`.
+
+If a run pauses for a human, `list_pending_approvals` shows the card and
+`approve_run` / `reject_run` / `request_changes_run` resolve it (by
+`approvalId`, not `runId`).

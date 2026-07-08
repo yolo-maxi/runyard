@@ -1,3 +1,5 @@
+import { openApiPathsFromSurface } from "./apiSurface.js";
+
 // Tool names shared by the authenticated menu payload and the public llms.txt.
 // These are the same for every deployment; only the workflow catalog is private.
 const HUB_TOOL_NAMES = [
@@ -25,7 +27,10 @@ const HUB_TOOL_NAMES = [
   "disable_schedule",
   "delete_schedule",
   "run_schedule_now",
-  "download_artifact"
+  "download_artifact",
+  "get_dashboard",
+  "list_workflow_bundles",
+  "get_workflow_bundle"
 ];
 
 const RUN_TITLE_RECOMMENDATION = "For agent-created runs, include input.title: a short human-readable title that explains the specific job.";
@@ -113,8 +118,14 @@ export function renderLlmsTxt(baseUrl) {
   lines.push(`- Workflow catalog (authenticated): ${baseUrl}/api/workflows`);
   lines.push(`- Setup docs: ${baseUrl}/docs/quickstart`);
   lines.push("");
-  lines.push("Tools (mirrors get_menu):");
+  lines.push("Tools (mirrors get_menu; the MCP server advertises the full set");
+  lines.push("over tools/list):");
   for (const tool of HUB_TOOL_NAMES) lines.push(`- ${tool}`);
+  lines.push("");
+  lines.push("API-first guarantee: the web app is an ordinary client of the same");
+  lines.push(`HTTP API. Every operation is documented in ${baseUrl}/openapi.json,`);
+  lines.push("and everything the app can show or do is available over the API and");
+  lines.push("MCP — a client built on those surfaces loses nothing.");
   lines.push("");
   lines.push("Workflows:");
   lines.push("- This deployment's catalog is private. Authenticate, then call");
@@ -233,78 +244,8 @@ export function openApiDocument({ baseUrl, version }) {
     servers: [{ url: `${baseUrl}/api` }],
     security: [{ bearerAuth: [] }],
     components: { securitySchemes: { bearerAuth: { type: "http", scheme: "bearer" } } },
-    paths: {
-      "/menu": { get: { summary: "Discover the Runyard MCP/CLI menu: tools, workflow catalog, and local/remote execution modes (same source as get_menu and /llms.txt)" } },
-      "/workflows": { get: { summary: "List workflows" }, post: { summary: "Create workflow (admin)" } },
-      "/workflows/{id}": { get: { summary: "Describe workflow and its input schema" }, patch: { summary: "Update workflow (admin)" }, delete: { summary: "Disable workflow (admin)" } },
-      "/workflows/{id}/run": { post: { summary: "Run workflow. Body: {input, executionMode: local|remote}. For agent-created runs, input.title is recommended as a short human-readable run title for run lists, approval cards, and handoff. improve.repoDir selects an allowlisted runner-local repo while logs/artifacts stay in the Hub. Accepts an optional responseEndpoint ({type: http|telegram, config}) so the caller can have the terminal-state reply delivered when the run finishes. Polling /runs/{id} remains the canonical fallback. Pass negotiate: true to preflight first." } },
-      "/workflows/{id}/preflight": { post: { summary: "Dry-run the deterministic run-creation preflight. Body: {input, executionMode}. Returns {negotiation: {status: ready|needs_input|blocked, input (normalized), questions, blockers, warnings, suggestedDefaults, checks, nextAction}}; nothing is created or enqueued." } },
-      "/run-drafts": {
-        get: { summary: "List run drafts (filter: status, workflow). A draft is a proposed run that has NOT been enqueued; its status mirrors the latest preflight until submitted or discarded." },
-        post: { summary: "Create a run draft and preflight it. Body: {workflow, input, executionMode}. Returns 201 with the draft (status ready|needs_input|blocked, preflight report, questions to answer)." }
-      },
-      "/run-drafts/{id}": {
-        get: { summary: "Get a run draft with its latest preflight report" },
-        patch: { summary: "Answer questions / edit a draft: body.input is shallow-merged into the draft input (null deletes a key; replaceInput: true replaces it), executionMode/runnerLocation update options; the draft is re-preflighted and its status updated." }
-      },
-      "/run-drafts/{id}/submit": { post: { summary: "Submit a run draft: re-preflights and enqueues the real run only when ready (202 with {run, draft}); otherwise 422 (needs_input) or 409 (blocked) with the refreshed negotiation state and no run created." } },
-      "/run-drafts/{id}/discard": { post: { summary: "Discard an open run draft (abandon the negotiation)" } },
-      "/runs": { get: { summary: "List runs (filter by status, q, workflow)" } },
-      "/runs/{id}": { get: { summary: "Get run: status, outputs, error, and responseEndpoints[] delivery state" } },
-      "/runs/{id}/events": { get: { summary: "Get run events" }, post: { summary: "Append run event (runner)" } },
-      "/runs/{id}/timeline": { get: { summary: "Get a unified ascending run timeline built from status transitions, events, and artifacts. Supports since=<iso> and limit=<n>; used by `runyard tail`." } },
-      "/runs/{id}/logs": { get: { summary: "Get run log lines" } },
-      "/runs/{id}/artifacts": { get: { summary: "List run artifacts" }, post: { summary: "Upload artifact (runner)" } },
-      "/runs/{id}/rerun": { post: { summary: "Re-queue the run with the same or edited input" } },
-      "/runs/{id}/promote": { post: { summary: "Merge a successful isolated worktree run into its target branch, run gates, push, and clean up the branch/worktree" } },
-      "/runs/{id}/cancel": { post: { summary: "Cancel a queued or running run" } },
-      "/artifacts/{id}/download": { get: { summary: "Download an artifact's bytes" } },
-      "/approvals": {
-        get: { summary: "List approvals. ?status=pending|resolved filters; resolved cards carry the decision in their resolution field." },
-        post: { summary: "Create an approval card for a human decision. Body: {title, description, runId?, ask: {action, reason, audience}, timeoutMs?/timeoutAt? + fallback? for timed approvals}." }
-      },
-      "/approvals/{id}": { get: { summary: "Get a single approval card" } },
-      "/approvals/{id}/approve": { post: { summary: "Approve request" } },
-      "/approvals/{id}/reject": { post: { summary: "Reject request" } },
-      "/approvals/{id}/request-changes": { post: { summary: "Request changes" } },
-      "/agents": { get: { summary: "List reusable agent roles" }, post: { summary: "Create/update agent (admin)" } },
-      "/skills": { get: { summary: "List skills" }, post: { summary: "Create/update skill (admin)" } },
-      "/knowledge": { get: { summary: "List knowledge resources" }, post: { summary: "Create/update knowledge resource (admin)" } },
-      "/tokens": { get: { summary: "List access tokens (admin)" }, post: { summary: "Issue a scoped access token (admin)" } },
-      "/audit": { get: { summary: "Read the audit log (admin)" } },
-      "/alerts": { get: { summary: "List failure alerts (admin)" } },
-      "/me": { get: { summary: "Describe the authenticated token: name and scopes" } },
-      "/secrets": { get: { summary: "List secret names and metadata, never values (admin)" } },
-      "/secrets/{key}": { put: { summary: "Create/update an encrypted secret (admin). Body: {value, description?}" }, delete: { summary: "Delete a secret (admin)" } },
-      "/chat/status": { get: { summary: "In-app Assistant status: resolved provider (runner|anthropic|openai) and whether it is configured" } },
-      "/chat": { post: { summary: "Ask the in-app Assistant. Body: {messages, context}. Answers first; any app-changing action is returned as a confirmation button, never executed server-side." } },
-      "/hooks": {
-        get: { summary: "List post-run hook profiles. Non-admin callers see enabled profiles in a caller-safe shape; ?workflow=<slug> narrows to profiles that workflow may select via input.postRunHooks. Admins with ?all=1 see every profile with config + readiness." },
-        post: { summary: "Create/update a post-run hook profile (admin). Bounded per-kind config; secrets referenced by name only." }
-      },
-      "/hooks/{slug}": { get: { summary: "Describe a hook profile" }, patch: { summary: "Update a hook profile (admin)" } },
-      "/hooks/{slug}/validate": { post: { summary: "Dry-run readiness check for a hook profile (admin): reports hook_config_required with missing secret names only" } },
-      "/workflow-endpoints": { get: { summary: "List configured authenticated workflow endpoints (admin)" }, post: { summary: "Create/update an authenticated workflow endpoint (admin)" } },
-      "/workflow-endpoints/{slug}": { get: { summary: "Describe a workflow endpoint (admin)" }, post: { summary: "Submit data to a fixed authenticated workflow endpoint (per-endpoint secret, rate-limited, deduped)" } },
-      "/workflow-packages/workflows/{id}/export": { get: { summary: "Export a workflow as a portable .runyard-workflow.json package file (admin). The file contains workflow source bytes, metadata, requirements, and content/workflow hashes; secret values are never included." } },
-      "/workflow-packages/validate": { post: { summary: "Validate a workflow package file without importing it (admin). Accepts {workflowPackage} or the raw package JSON and checks schema, source hash, content hash, and size limits." } },
-      "/workflow-packages/preview": { post: { summary: "Preview importing a workflow package (admin). Accepts optional slug/targetSlug and returns the disabled workflow shape plus requirements report; no rows are written." } },
-      "/workflow-packages/import": { post: { summary: "Import a workflow package file (admin). Publishes source as an immutable DB workflow bundle and upserts the workflow disabled by default for local configuration/preflight before enabling." } },
-      "/schedules": {
-        get: { summary: "List schedules (cron jobs) with next/last run and a human-readable preview" },
-        post: { summary: "Create a schedule (admin). Body: {name, workflowSlug, cron|runAt, timezone, input, enabled}. Cron schedules fire recurringly; runAt fires once. Fires honor the workflow's approval policy." }
-      },
-      "/schedules/preview": { get: { summary: "Validate a cron expression (query: cron, timezone) and return a description plus the next fire times" } },
-      "/schedules/{id}": {
-        get: { summary: "Get a schedule" },
-        patch: { summary: "Update a schedule (admin)" },
-        delete: { summary: "Delete a schedule (admin)" }
-      },
-      "/schedules/{id}/enable": { post: { summary: "Enable a schedule (admin)" } },
-      "/schedules/{id}/disable": { post: { summary: "Disable a schedule (admin)" } },
-      "/schedules/{id}/run-now": { post: { summary: "Fire a schedule immediately without changing its cadence" } },
-      "/runners/register": { post: { summary: "Register runner" } },
-      "/runners/{id}/next-run": { get: { summary: "Claim next run for runner" } }
-    }
+    // Generated from the API surface registry (src/apiSurface.js) so this
+    // document can never drift from the routes the server actually registers.
+    paths: openApiPathsFromSurface()
   };
 }

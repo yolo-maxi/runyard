@@ -1,4 +1,6 @@
+import { existsSync } from "node:fs";
 import path from "node:path";
+import express from "express";
 import { createCliTarballBuilder, installScript as renderInstallScript } from "./clientInstall.js";
 import {
   hubMenuPayload as buildHubMenuPayload,
@@ -34,6 +36,17 @@ export function createPublicHandlers({
 } = {}) {
   const publicDir = path.join(env.root, "public");
   const buildCliTarball = createCliTarballBuilder({ root: env.root, dataDir: env.dataDir });
+
+  // The docs site is a static Fumadocs export committed at docs-site/out
+  // (built with `pnpm build:docs`; base path /docs). Its pages carry Next.js
+  // inline bootstrap scripts, so responses under /docs relax script-src to
+  // 'unsafe-inline' — the content is repo-authored, same-origin static HTML.
+  const docsSiteDir = path.join(env.root, "docs-site", "out");
+  const docsSiteReady = existsSync(path.join(docsSiteDir, "index.html"));
+  const docsSiteStatic = express.static(docsSiteDir);
+  const docsCsp =
+    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; " +
+    "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'";
 
   function hubMenuPayload(req) {
     return buildHubMenuPayload({
@@ -88,8 +101,19 @@ export function createPublicHandlers({
       res.sendFile(path.join(publicDir, "index.html"));
     },
 
-    docs(_req, res) {
-      res.sendFile(path.join(publicDir, "docs.html"));
+    // Mounted with app.use("/docs", ...): serves the static docs site, falls
+    // back to the legacy single-page docs.html when no build is present
+    // (fresh clone before `pnpm build:docs`), and answers unknown docs paths
+    // with the site's own 404 page.
+    docsSite(req, res, next) {
+      if (!docsSiteReady) return res.sendFile(path.join(publicDir, "docs.html"));
+      res.setHeader("Content-Security-Policy", docsCsp);
+      docsSiteStatic(req, res, (error) => {
+        if (error) return next(error);
+        const notFound = path.join(docsSiteDir, "404.html");
+        if (existsSync(notFound)) return res.status(404).sendFile(notFound);
+        next();
+      });
     },
 
     // Unauthenticated discovery copy is static/generic: the live capability

@@ -1,0 +1,51 @@
+---
+title: Tokens & Scopes
+description: Bearer-token authentication, the five scopes, the bootstrap token, and how browser and Telegram sessions work.
+---
+
+Every Runyard API call is authenticated with a **bearer access token**:
+
+```bash
+curl -H "Authorization: Bearer $RUNYARD_TOKEN" https://hub.example.com/api/me
+```
+
+`GET /api/me` (or the `whoami` MCP tool) describes the token you are holding: its name and granted scopes. Tokens are issued and revoked by admins and may carry an expiry.
+
+## Scopes
+
+A token carries one or more scopes; each endpoint declares which scopes may call it.
+
+| Scope | Grants |
+| --- | --- |
+| `api` | Operating runs: start/preflight workflows, run drafts, reruns, promotion, cancel, resolve approvals. |
+| `mcp` | The same operating surface for MCP clients. |
+| `runner` | The runner protocol: register, heartbeat, claim runs, report lifecycle, upload artifacts. |
+| `approvals` | Resolving and creating approval cards only — the narrow scope for approval surfaces. |
+| `admin` | Everything. `admin` is a **superscope**: it satisfies every scope requirement, and admin-only endpoints (tokens, secrets, catalog edits, schedules, hooks, audit) require it. |
+
+Reads such as listing runs, workflows, runners, or schedules need only an authenticated token, whatever its scopes. Runner lifecycle endpoints additionally enforce **run ownership**: only the runner token that claimed a run (or an admin) may report on it.
+
+## Bootstrap token
+
+On first boot, if no access tokens exist, the Hub creates a `bootstrap-admin` token with the `admin`, `api`, `runner`, and `mcp` scopes and writes it to `data/bootstrap-token.txt` on the server (relative to the Hub's data directory). Use it to log in and mint narrower tokens, one per client or integration.
+
+## Browser sessions
+
+The web app is an ordinary API client. `POST /api/auth/token-login` exchanges an access token for a **session cookie** — a signed copy of the token — so the browser session carries *exactly* the token's scopes, no extra power. Admin sections of the web app appear only for admin-scoped sessions. `POST /api/auth/logout` clears the cookie.
+
+## Telegram WebApp sessions
+
+Approving from Telegram uses `POST /api/auth/telegram-webapp`, which verifies Telegram's signed init data against the configured bot and allowlisted users, then issues a session scoped to **`approvals` only** — narrower than any token session. A Telegram session can list and resolve approval cards but cannot start runs or touch admin surfaces.
+
+## API & MCP
+
+| Endpoint | MCP tool | Notes |
+| --- | --- | --- |
+| `GET /api/me` | `whoami` | Token name and scopes. |
+| `GET /api/tokens` | `list_tokens` | Admin. |
+| `POST /api/tokens` | `create_token` | Admin. `{name, scopes, expiresInDays?}`. |
+| `DELETE /api/tokens/{id}` | `revoke_token` | Admin. |
+| `POST /api/auth/token-login` | — | Browser session bootstrap (rate-limited). |
+| `POST /api/auth/telegram-webapp` | — | Approvals-scoped Telegram session. |
+| `POST /api/auth/logout` | — | Clears the session cookie. |
+| `GET /api/audit` | `get_audit_log` | Admin; who did what, most recent first. |

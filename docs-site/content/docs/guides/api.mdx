@@ -1,0 +1,177 @@
+---
+title: HTTP API
+description: Authenticate, discover, and drive workflow runs over the Runyard Hub's HTTP API.
+---
+
+Every Runyard surface — the web app, the CLI, and the MCP server — is an
+ordinary client of one HTTP API served by the Hub. Anything they can do, you
+can do with `curl`.
+
+## Authentication
+
+Send an access token as a bearer token on every request:
+
+```bash
+curl -H "Authorization: Bearer $RUNYARD_TOKEN" https://hub.example.com/api/me
+```
+
+Tokens are minted by an admin (web UI, `POST /api/tokens`, or the CLI) and carry
+**scopes**:
+
+| Scope | Grants |
+| ----- | ------ |
+| `api` | Start runs, preflight, drafts, rerun/cancel/promote, create approvals |
+| `mcp` | The same operations, issued for MCP clients |
+| `runner` | The runner protocol: register, heartbeat, claim runs, report lifecycle events and artifacts |
+| `approvals` | Resolve approval cards (approve / reject / request changes) and create them |
+| `admin` | **Superscope** — satisfies every scope requirement, plus admin-only surfaces: tokens, secrets, audit log, schedules, workflow create/update, packages, hooks, updates |
+
+Reads such as listing runs, workflows, or artifacts require any authenticated
+token. A request with no valid token gets `401 {"error": "unauthorized"}`; a
+token missing a required scope gets:
+
+```json
+{ "error": "insufficient scope", "required": ["api", "mcp"] }
+```
+
+with status `403`. `GET /api/me` describes the calling token (name and scopes).
+
+## Discovery
+
+- **`GET /openapi.json`** (unauthenticated) — generated from the server's API
+  surface registry, the single source of truth every route is registered from,
+  so **every endpoint is documented there**. This guide covers the important
+  ones; use `/openapi.json` for the full list.
+- **`GET /api/menu`** (authenticated) — the agent-facing menu: workflow catalog,
+  local/remote execution modes, and follow-up paths. The same data backs the
+  MCP `get_menu` tool and `/llms.txt`.
+- **`GET /api/version`** (unauthenticated) — product name, version, instance
+  name.
+
+## The typical flow
+
+List workflows, preflight your input, start the run, then poll it:
+
+```bash
+HUB=https://hub.example.com
+AUTH="Authorization: Bearer $RUNYARD_TOKEN"
+
+# 1. What can I run?
+curl -H "$AUTH" "$HUB/api/workflows"
+
+# 2. Dry-run the deterministic preflight — nothing is created.
+curl -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"input": {"topic": "hello", "title": "Hello run"}}' \
+  "$HUB/api/workflows/idea-to-product/preflight"
+
+# 3. Start the run (or pass "negotiate": true to preflight-then-run in one call).
+curl -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"input": {"topic": "hello", "title": "Hello run"}, "executionMode": "remote"}' \
+  "$HUB/api/workflows/idea-to-product/run"
+
+# 4. Poll status, then read the timeline, logs, and artifacts.
+curl -H "$AUTH" "$HUB/api/runs/<runId>"
+curl -H "$AUTH" "$HUB/api/runs/<runId>/timeline"
+curl -H "$AUTH" "$HUB/api/runs/<runId>/logs"
+curl -H "$AUTH" "$HUB/api/runs/<runId>/artifacts"
+```
+
+For agent-created runs, include a short human-readable `input.title` — it labels
+run lists, approval cards, and handoffs. `executionMode` is `local` or `remote`;
+`run` also accepts an optional `responseEndpoint` (`{type: http|telegram,
+config}`) to have the terminal-state reply delivered when the run finishes
+(polling `/api/runs/:id` remains the canonical fallback).
+
+With `"negotiate": true`, a non-ready request returns the negotiation state
+(questions, blockers, warnings, plus a saved draft) instead of creating a run —
+fix the input and call again.
+
+## Key endpoints
+
+Workflows and runs (`preflight` and `run` require `api` or `mcp` scope; reads
+require any token):
+
+| Method + path | Purpose |
+| ------------- | ------- |
+| `GET /api/workflows` | List workflows (`?q=` searches) |
+| `GET /api/workflows/:id` | Describe a workflow and its input schema |
+| `GET /api/workflows/:id/source` | Workflow source, parsed metadata, sections, graph |
+| `POST /api/workflows/:id/preflight` | Dry-run preflight: `ready` / `needs_input` / `blocked`, nothing created |
+| `POST /api/workflows/:id/run` | Run a workflow: `{input, executionMode, negotiate?}` |
+| `POST /api/workflows` / `PATCH /api/workflows/:id` | Create/update a workflow (admin). Source is submitted as bytes or a `workflow.bundleId` — never a file path |
+| `GET /api/runs` | List runs (filter by `status`, `q`, `workflow`) |
+| `GET /api/runs/:id` | Run status, outputs, error, response-delivery state |
+| `GET /api/runs/:id/timeline` | Unified ascending timeline (`since=<iso>`, `limit=<n>`); backs `runyard tail` |
+| `GET /api/runs/:id/events` · `/logs` · `/diagnostics` | Structured events, log lines, diagnostics + log summary |
+| `GET /api/runs/:id/artifacts` · `GET /api/artifacts/:id/download` | List a run's artifacts; download bytes |
+| `POST /api/runs/:id/cancel` · `/rerun` · `/promote` | Cancel; re-queue with same/edited input; merge a successful isolated run into its target branch |
+
+Other resources (see `/openapi.json` for the rest — schedules, catalog
+agents/skills/knowledge, hooks, workflow bundles and packages, workflow
+endpoints, runners, dashboard):
+
+| Method + path | Purpose |
+| ------------- | ------- |
+| `GET /api/schedules` · `POST /api/schedules` | List schedules; create cron/one-shot schedules (admin) |
+| `GET /api/runners` | Registered runners, heartbeat state, capacity, pool summary |
+| `GET /api/tokens` · `POST /api/tokens` · `DELETE /api/tokens/:id` | Manage access tokens (admin) |
+| `GET /api/secrets` · `PUT /api/secrets/:key` · `DELETE /api/secrets/:key` | Encrypted secrets store — names and metadata only, never values (admin) |
+| `GET /api/hooks` | Post-run hook profiles a workflow may select via `input.postRunHooks` |
+| `GET /api/audit` | Audit log (admin) |
+| `GET /api/dashboard` | Run counts by status, recent activity, attention items |
+
+## Approvals
+
+Workflows can pause on a human decision. Approval cards are first-class API
+objects (resolving them requires `api`, `mcp`, or `approvals` scope):
+
+| Method + path | Purpose |
+| ------------- | ------- |
+| `GET /api/approvals?status=pending` | List approval cards (`pending` or `resolved`) |
+| `GET /api/approvals/:id` | One card: title, `ask` (action / reason / audience), kind, linked run |
+| `POST /api/approvals` | Create a card: `{title, description, runId?, ask, timeoutMs?/timeoutAt? + fallback?}` for timed approvals |
+| `POST /api/approvals/:id/approve` | Approve — a held run is released |
+| `POST /api/approvals/:id/reject` | Reject — a held run is cancelled (never failed) |
+| `POST /api/approvals/:id/request-changes` | Request changes with a comment; the run is cancelled so it can be re-run with new input |
+
+## Run drafts
+
+Drafts make run-creation negotiation explicit: a draft is a proposed run that
+has **not** been enqueued, and its status mirrors the latest preflight.
+
+| Method + path | Purpose |
+| ------------- | ------- |
+| `POST /api/run-drafts` | Create + preflight a draft: `{workflow, input, executionMode}` → `201` with status `ready` / `needs_input` / `blocked` and open questions |
+| `GET /api/run-drafts` · `GET /api/run-drafts/:id` | List / inspect drafts with their latest preflight report |
+| `PATCH /api/run-drafts/:id` | Answer questions: `input` is shallow-merged (a `null` value deletes a key; `replaceInput: true` replaces it), then re-preflighted |
+| `POST /api/run-drafts/:id/submit` | Re-preflight and enqueue the real run only when ready — `202` with `{run, draft}` |
+| `POST /api/run-drafts/:id/discard` | Abandon the negotiation |
+
+## Error conventions
+
+| Status | Meaning |
+| ------ | ------- |
+| `401` | Missing/invalid token: `{"error": "unauthorized"}` |
+| `403` | Insufficient scope: `{"error": "insufficient scope", "required": [...]}` (also runner-ownership failures on the runner protocol) |
+| `422` | Negotiation `needs_input` — the body carries the negotiation state: normalized input, `questions`, `warnings`, `suggestedDefaults`, `nextAction` |
+| `409` | Negotiation `blocked` — the body carries `blockers`; no run is created |
+
+The `422`/`409` bodies are returned by `run` with `negotiate: true` and by
+draft `submit`; they are structured responses, not opaque failures — answer the
+questions and retry.
+
+## Rate limits
+
+A few endpoints are rate-limited per client IP (over the limit returns `429`):
+
+| Endpoint | Limit |
+| -------- | ----- |
+| `POST /api/auth/token-login` | 10 / minute |
+| `POST /api/auth/telegram-webapp` | 30 / minute |
+| `POST /api/schedules/:id/run-now` | 60 / minute |
+| `POST /api/chat` (in-app assistant) | 60 / minute |
+
+## See also
+
+- [MCP guide](./mcp.mdx) — every API operation is also an MCP tool
+- [CLI guide](./cli.mdx) — the same API from your terminal

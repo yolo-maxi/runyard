@@ -1,0 +1,28 @@
+---
+title: Concepts
+description: A map of the core Runyard concepts and how they fit together.
+---
+
+Runyard is a self-hosted control plane for agent runs. You install **workflows** into a catalog, start **runs** of those workflows from the API, MCP, web app, or a **schedule**, and **runners** claim and execute them. Anything that needs a human decision surfaces as an **approval** card, sensitive values live in the encrypted **secrets** store, and optional side effects after a run are handled by admin-defined **hooks**. Access is governed by scoped **tokens**, and every page in the Hub is a shareable **deep link**.
+
+## The catalog
+
+- **[Workflows](./workflows.mdx)** — the unit of the catalog: a named, versioned definition with input/output schemas whose source lives as immutable bundles in the Hub database.
+- **[Agents, skills & knowledge](./agents-skills-knowledge.mdx)** — shared, reusable building blocks (agent roles, skills, knowledge resources) that workflows reference.
+
+## Execution
+
+- **[Runs](./runs.mdx)** — a single execution of a workflow: lifecycle statuses, preflight and run drafts, events, logs, artifacts, reruns, and promotion.
+- **[Runners](./runners.mdx)** — the machines that claim queued runs and execute them via the Smithers engine, with tags, capacity, and optional sandboxing.
+- **[Schedules](./schedules.mdx)** — cron or one-shot triggers that create ordinary runs on a cadence.
+
+## Control
+
+- **[Approvals](./approvals.mdx)** — declared human decisions: approval cards with an explicit ask, per-kind consequences, and optional timers with fallbacks.
+- **[Hooks](./hooks.mdx)** — admin-defined post-run side effects (publish, push, webhook) that run after a run's gates pass and never fail a green run.
+
+## Platform
+
+- **[Tokens & scopes](./tokens-and-scopes.mdx)** — bearer-token auth with the `api`, `mcp`, `runner`, `approvals`, and `admin` scopes; browser sessions carry exactly a token's scopes.
+- **[Secrets](./secrets.mdx)** — an encrypted store whose values are only ever decrypted into a run's child process environment, never returned by the API.
+- **[Deep links](./deep-links.mdx)** — the shareable URL grammar of the Hub web app, plus the deep links the API returns in its payloads.

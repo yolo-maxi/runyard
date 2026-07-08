@@ -57,6 +57,41 @@ export function workflowEndpointFeedbackText(body = {}) {
 }
 
 export function workflowEndpointRunInput(endpoint, body, { payloadHash }) {
+  const endpointConfig = endpoint.config || {};
+  // inputMode "payload": generic machine-event endpoints (e.g. a CI release
+  // trigger). The raw JSON body is passed through as input.payload (untrusted
+  // — receiving workflows must treat it as evidence, never instructions),
+  // merged under the endpoint's configured input defaults; the endpoint's
+  // repo/project/repoDir pins still win over anything in the payload.
+  if (endpointConfig.inputMode === "payload") {
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return { ok: false, code: 400, error: "JSON object payload is required" };
+    }
+    const defaults = endpointConfig.input && typeof endpointConfig.input === "object" ? endpointConfig.input : {};
+    const title = firstWorkflowEndpointText(
+      body.title,
+      body.releaseTag,
+      body.tag,
+      objectOrEmpty(body.release).tag_name,
+      "submission",
+      80
+    );
+    return {
+      ok: true,
+      input: {
+        ...defaults,
+        title: `${endpoint.name || endpoint.slug}: ${title}`,
+        payload: body,
+        payloadHash,
+        ...(endpoint.project ? { project: endpoint.project } : {}),
+        ...(endpoint.repo ? { repo: endpoint.repo } : {}),
+        ...(endpoint.repoDir ? { repoDir: endpoint.repoDir } : {})
+      },
+      source: workflowEndpointSource(body),
+      feedbackText: ""
+    };
+  }
+
   const source = workflowEndpointSource(body);
   const feedbackText = workflowEndpointFeedbackText(body);
   if (!feedbackText) return { ok: false, code: 400, error: "feedback text is required" };

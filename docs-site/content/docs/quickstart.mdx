@@ -1,0 +1,104 @@
+---
+title: Quickstart
+description: Install the Hub, sign in with the bootstrap token, start a runner, and run the hello workflow.
+---
+
+This page takes you from a fresh Linux box to a completed workflow run with logs and artifacts in the Hub.
+
+## 1. Install the Hub
+
+The repository's install script is a one-command, idempotent bootstrap. It installs Node 22 and pnpm if needed, clones Runyard at the latest release tag (default `/opt/runyard`), generates an env file with a `SECRETS_ENC_KEY` and session secret, creates the data directory, and installs systemd units for the Hub and a runner:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/yolo-maxi/runyard/main/install.sh | bash
+```
+
+Verify the Hub is up:
+
+```bash
+curl -fsS http://127.0.0.1:43117/healthz
+curl -fsS http://127.0.0.1:43117/version
+```
+
+The script never prints secrets, never applies updates automatically, and prints a Caddy reverse-proxy snippet if you want TLS in front (recommended for anything non-local — see the [security guide](./guides/security)).
+
+## 2. Sign in with the bootstrap token
+
+On first boot the Hub writes a full-admin bootstrap token to `bootstrap-token.txt` in its data directory (with the default install, `/opt/runyard/data/bootstrap-token.txt`, mode 600).
+
+Open the web app at your Hub URL (for example `https://hub.example.com`) and paste the bootstrap token into the sign-in form. The browser session carries exactly the token's scopes — the bootstrap token is admin, so you can now mint narrower tokens for everything else from the Connect tab.
+
+## 3. Install the CLI and log in
+
+Each deployment serves its own CLI install script:
+
+```bash
+curl -fsSL https://hub.example.com/install.sh | bash
+```
+
+It installs the `runyard` and `runyard-mcp` commands into `~/.local/bin` and prompts for an access token. You can also log in later:
+
+```bash
+runyard login --url https://hub.example.com
+runyard status   # shows the authenticated token name and scopes
+```
+
+## 4. Start a runner
+
+Runners execute workflows with the Smithers engine, so a runner host needs `bun`, `smithers`, and at least one authenticated agent CLI (`claude`, `codex`, or `pi`) on its PATH.
+
+If you used the Hub install script, a `runyard-runner` systemd unit is already installed and idling. Mint a runner-scoped token, put it in `/etc/runyard/runner.env` as `RUNYARD_HUB_TOKEN=...`, then:
+
+```bash
+systemctl restart runyard-runner
+```
+
+To run an ad-hoc runner on any other machine (for example your laptop, for `local` execution):
+
+```bash
+runyard token-create my-runner --scopes runner   # or mint one in the web app (Connect)
+runyard runner setup --workspace ~/runyard-runner --location local
+runyard runner start --workspace ~/runyard-runner --location local
+```
+
+`runner setup` checks prerequisites and scaffolds the Smithers workspace the runner executes in. Confirm the runner is online:
+
+```bash
+runyard runners
+```
+
+## 5. Run the hello workflow
+
+`hello` is a minimal seeded workflow that proves end-to-end execution: it asks the runner's Claude CLI for one sentence and returns structured output.
+
+Web: open **Workflows**, pick **Hello (Smithers proof)**, fill in `topic`, and click Run.
+
+CLI:
+
+```bash
+runyard run hello --where local --input '{"topic":"durable AI workflows","title":"Hello proof run"}'
+```
+
+MCP (from any connected agent):
+
+```json
+{ "tool": "run_workflow", "arguments": { "id": "hello", "input": { "topic": "durable AI workflows", "title": "Hello proof run" }, "executionMode": "local" } }
+```
+
+## 6. Watch the run and read the results
+
+```bash
+runyard runs                    # list runs and their statuses
+runyard run-status <run-id>     # status, outputs, error
+runyard tail <run-id>           # unified NDJSON timeline (status + events + artifacts)
+runyard logs <run-id>           # raw run log lines
+runyard artifacts <run-id>      # artifacts recorded for the run
+```
+
+The same data lives at `GET /api/runs/{id}`, `/api/runs/{id}/timeline`, `/api/runs/{id}/logs`, and `/api/runs/{id}/artifacts`, and in the web run page — the Hub is the source of truth even when execution happened on a local runner.
+
+## Where to go next
+
+- [Authoring workflows](./guides/workflows-authoring) — create your own workflows over the API or MCP.
+- [Approvals](./guides/approvals-telegram) — put human checkpoints in front of dangerous work.
+- [Agent consumers](./guides/agent-consumers) — point AI agents at your Hub.

@@ -1,0 +1,19 @@
+---
+title: What is Runyard
+description: A self-hosted control plane for agent runs — workflows in, durable runs, logs, artifacts, and approvals out.
+---
+
+Runyard is a self-hosted control plane for agent runs. Agents and humans trigger workflows over MCP, the CLI, the HTTP API, or the web app; runners execute those workflows with the Smithers engine; and the Hub stores the durable record of everything that happened — runs, logs, events, artifacts, approvals, and knowledge. A run started from a chat agent, a cron schedule, or a terminal all leaves the same auditable trail in the same place.
+
+Runyard is designed as one private deployment per company. Your Hub holds your workflow catalog, your secrets, your runners, and your history; nothing about your deployment is published to a shared service, and the only outbound call the Hub makes is a passive read of the public GitHub Releases API to check for updates. Operators, teammates, and their agents all authenticate to the same Hub with scoped access tokens.
+
+Runyard is API-first by construction. Every HTTP route the Hub serves is declared in a single API surface registry; the OpenAPI document is generated from it and the MCP tool list is parity-tested against it. The web app is an ordinary API client with no privileged endpoints — anything it can show or do is equally available over the API and MCP, so a third-party client built on those surfaces loses nothing.
+
+## Next steps
+
+<Cards>
+  <Card title="Quickstart" href="./quickstart" description="Install the Hub, start a runner, and run your first workflow." />
+  <Card title="Concepts" href="./concepts" description="Workflows, runs, runners, approvals, and the Hub's durable record." />
+  <Card title="HTTP API" href="./guides/api" description="Drive Runyard from any language with bearer-token auth and openapi.json." />
+  <Card title="MCP" href="./guides/mcp" description="Connect AI agents to your Hub with the runyard-mcp server." />
+</Cards>

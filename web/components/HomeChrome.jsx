@@ -18,7 +18,7 @@ export function PrimaryActionBar({ runners = [], capabilities = [] }) {
     headline = "Connect your first runner";
     sub = "A runner executes workflows on a machine you control. Without one, queued work can't move.";
     primary = { label: "Connect a runner", href: "#onboarding" };
-    secondary = [{ label: "Read the quickstart", href: "/docs#quickstart" }];
+    secondary = [{ label: "Read the quickstart", href: "/docs/quickstart/" }];
   } else if (!capabilities.length) {
     headline = "Publish your first workflow";
     sub = "Workflows are the actions agents and humans can trigger. Start from a template.";

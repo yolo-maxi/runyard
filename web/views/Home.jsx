@@ -353,7 +353,7 @@ export function Home() {
                 takes an empty hub to its first triggered run. Quickstart docs
                 stay as the secondary affordance. */}
             <button type="button" className="button primary" onClick={() => navigate("#workflows")}>Pick a workflow</button>
-            <a className="button" href="/docs#quickstart">Open quickstart</a>
+            <a className="button" href="/docs/quickstart/">Open quickstart</a>
           </div>
         </div>
       ) : (

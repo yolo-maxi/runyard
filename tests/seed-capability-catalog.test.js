@@ -23,6 +23,7 @@ describe("seed capability catalog", () => {
       "research",
       "implement",
       "smart-contract-audit",
+      "docs-update",
       "implement-change-gated",
       "idea-to-product",
       "improve",

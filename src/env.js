@@ -63,6 +63,11 @@ export const env = {
   hostname: deriveHostnameLabel({ env: process.env, baseUrl }),
   sessionSecret: resolveSessionSecret({ env: process.env, dataDir, isProduction }),
   bootstrapToken: firstEnv("RUNYARD_HUB_BOOTSTRAP_TOKEN", "SMITHERS_HUB_BOOTSTRAP_TOKEN") || "",
+  releaseDocsUpdateEndpointSecret:
+    firstEnv(
+      "RUNYARD_HUB_RELEASE_DOCS_UPDATE_SECRET",
+      "RUNYARD_RELEASE_DOCS_UPDATE_ENDPOINT_SECRET"
+    ) || "",
   runyardMobileFeedbackEndpointSecret:
     firstEnv(
       "RUNYARD_HUB_MOBILE_FEEDBACK_SECRET",

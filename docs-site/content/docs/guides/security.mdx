@@ -1,0 +1,64 @@
+---
+title: Security model
+description: Trust boundary, token scopes, secrets handling, runner sandboxing, and production posture for a Runyard deployment.
+---
+
+Runyard is one private deployment per company, and the security model follows from that: a small, deliberate unauthenticated surface; scoped bearer tokens for everything else; secrets encrypted at rest and never echoed; and approval gates in front of dangerous work.
+
+## Trust boundary
+
+Every operation requires either a bearer access token (`Authorization: Bearer ...`) or a browser session created by exchanging such a token — and the session carries exactly the token's scopes, no extra power. The unauthenticated surface is deliberately tiny:
+
+| Endpoint | Purpose |
+| --- | --- |
+| `/healthz`, `/readyz` | Liveness/readiness probes. |
+| `/api/version`, `/version` | Product name and version. |
+| `/`, `/app`, `/docs` | Landing page, app shell, documentation pages (data still requires auth). |
+| `/llms.txt` | Static, generic agent discovery document. |
+| `/openapi.json` | Generated API description. |
+| `/install.sh`, `/cli.tgz` | Client install assets. |
+
+Two narrow exceptions authenticate by other means: `POST /api/telegram/webhook` is verified against the configured bot and webhook secret, and `POST /api/workflow-endpoints/{slug}` submissions authenticate with that endpoint's own secret (below). `GET /api/setup` returns only a reduced identity payload (instance name, auth mode) to unauthenticated callers.
+
+## Scopes
+
+Tokens carry scopes; admins mint them from the Connect tab or `POST /api/tokens`.
+
+| Scope | Grants |
+| --- | --- |
+| `api` | Run workflows and read runs over HTTP. |
+| `mcp` | The same operations over the MCP server. |
+| `runner` | The runner protocol: register, heartbeat, claim runs, report lifecycle. |
+| `approvals` | Create and resolve approval cards (the scope Telegram WebApp sessions get). |
+| `admin` | Superscope: satisfies every scope requirement and gates all mutation of workflows, secrets, tokens, schedules, hooks, and updates. |
+
+Runner tokens are additionally subject to **run-ownership checks**: a run's lifecycle endpoints (`start`, `events`, `complete`, `fail`, artifact upload) only accept the runner that owns the run, or an admin. One compromised runner token cannot report on, or interfere with, another runner's work.
+
+## Secrets
+
+The reusable secret store is enabled by setting `SECRETS_ENC_KEY` (a 32-byte key) on the Hub; without a valid key the feature is disabled rather than degraded. Values are encrypted at rest and are write-only from the API's point of view: `GET /api/secrets` returns names and metadata, never values, and secrets are redacted from API responses, events, approval cards, and audit entries. Workflows reference secrets by name; the Hub injects values into runs that declared them.
+
+## Workflow endpoints
+
+Fixed-purpose webhook-style intake (`POST /api/workflow-endpoints/{slug}`) is designed for exposure to semi-trusted callers: each endpoint has its **own** secret (not a Hub token), plus rate limits, payload size caps, and deduplication. An endpoint can only trigger the single workflow an admin configured it for — a leaked endpoint secret does not grant API access.
+
+## Approval gating
+
+Workflows whose consequences warrant a human get an `approvalPolicy` that holds runs in `waiting_approval` until someone approves; mid-run engine gates and gated side effects (post-run hook profiles are admin-defined and admin-configured) use the same approval cards. See [Approvals](./approvals-telegram).
+
+## Runner sandboxing
+
+Runners can execute workflow processes inside a bubblewrap sandbox (`RUNNER_SANDBOX=bubblewrap`), and the repo ships a narrow AppArmor profile (`deploy/apparmor/install.sh`) that grants unprivileged user-namespace creation to bwrap on Ubuntu 24.04+ kernels that restrict it. This is not on faith: CI runs a `sandbox-smoke` job on every push that installs bubblewrap, loads the profile through the same operator install script, and runs the sandbox suites with `RUNYARD_REQUIRE_BWRAP=1` so the real-bwrap smoke test fails instead of silently skipping if the path regresses.
+
+## Production posture
+
+- **TLS reverse proxy** — keep the Hub on `127.0.0.1` and terminate TLS in front (the installer prints a Caddy snippet); set `BASE_URL` to the https URL.
+- **Session secret** — set `RUNYARD_HUB_SESSION_SECRET` explicitly in production (the installer generates one).
+- **`SECRETS_ENC_KEY`** — set it once and guard it; rotating the key makes previously stored secrets unreadable.
+- **Token hygiene** — issue narrow scopes, set `expiresInDays` on tokens for humans, and revoke with `DELETE /api/tokens/{id}`; retire the bootstrap token once real admin tokens exist.
+- **Audit log review** — every actor-attributable action lands in the audit log (`runyard audit`, `GET /api/audit`, `get_audit_log`).
+- **Updates** — leave `UPDATE_APPLY_ENABLED` off unless you want the admin-gated HTTP apply; prefer `runyard update` on the host. See [Releases](./releases).
+
+## What stays out of public discovery docs
+
+`/llms.txt` and `/openapi.json` are static and generic by design: they describe the product and its surfaces, never your deployment. The live workflow catalog, runner details, secret names, and operator configuration are only available behind auth (`GET /api/menu`, `GET /api/workflows`). An unauthenticated crawler learns that a Runyard exists — not what yours can do.

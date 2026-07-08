@@ -1,0 +1,233 @@
+---
+title: Installation
+description: Install and deploy a Runyard Hub and runners — from source, with systemd, or with Docker.
+---
+
+Runyard is a self-hosted control plane for agent runs. A deployment has a small,
+fixed shape:
+
+- **Hub** — the HTTP server: API, web UI, MCP-backing endpoints, and the embedded
+  SQLite datastore. One per deployment.
+- **Runners** — one or more worker processes that register with the Hub using a
+  runner-scoped token, heartbeat, claim queued runs, and execute workflows. A
+  runner can live on the same host as the Hub or on a separate machine.
+- **Clients** — the `runyard` CLI, the `runyard-mcp` MCP server, and the web app
+  are all ordinary API clients of the Hub.
+
+## Requirements
+
+| Requirement | Notes |
+| ----------- | ----- |
+| Node.js >= 22.5 | The Hub uses the built-in `node:sqlite` module (started with `--experimental-sqlite`) |
+| pnpm | Dependency install and build (`corepack enable` works) |
+| git, curl | For source installs and the bootstrap script |
+
+Runner hosts additionally need the Smithers engine and at least one authenticated
+agent CLI (`claude`, `codex`, or `pi`) on `PATH` — see [the CLI guide](./cli.mdx)
+for `runyard runner setup`.
+
+## Quick install (host bootstrap)
+
+The repository ships a one-command, idempotent bootstrap script for a fresh
+Linux box:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/yolo-maxi/runyard/main/install.sh | bash
+```
+
+It ensures Node 22 + pnpm, clones the latest release tag into `/opt/runyard`
+(override with `RUNYARD_HOME`), runs `pnpm install --frozen-lockfile`, generates
+a `SECRETS_ENC_KEY` and session secret into `/etc/runyard/runyard.env` (never
+clobbering an existing file, never printing secrets), creates the data
+directory, installs and enables the systemd units for the Hub and a runner, and
+installs a daily *passive* update-check timer (it never auto-applies updates).
+
+When it finishes it prints next steps: sign in with the bootstrap token, mint a
+runner-scoped token, put it in `/etc/runyard/runner.env`, and restart the runner
+unit.
+
+A running Hub also serves its own **client** install script at
+`https://hub.example.com/install.sh` (plus the CLI tarball at `/cli.tgz`). That
+one installs the `runyard` CLI and `runyard-mcp` on a workstation — see
+[the CLI guide](./cli.mdx).
+
+## Running from source
+
+```bash
+git clone https://github.com/yolo-maxi/runyard.git
+cd runyard
+pnpm install
+pnpm build          # builds the web app bundle
+pnpm start          # node --experimental-sqlite src/server.js
+```
+
+The Hub listens on `127.0.0.1:43117` by default. Start a runner in a second
+process:
+
+```bash
+node src/runner.js
+# or, via the CLI against a configured remote:
+runyard runner start --workspace /path/to/workspace --location local
+```
+
+The runner authenticates with a runner-scoped token (`RUNYARD_HUB_TOKEN`); on a
+fresh Hub it may use the bootstrap token until you mint one.
+
+## systemd
+
+The repository ships generic units in `deploy/`. The Hub unit
+(`deploy/runyard.service`):
+
+```ini
+[Unit]
+Description=Runyard Hub
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/runyard
+EnvironmentFile=/etc/runyard/runyard.env
+ExecStart=/usr/bin/env node --experimental-sqlite /opt/runyard/src/server.js
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+```
+
+And the runner unit (`deploy/runyard-runner.service`):
+
+```ini
+[Unit]
+Description=Runyard Runner
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/runyard
+EnvironmentFile=/etc/runyard/runner.env
+Environment=RUNYARD_HUB_URL=https://hub.example.com
+Environment="SMITHERS_RUNNER_NAME=vps-runner-1"
+Environment=SMITHERS_RUNNER_LOCATION=vps
+Environment=SMITHERS_RUNNER_TAGS=linux,node,git,shell,web,smithers
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/env node /opt/runyard/src/runner.js
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+```
+
+The bootstrap script installs these for you, retargeted to your install
+directory, env-file location, and node binary. Secrets live in the
+`EnvironmentFile`s (mode `0600`), never in the units.
+
+## Docker Compose
+
+Runyard publishes two environment-agnostic images to GHCR:
+
+| Image | Role |
+| ----- | ---- |
+| `ghcr.io/yolo-maxi/runyard-hub` | control plane + web UI + embedded datastore (HTTP on `PORT`, default 8080 in-container) |
+| `ghcr.io/yolo-maxi/runyard-runner` | claims runs and executes them; workspace volume at `/workspace` |
+
+The portable base stack is `docker-compose.yml` at the repo root:
+
+```bash
+HUB_IMAGE=ghcr.io/yolo-maxi/runyard-hub:0.3.10 \
+RUNNER_IMAGE=ghcr.io/yolo-maxi/runyard-runner:0.3.10 \
+HUB_PORT=8080 \
+docker compose up -d
+```
+
+Provide secrets (`RUNYARD_HUB_SESSION_SECRET`, `SECRETS_ENC_KEY`,
+`RUNYARD_HUB_TOKEN`, agent API keys) via a `.env` file or your platform's secret
+mechanism. For production, pin images by `@sha256:` digest rather than mutable
+tags. Optional overlays (all off by default):
+
+- `--profile proxy` — a bundled Caddy container that terminates TLS for
+  `SITE_ADDRESS` and proxies to the Hub. Skip it if you already have a gateway.
+- `-f deploy/compose/runner-docker-socket.yml` — give the runner `docker build`
+  access via the host socket (or run a rootless DinD sidecar instead).
+- `-f docker-compose.local.yml` — dev profile using locally built images.
+
+### Confidential VMs (dstack / Intel TDX)
+
+`deploy/dstack/` contains an overlay that adapts the base compose for dstack
+confidential-VM deployments: every image **must** be pinned by digest (the
+attestation measures the compose text), the Hub sits on `:80` behind the
+dstack gateway, and updates/rollbacks go through dstack's `UpgradeApp` with new
+digests. Render a single self-contained file with:
+
+```bash
+docker compose -f docker-compose.yml -f deploy/dstack/docker-compose.dstack.yml config > app-compose.yml
+```
+
+See `deploy/dstack/README.md` in the repository for the full contract.
+
+## Reverse proxy
+
+The Hub is a single HTTP listener; any TLS-terminating proxy that forwards **all
+paths** to the Hub port works. With Caddy:
+
+```text
+hub.example.com {
+    reverse_proxy 127.0.0.1:43117
+}
+```
+
+Then set `BASE_URL=https://hub.example.com` in the Hub's env file and restart.
+An `https://` base URL switches the Hub into production session mode. If the
+proxy is not on loopback, set the trust-proxy configuration accordingly so
+client IPs (used by rate limiting) are read from `X-Forwarded-For` only when
+that header is trustworthy.
+
+## Environment variables
+
+Hub (all optional unless noted; legacy `SMITHERS_HUB_*` names are still read as
+fallbacks so old deployments keep working):
+
+| Variable | Meaning |
+| -------- | ------- |
+| `PORT` | Hub HTTP port (default `43117`; the container image defaults to 8080) |
+| `HOST` | Bind address (default `127.0.0.1`) |
+| `BASE_URL` | Public URL of the Hub (e.g. `https://hub.example.com`); an `https` value enables production behavior |
+| `RUNYARD_HUB_DATA_DIR` | Data directory (default `<repo>/data`) — the DB, artifacts, and bootstrap token live here |
+| `RUNYARD_HUB_DB` | Explicit SQLite database path (default `<data dir>/runyard.sqlite`) |
+| `RUNYARD_HUB_SESSION_SECRET` | Secret for browser session cookies. Required in production; in dev a generated value is persisted to the data dir |
+| `SECRETS_ENC_KEY` | 32-byte key (base64/hex) for the encrypted secrets store. Keep it safe — rotating it makes stored secrets unreadable |
+| `RUNYARD_HUB_BOOTSTRAP_TOKEN` | Optional pre-seeded bootstrap admin/runner token (containers); on host installs one is generated into the data dir |
+| `RUNYARD_HUB_INSTANCE_NAME` | Display name of the deployment (default `Runyard`) |
+
+Runner:
+
+| Variable | Meaning |
+| -------- | ------- |
+| `RUNYARD_HUB_URL` | How the runner reaches the Hub (e.g. `https://hub.example.com`) |
+| `RUNYARD_HUB_TOKEN` | Runner-scoped access token minted on the Hub |
+| `SMITHERS_WORKSPACE` | Workspace directory the runner executes workflows in |
+| `SMITHERS_RUNNER_LOCATION` | Location label (`vps` or `local`) used for run routing |
+| `SMITHERS_RUNNER_NAME` / `SMITHERS_RUNNER_TAGS` | Runner display name and capability tags |
+| `SMITHERS_RUNNER_CONCURRENCY` | Max concurrent runs (default 1) |
+
+## Where state lives
+
+Everything durable is in the Hub's data directory (`RUNYARD_HUB_DATA_DIR`,
+default `data/`; the `hub-data` volume mounted at `/data` in containers). It
+survives every update and rollback:
+
+- `runyard.sqlite` — the SQLite database (runs, workflows, tokens, schedules,
+  approvals, encrypted secrets)
+- `artifacts/` — uploaded run artifacts
+- `bootstrap-token.txt` — the first admin token, generated on first boot
+  (mode `0600`); use it to sign in once and mint scoped tokens
+- `session-secret.txt` — the persisted dev session secret when none is provided
+
+Back this directory up. The runner workspace, by contrast, is disposable
+scratch space — outputs and event traces are uploaded to the Hub as artifacts.
+
+## Next steps
+
+- Point clients at the Hub: [CLI guide](./cli.mdx), [MCP guide](./mcp.mdx)
+- Drive it over HTTP: [API guide](./api.mdx)

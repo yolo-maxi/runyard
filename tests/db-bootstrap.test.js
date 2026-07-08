@@ -182,8 +182,9 @@ describe("db bootstrap", () => {
     assert.deepEqual(overridden.calls.find((call) => call.fn === "upsertWorkflowEndpoint").options, { secret: "env-secret" });
   });
 
-  it("keeps the mobile feedback endpoint as the default seed", () => {
-    assert.equal(defaultWorkflowEndpointSeeds[0].slug, "runyard-mobile-feedback");
-    assert.equal(defaultWorkflowEndpointSeeds[0].capabilitySlug, "improve");
+  it("seeds the default workflow endpoints with their capabilities", () => {
+    const byCapability = Object.fromEntries(defaultWorkflowEndpointSeeds.map((seed) => [seed.slug, seed.capabilitySlug]));
+    assert.equal(byCapability["runyard-mobile-feedback"], "improve");
+    assert.equal(byCapability["release-docs-update"], "docs-update");
   });
 });

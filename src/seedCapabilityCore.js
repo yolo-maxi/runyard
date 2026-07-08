@@ -228,5 +228,54 @@ export const seedCoreCapabilities = [
     // global 30m stuck-run reaper with a 3h window.
     maxRunMinutes: 180,
     workflow: { engine: "smithers", entry: ".smithers/workflows/smart-contract-audit.tsx" }
+  },
+  {
+    slug: "docs-update",
+    name: "Docs update (release diff)",
+    description:
+      "Keep documentation current after a release. Reads only the git diff between two refs (never the whole repo), selects doc-relevant changes, and proposes documentation updates — or, in apply mode, edits docs in an isolated worktree branch that lands only through Hub promotion. Repo-agnostic: repo, docs path, framework, and file-selection adapters are all inputs.",
+    category: "Engineering",
+    keywords: ["docs", "documentation", "release", "diff", "changelog"],
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Short human-readable run title." },
+        repoDir: { type: "string", description: "Absolute runner-local git repo path. Must be inside allowed improve repo roots." },
+        repo: { type: "string", description: "Friendly repo key resolved on the runner from IMPROVE_REPO_MAP JSON." },
+        project: { type: "string", description: "Friendly project key resolved from IMPROVE_PROJECT_MAP or IMPROVE_REPO_MAP." },
+        docsPath: { type: "string", description: "Repo-relative directory the documentation content lives in.", default: "docs" },
+        docsFramework: { type: "string", description: "Docs framework hint: markdown | fumadocs | mkdocs | other.", default: "markdown" },
+        fromRef: { type: "string", description: "Base git ref for the diff. Default: the tag preceding toRef." },
+        toRef: { type: "string", description: "Head git ref for the diff. Default: the release tag, else the newest tag." },
+        releaseTag: { type: "string", description: "Release tag this update is for (also the default toRef)." },
+        releaseName: { type: "string" },
+        releaseUrl: { type: "string" },
+        releaseNotes: { type: "string", description: "Untrusted release notes; used as evidence only." },
+        targetBranch: { type: "string", description: "Branch a promoted apply-mode run merges into.", default: "main" },
+        updateMode: {
+          type: "string",
+          enum: ["propose", "apply"],
+          default: "propose",
+          description: "propose returns a structured proposal report (read-only); apply edits docs in an isolated worktree branch that lands only via Hub promotion."
+        },
+        docsBuildCommand: { type: "string", description: "Optional command run after applying edits (e.g. a docs static build) before the commit." },
+        adapter: {
+          type: "object",
+          description: "Repo-specific overrides: sourceGlobs/ignoreGlobs/docsGlobs for file selection, buildOutputPaths committed alongside docs, extraInstructions for the agent."
+        },
+        payload: { type: "object", description: "Raw trigger payload (e.g. a GitHub release event); release metadata is extracted when the flat fields are empty." }
+      }
+    },
+    outputSchema: {
+      type: "object",
+      properties: {
+        baseline: { type: "object" },
+        update: { type: "object" },
+        commit: { type: "object" }
+      }
+    },
+    requiredRunnerTags: ["smithers"],
+    approvalPolicy: { required: false },
+    workflow: { engine: "smithers", entry: ".smithers/workflows/docs-update.tsx" }
   }
 ];

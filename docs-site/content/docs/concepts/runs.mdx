@@ -1,0 +1,72 @@
+---
+title: Runs
+description: The run lifecycle, preflight and run drafts, events and artifacts, reruns, and promotion.
+---
+
+A **run** is a single execution of a [workflow](./workflows.mdx) with a JSON input. Runs are created from the API, MCP, web app, CLI, a [schedule](./schedules.mdx), or a workflow endpoint; a [runner](./runners.mdx) claims each queued run and executes it, streaming events, logs, and artifacts back to the Hub as the durable record.
+
+## Lifecycle
+
+| Status | Meaning |
+| --- | --- |
+| `waiting_approval` | Held for a human decision before entering the queue (see [Approvals](./approvals.mdx)). Never times out — waiting cannot fail a run. |
+| `queued` | Ready for a matching runner to claim. |
+| `assigned` | Claimed by a runner, not yet started. |
+| `running` | Executing on the runner. |
+| `succeeded` | Finished with outputs. |
+| `cancelled` | Stopped by an operator or a rejected approval — a human "no" is a decision, not a failure. |
+| `failed` (+ classes) | Terminal failure; see failure classes below. |
+
+Terminal states are final: late reports racing a terminal state are absorbed idempotently rather than overwriting the first decision.
+
+### Failure classes
+
+Failures are classified into specific terminal statuses so operators can tell config problems from real failures: `failed` (generic), `blocked_by_gate` (a verification gate failed), `blocked_by_preflight` (the run could never start as configured), `provider_limited` (rate limits/quota), `timed_out`, `invalid_output` (schema mismatch), `infra_unavailable` (network/runner infrastructure), and `needs_human`.
+
+## Preflight and run drafts (negotiation)
+
+Before anything is enqueued, Runyard can run a **deterministic preflight**: schema checks on required input fields, runner/tag availability, secret presence, hook eligibility, and workflow source resolution. The result is `ready`, `needs_input` (with `questions[]` the caller can answer), or `blocked` (with `blockers[]` only an operator can fix), plus warnings, suggested defaults, and a `nextAction` hint.
+
+Three ways to use it:
+
+- `POST /api/workflows/{id}/preflight` — stateless report, nothing created.
+- `POST /api/workflows/{id}/run` with `negotiate: true` — enqueue only when ready; otherwise the negotiation state and a saved draft come back instead of a doomed run.
+- **Run drafts** — a draft is a proposed run that has *not* been enqueued. Create it, patch its input to answer questions (each patch re-preflights), then submit; submit re-preflights and returns 202 with the run only when ready (422 `needs_input` / 409 `blocked` otherwise).
+
+```bash
+curl -X POST -H "Authorization: Bearer $RUNYARD_TOKEN" -H "Content-Type: application/json" \
+  -d '{"input": {"title": "Nightly digest", "topic": "release notes"}, "executionMode": "remote"}' \
+  https://hub.example.com/api/workflows/idea-to-product/run
+```
+
+`input.title` is recommended for agent-created runs: a short human-readable title used in run lists, approval cards, and handoff.
+
+## Events, timeline, logs, artifacts
+
+Runners append structured **events** as the run progresses; `GET /api/runs/{id}/events/stream` serves them live over SSE and `GET /api/runs/{id}/timeline` merges status transitions, events, and artifacts into one ascending feed (with `since`/`limit` paging). Log lines are at `/logs`, a condensed log summary and diagnostics at `/diagnostics`, and uploaded **artifacts** (outputs, traces, files) at `/artifacts`, downloadable by artifact id.
+
+## Reruns and promotion
+
+- **Rerun** — `POST /api/runs/{id}/rerun` creates a linked new run with the same input, optionally edited.
+- **Promotion** — for runs that mutated an isolated git worktree, `POST /api/runs/{id}/promote` merges the successful run's work into its target branch, runs gates, pushes, and cleans up the branch/worktree. Merging to the default branch always goes through promotion, never through a [hook](./hooks.mdx).
+
+## Response endpoints
+
+A run request may include `responseEndpoint: {type: "http" | "telegram", config}` so the terminal-state reply is delivered to the caller when the run finishes. Delivery state is reported in `responseEndpoints[]` on `GET /api/runs/{id}`; polling that endpoint remains the canonical fallback.
+
+## API & MCP
+
+| Endpoint | MCP tool |
+| --- | --- |
+| `POST /api/workflows/{id}/run` | `run_workflow` |
+| `POST /api/workflows/{id}/preflight` | `preflight_workflow` |
+| `GET/POST /api/run-drafts`, `GET/PATCH /api/run-drafts/{id}`, `POST .../submit`, `POST .../discard` | `list_run_drafts`, `create_run_draft`, `get_run_draft`, `update_run_draft`, `submit_run_draft`, `discard_run_draft` |
+| `GET /api/runs`, `GET /api/runs/{id}` | `list_runs`, `get_run_status` |
+| `GET /api/runs/{id}/events`, `/timeline`, `/diagnostics`, `/logs` | `get_run_events`, `get_run_timeline`, `get_run_diagnostics`, `get_run_logs` |
+| `GET /api/runs/{id}/artifacts`, `GET /api/artifacts`, `GET /api/artifacts/{id}/download` | `get_run_artifacts`, `search_artifacts`, `download_artifact` |
+| `POST /api/runs/{id}/cancel` | `cancel_run` |
+| `POST /api/runs/{id}/rerun` | `rerun_workflow_run` |
+| `POST /api/runs/{id}/promote` | `promote_run` |
+| `GET /api/dashboard` | `get_dashboard` |
+
+The `start`/`complete`/`fail`/event-append and artifact-upload endpoints under `/api/runs/{id}` are the runner protocol (runner-scoped tokens, run ownership enforced) — see [Runners](./runners.mdx).

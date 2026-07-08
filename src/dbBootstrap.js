@@ -11,6 +11,32 @@ import { publishTrustedSeedWorkflowSource } from "./workflowBundlePublishing.js"
 
 export const defaultWorkflowEndpointSeeds = [
   {
+    // Generic release-event intake for the repo-agnostic docs-update
+    // workflow. Runyard's own GitHub Actions release job posts here; the
+    // Runyard-specific facts (repo key, docs path, framework) live in this
+    // seed's config — the workflow itself assumes nothing about the repo.
+    slug: "release-docs-update",
+    name: "Release docs update",
+    description: "Accepts release events (e.g. from GitHub Actions) and queues a docs-update run that reads only the diff between the previous and released tags.",
+    capabilitySlug: "docs-update",
+    repo: "runyard",
+    maxPayloadBytes: 64 * 1024,
+    rateLimitCount: 10,
+    rateLimitWindowMs: 60_000,
+    dedupeWindowMs: 10 * 60_000,
+    secretEnvKey: "releaseDocsUpdateEndpointSecret",
+    config: {
+      inputMode: "payload",
+      untrustedInput: true,
+      input: {
+        docsPath: "docs-site/content/docs",
+        docsFramework: "fumadocs",
+        updateMode: "propose",
+        adapter: { buildOutputPaths: ["docs-site/out"] }
+      }
+    }
+  },
+  {
     slug: "runyard-mobile-feedback",
     name: "Runyard mobile/app feedback",
     description: "Accepts trusted app-server feedback submissions and queues a constrained improve run for Runyard.",
@@ -105,7 +131,8 @@ export function createDbBootstrap({
     for (const endpoint of workflowEndpointSeeds) {
       const query = workflowEndpointSeedLookupQuery(endpoint.slug);
       const existing = one(query.sql, query.params);
-      const secret = env.runyardMobileFeedbackEndpointSecret || (existing ? "" : readOrCreateSeededEndpointSecret(endpoint.slug));
+      const secretEnvKey = endpoint.secretEnvKey || "runyardMobileFeedbackEndpointSecret";
+      const secret = env[secretEnvKey] || (existing ? "" : readOrCreateSeededEndpointSecret(endpoint.slug));
       upsertWorkflowEndpoint(endpoint, secret ? { secret } : {});
     }
   }

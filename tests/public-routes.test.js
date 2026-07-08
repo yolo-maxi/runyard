@@ -129,11 +129,13 @@ describe("public route helpers", () => {
     routeHandlers.landing(req(), anonymous);
     routeHandlers.landing(req({ token: { id: "tok_1" } }), authenticated);
     routeHandlers.app({}, app);
-    routeHandlers.docs({}, docs);
+    routeHandlers.docsSite({}, docs, () => {});
 
     assert.equal(anonymous.file, "/srv/runyard/public/landing.html");
     assert.deepEqual(authenticated.redirectArgs, [302, "/app"]);
     assert.equal(app.file, "/srv/runyard/public/index.html");
+    // No docs-site build exists under the fake root, so the docs mount
+    // falls back to the legacy single-page docs.html.
     assert.equal(docs.file, "/srv/runyard/public/docs.html");
   });
 

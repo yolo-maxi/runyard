@@ -1,0 +1,49 @@
+---
+title: Runners
+description: The machines that claim and execute runs via the Smithers engine - registration, tags, capacity, health, and sandboxing.
+---
+
+A **runner** is a machine that executes [runs](./runs.mdx). Runners run the Runyard runner process, which claims queued runs from the Hub and executes each workflow via the **Smithers engine** (`smithers up <workflow> --input <json>`), spawning the local agent CLI as the worker. Nothing is faked: the agent runs on the runner's machine, and the Hub is the durable record — events stream back as run events, and outputs and traces are uploaded as artifacts.
+
+## Registration, heartbeat, claim
+
+Runners speak a small machine protocol authenticated with **runner-scoped tokens** (see [Tokens & scopes](./tokens-and-scopes.mdx)):
+
+1. `POST /api/runners/register` — announce name, hostname, platform, version, tags, and capacity.
+2. `POST /api/runners/{id}/heartbeat` — periodic liveness; a stale heartbeat marks the runner offline.
+3. `GET /api/runners/{id}/next-run` — claim the next matching queued run. The claim payload carries everything the run needs, including decrypted [secrets](./secrets.mdx) for that run only.
+
+Run lifecycle reports (`start`, events, `complete`, `fail`, artifact upload) are restricted to the runner that owns the run: the Hub checks the claiming token's identity, so one runner's token cannot touch another runner's runs.
+
+## Tags and execution modes
+
+Runners advertise **tags** (for example `local` on a workstation, `vps` on a shared remote pool). Two things match runs to runners:
+
+- A workflow's `requiredRunnerTags` must all be present on the runner.
+- The caller's execution intent: `executionMode: "local" | "remote" | "auto"` (optionally a specific `runnerLocation`). `remote` targets the shared remote/VPS pool (default location `vps`); `auto` takes any matching runner.
+
+Preflight checks this matching up front and reports `no_matching_runner` (blocker) or `runners_offline` (warning — the run would queue until one returns).
+
+## Capacity and pool
+
+Each runner declares a `capacity` (concurrent run slots) and reports its active runs; the Hub assigns work only to free slots. `GET /api/runners` returns every registered runner with heartbeat state, capacity, active slots, plus a pool summary — the same data the **Runners** page in the web app shows (`#runners`).
+
+```bash
+curl -H "Authorization: Bearer $RUNYARD_TOKEN" https://hub.example.com/api/runners
+```
+
+## Sandboxing
+
+By default the runner executes workflows directly on its host. Setting `RUNNER_SANDBOX=bubblewrap` on the runner wraps each workflow *launch* in a generated Bubblewrap (`bwrap`) sandbox: the run's workspace is the only writable mount (bound at the same path inside and out), system directories are bound read-only, and the child gets a fresh workspace-local `HOME` — the host home directory, with its keys and credentials, is never mounted. Polling and control commands stay outside the sandbox. Installing `bwrap` is the deployer's responsibility; the runner verifies at startup that the sandbox actually works before claiming runs.
+
+## API & MCP
+
+| Endpoint | MCP tool | Notes |
+| --- | --- | --- |
+| `GET /api/runners` | `list_runners` | Runners, heartbeat state, capacity, slots, pool summary. |
+| `POST /api/runners/register` | — | Runner protocol (runner scope). |
+| `POST /api/runners/{id}/heartbeat` | — | Runner protocol. |
+| `GET /api/runners/{id}/next-run` | — | Runner protocol; claims the next run. |
+| `POST /api/runs/{id}/start` / `/complete` / `/fail` / `/events` / `/artifacts` | — | Runner protocol; run ownership enforced. |
+
+The runner protocol endpoints intentionally have no MCP tools — they are Hub↔runner machinery, not an operator surface.

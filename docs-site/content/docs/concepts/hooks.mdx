@@ -1,0 +1,60 @@
+---
+title: Hooks
+description: Post-run hook profiles - admin-defined, bounded side effects selected per run that never fail a green run.
+---
+
+A **post-run hook profile** is an admin-authored recipe for an optional side effect — publishing static output, pushing a work branch, calling a webhook — that runs *after* a [run](./runs.mdx) has produced its verified artifacts and its gates have passed. Hooks separate "the work succeeded" from "the side effect happened": callers opt in per run, and hook outcomes never rewrite a run's status.
+
+## Profiles are bounded on purpose
+
+Each profile has a fixed `kind` with a fixed set of config keys — anything else is rejected, so raw credentials or ad-hoc shell fragments can never be smuggled into a profile:
+
+| Kind | Effect |
+| --- | --- |
+| `static-publish` | Copy verified artifacts to a configured target root (optionally with a public URL base). |
+| `git-push` | Push a work branch to a configured remote. Protected branches (`main`, `master`) are refused — merging to the default branch stays behind explicit [run promotion](./runs.mdx). |
+| `webhook` | POST/PUT to an https URL, with optional headers and secret-backed headers. |
+| `vercel-preview` | Trigger a preview deploy for a configured project. |
+| `custom-script` | Run an allowlisted absolute command with declared, typed arguments — never a shell. |
+
+Profiles reference [secrets](./secrets.mdx) by **name only** (`secretNames`), declare typed `params` callers may fill, and can restrict which workflows may use them (`allowedCapabilities`).
+
+## Selecting hooks per run
+
+Selection is explicit and two-sided:
+
+1. The workflow must opt in via `workflow.hooks.allowedProfiles` (a list of profile slugs, or `"*"`); no opt-in means no hooks, default-closed.
+2. The caller selects profiles per run with `input.postRunHooks: ["publish-docs", …]`.
+
+Preflight rejects a request naming a profile that is disabled or not allowed for that workflow, so ineligible hooks surface before a run is created.
+
+```bash
+# Which profiles may this workflow select?
+curl -H "Authorization: Bearer $RUNYARD_TOKEN" \
+  "https://hub.example.com/api/hooks?workflow=idea-to-product"
+```
+
+Non-admin callers see enabled profiles in a caller-safe shape (slug, name, kind, params) — no paths, remotes, URLs, or secret names. Admins with `?all=1` see every profile with full config and readiness.
+
+## Hook outcomes never turn a green run red
+
+Hooks run after the run's gates pass, and their results are reported separately from the run status:
+
+| Outcome | Meaning |
+| --- | --- |
+| `succeeded` | The side effect completed. |
+| `hook_failed` | The side effect itself failed. |
+| `hook_config_required` | The profile cannot execute — typically missing named secrets or a disabled secret store. |
+| `hook_blocked` | The profile was not eligible for this run. |
+| `skipped` | The hook did not run. |
+
+A failed hook never rewrites a successful run into a failed one: the run keeps its own status and the hook results ride in the run output, aggregated into one headline hook status. `POST /api/hooks/{slug}/validate` is the admin dry-run: it reports `hook_config_required` with missing secret *names* only.
+
+## API & MCP
+
+| Endpoint | MCP tool | Notes |
+| --- | --- | --- |
+| `GET /api/hooks` | `list_hooks` | `?workflow=<slug>` narrows; admin `?all=1` includes disabled. |
+| `GET /api/hooks/{slug}` | `get_hook` | |
+| `POST /api/hooks`, `PATCH /api/hooks/{slug}` | `upsert_hook` | Admin. |
+| `POST /api/hooks/{slug}/validate` | `validate_hook` | Admin readiness dry-run. |

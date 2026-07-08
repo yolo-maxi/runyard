@@ -1,0 +1,46 @@
+---
+title: Versioning and releases
+description: How Runyard itself is versioned, gated, released, and self-updated — and how the docs track each release.
+---
+
+Runyard releases are semver git tags (`vX.Y.Z`). The version in `package.json` is the single source of truth and flows to `/api/version`, the OpenAPI document, the CLI, and the update checker.
+
+## CI pipeline
+
+The GitHub Actions pipeline (`.github/workflows/release.yml` and `images.yml`) has four jobs:
+
+| Job | Trigger | What it does |
+| --- | --- | --- |
+| `test` | Every PR and push to `main` (and tags) | `pnpm test` + `pnpm build` on Node 22. |
+| `sandbox-smoke` | Same | Real bubblewrap + AppArmor gate on Ubuntu 24.04: installs bwrap, loads the repo's AppArmor profile via the same script operators run, then runs the sandbox suites with `RUNYARD_REQUIRE_BWRAP=1` so the smoke test fails rather than skips. |
+| `release` | Pushed `v*` tags | Publishes the GitHub Release with generated notes — only after `test` and `sandbox-smoke` are green. A red run never publishes. |
+| `build-push` (images) | Pushed `v*` tags | Builds and pushes GHCR `hub` and `runner` container images behind the same two gates, and records both image digests as a release artifact. |
+
+## The release-train helper
+
+`scripts/release-train.mjs` gives operators (and the deployment watchdog) machine-readable release state:
+
+```bash
+node scripts/release-train.mjs status --json      # branch/tag facts + gate evidence
+node scripts/release-train.mjs gate test          # run a local gate, record pass/fail
+node scripts/release-train.mjs record sandbox-smoke --pass --note <ci-run-url>
+```
+
+Local gates are `test`, `build`, and `diff-check` (`git diff --check`); `sandbox-smoke` only runs on a real Actions kernel, so its evidence is recorded by hand from a green CI run. Evidence is keyed to the full HEAD SHA in `data/release-evidence.json`, so a green gate can never be inherited across new commits, and `status` tells you the next action (run a gate, fix a failure, tag).
+
+## Self-update for deployments
+
+A deployed Hub checks the public GitHub Releases API passively (outbound-only, `UPDATE_CHECK_ENABLED`, default on) and shows admins an update badge.
+
+| Surface | Operation |
+| --- | --- |
+| HTTP | `GET /api/update-status` (admin) — is a newer release available, current update state. |
+| HTTP | `POST /api/update/apply` (admin) — apply the update over HTTP; disabled unless `UPDATE_APPLY_ENABLED=1`. |
+| MCP | `get_update_status`, `apply_update`. |
+| CLI | `runyard update [tag]` on the host — the recommended path. |
+
+`runyard update` drains runners (bounded grace window; it aborts rather than kill in-flight runs), swaps the checkout to the new tag, restarts services, verifies health, and rolls back automatically on failure. The data directory (database, secrets, artifacts) survives every update and rollback.
+
+## Docs stay current
+
+Runyard ships a repo-agnostic `docs-update` workflow that keeps documentation honest against each release. When a release is published, a GitHub Actions step triggers it on the project's own Hub through an authenticated workflow endpoint (`release-docs-update`); the workflow inspects only the git diff between the previous and new release tags — never the whole repository — and reports proposed documentation updates. In its opt-in `apply` mode it edits docs in an isolated worktree branch instead, and that branch reaches the target branch only through a human-approved run promotion. The repository, docs path, docs framework, and file-selection rules are all workflow inputs, so any repo can adopt it.

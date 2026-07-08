@@ -1,0 +1,55 @@
+---
+title: Schedules
+description: Cron and one-shot triggers that create ordinary workflow runs on a cadence.
+---
+
+A **schedule** runs a [workflow](./workflows.mdx) automatically: either recurring on a **cron** cadence or once at a fixed **runAt** timestamp. Each fire creates a completely ordinary [run](./runs.mdx) with the schedule's stored input — it appears in run lists, honors the workflow's approval policy, and is executed by whatever runner matches.
+
+## Cron expressions and timezones
+
+Runyard uses standard **5-field cron** (`minute hour day-of-month month day-of-week`) with ranges (`a-b`), lists (`a,b,c`), steps (`*/n`, `a-b/n`), month/weekday names (`jan..dec`, `sun..sat`), and the aliases `@yearly`, `@monthly`, `@weekly`, `@daily`, `@hourly`. There is no seconds field — the Hub ticks at minute granularity.
+
+Every schedule has an **IANA timezone** (default `UTC`); the expression is evaluated against wall-clock time in that zone, so DST shifts are honored.
+
+```bash
+# Validate an expression and see the next fire times before saving anything
+curl -H "Authorization: Bearer $RUNYARD_TOKEN" \
+  "https://hub.example.com/api/schedules/preview?cron=0%209%20*%20*%20mon-fri&timezone=Europe/Rome"
+```
+
+The preview returns a human-readable description plus the next fire instants — nothing is created.
+
+## One-shot schedules
+
+Provide `runAt` (an ISO timestamp) instead of `cron` to fire exactly once. A schedule takes one or the other.
+
+## Enable, disable, run now
+
+- **Disable** stops a schedule from firing without deleting it; **enable** resumes the cadence. Both are admin actions.
+- **Run now** fires the schedule immediately without changing its cadence — useful for testing input before the next scheduled fire.
+
+Each schedule tracks `nextRunAt`, `lastRunAt`, the last run id, and the last fire status, all visible on the Schedules page (`#schedules`) and in the API.
+
+## What a fire produces
+
+Every fire dispatches a normal run whose origin identifies the schedule:
+
+```json
+{ "type": "schedule", "label": "schedule: Nightly digest", "scheduleId": "sch_123", "trigger": "ticker" }
+```
+
+(`trigger` is `ticker` for cadence fires, `manual` for run-now.) The run also gets a `run.scheduled` event recording the schedule, cron, and timezone. If the workflow's approval policy requires it, the run starts in `waiting_approval` like any other run.
+
+## API & MCP
+
+| Endpoint | MCP tool | Notes |
+| --- | --- | --- |
+| `GET /api/schedules` | `list_schedules` | Includes next/last run and a readable preview. |
+| `GET /api/schedules/preview` | `preview_schedule` | Query: `cron`, `timezone`. |
+| `GET /api/schedules/{id}` | `get_schedule` | |
+| `POST /api/schedules` | `create_schedule` | Admin. Body: `name`, `workflowSlug`, `cron` or `runAt`, `timezone`, `input`, `enabled`. |
+| `PATCH /api/schedules/{id}` | `update_schedule` | Admin. |
+| `POST /api/schedules/{id}/enable` | `enable_schedule` | Admin. |
+| `POST /api/schedules/{id}/disable` | `disable_schedule` | Admin. |
+| `POST /api/schedules/{id}/run-now` | `run_schedule_now` | Fires immediately; rate-limited. |
+| `DELETE /api/schedules/{id}` | `delete_schedule` | Admin. |

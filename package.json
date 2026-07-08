@@ -25,6 +25,7 @@
     "cli": "node src/cli.js",
     "build:vendor": "node bin/build-vendor.mjs",
     "build:web": "node bin/build-web.mjs",
+    "build:docs": "pnpm --dir docs-site install && pnpm --dir docs-site build",
     "watch:web": "node bin/build-web.mjs --watch",
     "build": "node bin/build-vendor.mjs && node bin/build-web.mjs",
     "smoke:smart-contract-audit": "node scripts/smoke-smart-contract-audit.mjs",

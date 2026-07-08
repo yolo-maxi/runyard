@@ -1,0 +1,73 @@
+---
+title: Workflows
+description: The catalog unit of Runyard - versioned definitions with schemas, immutable source bundles, and portable packages.
+---
+
+A **workflow** is the unit of the Runyard catalog: a named, versioned definition of something an agent can do. Each workflow has a slug, a display name and description, input/output schemas, and a source program that the runner executes. In older code and database tables the same object is called a *capability* — that is the legacy/internal synonym; user-facing surfaces say workflow.
+
+## Definition
+
+A workflow definition carries:
+
+| Field | Purpose |
+| --- | --- |
+| `slug`, `name`, `description`, `category`, `keywords` | Identity and catalog discovery (`GET /api/workflows?q=` searches). |
+| `inputSchema` / `outputSchema` | JSON schemas for run input and output. Required input fields drive [preflight questions](./runs.mdx). |
+| `requiredRunnerTags` | Tags a [runner](./runners.mdx) must advertise to be assigned a run. |
+| `requiredSkills` / `requiredAgents` | References into the [shared catalog](./agents-skills-knowledge.mdx). |
+| `approvalPolicy` | Whether new runs hold for an [approval](./approvals.mdx) before executing. |
+| `workflow` | Source configuration — most importantly `workflow.bundleId`, plus options like `hooks.allowedProfiles` for [post-run hooks](./hooks.mdx) and `secrets` for [secret delivery](./secrets.mdx). |
+| `enabled` | Disabled workflows disappear from the catalog for non-admins and cannot be run. |
+
+## Workflow source is data, not files
+
+Workflow source is created and edited through the API/MCP (`create_workflow` / `update_workflow` with inline source bytes) or by importing a workflow package. You never write workflow files to disk on the Hub or runner: custom workflows must carry source bytes or reference an existing `workflow.bundleId` — bare `workflow.entry` file paths are rejected.
+
+### DB-backed workflow bundles
+
+Published source lives in the Hub database as **workflow bundles**: immutable, hash-addressed rows in the `workflow_bundles` table. Publishing is insert-only — every publish creates a new `(workflow slug, version)` row with a `sha256` of the source, so a bundle id permanently names the exact bytes that were published. Bundles are capped at 500 KB, listing never returns source bytes, and a workflow that references a missing bundle fails preflight rather than silently falling back to a file.
+
+```bash
+# List bundle versions for one workflow (metadata only, never source bytes)
+curl -H "Authorization: Bearer $RUNYARD_TOKEN" \
+  "https://hub.example.com/api/workflow-bundles?capability=idea-to-product"
+
+# Fetch one bundle including its source code
+curl -H "Authorization: Bearer $RUNYARD_TOKEN" \
+  https://hub.example.com/api/workflow-bundles/wfb_abc123
+```
+
+Prefer `create_workflow` / `update_workflow` with inline source — they publish a bundle for you and point the workflow at it.
+
+## Versioning
+
+Updating a workflow bumps its integer `version` and snapshots the previous definition. `GET /api/workflows/{name}/versions` lists the versions observed on past runs, and every run records the `workflowVersion` it executed. Bundle versions count separately, per publish.
+
+## Workflow packages
+
+A **workflow package** is a portable `.runyard-workflow.json` file for moving a workflow between Hubs. Exports contain source bytes, metadata, requirements, and content/workflow hashes — never secret values. Imports publish the source as a new immutable bundle and create the workflow **disabled by default**, so an admin can configure and preflight it locally before enabling it. `validate` and `preview` let you check a package without writing anything.
+
+## Enabled and disabled
+
+`DELETE /api/workflows/{id}` disables a workflow rather than erasing it: historical runs stay intact, non-admins get a 404, and preflight blocks new runs until an admin re-enables it with `PATCH /api/workflows/{id}`.
+
+## API & MCP
+
+| Endpoint | MCP tool | Notes |
+| --- | --- | --- |
+| `GET /api/workflows` | `list_workflows`, `search_workflows` | `?q=` searches. |
+| `POST /api/workflows` | `create_workflow` | Admin. Inline source or `workflow.bundleId`. |
+| `GET /api/workflows/{id}` | `describe_workflow` | Definition and input schema. |
+| `PATCH /api/workflows/{id}` | `update_workflow` | Admin. |
+| `DELETE /api/workflows/{id}` | `delete_workflow` | Admin; disables. |
+| `GET /api/workflows/{id}/source` | `get_workflow_source` | Source, metadata, sections, graph. |
+| `GET /api/workflows/{name}/versions` | `list_workflow_versions` | Versions seen on runs. |
+| `GET /api/workflow-bundles` | `list_workflow_bundles` | Metadata only. |
+| `GET /api/workflow-bundles/{id}` | `get_workflow_bundle` | Includes source. |
+| `POST /api/workflow-bundles` | `publish_workflow_bundle` | Admin. |
+| `GET /api/workflow-packages/workflows/{id}/export` | `export_workflow_package` | Admin. |
+| `POST /api/workflow-packages/validate` | `validate_workflow_package` | Admin. |
+| `POST /api/workflow-packages/preview` | `preview_workflow_import` | Admin; nothing written. |
+| `POST /api/workflow-packages/import` | `import_workflow_package` | Admin; imports disabled. |
+
+Running a workflow (`POST /api/workflows/{id}/run`, `run_workflow`) and preflighting it are covered on the [Runs](./runs.mdx) page.

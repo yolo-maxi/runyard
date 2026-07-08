@@ -1,0 +1,185 @@
+---
+title: CLI
+description: Install the runyard CLI, connect it to a Hub, and drive workflows, runs, approvals, and runners from the terminal.
+---
+
+The `runyard` CLI is a thin client of the Hub's [HTTP API](./api.mdx). It talks
+to one or more Hubs ("remotes"), starts and tails workflow runs, resolves
+approvals, and can set up and start a runner on the local machine.
+
+## Install
+
+The fastest path is the install script served by your own Hub, which downloads
+the CLI tarball from the same instance (`/cli.tgz`), installs `runyard` and
+`runyard-mcp` into `~/.local/bin`, and logs you in:
+
+```bash
+curl -fsSL https://hub.example.com/install.sh | bash
+```
+
+It prompts for an access token (Web Hub → Connect) and a name for the
+connection. Alternatively, run the CLI from a source checkout of the
+repository with `pnpm cli -- <command>` (the checkout exposes the `runyard`,
+`runyard-mcp`, and `runyard-runner` binaries under `bin/`).
+
+## Connecting to a Hub
+
+The CLI stores named remotes (Hub URL + token) in `~/.runyard/config.json`
+(mode `0600`). Every command accepts global options `--url`, `--token`,
+`--remote <name>`, and `--json` (machine-readable output).
+
+```bash
+# Authenticate and save as a remote (prompts for URL/token if omitted)
+runyard login --remote default --url https://hub.example.com
+
+# Inspect and switch remotes
+runyard remotes            # list (alias: runyard remote list)
+runyard remote use staging
+runyard remote remove old  # alias: rm
+runyard logout             # remove the current remote (--all removes every remote)
+
+# Who am I? (token name + scopes)
+runyard status
+```
+
+Environment variables `RUNYARD_HUB_URL` / `RUNYARD_HUB_TOKEN` (and an explicit
+`--url` / `--token`) take precedence over the saved remote.
+
+## Discover and run workflows
+
+```bash
+runyard menu                     # next-action menu, top 5 workflows (alias: discover; --all for the full catalog)
+runyard workflows                # list workflows (-q <query> to search)
+runyard workflow describe <id>   # input schema, permissions, agents, skills
+
+# Dry-run the deterministic preflight — nothing is created
+runyard preflight my-workflow --input '{"topic": "hello"}' --where remote
+
+# Run it
+runyard run my-workflow \
+  --input '{"topic": "hello", "title": "Hello run"}' \
+  --where remote
+```
+
+`runyard run` options:
+
+| Option | Meaning |
+| ------ | ------- |
+| `-i, --input <json>` | JSON input for the run |
+| `--where <mode>` | Execution mode: `local` or `remote` (alias: `--execution-mode`) |
+| `--runner-location <location>` | Target a specific runner location tag |
+| `--negotiate` | Preflight first: enqueue only when ready, otherwise print the negotiation state (questions/blockers and a saved draft) without creating a run |
+| `--chain <json>` | JSON array of next workflow steps to queue after each run succeeds |
+| `--pin <sha>` | Pin the run to a specific workflow git SHA (requires capability versioning) |
+
+Related: `runyard workflow versions <workflow>` lists SHAs seen across runs and
+`runyard workflow rollback <workflow> <sha>` re-runs pinned to a prior SHA
+(`--from-run <id>` links it to the run being rolled back).
+
+## Watch and manage runs
+
+```bash
+runyard runs -s running          # list runs (filter by status)
+runyard run-status <id>          # run detail (alias: run-detail)
+runyard logs <id>                # print run logs
+runyard tail <runId>             # follow the unified timeline as NDJSON
+runyard tail <runId> --once      # one snapshot, then exit (--since <iso> to resume)
+runyard artifacts <runId>        # list a run's artifacts (omit runId to search across runs)
+runyard cancel <runId> -r "no longer needed"
+```
+
+`tail` emits `{ts, kind, source, payload}` lines built from status transitions,
+events, and artifacts, polling every 2 seconds with a `since` cursor — pipe it
+into `jq` or downstream tooling.
+
+## Approvals
+
+```bash
+runyard approvals                    # list pending approval cards
+runyard approve <id> -c "ship it"
+runyard reject <id> -c "wrong repo"
+runyard request-changes <id> -c "tighten the scope first"
+```
+
+## Workflow packages
+
+Workflows move between Hubs as portable `.runyard-workflow.json` package files
+— exported from one Hub and imported into another (admin token required).
+Imported workflows arrive **disabled** for review before enabling; this is the
+supported way to carry workflow source around, not files on a runner.
+
+```bash
+runyard workflow-package export my-workflow -o my-workflow.runyard-workflow.json
+runyard workflow-package validate my-workflow.runyard-workflow.json
+runyard workflow-package preview my-workflow.runyard-workflow.json --slug new-name
+runyard workflow-package import my-workflow.runyard-workflow.json
+```
+
+## Tokens, audit, and catalog
+
+Admin-scoped commands:
+
+```bash
+runyard token-create ci-bot --scopes api,mcp --expires-in-days 90
+runyard token-list
+runyard token-revoke <id>
+runyard audit                    # recent audit log
+```
+
+Reads available to any token: `runyard runners` (runner pool), `runyard agents`,
+`runyard skills`, `runyard knowledge -q <query>`, `runyard hooks
+[--workflow <slug>]`, and `runyard hook describe|validate <slug>`. Secrets have
+no CLI subcommand — manage them in the web UI, over the
+[API](./api.mdx) (`PUT /api/secrets/:key`), or with the MCP `set_secret` tool.
+
+## Runner setup
+
+Turn a machine into a runner in three steps. First scaffold a workspace
+(requires `bun` and the `smithers` engine on `PATH`; it warns if no `claude`,
+`codex`, or `pi` agent CLI is found):
+
+```bash
+runyard runner setup --workspace ~/runyard-workspace --location local
+```
+
+Then start the runner against the current remote (it inherits the remote's URL
+and token, or `RUNYARD_HUB_URL` / `RUNYARD_HUB_TOKEN`):
+
+```bash
+runyard runner start --workspace ~/runyard-workspace --location local
+```
+
+`--location` is `local` or `vps` and drives run routing (`--where local` runs
+land on `local`-tagged runners). You can also register a machine explicitly:
+
+```bash
+runyard runner register --name my-laptop --tags linux,node,git,shell,web,smithers --location local
+```
+
+For an always-on runner use the systemd unit instead — see
+[Installation](./installation.mdx).
+
+## MCP helpers
+
+```bash
+runyard mcp install --all    # configure detected AI clients to use this Hub
+runyard mcp config           # print the MCP config snippet (alias: runyard mcp-config)
+```
+
+See the [MCP guide](./mcp.mdx) for clients and options.
+
+## Updating a host install
+
+On a host that runs the Hub from a full checkout (not the thin CLI bundle),
+`runyard update [tag]` applies a release **on that host**: it drains runners,
+swaps the code, restarts the systemd units, verifies health, and rolls back
+automatically on failure. It is always operator-initiated.
+
+```bash
+runyard update            # latest release (asks for confirmation; -y to skip)
+runyard update v0.3.10    # a specific tag
+```
+
+Options: `--units <units>` (systemd units to restart, default
+`runyard runyard-runner`) and `--grace-ms <ms>` (bounded drain window before
+aborting — in-flight runs are never killed).

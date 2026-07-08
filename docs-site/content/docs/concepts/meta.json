@@ -1,0 +1,16 @@
+{
+  "title": "Concepts",
+  "pages": [
+    "index",
+    "workflows",
+    "runs",
+    "approvals",
+    "runners",
+    "schedules",
+    "agents-skills-knowledge",
+    "tokens-and-scopes",
+    "secrets",
+    "hooks",
+    "deep-links"
+  ]
+}

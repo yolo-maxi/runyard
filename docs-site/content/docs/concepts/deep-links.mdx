@@ -1,0 +1,43 @@
+---
+title: Deep Links
+description: Every Hub URL is shareable - the hash-route grammar of the web app and the deep links the API returns.
+---
+
+Every URL in the Runyard web app is shareable: the app is a hash-routed SPA, so any view — a run's logs, a workflow's graph, a pending approval — can be copied from the address bar and opened by anyone with access to the Hub. Links have the form:
+
+```
+https://hub.example.com/app#runs/run_abc123/logs
+```
+
+## Route grammar
+
+| Route | View |
+| --- | --- |
+| `#runs` | Run list (also the home view). |
+| `#runs/:id` | Run detail. |
+| `#runs/:id/logs` | Run logs tab. |
+| `#runs/:id/artifacts` | Run artifacts tab. |
+| `#runs/:id/artifacts/:artifactId` | A specific artifact. |
+| `#workflows` | Workflow catalog. |
+| `#workflows/:slug` | Workflow detail. |
+| `#workflows/:slug/graph` | Visual graph tab. |
+| `#workflows/:slug/code` | Source code tab. |
+| `#workflows/:slug/runs` | The workflow's runs. |
+| `#workflows/:slug/run` | Start-a-run form. |
+| `#workflows/:slug/edit` | Edit the workflow (admin). |
+| `#approvals`, `#approvals/:id` | Approval inbox / one card. |
+| `#schedules`, `#schedules/:id` | Schedules / one schedule. |
+| `#agents/agents`, `#agents/skills`, `#agents/knowledge` | The shared catalogs (append `/:slug` for one entry). |
+| `#runners` | Runner health and pool. |
+| `#tokens`, `#secrets`, `#audit`, `#settings`, `#connect` | Admin and setup views. |
+
+Segments are URL-encoded, so ids and slugs with special characters remain valid links. Some tabs accept aliases (for example `visual` for `graph`, `source` for `code`).
+
+## Deep links in API payloads
+
+The API hands these links back so agents and integrations can point humans at the right screen without building URLs themselves:
+
+- Approval cards carry `deepLink` (the card) and `deepLinkRun` (the linked run), and their `context` includes workflow and run deep links.
+- Run-creating responses (`run_workflow`, schedule run-now, draft submit) include link objects for following the run — its status, events, and artifacts endpoints.
+
+When an agent hands off to a human — "approve this", "read the logs" — prefer relaying the payload's deep link over describing where to click.

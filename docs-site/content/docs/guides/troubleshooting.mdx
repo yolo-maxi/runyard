@@ -1,0 +1,80 @@
+---
+title: Troubleshooting
+description: Practical fixes for stuck runs, failure classes, preflight blockers, auth errors, and delivery problems.
+---
+
+## A run is stuck in `queued`
+
+A queued run means no runner has claimed it — either no runner is online, or none matches the run's required tags / requested location (`local` vs `vps`/`remote`).
+
+```bash
+runyard runners            # GET /api/runners — heartbeat state, tags, capacity
+```
+
+A runner is considered offline after ~30 seconds without a heartbeat. If the runner should be online, check its service logs on the runner host:
+
+```bash
+journalctl -u runyard-runner -e
+```
+
+Common causes: the runner unit is idling because `RUNYARD_HUB_TOKEN` is empty or revoked; the runner's tags do not include what the workflow requires (`requiredRunnerTags`, for example `smithers`); or the run asked for `--where local` and only `vps` runners are registered. Running `runyard preflight <workflow>` before enqueueing catches `no_matching_runner` up front.
+
+## A run is in `waiting_approval`
+
+The run is held on an approval card, which is by design: approval-held runs are never failed or reaped for waiting. Find and resolve the card — web **Approvals**, `runyard approvals` then `runyard approve|reject|request-changes <approval-id>`, or the MCP tools. See [Approvals](./approvals-telegram).
+
+## Failure classes
+
+Terminal failures carry a class so you know whether to fix input, config, or infrastructure:
+
+| Class | Meaning | What to do |
+| --- | --- | --- |
+| `blocked_by_gate` | A quality gate (tests, lint, typecheck, build, eval) failed inside the workflow. | Read the run logs for the gate output; fix the underlying work and re-run. |
+| `blocked_by_preflight` | The runner's preflight refused to execute (missing workflow source, auth not ready, repo path problems). | Check run diagnostics; fix workflow config or runner setup. |
+| `provider_limited` | Model provider rate limit / quota / overload. | Wait and re-run; check the provider account. |
+| `timed_out` | The run exceeded a deadline or an operation timed out. | Re-run; if recurring, raise the workflow's time budget or shrink the job. |
+| `invalid_output` | The agent's output failed schema validation. | Inspect logs; tighten the prompt or loosen the output schema. |
+| `infra_unavailable` | Network/DNS/disk/spawn failures, runner offline mid-run. | Fix the runner host; re-run. |
+| `needs_human` | The workflow concluded a human must act. | Read the run output and the linked approval/escalation card. |
+| `failed` | Unclassified failure. | Start with diagnostics and logs. |
+
+## Preflight blockers
+
+`runyard preflight <workflow>` (or `POST /api/workflows/{id}/preflight`) reports `ready`, `needs_input` (with questions — usually missing required input fields), or `blocked` with coded blockers, including:
+
+- `missing_secret` / `secrets_unavailable` — required secrets are not stored, or the secret store is disabled (set `SECRETS_ENC_KEY` on the Hub, then `PUT /api/secrets/{key}`).
+- `no_matching_runner` — no registered runner matches the required tags/location.
+- `workflow_disabled`, `workflow_not_found` — an admin can re-enable via `PATCH /api/workflows/{id}`.
+- `workflow_bundle_missing` / `workflow_source_missing` — the definition references source that is not published; send source bytes via `update_workflow`.
+- `repo_dir_invalid`, `hook_blocked` — input points outside allowlisted repos, or requests hook profiles that are not enabled for the workflow.
+
+## 401 / 403 responses
+
+`401` means no valid token; `403 insufficient scope` means the token lacks the required scope (the response names it). Check what you are authenticated as:
+
+```bash
+runyard status        # GET /api/me — token name and scopes
+```
+
+Admin actions (creating workflows, secrets, tokens, schedules) need `admin`; running workflows needs `api` or `mcp`; the runner protocol needs `runner`. Ask a Hub admin for a token with the right scopes.
+
+## Secrets not configured
+
+If secret endpoints return an error about the store being disabled, the Hub has no valid `SECRETS_ENC_KEY`. Set a 32-byte base64/hex key in the Hub env file and restart. Note that rotating an existing key makes previously stored secrets unreadable.
+
+## Telegram not delivering
+
+Verify, in order: `TELEGRAM_BOT_TOKEN` and `TELEGRAM_APPROVAL_CHAT_ID` are set on the Hub; the bot's webhook points at `https://hub.example.com/api/telegram/webhook` with the matching `TELEGRAM_WEBHOOK_SECRET`; the bot is a member of the target chat; and the users pressing buttons are listed in `TELEGRAM_APPROVAL_USER_IDS`. Response-endpoint deliveries record their state (`status`, `attempts`, `last_error`) on `GET /api/runs/{id}` under `responseEndpoints[]`.
+
+## Runner agent auth expired
+
+Runs failing with provider auth errors usually mean the runner's `codex`/`claude` CLI login lapsed. On hosts with `REAUTH_ENABLED=1`, an admin can trigger re-auth from the web app (runner card → Re-auth): the Hub surfaces a verification URL and user code, and never token material. Otherwise, log in on the runner host directly (`codex login`, `claude setup-token`).
+
+## Where to look, generally
+
+| Surface | What it tells you |
+| --- | --- |
+| `GET /api/runs/{id}/diagnostics` | Structured diagnosis + log summary for a run (`get_run_diagnostics`). |
+| `runyard tail <run-id>` | Unified timeline: status transitions, events, artifacts as NDJSON. |
+| `runyard audit` | Who did what (admin). |
+| `GET /readyz` | Hub readiness — `503` means the Hub cannot serve (for example a database problem). |

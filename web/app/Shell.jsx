@@ -124,7 +124,7 @@ export function Shell({ me }) {
           </a>
         </nav>
         <nav className="nav" aria-label="Support and admin">
-          <a className="button support-link" href="/docs#deep-links" title="Every URL in the Hub is shareable — see Docs.">
+          <a className="button support-link" href="/docs/concepts/deep-links/" title="Every URL in the Hub is shareable — see Docs.">
             Docs
           </a>
           <a className="button support-link" href="/llms.txt">
@@ -142,7 +142,7 @@ export function Shell({ me }) {
               <span className="admin-label-short">More</span> <span aria-hidden="true">▾</span>
             </summary>
             <div className="admin-menu-list" role="menu">
-              <a className="mobile-menu-only" href="/docs#deep-links" role="menuitem">
+              <a className="mobile-menu-only" href="/docs/concepts/deep-links/" role="menuitem">
                 Docs
               </a>
               <a className="mobile-menu-only" href="/llms.txt" role="menuitem">
