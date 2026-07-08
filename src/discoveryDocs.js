@@ -17,7 +17,14 @@ const HUB_TOOL_NAMES = [
   "list_approvals",
   "list_hooks",
   "list_schedules",
+  "get_schedule",
+  "preview_schedule",
   "create_schedule",
+  "update_schedule",
+  "enable_schedule",
+  "disable_schedule",
+  "delete_schedule",
+  "run_schedule_now",
   "download_artifact"
 ];
 
@@ -137,6 +144,31 @@ export function renderLlmsTxt(baseUrl) {
   lines.push("   `runyard preflight <workflow>`, or POST /api/workflows/{id}/preflight.");
   lines.push("4. Fetch status, logs, outputs, artifacts, and the unified timeline from the Hub.");
   lines.push("5. Operators can run `runyard tail <run-id>` for an NDJSON timeline stream.");
+  lines.push("");
+  lines.push("Creating and editing workflows:");
+  lines.push("- Workflows are stored in the Hub database as immutable, versioned");
+  lines.push("  source bundles. Create or update them by sending workflow source");
+  lines.push("  bytes through MCP (create_workflow / update_workflow), HTTP");
+  lines.push("  (POST /api/workflows, PATCH /api/workflows/{id}), or by importing a");
+  lines.push("  portable package file (see below).");
+  lines.push("- Do NOT write workflow files to disk: custom workflows that reference");
+  lines.push("  bare workflow.entry file paths without source bytes are rejected.");
+  lines.push("  Repository-authored workflow files are reserved for the shipped");
+  lines.push("  internal/dev seed catalog only.");
+  lines.push("");
+  lines.push("Schedules (cron and one-shot):");
+  lines.push("- Schedules fire workflows on a recurring 5-field cron cadence");
+  lines.push("  (with IANA timezone support) or once at an ISO runAt timestamp.");
+  lines.push(`- HTTP lifecycle: GET/POST ${baseUrl}/api/schedules,`);
+  lines.push("  GET /api/schedules/preview?cron=...&timezone=..., and per-schedule");
+  lines.push("  GET/PATCH/DELETE /api/schedules/{id} plus");
+  lines.push("  POST /api/schedules/{id}/enable | /disable | /run-now.");
+  lines.push("- Equivalent MCP tools: list_schedules, get_schedule, preview_schedule,");
+  lines.push("  create_schedule, update_schedule, enable_schedule, disable_schedule,");
+  lines.push("  delete_schedule, run_schedule_now.");
+  lines.push("- Each fire creates a normal run (origin.type \"schedule\", a");
+  lines.push("  run.scheduled event, and last run status recorded on the schedule),");
+  lines.push("  so scheduled runs are traced like any other run.");
   lines.push("");
   lines.push("Response endpoints (optional):");
   lines.push("- POST /api/workflows/:id/run accepts an optional responseEndpoint:");

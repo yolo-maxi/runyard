@@ -143,7 +143,7 @@ export function WorkflowEditor({ slug = "", onClose, onSaved }) {
   return (
     <section id="editor" className="panel" ref={editorRef}>
       <h2>{slug ? "Edit" : "New"} Workflow</h2>
-      <p className="muted">Workflow definitions are seeded from git. Edits here are operational overrides and can be replaced by the next seeded definition change.</p>
+      <p className="muted">Workflows are stored as versioned bundles in the Hub database. Saving publishes a new version through the API — the same path agents use over MCP.</p>
       <form id="cap-form" className="form-grid" onSubmit={onSubmit}>
         <label>Name <span className="req">*</span>
           <input value={form.name} onChange={(e) => set("name", e.target.value)} required />

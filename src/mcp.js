@@ -139,6 +139,8 @@ const tools = [
       }
     }
   },
+  { name: "enable_schedule", description: "Enable a schedule so it fires on its cadence again. Requires an admin-scoped token.", inputSchema: { type: "object", required: ["scheduleId"], properties: { scheduleId: { type: "string" } } } },
+  { name: "disable_schedule", description: "Disable a schedule without deleting it; it keeps its definition but stops firing. Requires an admin-scoped token.", inputSchema: { type: "object", required: ["scheduleId"], properties: { scheduleId: { type: "string" } } } },
   { name: "delete_schedule", description: "Delete a schedule. Requires an admin-scoped token.", inputSchema: { type: "object", required: ["scheduleId"], properties: { scheduleId: { type: "string" } } } },
   { name: "run_schedule_now", description: "Fire a schedule immediately, creating a run outside its normal cadence. Requires an admin-scoped token.", inputSchema: { type: "object", required: ["scheduleId"], properties: { scheduleId: { type: "string" } } } },
   { name: "list_repo_options", description: "List allowlisted repos/projects this Hub can target without exposing raw paths.", inputSchema: { type: "object", properties: {} } },
@@ -320,6 +322,8 @@ async function callTool(name, args = {}) {
     if (name === "create_schedule") return result(await client.post("/api/schedules", body));
     return result(await client.patch(`/api/schedules/${encodeURIComponent(args.scheduleId || args.id)}`, body));
   }
+  if (name === "enable_schedule") return result(await client.post(`/api/schedules/${encodeURIComponent(args.scheduleId || args.id)}/enable`, {}));
+  if (name === "disable_schedule") return result(await client.post(`/api/schedules/${encodeURIComponent(args.scheduleId || args.id)}/disable`, {}));
   if (name === "delete_schedule") return result(await client.delete(`/api/schedules/${encodeURIComponent(args.scheduleId || args.id)}`));
   if (name === "run_schedule_now") return result(await client.post(`/api/schedules/${encodeURIComponent(args.scheduleId || args.id)}/run-now`, {}));
   if (name === "list_repo_options") return result(await client.get("/api/repo-options"));

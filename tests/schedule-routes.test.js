@@ -176,6 +176,27 @@ describe("schedule route helpers", () => {
     assert.ok(audits.some((audit) => audit.action === "schedule.fire_failed" && audit.target === "sched_bad"));
   });
 
+  it("records thrown fire exceptions on the schedule row, not just the audit log", () => {
+    const { audits, fireResults, handlers } = harness({
+      dueSchedules: [{
+        id: "sched_boom",
+        name: "Boom",
+        capabilitySlug: "research",
+        cron: "0 0 * * *",
+        timezone: "UTC",
+        input: {},
+        nextRunAt: "2026-06-30T00:00:00.000Z"
+      }],
+      claimScheduleFire: () => { throw new Error("db locked"); }
+    });
+
+    const fired = handlers.fireDueSchedules("2026-06-30T00:01:00.000Z");
+
+    assert.deepEqual(fired, []);
+    assert.deepEqual(fireResults, [{ scheduleId: "sched_boom", runId: null, status: "error: db locked" }]);
+    assert.ok(audits.some((audit) => audit.action === "schedule.fire_failed" && audit.detail.error === "db locked"));
+  });
+
   it("handles preview and CRUD route responses", () => {
     const { audits, handlers } = harness();
 

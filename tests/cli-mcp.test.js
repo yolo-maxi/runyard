@@ -191,6 +191,8 @@ describe("CLI/MCP discovery and execution intent", () => {
         "preview_schedule",
         "create_schedule",
         "update_schedule",
+        "enable_schedule",
+        "disable_schedule",
         "delete_schedule",
         "run_schedule_now",
         "download_artifact",
@@ -285,6 +287,12 @@ describe("CLI/MCP discovery and execution intent", () => {
 
       const fetched = parseToolText(await mcp.call("tools/call", { name: "get_schedule", arguments: { scheduleId } }));
       assert.equal(fetched.schedule.enabled, false);
+
+      const enabled = parseToolText(await mcp.call("tools/call", { name: "enable_schedule", arguments: { scheduleId } }));
+      assert.equal(enabled.schedule.enabled, true);
+
+      const disabled = parseToolText(await mcp.call("tools/call", { name: "disable_schedule", arguments: { scheduleId } }));
+      assert.equal(disabled.schedule.enabled, false);
 
       const deleted = parseToolText(await mcp.call("tools/call", { name: "delete_schedule", arguments: { scheduleId } }));
       assert.equal(deleted.deleted, true);

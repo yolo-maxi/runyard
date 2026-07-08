@@ -99,9 +99,9 @@ function OnboardingCard() {
   const steps = [
     {
       n: 1,
-      title: "Browse workflow templates",
-      body: "Start from a curated workflow. Each one ships with a sample input and a runner profile.",
-      cta: <a className="button" href="/workflow-templates/" target="_blank" rel="noopener">Browse templates ↗</a>
+      title: "Browse starter templates",
+      body: "Start from a curated workflow below. “Use template” publishes it straight to your Hub through the API — workflows live in the database, no files to save.",
+      cta: <button className="button" onClick={() => document.querySelector(".template-grid")?.scrollIntoView({ behavior: "smooth", block: "start" })}>See templates below ↓</button>
     },
     {
       n: 2,

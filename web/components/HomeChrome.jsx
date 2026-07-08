@@ -23,7 +23,7 @@ export function PrimaryActionBar({ runners = [], capabilities = [] }) {
     headline = "Publish your first workflow";
     sub = "Workflows are the actions agents and humans can trigger. Start from a template.";
     primary = { label: "Publish a workflow", href: "#workflows" };
-    secondary = [{ label: "Browse templates", href: "/workflow-templates/" }];
+    secondary = [{ label: "Browse templates", href: "#workflows" }];
   } else if (onlineRunners === 0) {
     tone = "warn";
     headline = "No active runners";

@@ -156,7 +156,7 @@ function CodeTab({ slug, cap }) {
             <p className="muted">Fetching the workflow source…</p>
           ) : !payload.available ? (
             <>
-              <p className="muted">{payload.message || "No workflow source file shipped for this workflow."}</p>
+              <p className="muted">{payload.message || "No source stored for this workflow yet. Publish source through the API or MCP to view it here."}</p>
               <p className="muted">Registered entry: <code>{cap?.workflow?.entry || "—"}</code></p>
             </>
           ) : def ? (

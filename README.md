@@ -12,6 +12,7 @@ One private deployment per company/org — no SaaS dependency, no shared databas
 - **Run** — one durable execution: `queued → running → succeeded/failed/cancelled`, pausing in `waiting_approval` for human sign-off. Keeps logs, events, outputs, artifacts, and a unified timeline.
 - **Runner** — a disposable process on a VPS or laptop that polls the Hub, claims matching runs, executes them, and uploads artifacts.
 - **Approval** — a human checkpoint resolved from Web, API, CLI, MCP, or Telegram and recorded once.
+- **Schedule** — a recurring cron (or one-shot `runAt`) timer that fires a workflow run on a cadence, managed over Web/API/MCP.
 - **Artifact / Agent / Skill / Knowledge** — persistent run outputs, reusable roles, reusable tooling packages, and shared company context.
 - **Access token** — the single bearer auth primitive for Web/API/CLI/MCP/runners; scopes (`api`, `mcp`, `runner`, `admin`) narrow what a token can do.
 
@@ -107,6 +108,19 @@ and content/source hashes. It never includes secret values. Import publishes the
 source into the target Hub's DB-backed workflow bundle store and creates the
 workflow disabled by default, so the target deployment can configure secrets,
 runners, hooks, and local preflight before enabling it.
+
+## Schedules (cron + one-shot)
+
+Schedules fire workflows on a recurring 5-field cron cadence (with IANA
+timezone support) or once at an ISO `runAt` timestamp. The full lifecycle is
+exposed over HTTP (`GET/POST /api/schedules`, `GET /api/schedules/preview`,
+`GET/PATCH/DELETE /api/schedules/{id}`, `POST .../enable|disable|run-now`),
+over MCP (`list_schedules`, `get_schedule`, `preview_schedule`,
+`create_schedule`, `update_schedule`, `enable_schedule`, `disable_schedule`,
+`delete_schedule`, `run_schedule_now`), and in the web app. Each fire creates
+a normal run with `origin.type "schedule"` and a `run.scheduled` event, and
+the schedule row records its last run id and status. The scheduler claims due
+schedules atomically, so concurrent ticks and restarts cannot double-fire.
 
 ## Agent-created run titles
 

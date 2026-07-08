@@ -92,6 +92,7 @@ export function createScheduleHandlers({
           recordAudit(`schedule:${schedule.id}`, "schedule.fire_failed", schedule.id, { error: result.error });
         }
       } catch (error) {
+        recordScheduleFireResult(schedule.id, null, `error: ${error.message}`.slice(0, 80));
         recordAudit(`schedule:${schedule.id}`, "schedule.fire_failed", schedule.id, { error: error.message });
       }
     }
