@@ -100,7 +100,7 @@ describe("runner runtime helpers", () => {
     assert.deepEqual(materializeAgentRuntimePack({ id: "run_2" }, null, { workspace: temp }), {});
   });
 
-  it("materializes DB workflow bundles to an isolated per-run file", () => {
+  it("materializes DB workflow bundles as a per-run file inside .smithers/workflows so relative imports resolve like templates", () => {
     const temp = mkdtempSync(path.join(os.tmpdir(), "runner-workflow-bundle-"));
     const code = "export default function Workflow() {}\n";
     const bundle = { id: "wfb_1", capabilitySlug: "deploy", version: 3, language: "tsx", sha256: workflowBundleSha256(code), code };
@@ -108,7 +108,11 @@ describe("runner runtime helpers", () => {
 
     const materialized = materializeWorkflowBundle({ id: "run_1" }, capability, bundle, { workspace: temp });
 
-    assert.equal(materialized.entry, path.join(temp, ".smithers", "workflow-bundles", "run_1", "wfb_1.v3.tsx"));
+    // Regression guard: bundles used to land in an isolated per-run directory,
+    // which broke every bundle-backed workflow importing "./lib.js" or
+    // "../agents" (they resolve only from the workflows directory).
+    assert.equal(materialized.entry, path.join(temp, ".smithers", "workflows", "wfb_1.v3.run_1.tsx"));
+    assert.equal(path.dirname(materialized.entry), path.join(temp, ".smithers", "workflows"));
     assert.equal(readFileSync(materialized.entry, "utf8"), code);
     assert.equal(materialized.bundleId, "wfb_1");
     assert.equal(materialized.version, 3);

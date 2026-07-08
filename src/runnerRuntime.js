@@ -83,9 +83,18 @@ export function materializeWorkflowBundle(run, capability, bundle, { workspace }
     throw new Error(`workflow bundle ${bundleId} sha256 mismatch: stored ${bundle.sha256 || "(none)"}, materialized ${sha256}`);
   }
   const language = /^[a-z0-9]{1,10}$/.test(String(bundle.language || "")) ? bundle.language : "tsx";
-  const bundleDir = path.join(workspace, ".smithers", "workflow-bundles", String(run.id));
+  // Materialize INTO .smithers/workflows (with a per-run filename) rather
+  // than an isolated per-run directory: bundle source uses the same relative
+  // imports as checked-in templates ("./improve-repo.js", "../agents"), and
+  // those only resolve from the workflows directory — an isolated directory
+  // breaks every bundle-backed workflow with a relative import at load time.
+  const runSegment = String(run.id);
+  if (!/^[A-Za-z0-9_-]+$/.test(runSegment)) {
+    throw new Error(`run id ${runSegment} has unsupported characters; refusing to materialize workflow bundle`);
+  }
+  const bundleDir = path.join(workspace, ".smithers", "workflows");
   mkdirSync(bundleDir, { recursive: true });
-  const entry = path.join(bundleDir, `${bundleId}.v${bundle.version || 0}.${language}`);
+  const entry = path.join(bundleDir, `${bundleId}.v${bundle.version || 0}.${runSegment}.${language}`);
   writeFileSync(entry, bundle.code, { mode: 0o600 });
   return {
     entry,
