@@ -1267,9 +1267,9 @@ describe("Hardening: scopes, tokens, run state, webhook, health", () => {
   });
 
   it("rejects unknown token scopes at mint time", async () => {
-    const res = await raw("/api/tokens", { method: "POST", body: { name: "typo", scopes: ["api", "read"] } });
+    const res = await raw("/api/tokens", { method: "POST", body: { name: "typo", scopes: ["api", "reed"] } });
     assert.equal(res.status, 400);
-    assert.deepEqual(res.data.unknown, ["read"]);
+    assert.deepEqual(res.data.unknown, ["reed"]);
   });
 
   it("enforces token scopes", async () => {

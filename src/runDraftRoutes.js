@@ -7,7 +7,7 @@
 // editable drafts instead of becoming failed runs.
 //
 //   POST  /api/run-drafts              create + preflight
-//   GET   /api/run-drafts              list (filter: status, capability)
+//   GET   /api/run-drafts              list (filter: status, workflow)
 //   GET   /api/run-drafts/:id          inspect
 //   PATCH /api/run-drafts/:id          answer questions / edit input, re-preflight
 //   POST  /api/run-drafts/:id/submit   enqueue the real run — only when ready
@@ -23,6 +23,8 @@ export function presentRunDraft(draft) {
   if (!draft) return null;
   return {
     id: draft.id,
+    workflow: draft.capabilitySlug,
+    // Legacy alias of `workflow`, kept for pre-v1 clients.
     capability: draft.capabilitySlug,
     status: draft.status,
     input: draft.input,
@@ -79,11 +81,11 @@ export function createRunDraftHandlers({
     const capability = getCapability(slug);
     const isAdmin = (req.token?.scopes || []).includes("admin");
     if (!capability || (!capability.enabled && !isAdmin)) {
-      res.status(404).json({ error: "capability not found" });
+      res.status(404).json({ error: "workflow not found" });
       return null;
     }
     if (capability.workflow?.adminOnly && !isAdmin) {
-      res.status(403).json({ error: "admin scope required", capability: capability.slug });
+      res.status(403).json({ error: "admin scope required", workflow: capability.slug });
       return null;
     }
     return capability;
@@ -111,16 +113,18 @@ export function createRunDraftHandlers({
     listRunDrafts(req, res) {
       const drafts = listRunDrafts({
         status: String(req.query.status || ""),
-        capability: String(req.query.capability || "")
+        // ?workflow= is canonical; ?capability= is the legacy alias.
+        capability: String(req.query.workflow || req.query.capability || "")
       });
       res.json({ drafts: drafts.map(presentRunDraft) });
     },
 
     createRunDraft(req, res) {
       const body = req.body || {};
-      const slug = String(body.capability || body.capabilitySlug || body.id || "").trim();
+      // `workflow` is the documented field; the capability names are legacy.
+      const slug = String(body.workflow || body.capability || body.capabilitySlug || body.id || "").trim();
       if (!slug) {
-        return res.status(400).json({ error: "capability is required" });
+        return res.status(400).json({ error: "workflow is required" });
       }
       const capability = capabilityAccess(req, res, slug);
       if (!capability) return;

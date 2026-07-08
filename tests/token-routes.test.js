@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  DEFAULT_TOKEN_SCOPES,
   KNOWN_TOKEN_SCOPES,
+  TOKEN_PRESETS,
+  TOKEN_SCOPE_METADATA,
   createTokenHandlers,
   revokeTokenDecision,
   tokenCreateInput
@@ -54,15 +57,51 @@ describe("token route helpers", () => {
   });
 
   it("rejects unknown scopes so typos never become long-lived credentials", () => {
-    const input = tokenCreateInput({ name: "oops", scopes: ["api", "read"] });
+    const input = tokenCreateInput({ name: "oops", scopes: ["api", "reed"] });
     assert.equal(input.error.status, 400);
-    assert.deepEqual(input.error.body.unknown, ["read"]);
+    assert.deepEqual(input.error.body.unknown, ["reed"]);
     assert.deepEqual(input.error.body.known, KNOWN_TOKEN_SCOPES);
 
-    // Every documented scope is mintable, including approvals (least-privilege bots).
+    // Every documented scope is mintable, including approvals and read
+    // (least-privilege bots and read-only monitors).
     for (const scope of KNOWN_TOKEN_SCOPES) {
       assert.equal(tokenCreateInput({ scopes: [scope] }).error, undefined, scope);
     }
+  });
+
+  it("keeps the scope metadata, presets, and defaults inside the known vocabulary", () => {
+    assert.deepEqual(
+      TOKEN_SCOPE_METADATA.map((entry) => entry.scope).sort(),
+      [...KNOWN_TOKEN_SCOPES].sort(),
+      "every known scope is described exactly once"
+    );
+    for (const entry of TOKEN_SCOPE_METADATA) {
+      assert.ok(entry.title.length > 1 && entry.summary.length > 20, `${entry.scope} needs a title and summary`);
+    }
+    for (const preset of TOKEN_PRESETS) {
+      for (const scope of preset.scopes) {
+        assert.ok(KNOWN_TOKEN_SCOPES.includes(scope), `preset ${preset.id} uses unknown scope ${scope}`);
+      }
+      assert.ok(preset.summary.length > 20, `preset ${preset.id} needs a summary`);
+    }
+    const defaults = TOKEN_PRESETS.filter((preset) => preset.default);
+    assert.equal(defaults.length, 1, "exactly one default preset");
+    assert.equal(defaults[0].id, "everything");
+    const readOnly = TOKEN_PRESETS.find((preset) => preset.id === "read-only");
+    assert.deepEqual(readOnly.scopes, ["read"], "read-only preset mints a read-scope token");
+    for (const scope of DEFAULT_TOKEN_SCOPES) {
+      assert.ok(KNOWN_TOKEN_SCOPES.includes(scope));
+    }
+  });
+
+  it("serves the scope vocabulary through the route handler", () => {
+    const { handlers } = harness();
+    const res = response();
+    handlers.listTokenScopes(req(), res);
+    assert.deepEqual(res.body.scopes, TOKEN_SCOPE_METADATA);
+    assert.deepEqual(res.body.presets, TOKEN_PRESETS);
+    assert.deepEqual(res.body.defaultScopes, DEFAULT_TOKEN_SCOPES);
+    assert.deepEqual(res.body.known, KNOWN_TOKEN_SCOPES);
   });
 
   it("400s through the route handler on unknown scopes without minting", () => {

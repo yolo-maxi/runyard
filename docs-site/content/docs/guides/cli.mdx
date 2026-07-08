@@ -70,7 +70,7 @@ runyard run my-workflow \
 | `--runner-location <location>` | Target a specific runner location tag |
 | `--negotiate` | Preflight first: enqueue only when ready, otherwise print the negotiation state (questions/blockers and a saved draft) without creating a run |
 | `--chain <json>` | JSON array of next workflow steps to queue after each run succeeds |
-| `--pin <sha>` | Pin the run to a specific workflow git SHA (requires capability versioning) |
+| `--pin <sha>` | Pin the run to a specific workflow git SHA (requires workflow versioning) |
 
 Related: `runyard workflow versions <workflow>` lists SHAs seen across runs and
 `runyard workflow rollback <workflow> <sha>` re-runs pinned to a prior SHA

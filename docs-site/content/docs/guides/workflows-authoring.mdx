@@ -100,7 +100,7 @@ Inspect what is stored:
 ```bash
 curl -sS https://hub.example.com/api/workflows/team-hello/source \
   -H "Authorization: Bearer $RUNYARD_TOKEN"        # parsed source, metadata, graph
-curl -sS "https://hub.example.com/api/workflow-bundles?capability=team-hello" \
+curl -sS "https://hub.example.com/api/workflow-bundles?workflow=team-hello" \
   -H "Authorization: Bearer $RUNYARD_TOKEN"        # bundle versions (never source bytes)
 ```
 

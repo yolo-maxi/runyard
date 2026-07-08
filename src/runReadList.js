@@ -3,7 +3,8 @@ import { boundedLimit } from "./httpQuery.js";
 export function runListQuery(rawQuery = {}, hiddenRunSlugs = []) {
   const status = rawQuery.status || "";
   const limit = boundedLimit(rawQuery.limit, 100, 500);
-  const capability = String(rawQuery.capability || rawQuery.capabilitySlug || "").trim();
+  // ?workflow= is canonical; ?capability= / ?capabilitySlug= are legacy aliases.
+  const capability = String(rawQuery.workflow || rawQuery.capability || rawQuery.capabilitySlug || "").trim();
   const hasWorkflowParam = Object.hasOwn(rawQuery, "workflows") || Object.hasOwn(rawQuery, "capabilities");
   const workflowParam = hasWorkflowParam ? String(rawQuery.workflows || rawQuery.capabilities || "").trim() : "";
   const workflowSlugs = [

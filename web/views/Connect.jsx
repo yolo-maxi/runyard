@@ -1,9 +1,11 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api.js";
 import { deepLinks } from "../lib/router.js";
 import { toast } from "../lib/toast.js";
 import { copyText } from "../lib/clipboard.js";
 import { Toolbar } from "../components/ui.jsx";
+import { EVERYTHING_SCOPES, ScopePicker } from "../components/ScopePicker.jsx";
 import { Tokens } from "./Tokens.jsx";
 
 // A read-only input + Copy button — mirrors legacy `.copy-row` markup so
@@ -39,11 +41,9 @@ function SecretRow({ id, value, label = "Secret" }) {
   );
 }
 
-const INVITE_SCOPES = ["api", "mcp", "runner", "admin"];
-
 // Connect an agent or teammate. Ported from legacy renderConnect(): setup cards
 // (MCP / CLI / HTTP API / Runner pool), the install + multi-org guidance, and
-// the invite-token generator (POST /api/tokens with selectable scopes).
+// the invite-token generator (POST /api/tokens with preset/scope selection).
 export function Connect() {
   const origin = location.origin;
   const installCmd = `bash <(curl -fsSL ${origin}/install.sh)`;
@@ -52,22 +52,16 @@ export function Connect() {
   const apiSnippet = `curl -H "authorization: Bearer $TOKEN" ${origin}/api/menu`;
   const runnerSnippet = `RUNYARD_HUB_URL=${origin} \\\nRUNYARD_HUB_TOKEN=shub_... \\\nSMITHERS_RUNNER_TAGS=linux,node,git,shell,web,smithers \\\nrunyard-runner`;
 
+  const { data: scopeMeta } = useQuery({ queryKey: ["token-scopes"], queryFn: () => api("/api/tokens/scopes") });
   const [name, setName] = useState("teammate");
-  const [scopes, setScopes] = useState(() => new Set(["api", "mcp"]));
+  // Default to the Everything preset; Read-only / Runner are one click away.
+  const [scopes, setScopes] = useState(() => new Set(EVERYTHING_SCOPES));
   const [issued, setIssued] = useState(null); // { token } once minted
-
-  function toggleScope(scope) {
-    setScopes((prev) => {
-      const next = new Set(prev);
-      if (next.has(scope)) next.delete(scope);
-      else next.add(scope);
-      return next;
-    });
-  }
 
   async function onSubmit(event) {
     event.preventDefault();
-    const selected = INVITE_SCOPES.filter((s) => scopes.has(s));
+    const known = scopeMeta?.known || [...scopes];
+    const selected = known.filter((s) => scopes.has(s));
     if (!selected.length) {
       toast("Pick at least one scope", "error");
       return;
@@ -130,13 +124,11 @@ export function Connect() {
           <p className="muted">Generate a token to hand them. They run the install command above and paste this when asked — no secret baked into any command.</p>
           <form id="invite-form" className="form-grid" onSubmit={onSubmit}>
             <label>Scopes
-              <div className="toolbar-actions">
-                {INVITE_SCOPES.map((s) => (
-                  <label className="muted" key={s}>
-                    <input type="checkbox" className="invite-scope" value={s} checked={scopes.has(s)} onChange={() => toggleScope(s)} /> {s}
-                  </label>
-                ))}
-              </div>
+              {scopeMeta ? (
+                <ScopePicker selected={scopes} onChange={setScopes} meta={scopeMeta} />
+              ) : (
+                <p className="muted">Loading scopes…</p>
+              )}
             </label>
             <label>Label<input id="invite-name" value={name} onChange={(e) => setName(e.target.value)} /></label>
             <button className="primary" type="submit">Generate token</button>
@@ -160,8 +152,9 @@ export function Connect() {
       <section className="panel">
         <h2>Access tokens</h2>
         <p className="muted">
-          Create, inspect, and revoke API/MCP/runner/admin tokens from the same
-          place you use to connect agents and teammates.
+          Create, inspect, and revoke tokens from the same place you use to
+          connect agents and teammates. Presets cover the common cases —
+          everything, read-only, approvals-only, runner, admin.
         </p>
       </section>
       <Tokens embedded />

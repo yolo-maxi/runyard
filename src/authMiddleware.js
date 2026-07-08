@@ -34,6 +34,9 @@ export function createAuthMiddleware({
   }
 
   // Scope enforcement. `admin` is a superscope that satisfies every requirement.
+  // `read` is the opposite: it never appears in a mutation's scope list, so a
+  // read-only token authenticates (reads mostly require auth, not a scope)
+  // but fails every scope-gated write with 403.
   function requireScopes(...needed) {
     return (req, res, next) => {
       const scopes = req.token?.scopes || [];

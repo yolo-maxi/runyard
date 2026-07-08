@@ -8,7 +8,8 @@ export function createWorkflowBundleHandlers({
 } = {}) {
   return {
     listWorkflowBundles(req, res) {
-      const capabilitySlug = String(req.query.capability || "").trim();
+      // ?workflow= is canonical; ?capability= is the legacy alias.
+      const capabilitySlug = String(req.query.workflow || req.query.capability || "").trim();
       res.json({ bundles: listWorkflowBundles({ capabilitySlug }) });
     },
 
@@ -21,7 +22,7 @@ export function createWorkflowBundleHandlers({
     publishWorkflowBundle(req, res) {
       try {
         const bundle = publishWorkflowBundle({
-          capabilitySlug: req.body.capabilitySlug || req.body.capability_slug || "",
+          capabilitySlug: req.body.workflowSlug || req.body.capabilitySlug || req.body.capability_slug || "",
           code: req.body.code,
           language: req.body.language || "",
           createdBy: actorName(req.token)

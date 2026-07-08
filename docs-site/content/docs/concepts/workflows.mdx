@@ -30,7 +30,7 @@ Published source lives in the Hub database as **workflow bundles**: immutable, h
 ```bash
 # List bundle versions for one workflow (metadata only, never source bytes)
 curl -H "Authorization: Bearer $RUNYARD_TOKEN" \
-  "https://hub.example.com/api/workflow-bundles?capability=idea-to-product"
+  "https://hub.example.com/api/workflow-bundles?workflow=idea-to-product"
 
 # Fetch one bundle including its source code
 curl -H "Authorization: Bearer $RUNYARD_TOKEN" \

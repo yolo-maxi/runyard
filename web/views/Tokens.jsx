@@ -5,8 +5,7 @@ import { deepLinks } from "../lib/router.js";
 import { copyText } from "../lib/clipboard.js";
 import { toast } from "../lib/toast.js";
 import { Toolbar, StatusBadge } from "../components/ui.jsx";
-
-const TOKEN_SCOPES = ["api", "mcp", "runner", "admin"];
+import { EVERYTHING_SCOPES, ScopePicker, presetForScopes } from "../components/ScopePicker.jsx";
 
 // Reveal/copy a secret shown only once (e.g. a freshly minted token). Mirrors
 // legacy secretInput() + bindSecretToggles() markup/classes/behaviour.
@@ -31,8 +30,20 @@ function SecretInput({ id, value, label = "Secret" }) {
   );
 }
 
+// Readable scope display for the token list: the preset name when the scopes
+// match one (e.g. "Read-only"), always followed by the raw scope codes.
+export function TokenScopes({ scopes = [], meta }) {
+  const preset = presetForScopes(scopes, meta);
+  return (
+    <>
+      {preset ? <>{preset.title}<br /></> : null}
+      <span className="muted">{scopes.join(", ")}</span>
+    </>
+  );
+}
+
 // Existing tokens table. Ported from legacy tokenTable().
-function TokenTable({ tokens, onRevoke }) {
+function TokenTable({ tokens, meta, onRevoke }) {
   if (!tokens.length) return <p className="muted">No tokens.</p>;
   return (
     <table className="table">
@@ -45,7 +56,7 @@ function TokenTable({ tokens, onRevoke }) {
             <td data-label="Name">
               {token.name}<br /><span className="muted">{token.id}</span>
             </td>
-            <td data-label="Scopes">{(token.scopes || []).join(", ")}</td>
+            <td data-label="Scopes"><TokenScopes scopes={token.scopes || []} meta={meta} /></td>
             <td data-label="State">
               <StatusBadge value={token.active ? "online" : "offline"} />
               {token.expiresAt ? (
@@ -70,24 +81,23 @@ function TokenTable({ tokens, onRevoke }) {
 export function Tokens({ embedded = false } = {}) {
   const queryClient = useQueryClient();
   const { data, isLoading } = useQuery({ queryKey: ["tokens"], queryFn: () => api("/api/tokens") });
+  const { data: scopeMeta } = useQuery({ queryKey: ["token-scopes"], queryFn: () => api("/api/tokens/scopes") });
 
   const [name, setName] = useState("local agent");
-  const [scopes, setScopes] = useState(() => new Set(["api", "mcp"]));
+  // Default to the Everything preset; Read-only is one preset click away.
+  const [scopes, setScopes] = useState(() => new Set(EVERYTHING_SCOPES));
   const [expiry, setExpiry] = useState("0");
   const [created, setCreated] = useState(null);
-
-  function toggleScope(scope) {
-    setScopes((prev) => {
-      const next = new Set(prev);
-      if (next.has(scope)) next.delete(scope); else next.add(scope);
-      return next;
-    });
-  }
 
   async function handleCreate(event) {
     event.preventDefault();
     const expiresInDays = Number(expiry || 0);
-    const selected = TOKEN_SCOPES.filter((scope) => scopes.has(scope));
+    const known = scopeMeta?.known || [...scopes];
+    const selected = known.filter((scope) => scopes.has(scope));
+    if (!selected.length) {
+      toast("Pick at least one scope", "error");
+      return;
+    }
     try {
       const result = await api("/api/tokens", {
         method: "POST",
@@ -127,20 +137,11 @@ export function Tokens({ embedded = false } = {}) {
             </label>
             <label>
               Scopes
-              <div className="toolbar-actions">
-                {TOKEN_SCOPES.map((scope) => (
-                  <label className="muted" key={scope}>
-                    <input
-                      type="checkbox"
-                      className="token-scope"
-                      value={scope}
-                      checked={scopes.has(scope)}
-                      onChange={() => toggleScope(scope)}
-                    />{" "}
-                    {scope}
-                  </label>
-                ))}
-              </div>
+              {scopeMeta ? (
+                <ScopePicker selected={scopes} onChange={setScopes} meta={scopeMeta} />
+              ) : (
+                <p className="muted">Loading scopes…</p>
+              )}
             </label>
             <label>
               Expires in days (0 = never)
@@ -162,7 +163,7 @@ export function Tokens({ embedded = false } = {}) {
         </div>
         <div className="panel">
           <h2>Existing Tokens</h2>
-          {isLoading ? <p className="muted">Loading…</p> : <TokenTable tokens={tokens} onRevoke={handleRevoke} />}
+          {isLoading ? <p className="muted">Loading…</p> : <TokenTable tokens={tokens} meta={scopeMeta} onRevoke={handleRevoke} />}
         </div>
       </section>
     </>

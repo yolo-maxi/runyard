@@ -11,7 +11,7 @@ describe("server route registration", () => {
 
     assert.ok(app.calls.length > 60);
     assertRoute(app, "get", "/healthz", [deps.publicHandlers.healthz]);
-    assertRoute(app, "get", "/api/menu", [deps.requireAuth, deps.scopes["api,mcp"], deps.publicHandlers.menu]);
+    assertRoute(app, "get", "/api/menu", [deps.requireAuth, deps.scopes["api,mcp,read"], deps.publicHandlers.menu]);
     assertRoute(app, "post", "/api/auth/token-login", [deps.rateLimits.login, deps.authHandlers.tokenLogin]);
     assertRoute(app, "post", "/api/runs/:id/complete", [
       deps.requireAuth,
@@ -51,6 +51,12 @@ describe("server route registration", () => {
     assertRoute(app, "post", "/api/runners/register", [deps.requireAuth, deps.scopes.runner]);
     assertRoute(app, "post", "/api/chat", [deps.requireAuth, deps.rateLimits["support-chat"]]);
     assertRoute(app, "use", "/public");
+    // Grouped /api/v1 aliases share the canonical middleware and handlers.
+    assertRoute(app, "get", "/api/v1/admin/tokens/scopes", [deps.requireAuth, deps.scopes.admin, deps.tokenHandlers.listTokenScopes]);
+    assertRoute(app, "get", "/api/v1/automation/schedules", [deps.requireAuth, deps.scheduleHandlers.listSchedules]);
+    assertRoute(app, "post", "/api/v1/workflows/:id/preflight", [deps.requireAuth, deps.scopes["api,mcp"], deps.capabilityHandlers.preflightWorkflow]);
+    assertRoute(app, "get", "/api/v1/runs/drafts", [deps.requireAuth, deps.runDraftHandlers.listRunDrafts]);
+    assertRoute(app, "get", "/api/v1/system/menu", [deps.requireAuth, deps.scopes["api,mcp,read"], deps.publicHandlers.menu]);
   });
 });
 
@@ -114,7 +120,7 @@ function routeDeps() {
     scheduleHandlers: handlers(["listSchedules", "previewSchedule", "getSchedule", "createSchedule", "updateSchedule", "enableSchedule", "disableSchedule", "deleteSchedule", "runScheduleNowRoute"]),
     secretHandlers: handlers(["requireSecretsEnabled", "listSecrets", "upsertSecret", "deleteSecret"]),
     supportChatHandlers: handlers(["status", "chat"]),
-    tokenHandlers: handlers(["listTokens", "createToken", "revokeToken"]),
+    tokenHandlers: handlers(["listTokens", "listTokenScopes", "createToken", "revokeToken"]),
     updateHandlers: handlers(["status", "apply"]),
     workflowBundleHandlers: handlers(["listWorkflowBundles", "publishWorkflowBundle", "getWorkflowBundle"]),
     workflowPackageHandlers: handlers(["exportWorkflowPackage", "validateWorkflowPackage", "previewWorkflowPackageImport", "importWorkflowPackage"]),

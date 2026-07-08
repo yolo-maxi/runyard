@@ -1,4 +1,4 @@
-import { openApiPathsFromSurface } from "./apiSurface.js";
+import { API_GROUPS, openApiPathsFromSurface } from "./apiSurface.js";
 
 // Tool names shared by the authenticated menu payload and the public llms.txt.
 // These are the same for every deployment; only the workflow catalog is private.
@@ -143,8 +143,22 @@ export function renderLlmsTxt(baseUrl) {
   lines.push("  lists, and human handoff stay decipherable.");
   lines.push("");
   lines.push("Authenticate with a Hub access token using Bearer auth. Tokens carry");
-  lines.push("scopes (api, mcp, runner, admin). Ask this Hub's administrator for a");
-  lines.push("token; admins issue them from the Connect tab in the web app.");
+  lines.push("scopes (api, mcp, approvals, read, runner, admin); a token with only");
+  lines.push("the read scope is read-only — it can inspect workflows, runs, logs,");
+  lines.push("approvals, and schedules but cannot change anything. Ask this Hub's");
+  lines.push("administrator for a token; admins issue them from the Connect tab in");
+  lines.push("the web app (GET /api/tokens/scopes lists scopes and presets).");
+  lines.push("");
+  lines.push("API groups:");
+  lines.push("- The API is organized into groups, exposed as OpenAPI tags:");
+  lines.push("  workflows, runs, approvals, automation (schedules + endpoints),");
+  lines.push("  library (agents, skills, knowledge, hooks), distribution (bundles,");
+  lines.push("  packages), admin (tokens, secrets, audit, alerts, updates), and");
+  lines.push("  system (health, version, menu, dashboard, runners).");
+  lines.push("- Grouped operations also answer at stable /api/v1 aliases, e.g.");
+  lines.push(`  ${baseUrl}/api/v1/automation/schedules or ${baseUrl}/api/v1/runs.`);
+  lines.push("  Aliases share the canonical route's auth and scopes; unversioned");
+  lines.push("  /api paths remain fully supported.");
   lines.push("");
   lines.push("Run path:");
   lines.push("1. Discover with get_menu / list_workflows.");
@@ -236,7 +250,11 @@ export function openApiDocument({ baseUrl, version }) {
       version,
       description:
         "Self-hosted control plane for agent runs. The Web Hub, CLI, and MCP server all drive this same JSON API. " +
-        "Authenticate every request with `Authorization: Bearer shub_...`; tokens carry scopes (api, mcp, runner, admin) and the bootstrap token is full admin. " +
+        "Authenticate every request with `Authorization: Bearer shub_...`; tokens carry scopes (api, mcp, approvals, read, runner, admin) and the bootstrap token is full admin. " +
+        "A token with only the read scope is read-only: it can inspect state but satisfies no create/update/delete/run/approve endpoint. " +
+        "Operations are organized into groups — workflows, runs, approvals, automation, library, distribution, admin, system — exposed as the tags below. " +
+        "Every grouped operation is also reachable at a stable /v1 alias (e.g. /v1/automation/schedules for /schedules); aliases share the canonical route's handler, auth, and scopes, and carry x-canonical-path. " +
+        "Unversioned paths remain fully supported. Paths under /capabilities are deprecated legacy aliases of /workflows. " +
         "Typical flow: discover workflows (GET /menu or /workflows), start a run (POST /workflows/{id}/run with executionMode local|remote), then poll /runs/{id} and read /runs/{id}/timeline, /logs, and /artifacts. " +
         "Runs that need a human checkpoint enter waiting_approval and are resolved via /approvals/{id}/approve|reject|request-changes. " +
         "Liveness endpoints (/healthz, /readyz, /api/version) and discovery copy (/llms.txt, this document) are unauthenticated and served from the repo root, not under /api."
@@ -244,6 +262,7 @@ export function openApiDocument({ baseUrl, version }) {
     servers: [{ url: `${baseUrl}/api` }],
     security: [{ bearerAuth: [] }],
     components: { securitySchemes: { bearerAuth: { type: "http", scheme: "bearer" } } },
+    tags: Object.entries(API_GROUPS).map(([name, group]) => ({ name, description: group.description })),
     // Generated from the API surface registry (src/apiSurface.js) so this
     // document can never drift from the routes the server actually registers.
     paths: openApiPathsFromSurface()

@@ -247,7 +247,7 @@ export function WorkflowDetail({ slug, sub = "" }) {
   const runsQuery = useQuery({
     queryKey: ["runs", "for-workflow", slug],
     queryFn: async () => {
-      try { return (await api(`/api/runs?capability=${encodeURIComponent(slug)}&limit=20`)).runs ?? []; } catch { return []; }
+      try { return (await api(`/api/runs?workflow=${encodeURIComponent(slug)}&limit=20`)).runs ?? []; } catch { return []; }
     },
     refetchInterval: 4000
   });

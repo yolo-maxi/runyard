@@ -1244,6 +1244,55 @@ label.inline input {
   }
 }
 
+/* Token scope picker: preset buttons above collapsible scope groups. */
+.scope-picker {
+  display: grid;
+  gap: 8px;
+}
+
+.scope-presets {
+  flex-wrap: wrap;
+}
+
+.scope-picker .scope-preset-summary {
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: var(--lh-xs);
+}
+
+details.scope-group {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 10px;
+  background: var(--soft);
+}
+
+details.scope-group summary {
+  cursor: pointer;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
+  color: #334155;
+}
+
+details.scope-group[open] summary {
+  margin-bottom: 6px;
+}
+
+.form-grid label.scope-option,
+.scope-option {
+  display: block;
+  margin: 4px 0;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-sm);
+}
+
+.scope-option .scope-option-summary {
+  display: block;
+  margin-left: 22px;
+  font-size: var(--fs-xs);
+  line-height: var(--lh-xs);
+}
+
 details.advanced {
   border: 1px solid var(--line);
   border-radius: 8px;

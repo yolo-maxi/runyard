@@ -160,6 +160,7 @@ async function callTool(name, args = {}) {
     return result(await response.json());
   }
   if (name === "list_tokens") return result(await client.get("/api/tokens"));
+  if (name === "list_token_scopes") return result(await client.get("/api/tokens/scopes"));
   if (name === "create_token") return result(await client.post("/api/tokens", {
     name: args.name,
     scopes: args.scopes || ["api", "mcp"],

@@ -15,7 +15,10 @@ process.env.SMITHERS_HUB_SESSION_SECRET = "test-secret";
 process.env.SMITHERS_HUB_BOOTSTRAP_TOKEN = "shub_test_token";
 
 const {
+  API_GROUPS,
   API_SURFACE,
+  apiV1AliasOperations,
+  fullApiSurface,
   mcpExemptOperations,
   mcpToolCoverage,
   openApiPathsFromSurface
@@ -32,10 +35,10 @@ const { registerServerRoutes } = await import("../src/serverRoutes.js");
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 describe("api surface registry", () => {
-  it("has unique method+path entries with summaries and known scopes", () => {
+  it("has unique method+path entries with summaries and known scopes, including v1 aliases", () => {
     const seen = new Set();
-    const knownScopes = new Set(["api", "mcp", "runner", "admin", "approvals"]);
-    for (const operation of API_SURFACE) {
+    const knownScopes = new Set(["api", "mcp", "runner", "admin", "approvals", "read"]);
+    for (const operation of fullApiSurface()) {
       const key = `${operation.method} ${operation.path}`;
       assert.ok(!seen.has(key), `duplicate registry entry ${key}`);
       seen.add(key);
@@ -49,13 +52,47 @@ describe("api surface registry", () => {
     }
   });
 
+  it("assigns every entry to a known API group", () => {
+    for (const operation of API_SURFACE) {
+      assert.ok(
+        API_GROUPS[operation.group],
+        `${operation.method} ${operation.path} needs a group from API_GROUPS (got ${operation.group})`
+      );
+    }
+  });
+
+  it("derives v1 aliases that share the canonical operation's contract", () => {
+    const aliases = apiV1AliasOperations();
+    assert.ok(aliases.length >= 60, `expected a substantial v1 alias surface, got ${aliases.length}`);
+    const canonical = new Map(API_SURFACE.map((operation) => [`${operation.method} ${operation.path}`, operation]));
+    for (const alias of aliases) {
+      assert.ok(alias.path.startsWith("/api/v1/"), `${alias.path} must live under /api/v1/`);
+      const source = canonical.get(`${alias.method} ${alias.aliasFor}`);
+      assert.ok(source, `alias ${alias.method} ${alias.path} points at unknown canonical ${alias.aliasFor}`);
+      assert.equal(alias.handler, source.handler, `${alias.path} handler drifted`);
+      assert.deepEqual(alias.scopes, source.scopes, `${alias.path} scopes drifted`);
+      assert.equal(alias.auth, source.auth, `${alias.path} auth drifted`);
+      assert.ok(!source.deprecated, `${alias.path} must not alias the deprecated ${alias.aliasFor}`);
+      assert.ok(!source.external, `${alias.path} cannot alias externally registered ${alias.aliasFor}`);
+      assert.ok(!alias.mcp, `${alias.path} must not add MCP tools`);
+      assert.ok(alias.mcpExempt.length > 10, `${alias.path} needs an mcpExempt reason`);
+    }
+    // Legacy capability paths, runner machine-protocol operations, and
+    // externally registered routes stay unversioned.
+    for (const operation of API_SURFACE) {
+      if (operation.deprecated || operation.external || operation.runnerOwner) {
+        assert.ok(!operation.v1Path, `${operation.method} ${operation.path} must not declare v1Path`);
+      }
+    }
+  });
+
   it("registers exactly the routes the registry declares, with the declared middleware", () => {
     const app = mockApp();
     const deps = routeDeps();
     registerServerRoutes(app, deps);
 
     const registered = new Map(app.calls.map((call) => [`${call.method} ${call.path}`, call]));
-    const expected = new Map(API_SURFACE.map((operation) => [
+    const expected = new Map(fullApiSurface().map((operation) => [
       `${operation.method === "static" ? "use" : operation.method} ${operation.path}`,
       operation
     ]));
@@ -86,6 +123,27 @@ describe("api surface registry", () => {
       } else {
         assert.equal(terminal, resolveDep(deps, operation.handler), `${key} handler`);
       }
+    }
+  });
+
+  it("registers each v1 alias with exactly the canonical route's middleware chain", () => {
+    const app = mockApp();
+    const deps = routeDeps();
+    registerServerRoutes(app, deps);
+    const byKey = new Map(app.calls.map((call) => [`${call.method} ${call.path}`, call]));
+    for (const alias of apiV1AliasOperations()) {
+      const aliasCall = byKey.get(`${alias.method} ${alias.path}`);
+      const canonicalCall = byKey.get(`${alias.method} ${alias.aliasFor}`);
+      assert.ok(aliasCall, `alias ${alias.method} ${alias.path} was not registered`);
+      assert.ok(canonicalCall, `canonical ${alias.method} ${alias.aliasFor} was not registered`);
+      assert.equal(aliasCall.handlers.length, canonicalCall.handlers.length, `${alias.path} chain length differs from ${alias.aliasFor}`);
+      aliasCall.handlers.forEach((middleware, index) => {
+        if (index === aliasCall.handlers.length - 1 && alias.wrap === "async") {
+          assert.equal(typeof middleware, "function", `${alias.path} async-wrapped handler`);
+          return;
+        }
+        assert.equal(middleware, canonicalCall.handlers[index], `${alias.path} middleware ${index} drifted from ${alias.aliasFor}`);
+      });
     }
   });
 });
@@ -134,11 +192,26 @@ describe("api surface <-> openapi parity", () => {
   it("documents every /api operation in openapi.json", () => {
     const doc = openApiDocument({ baseUrl: "https://hub.example", version: "0.0.0" });
     assert.deepEqual(doc.paths, openApiPathsFromSurface());
-    for (const operation of API_SURFACE) {
+    for (const operation of fullApiSurface()) {
       if (operation.openApi === false || !operation.path.startsWith("/api/")) continue;
       const openApiPath = operation.path.slice("/api".length).replaceAll(/:([A-Za-z0-9_]+)/g, "{$1}");
       assert.ok(doc.paths[openApiPath]?.[operation.method], `openapi.json is missing ${operation.method.toUpperCase()} ${openApiPath}`);
     }
+  });
+
+  it("tags every operation with its API group and lists the groups as document tags", () => {
+    const doc = openApiDocument({ baseUrl: "https://hub.example", version: "0.0.0" });
+    const documentTags = new Set((doc.tags || []).map((tag) => tag.name));
+    assert.deepEqual([...documentTags].sort(), Object.keys(API_GROUPS).sort());
+    for (const [pathKey, methods] of Object.entries(doc.paths)) {
+      for (const [method, entry] of Object.entries(methods)) {
+        assert.ok(Array.isArray(entry.tags) && entry.tags.length === 1, `${method.toUpperCase()} ${pathKey} needs exactly one tag`);
+        assert.ok(documentTags.has(entry.tags[0]), `${method.toUpperCase()} ${pathKey} uses undeclared tag ${entry.tags[0]}`);
+      }
+    }
+    // Alias paths advertise their canonical unversioned path.
+    assert.equal(doc.paths["/v1/automation/schedules"].get["x-canonical-path"], "/schedules");
+    assert.equal(doc.paths["/v1/runs/{id}"].get["x-canonical-path"], "/runs/{id}");
   });
 });
 
@@ -248,7 +321,7 @@ function routeDeps() {
     scheduleHandlers: handlers(["listSchedules", "previewSchedule", "getSchedule", "createSchedule", "updateSchedule", "enableSchedule", "disableSchedule", "deleteSchedule", "runScheduleNowRoute"]),
     secretHandlers: handlers(["requireSecretsEnabled", "listSecrets", "upsertSecret", "deleteSecret"]),
     supportChatHandlers: handlers(["status", "chat"]),
-    tokenHandlers: handlers(["listTokens", "createToken", "revokeToken"]),
+    tokenHandlers: handlers(["listTokens", "listTokenScopes", "createToken", "revokeToken"]),
     updateHandlers: handlers(["status", "apply"]),
     workflowBundleHandlers: handlers(["listWorkflowBundles", "publishWorkflowBundle", "getWorkflowBundle"]),
     workflowPackageHandlers: handlers(["exportWorkflowPackage", "validateWorkflowPackage", "previewWorkflowPackageImport", "importWorkflowPackage"]),

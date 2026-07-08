@@ -1,6 +1,6 @@
 ---
 title: Tokens & Scopes
-description: Bearer-token authentication, the five scopes, the bootstrap token, and how browser and Telegram sessions work.
+description: Bearer-token authentication, the scope vocabulary and presets (including read-only), the bootstrap token, and how browser and Telegram sessions work.
 ---
 
 Every Runyard API call is authenticated with a **bearer access token**:
@@ -19,11 +19,26 @@ A token carries one or more scopes; each endpoint declares which scopes may call
 | --- | --- |
 | `api` | Operating runs: start/preflight workflows, run drafts, reruns, promotion, cancel, resolve approvals. |
 | `mcp` | The same operating surface for MCP clients. |
+| `read` | **Read-only.** Inspect workflows, runs, logs, artifacts, approvals, schedules, runners, and the menu — and nothing else. It satisfies no mutation endpoint, so a `read`-only token can never change state. |
 | `runner` | The runner protocol: register, heartbeat, claim runs, report lifecycle, upload artifacts. |
 | `approvals` | Resolving and creating approval cards only — the narrow scope for approval surfaces. |
 | `admin` | Everything. `admin` is a **superscope**: it satisfies every scope requirement, and admin-only endpoints (tokens, secrets, catalog edits, schedules, hooks, audit) require it. |
 
 Reads such as listing runs, workflows, runners, or schedules need only an authenticated token, whatever its scopes. Runner lifecycle endpoints additionally enforce **run ownership**: only the runner token that claimed a run (or an admin) may report on it.
+
+## Presets
+
+`GET /api/tokens/scopes` (admin; MCP tool `list_token_scopes`) describes the scope vocabulary and the named presets the Tokens page offers:
+
+| Preset | Scopes | Use for |
+| --- | --- | --- |
+| **Everything** (default) | `api`, `mcp`, `approvals` | A normal person or agent: read everything, run workflows, decide approvals. No admin or runner rights. |
+| **Read-only** | `read` | Dashboards, monitors, and cautious integrations that must never change state. |
+| **Approvals only** | `approvals` | Approval inboxes and bots that only decide. |
+| **Runner** | `runner` | Runner machines. Keep separate from human tokens. |
+| **Admin** | `admin` | Full control, including tokens and secrets. Issue sparingly. |
+
+Finer-grained per-group write scopes (e.g. a token that can manage schedules but not run workflows) are a documented follow-up; today `api`/`mcp` grant the whole operating surface.
 
 ## Bootstrap token
 
@@ -43,6 +58,7 @@ Approving from Telegram uses `POST /api/auth/telegram-webapp`, which verifies Te
 | --- | --- | --- |
 | `GET /api/me` | `whoami` | Token name and scopes. |
 | `GET /api/tokens` | `list_tokens` | Admin. |
+| `GET /api/tokens/scopes` | `list_token_scopes` | Admin. Scope vocabulary, presets, defaults. |
 | `POST /api/tokens` | `create_token` | Admin. `{name, scopes, expiresInDays?}`. |
 | `DELETE /api/tokens/{id}` | `revoke_token` | Admin. |
 | `POST /api/auth/token-login` | — | Browser session bootstrap (rate-limited). |

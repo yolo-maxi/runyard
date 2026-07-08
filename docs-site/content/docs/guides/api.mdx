@@ -22,13 +22,20 @@ Tokens are minted by an admin (web UI, `POST /api/tokens`, or the CLI) and carry
 | ----- | ------ |
 | `api` | Start runs, preflight, drafts, rerun/cancel/promote, create approvals |
 | `mcp` | The same operations, issued for MCP clients |
+| `read` | **Read-only** — inspect workflows, runs, logs, artifacts, approvals, schedules, and runners; satisfies no mutation endpoint |
 | `runner` | The runner protocol: register, heartbeat, claim runs, report lifecycle events and artifacts |
 | `approvals` | Resolve approval cards (approve / reject / request changes) and create them |
 | `admin` | **Superscope** — satisfies every scope requirement, plus admin-only surfaces: tokens, secrets, audit log, schedules, workflow create/update, packages, hooks, updates |
 
+`GET /api/tokens/scopes` (admin) returns this vocabulary plus named presets —
+**everything** (`api`+`mcp`+`approvals`, the default), **read-only**,
+**approvals-only**, **runner**, and **admin** — which the Tokens page uses.
+
 Reads such as listing runs, workflows, or artifacts require any authenticated
-token. A request with no valid token gets `401 {"error": "unauthorized"}`; a
-token missing a required scope gets:
+token. A token with only the `read` scope is therefore read-only: it can
+inspect everything non-admin but every create/update/delete/run/approve call
+fails with `403`. A request with no valid token gets
+`401 {"error": "unauthorized"}`; a token missing a required scope gets:
 
 ```json
 { "error": "insufficient scope", "required": ["api", "mcp"] }
@@ -47,6 +54,35 @@ with status `403`. `GET /api/me` describes the calling token (name and scopes).
   MCP `get_menu` tool and `/llms.txt`.
 - **`GET /api/version`** (unauthenticated) — product name, version, instance
   name.
+
+## API groups and `/api/v1` aliases
+
+Operations are organized into eight groups, exposed as OpenAPI tags:
+**workflows**, **runs**, **approvals**, **automation** (schedules + workflow
+endpoints), **library** (agents, skills, knowledge, hooks), **distribution**
+(bundles, packages), **admin** (tokens, secrets, audit, alerts, updates), and
+**system** (health, version, menu, dashboard, runners).
+
+Every grouped operation is also reachable at a stable `/api/v1` alias that
+makes the group visible in the path — for example:
+
+| Canonical | Grouped alias |
+| --------- | ------------- |
+| `GET /api/workflows` | `GET /api/v1/workflows` |
+| `GET /api/runs/:id` | `GET /api/v1/runs/:id` |
+| `GET /api/run-drafts` | `GET /api/v1/runs/drafts` |
+| `GET /api/schedules` | `GET /api/v1/automation/schedules` |
+| `GET /api/agents` | `GET /api/v1/library/agents` |
+| `GET /api/workflow-bundles` | `GET /api/v1/distribution/bundles` |
+| `GET /api/tokens` | `GET /api/v1/admin/tokens` |
+| `GET /api/menu` | `GET /api/v1/system/menu` |
+
+Aliases are the same registry entries registered twice, so they always share
+the canonical route's handler, auth, and scopes; in `openapi.json` each alias
+carries `x-canonical-path`. Unversioned `/api/...` paths remain fully
+supported — use whichever reads better. The legacy `/api/capabilities/*`
+paths are deprecated aliases of `/api/workflows/*` and get no `/api/v1` form;
+new clients should say *workflow* everywhere.
 
 ## The typical flow
 
