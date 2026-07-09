@@ -10,7 +10,19 @@ import { api } from "./api.js";
 // active-run progress poll, etc.). On-demand / single-view reads stay as plain
 // useQuery in their view components.
 
-export const TERMINAL_RUN_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
+export const TERMINAL_RUN_STATUSES = new Set([
+  "succeeded",
+  "failed",
+  "cancelled",
+  "blocked_by_gate",
+  "blocked_by_preflight",
+  "provider_limited",
+  "timed_out",
+  "invalid_output",
+  "infra_unavailable",
+  "needs_human",
+  "budget_exceeded"
+]);
 export const isTerminalRun = (run) => TERMINAL_RUN_STATUSES.has(run?.status);
 
 // Runs poll fast while anything is in flight, slow when the fleet is idle —

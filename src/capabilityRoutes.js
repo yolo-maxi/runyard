@@ -27,6 +27,7 @@ import {
 } from "./capabilityRun.js";
 import { draftOptionsFromBody, negotiationStatusCode, presentRunDraft } from "./runDraftRoutes.js";
 import { RUN_PREFLIGHT_READY } from "./runPreflight.js";
+import { normalizeRunBudget, requestedRunBudget } from "./runBudget.js";
 
 export {
   capabilityRunDispatchOptions,
@@ -301,6 +302,13 @@ export function createCapabilityHandlers({
 
     const responseEndpointResult = parseResponseEndpoint(req.body.responseEndpoint);
     if (!responseEndpointResult.ok) return res.status(400).json({ error: responseEndpointResult.error });
+
+    // Reject a malformed budget with a clean 400 before anything is created —
+    // silently dropping a requested spend cap is never acceptable.
+    const budgetResult = normalizeRunBudget(requestedRunBudget(req.body?.input || req.body || {}, req.body || {}));
+    if (budgetResult.issues.length) {
+      return res.status(400).json({ error: "budget_invalid", issues: budgetResult.issues });
+    }
 
     let negotiation = null;
     if (req.body?.negotiate === true && evaluatePreflight) {

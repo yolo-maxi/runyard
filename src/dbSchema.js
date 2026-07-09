@@ -115,6 +115,8 @@ export const DB_SCHEMA_SQL = `
     input TEXT NOT NULL DEFAULT '{}',
     output TEXT,
     error TEXT,
+    usage TEXT,
+    budget TEXT,
     created_at TEXT NOT NULL,
     assigned_at TEXT,
     started_at TEXT,
@@ -339,6 +341,29 @@ export const DB_SCHEMA_SQL = `
     updated_at TEXT NOT NULL
   );
 
+  -- Per-run model-call usage records — one row per observed inference call
+  -- (metering gateway or runner-reported engine usage events). The run's
+  -- rolled-up totals live in runs.usage; these rows are the auditable detail.
+  -- Additive: older code never reads this table, so rollbacks boot cleanly.
+  CREATE TABLE IF NOT EXISTS run_usage_records (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    ts TEXT NOT NULL,
+    provider TEXT NOT NULL DEFAULT '',
+    model TEXT NOT NULL DEFAULT '',
+    prompt_tokens INTEGER NOT NULL DEFAULT 0,
+    completion_tokens INTEGER NOT NULL DEFAULT 0,
+    total_tokens INTEGER NOT NULL DEFAULT 0,
+    cost_micros INTEGER,
+    step_id TEXT,
+    node_id TEXT,
+    agent_label TEXT,
+    source TEXT NOT NULL DEFAULT '',
+    request_id TEXT,
+    metadata TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS secrets (
     key TEXT PRIMARY KEY,
     value_encrypted BLOB NOT NULL,
@@ -367,6 +392,7 @@ export const DB_SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
   CREATE INDEX IF NOT EXISTS idx_runs_created_at ON runs(created_at);
   CREATE INDEX IF NOT EXISTS idx_events_run ON run_events(run_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_run_usage_run ON run_usage_records(run_id, created_at);
   CREATE INDEX IF NOT EXISTS idx_artifacts_run ON artifacts(run_id);
   CREATE INDEX IF NOT EXISTS idx_approvals_status ON approvals(status);
   CREATE INDEX IF NOT EXISTS idx_workflow_endpoint_invocations_payload ON workflow_endpoint_invocations(endpoint_id, payload_hash, created_at);

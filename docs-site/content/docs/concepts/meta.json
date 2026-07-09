@@ -9,6 +9,7 @@
     "schedules",
     "agents-skills-knowledge",
     "tokens-and-scopes",
+    "metering",
     "secrets",
     "hooks",
     "deep-links"

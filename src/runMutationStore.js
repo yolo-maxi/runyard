@@ -8,7 +8,7 @@ import {
 } from "./runRecords.js";
 import { runStatusCountQuery } from "./runnerPoolRecords.js";
 
-const RUN_UPDATE_FIELDS = ["runner_id", "status", "current_step", "output", "error", "assigned_at", "started_at", "completed_at"];
+const RUN_UPDATE_FIELDS = ["runner_id", "status", "current_step", "output", "error", "usage", "assigned_at", "started_at", "completed_at"];
 
 export function createRunMutationStore({ one, run, now, getRun, adjustRunnerActiveRuns }) {
   function updateRun(runId, updates) {

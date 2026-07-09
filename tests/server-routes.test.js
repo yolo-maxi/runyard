@@ -113,9 +113,10 @@ function routeDeps() {
       publicDir: "/tmp/runyard-public"
     },
     runDraftHandlers: handlers(["listRunDrafts", "createRunDraft", "getRunDraft", "patchRunDraft", "submitRunDraft", "discardRunDraft"]),
-    runLifecycleHandlers: handlers(["recordRunEvent", "startRun", "completeRun", "failRun", "cancelRun"]),
+    gatewayHandlers: handlers(["openAiChatCompletions", "anthropicMessages"]),
+    runLifecycleHandlers: handlers(["recordRunEvent", "recordRunUsage", "startRun", "completeRun", "failRun", "cancelRun"]),
     runPromotionHandlers: handlers(["promoteRun"]),
-    runReadHandlers: handlers(["listRuns", "getRun", "listRunEvents", "streamRunEvents", "getRunLogSummary", "getRunDiagnostics", "getRunLogs", "getRunTimeline"]),
+    runReadHandlers: handlers(["listRuns", "getRun", "listRunEvents", "streamRunEvents", "getRunLogSummary", "getRunDiagnostics", "getRunLogs", "getRunTimeline", "getRunUsage"]),
     runRerunHandlers: handlers(["rerunRun"]),
     scheduleHandlers: handlers(["listSchedules", "previewSchedule", "getSchedule", "createSchedule", "updateSchedule", "enableSchedule", "disableSchedule", "deleteSchedule", "runScheduleNowRoute"]),
     secretHandlers: handlers(["requireSecretsEnabled", "listSecrets", "upsertSecret", "deleteSecret"]),

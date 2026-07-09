@@ -35,7 +35,10 @@ export function capabilityRunDispatchOptions({ body = {}, capability, env = proc
     origin: origin.origin,
     execution,
     capabilitySha: versionOptions.capabilitySha,
-    parentRunId: versionOptions.parentRunId
+    parentRunId: versionOptions.parentRunId,
+    // Optional spend budget: top-level body.budget wins over input.budget
+    // (both are accepted; createRun normalizes/validates).
+    ...(body.budget !== undefined ? { budget: body.budget } : {})
   };
 }
 

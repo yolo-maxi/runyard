@@ -12,9 +12,11 @@ import {
 export function createRunLifecycleHandlers({
   addRunEvent,
   createRun,
+  enforceRunBudget = () => ({ exceeded: false }),
   getCapability,
   maybeRecordFailureClassAlert,
   recordRunTerminalArtifacts,
+  recordRunUsage = () => ({ ok: false, code: 501, error: "usage recording unavailable" }),
   resolveEngineApprovalOnResume = () => [],
   scrubStoredSecrets,
   transitionRun,
@@ -68,6 +70,27 @@ export function createRunLifecycleHandlers({
       // card does not linger as a phantom hold after the workflow resumed.
       if (req.body.type === "engine.approval.resumed") resolveEngineApprovalOnResume(req.params.id, data);
       res.json({ event });
+    },
+
+    recordRunUsage(req, res) {
+      const result = recordRunUsage(req.params.id, req.body || {});
+      if (!result.ok) {
+        res.status(result.code || 400).json({ error: result.error });
+        return;
+      }
+      // Budget is enforced on every accepted record so the run is stopped
+      // before the next provider call, not at completion time.
+      const enforcement = result.duplicate ? { exceeded: false } : enforceRunBudget(req.params.id);
+      res.json({
+        record: result.record,
+        usage: result.usage,
+        duplicate: Boolean(result.duplicate),
+        budget: {
+          exceeded: Boolean(enforcement.exceeded),
+          ...(enforcement.reason ? { reason: enforcement.reason } : {}),
+          ...(enforcement.stopped ? { stopped: true } : {})
+        }
+      });
     },
 
     startRun(req, res) {

@@ -133,9 +133,18 @@ describe("run record helpers", () => {
       '{"topic":"x"}',
       "abc123",
       "parent_1",
+      null,
       "2026-01-01T00:00:00.000Z",
       "2026-01-01T00:00:00.000Z"
     ]);
+
+    assert.equal(runCreateRecord({
+      runId: "run_2",
+      capability,
+      input: {},
+      budget: { maxTokens: 5000 },
+      timestamp: "2026-01-01T00:00:00.000Z"
+    })[11], '{"maxTokens":5000}');
 
     assert.equal(runCreateRecord({
       runId: "run_2",
@@ -148,8 +157,8 @@ describe("run record helpers", () => {
 
     assert.deepEqual(runInsertQuery(), {
       sql: `INSERT INTO runs (id, capability_id, capability_slug, capability_name, workflow_version, runner_id, status,
-      current_step, input, capability_sha, parent_run_id, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      current_step, input, capability_sha, parent_run_id, budget, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     });
   });
 

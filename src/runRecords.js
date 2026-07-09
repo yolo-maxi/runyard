@@ -18,6 +18,10 @@ export function normalizeRun(row) {
     input: parseMaybeJson(row.input, {}),
     output: parseMaybeJson(row.output, null),
     error: row.error,
+    // Metered model-call usage aggregate + optional spend budget. Null until
+    // the first usage record / when no budget was requested (src/runUsage.js).
+    usage: parseMaybeJson(row.usage, null),
+    budget: parseMaybeJson(row.budget, null),
     // Capability version pinning + rollback parentage. Both stay null on the
     // existing path (RUNYARD_CAPABILITY_VERSIONING unset); see src/runExecution.js.
     capabilitySha: row.capability_sha || null,
@@ -45,6 +49,7 @@ export function runCreateRecord({
   input,
   options = {},
   approvalRequired = false,
+  budget = null,
   timestamp
 }) {
   const capabilitySha = options.capabilitySha ? String(options.capabilitySha).trim() || null : null;
@@ -61,6 +66,7 @@ export function runCreateRecord({
     jsonField(input, {}),
     capabilitySha,
     parentRunId,
+    budget ? JSON.stringify(budget) : null,
     timestamp,
     timestamp
   ];
@@ -69,8 +75,8 @@ export function runCreateRecord({
 export function runInsertQuery() {
   return {
     sql: `INSERT INTO runs (id, capability_id, capability_slug, capability_name, workflow_version, runner_id, status,
-      current_step, input, capability_sha, parent_run_id, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      current_step, input, capability_sha, parent_run_id, budget, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   };
 }
 

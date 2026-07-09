@@ -16,6 +16,7 @@ const RUN_TRANSITIONS = {
   invalid_output: [],
   infra_unavailable: [],
   needs_human: [],
+  budget_exceeded: [],
   cancelled: []
 };
 

@@ -2198,6 +2198,27 @@ details.advanced[open] summary {
   color: #3730a3;
 }
 
+/* Metered usage chip — "12.3k tok · $0.42". Quiet amber so cost is scannable
+ * on the runs list without competing with status. */
+.chip-usage {
+  background: #fffbeb;
+  border-color: #fde68a;
+  color: #92400e;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Budget-stop callout on run detail: the run was terminated on purpose by its
+ * spend ceiling — visually distinct from a generic failure banner. */
+.run-budget-notice {
+  border: 1px solid #fcd34d;
+  border-left: 4px solid #d97706;
+  background: #fffbeb;
+  color: #78350f;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin: 10px 0;
+}
+
 /* ---- Semantic chip modifiers --------------------------------------------
  * Differentiate chips by role on the run-detail meta strip so the page is
  * easier to scan: status pops, IDs are quiet & monospaced (fingerprint, not

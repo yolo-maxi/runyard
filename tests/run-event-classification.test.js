@@ -28,7 +28,13 @@ describe("run event classification helpers", () => {
     assert.equal(eventCategory({ type: "agent.summary" }), "agent");
     assert.equal(eventCategory({ type: "stderr" }), "log");
     assert.equal(eventCategory({ type: "custom" }), "other");
+    // Metered usage groups with agent activity; a budget stop is a run event.
+    assert.equal(eventCategory({ type: "run.usage" }), "agent");
+    assert.equal(eventCategory({ type: "run.budget.exceeded" }), "run");
+    assert.equal(eventCategory({ type: "run.budget_exceeded" }), "run");
 
+    assert.equal(eventSeverity({ type: "run.budget.exceeded" }), "error");
+    assert.equal(eventSeverity({ type: "run.usage", message: "model: 1k tokens" }), "info");
     assert.equal(eventSeverity({ type: "node.failed" }), "error");
     assert.equal(eventSeverity({ type: "stderr" }), "error");
     assert.equal(eventSeverity({ type: "node.skipped" }), "warn");

@@ -116,7 +116,12 @@ For agent-created runs, include a short human-readable `input.title` — it labe
 run lists, approval cards, and handoffs. `executionMode` is `local` or `remote`;
 `run` also accepts an optional `responseEndpoint` (`{type: http|telegram,
 config}`) to have the terminal-state reply delivered when the run finishes
-(polling `/api/runs/:id` remains the canonical fallback).
+(polling `/api/runs/:id` remains the canonical fallback), and an optional
+`budget` (`{maxTokens?, maxCostMicros?}`, also accepted as `input.budget`) that
+hard-caps the run's metered model usage — a breach terminates the run with the
+distinct status `budget_exceeded`. Metered usage aggregates onto every run
+object as `usage` and is detailed at `GET /api/runs/:id/usage`; see
+[Usage metering & budgets](../concepts/metering.mdx).
 
 With `"negotiate": true`, a non-ready request returns the negotiation state
 (questions, blockers, warnings, plus a saved draft) instead of creating a run —
@@ -138,6 +143,7 @@ require any token):
 | `GET /api/runs` | List runs (filter by `status`, `q`, `workflow`) |
 | `GET /api/runs/:id` | Run status, outputs, error, response-delivery state |
 | `GET /api/runs/:id/timeline` | Unified ascending timeline (`since=<iso>`, `limit=<n>`); backs `runyard tail` |
+| `GET /api/runs/:id/usage` | Metered usage: aggregate totals, per-call records, budget, and `budgetStop` |
 | `GET /api/runs/:id/events` · `/logs` · `/diagnostics` | Structured events, log lines, diagnostics + log summary |
 | `GET /api/runs/:id/artifacts` · `GET /api/artifacts/:id/download` | List a run's artifacts; download bytes |
 | `POST /api/runs/:id/cancel` · `/rerun` · `/promote` | Cancel; re-queue with same/edited input; merge a successful isolated run into its target branch |

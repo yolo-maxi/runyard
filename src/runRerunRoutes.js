@@ -60,7 +60,14 @@ export function createRunRerunHandlers({
       });
       const dispatched = dispatchRun(capability, input, {
         requestedBy: origin.requestedBy,
-        origin: origin.origin
+        origin: origin.origin,
+        // A re-run inherits the previous run's spend budget unless the edited
+        // input carries its own (body.budget > input.budget > previous budget).
+        ...(req.body?.budget !== undefined
+          ? { budget: req.body.budget }
+          : previous.budget && input.budget === undefined
+            ? { budget: previous.budget }
+            : {})
       });
       const run = dispatched.run;
       addRunEvent(previous.id, "run.rerun_requested", `Re-run requested as ${run.id}`, { runId: run.id });

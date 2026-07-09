@@ -17,6 +17,7 @@ export function createRunClaimStore({
   getRun,
   getDecryptedSecretEnv,
   buildAgentRuntimePack,
+  buildRunGatewayPin = () => null,
   getWorkflowBundle
 }) {
   function claimNextRun(runnerId) {
@@ -41,7 +42,14 @@ export function createRunClaimStore({
       addRunEvent(candidate.id, "run.assigned", `Assigned to ${runner.name}`, { runnerId });
 
       const claimedRun = getRun(candidate.id);
-      const secretEnv = getDecryptedSecretEnv(secretNamesForRun(capability, claimedRun?.input));
+      // Gateway-metered runs are pinned to the Hub's metering gateway: the
+      // claim ships a per-run gateway token INSTEAD of the provider key, which
+      // is withheld from the child env entirely (src/meteringGateway.js).
+      const gatewayPin = buildRunGatewayPin(claimedRun, capability);
+      const withheldSecretNames = new Set(gatewayPin?.excludeSecretNames || []);
+      const secretNames = secretNamesForRun(capability, claimedRun?.input)
+        .filter((name) => !withheldSecretNames.has(name));
+      const secretEnv = getDecryptedSecretEnv(secretNames);
       const agentRuntimePack = buildAgentRuntimePack(capability);
       addRunEvent(candidate.id, "run.agent_runtime_pack", "Captured agent/skill runtime pack", {
         schemaVersion: agentRuntimePack.schemaVersion,
@@ -52,6 +60,16 @@ export function createRunClaimStore({
       });
 
       const payload = { run: claimedRun, capability, agentRuntimePack };
+
+      if (gatewayPin) {
+        payload.gateway = gatewayPin;
+        // Event carries metadata only — never the token.
+        addRunEvent(candidate.id, "run.metering_gateway", `Run pinned to the metering gateway (model ${gatewayPin.model}); provider key withheld from the child environment`, {
+          model: gatewayPin.model,
+          path: gatewayPin.path,
+          withheldSecretNames: [...withheldSecretNames]
+        });
+      }
 
       // DB-backed workflow capabilities ship the bundle bytes with the claim so
       // the runner can materialize the source before Smithers launch. When the

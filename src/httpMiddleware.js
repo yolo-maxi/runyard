@@ -1,6 +1,9 @@
 import express from "express";
 
 const ARTIFACT_UPLOAD_PATH = /^\/api\/runs\/[^/]+\/artifacts\/?$/;
+// Metering-gateway inference calls carry full model contexts, which routinely
+// exceed the standard API body limit.
+const GATEWAY_PATH = /^\/api\/gateway\//;
 
 export function jsonBodyMiddleware({
   json = express.json,
@@ -11,7 +14,7 @@ export function jsonBodyMiddleware({
   const artifactJson = json({ limit: artifactLimit });
 
   return (req, res, next) => {
-    const parser = req.method === "POST" && ARTIFACT_UPLOAD_PATH.test(req.path)
+    const parser = req.method === "POST" && (ARTIFACT_UPLOAD_PATH.test(req.path) || GATEWAY_PATH.test(req.path))
       ? artifactJson
       : standardJson;
     return parser(req, res, next);

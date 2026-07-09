@@ -44,6 +44,53 @@ describe("run response endpoint payload helpers", () => {
     assert.equal(payload.links.logs, "https://hub.example/api/runs/run_1/logs");
   });
 
+  it("includes metered usage and budget on terminal payloads", () => {
+    const usage = { totalTokens: 1750, promptTokens: 6, completionTokens: 1744, costMicros: 130890, calls: 1, byModel: {}, byProvider: {} };
+    const payload = buildRunResponseEndpointPayload({
+      id: "run_2",
+      status: "succeeded",
+      capabilitySlug: "hello",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      usage,
+      budget: { maxTokens: 100000 }
+    }, {});
+    assert.deepEqual(payload.usage, usage);
+    assert.deepEqual(payload.budget, { maxTokens: 100000 });
+    assert.equal(payload.budgetStop, null);
+  });
+
+  it("reports budget stops distinctly with the stop reason and final usage", () => {
+    const payload = buildRunResponseEndpointPayload({
+      id: "run_3",
+      status: "budget_exceeded",
+      capabilitySlug: "hello",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      error: "budget exceeded: 120 tokens used, budget.maxTokens is 100",
+      usage: { totalTokens: 120, costMicros: 0, calls: 2 },
+      budget: { maxTokens: 100 }
+    }, {});
+    assert.equal(payload.status, "budget_exceeded");
+    assert.equal(payload.budgetStop.stopped, true);
+    assert.match(payload.budgetStop.reason, /budget exceeded: 120 tokens/);
+    assert.deepEqual(payload.budgetStop.budget, { maxTokens: 100 });
+    assert.equal(payload.usage.totalTokens, 120);
+    // Generic-failure error field stays null for budget stops; the reason
+    // lives on budgetStop so callers can tell the two apart.
+    assert.equal(payload.error, null);
+  });
+
+  it("keeps usage null for unmetered runs", () => {
+    const payload = buildRunResponseEndpointPayload({
+      id: "run_4",
+      status: "succeeded",
+      capabilitySlug: "hello",
+      createdAt: "2026-01-01T00:00:00.000Z"
+    }, {});
+    assert.equal(payload.usage, null);
+    assert.equal(payload.budget, null);
+    assert.equal(payload.budgetStop, null);
+  });
+
   it("redacts token-shaped delivery errors", () => {
     assert.equal(redactResponseEndpointText("Bearer abcdefghijk"), "Bearer [redacted]");
     assert.equal(redactResponseEndpointText("x".repeat(502)).length, 500);

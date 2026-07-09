@@ -9,6 +9,7 @@ import {
   runStartApprovalPayload
 } from "./runRecords.js";
 import { approvalPolicyNotifiesTelegram } from "./operatorRecords.js";
+import { normalizeRunBudget, requestedRunBudget } from "./runBudget.js";
 
 export function createRunCreateStore({
   run,
@@ -35,6 +36,12 @@ export function createRunCreateStore({
       };
     }
 
+    // Optional spend budget (options.budget wins over input.budget). Invalid
+    // budgets are rejected loudly: silently dropping a cap the caller asked
+    // for would let a run spend without the ceiling they thought they set.
+    const { budget, issues: budgetIssues } = normalizeRunBudget(requestedRunBudget(storedInput, options));
+    if (budgetIssues.length) throw new Error(budgetIssues.join("; "));
+
     run(
       runInsertQuery().sql,
       runCreateRecord({
@@ -43,6 +50,7 @@ export function createRunCreateStore({
         input: storedInput,
         options,
         approvalRequired,
+        budget,
         timestamp
       })
     );

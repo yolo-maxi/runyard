@@ -27,6 +27,9 @@ import { createWorkflowBundleHandlers } from "./workflowBundleRoutes.js";
 import { createWorkflowPackageHandlers } from "./workflowPackageRoutes.js";
 import { createRunLifecycleHandlers } from "./runLifecycleRoutes.js";
 import { createRunReadHandlers } from "./runReadRoutes.js";
+import { createGatewayHandlers } from "./gatewayRoutes.js";
+import { createRunBudgetEnforcer } from "./runBudget.js";
+import { now } from "./ids.js";
 import { createRunPromotionHandlers } from "./runPromotionRoutes.js";
 import { createCapabilityHandlers } from "./capabilityRoutes.js";
 import { createScheduleHandlers } from "./scheduleRoutes.js";
@@ -81,8 +84,11 @@ export function createServerComposition({
     listDueSchedules,
     claimScheduleFire,
     recordScheduleFireResult,
+    getDecryptedSecretEnv,
     getRun,
     getRunDraft,
+    getRunUsage,
+    recordRunUsage,
     discardRunDraft,
     listRunDrafts,
     markRunDraftSubmitted,
@@ -257,12 +263,25 @@ export function createServerComposition({
     env
   });
 
+  // Budget hard-stop shared by the usage-ingest endpoint and the metering
+  // gateway: both enforce after every accepted record (and the gateway also
+  // pre-checks before forwarding upstream).
+  const { enforceRunBudget } = createRunBudgetEnforcer({
+    getRun,
+    addRunEvent,
+    transitionRun,
+    recordRunTerminalArtifacts,
+    now
+  });
+
   const runLifecycleHandlers = createRunLifecycleHandlers({
     addRunEvent,
     createRun,
+    enforceRunBudget,
     getCapability,
     maybeRecordFailureClassAlert,
     recordRunTerminalArtifacts,
+    recordRunUsage,
     resolveEngineApprovalOnResume,
     scrubStoredSecrets,
     transitionRun,
@@ -270,10 +289,21 @@ export function createServerComposition({
     withRunLinks
   });
 
+  const gatewayHandlers = createGatewayHandlers({
+    env,
+    processEnv,
+    getRun,
+    getCapability,
+    getDecryptedSecretEnv,
+    recordRunUsage,
+    enforceRunBudget
+  });
+
   const runReadHandlers = createRunReadHandlers({
     countRuns,
     decorateSingleRun,
     getRun,
+    getRunUsage,
     hiddenRunSlugs: DEFAULT_HIDDEN_RUN_SLUGS,
     listArtifacts,
     listRunEvents,
@@ -513,6 +543,7 @@ export function createServerComposition({
       authHandlers,
       capabilityHandlers,
       catalogHandlers,
+      gatewayHandlers,
       hookProfileHandlers,
       operatorReadHandlers,
       publicHandlers,

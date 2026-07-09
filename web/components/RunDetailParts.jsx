@@ -2,13 +2,13 @@ import { deepLinks } from "../lib/router.js";
 import { copyText } from "../lib/clipboard.js";
 import {
   isActiveRun, runDurationMs, formatDuration, relativeTime, formatTimestamp,
-  artifactDisplayName, formatBytes, truncate, runStatusLabel
+  artifactDisplayName, formatBytes, truncate, runStatusLabel, runUsage, formatTokens, formatCostMicros
 } from "../lib/runHelpers.js";
 import { rerunRun, editRerunRun, cancelRun } from "../lib/runActions.js";
 import { promoteRun, runPromotionCandidate } from "../lib/runPromotion.js";
 import { StatusBadge, ShareButton, Icon, JsonBlock, CodeChurn } from "./ui.jsx";
 
-const FAILURE_STATUSES = new Set(["failed", "error", "cancelled", "rejected"]);
+const FAILURE_STATUSES = new Set(["failed", "error", "cancelled", "rejected", "budget_exceeded"]);
 
 // Outcome-first banner. Ported from runOutcomeBanner().
 export function RunBanner({ run, diagnostics, title, slug, onChanged }) {
@@ -79,8 +79,38 @@ export function RunMetaStrip({ run }) {
   if (attempt > 0) items.push(<li key="a"><span className="muted">Attempt</span> {attempt}</li>);
   const trigger = run.originLabel || run.origin?.label || "";
   if (trigger) items.push(<li key="t"><span className="muted">Trigger</span> {trigger}</li>);
+  const usage = runUsage(run);
+  if (usage) {
+    const byModel = Object.entries(usage.byModel)
+      .map(([model, totals]) => `${model}: ${formatTokens(totals.totalTokens)} tokens${totals.costMicros ? ` · ${formatCostMicros(totals.costMicros)}` : ""}`)
+      .join("\n");
+    const usageTitle = `${usage.calls} metered model call${usage.calls === 1 ? "" : "s"}${byModel ? `\n${byModel}` : ""}`;
+    items.push(
+      <li key="u" title={usageTitle}>
+        <span className="muted">Usage</span> {usage.tokensLabel} tok{usage.costLabel ? ` · ${usage.costLabel}` : ""}
+      </li>
+    );
+  }
+  if (run.budget && typeof run.budget === "object") {
+    const parts = [];
+    if (run.budget.maxTokens) parts.push(`${formatTokens(run.budget.maxTokens)} tok`);
+    if (run.budget.maxCostMicros) parts.push(formatCostMicros(run.budget.maxCostMicros));
+    if (parts.length) items.push(<li key="b" title="Hard spend ceiling for this run"><span className="muted">Budget</span> {parts.join(" · ")}</li>);
+  }
   if (!items.length) return null;
   return <ul className="run-meta-strip" aria-label="Run metadata">{items}</ul>;
+}
+
+// Budget-stop callout: unmissable, plain-English explanation of why the run
+// ended, shown only for budget_exceeded runs.
+export function RunBudgetNotice({ run }) {
+  if (!run || run.status !== "budget_exceeded") return null;
+  return (
+    <div className="run-budget-notice" role="status" aria-label="Budget stop">
+      <strong>Stopped at budget.</strong>{" "}
+      <span>{truncate(String(run.error || "This run reached its spend budget and was terminated before further model calls."), 240)}</span>
+    </div>
+  );
 }
 
 export function RunOutcomeSummary({ summary }) {
@@ -140,9 +170,11 @@ export function RunDiagnostics({ diagnostics }) {
   const statusKey = diagnostics.status || "";
   const intro = statusKey === "waiting_approval"
     ? "This run is paused waiting for an approval decision."
-    : statusKey === "failed" || statusKey === "error"
-      ? "This run failed. Diagnostic details below."
-      : "This run was cancelled. Diagnostic details below.";
+    : statusKey === "budget_exceeded"
+      ? "This run was stopped by its spend budget. Diagnostic details below."
+      : statusKey === "failed" || statusKey === "error"
+        ? "This run failed. Diagnostic details below."
+        : "This run was cancelled. Diagnostic details below.";
   const isLive = LIVE_STATUSES.has(statusKey);
   const timeline = Array.isArray(diagnostics.timeline) ? diagnostics.timeline : [];
   const logs = Array.isArray(diagnostics.logExcerpts) ? diagnostics.logExcerpts : [];

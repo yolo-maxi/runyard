@@ -6,12 +6,17 @@ export const RUN_FAILURE_CLASSES = Object.freeze({
   TIMED_OUT: "timed_out",
   INVALID_OUTPUT: "invalid_output",
   INFRA_UNAVAILABLE: "infra_unavailable",
-  NEEDS_HUMAN: "needs_human"
+  NEEDS_HUMAN: "needs_human",
+  // Hard budget stop: the run's metered usage reached its budget and the Hub
+  // terminated it before further provider calls (see src/runBudget.js).
+  // Distinct from generic failure so callers can bill/cap against it.
+  BUDGET_EXCEEDED: "budget_exceeded"
 });
 
 export const RUN_FAILURE_TERMINAL_STATUSES = new Set(Object.values(RUN_FAILURE_CLASSES));
 
 const CLASS_PATTERNS = [
+  [RUN_FAILURE_CLASSES.BUDGET_EXCEEDED, /\b(budget exceeded|budget\.maxTokens|budget\.maxCostMicros|run budget)\b/i],
   [RUN_FAILURE_CLASSES.BLOCKED_BY_PREFLIGHT, /\b(preflight|missing workflow|workflow file not found|auth not ready|runner tags|repo path|not writable|no workflow\.entry)\b/i],
   [RUN_FAILURE_CLASSES.BLOCKED_BY_GATE, /\b(gate failed|test failed|lint failed|typecheck failed|build failed|verification failed|eval failed)\b/i],
   [RUN_FAILURE_CLASSES.PROVIDER_LIMITED, /\b(429|rate limit|rate-limit|quota|usage limit|provider limited|temporarily overloaded)\b/i],

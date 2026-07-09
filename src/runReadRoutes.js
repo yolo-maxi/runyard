@@ -1,4 +1,5 @@
 import { buildRunTimeline, timelinePage } from "./runTimeline.js";
+import { runBudgetStop } from "./runBudget.js";
 import { redactSnippet, summarizeRunEvents } from "./runEventSummary.js";
 import { buildQueueIndex } from "./runPresentation.js";
 import {
@@ -13,6 +14,7 @@ export function createRunReadHandlers({
   countRuns,
   decorateSingleRun,
   getRun,
+  getRunUsage = () => null,
   hiddenRunSlugs = [],
   listArtifacts,
   listRunEvents,
@@ -108,6 +110,17 @@ export function createRunReadHandlers({
         .map((event) => `[${event.createdAt}] ${event.type}: ${redactSnippet(event.message, 4000)}`)
         .join("\n");
       res.type("text/plain").send(logs);
+    },
+
+    getRunUsage(req, res) {
+      const run = loadRun(req, res);
+      if (!run) return;
+      const usage = getRunUsage(run.id);
+      res.json({
+        ...usage,
+        status: run.status,
+        budgetStop: runBudgetStop(run)
+      });
     },
 
     getRunTimeline(req, res) {

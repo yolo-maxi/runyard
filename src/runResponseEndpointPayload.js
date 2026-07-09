@@ -1,5 +1,6 @@
 import { now } from "./ids.js";
 import { redactText } from "./redaction.js";
+import { runBudgetStop } from "./runBudget.js";
 
 const PAYLOAD_OUTPUT_KEY_LIMIT = 32;
 const PAYLOAD_ARTIFACT_LIMIT = 50;
@@ -78,6 +79,12 @@ export function buildRunResponseEndpointPayload(run, options = {}) {
       durationMs
     },
     error: run.status === "failed" ? redactResponseEndpointText(run.error) : null,
+    // Metered model-call usage so delegated callers can bill/cap against real
+    // consumption; budgetStop is non-null only when the run was terminated on
+    // its budget (status budget_exceeded) and carries the stop reason.
+    usage: run.usage || null,
+    budget: run.budget || null,
+    budgetStop: runBudgetStop(run),
     output: summarizeResponseOutput(run.output),
     artifacts: artifacts.map((artifact) => responseArtifactDescriptor(artifact, baseUrl)),
     links: runResponseEndpointLinks(run.id, baseUrl),

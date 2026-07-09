@@ -42,7 +42,7 @@ export const MCP_TOOLS = [
   },
   {
     name: "run_workflow",
-    description: "Run a workflow with JSON input. For agent-created runs, include input.title when practical: a short human-readable title for run lists, approval cards, and handoff. Pass executionMode 'local' to target a local runner or 'remote' to target the shared remote/VPS runner pool. Outputs and artifacts are fetched from the Hub. For improve, input.repoDir selects an allowlisted runner-local git repo to edit. Pass negotiate: true to preflight first — a non-ready request then returns the negotiation state (questions/blockers/warnings + a saved draft) instead of creating a run; fix the input and call again.",
+    description: "Run a workflow with JSON input. For agent-created runs, include input.title when practical: a short human-readable title for run lists, approval cards, and handoff. Pass executionMode 'local' to target a local runner or 'remote' to target the shared remote/VPS runner pool. Outputs and artifacts are fetched from the Hub. For improve, input.repoDir selects an allowlisted runner-local git repo to edit. Optional budget { maxTokens, maxCostMicros } hard-caps the run's metered model usage; a breach terminates the run as budget_exceeded. Pass negotiate: true to preflight first — a non-ready request then returns the negotiation state (questions/blockers/warnings + a saved draft) instead of creating a run; fix the input and call again.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -51,13 +51,21 @@ export const MCP_TOOLS = [
         input: { type: "object" },
         executionMode: { type: "string", enum: ["local", "remote", "auto"] },
         runnerLocation: { type: "string" },
+        budget: {
+          type: "object",
+          description: "Optional hard spend ceiling for the run's metered model usage.",
+          properties: {
+            maxTokens: { type: "number", description: "Maximum total tokens across all metered model calls." },
+            maxCostMicros: { type: "number", description: "Maximum cost in micro-USD (1000000 = $1)." }
+          }
+        },
         negotiate: { type: "boolean" }
       }
     }
   },
   {
     name: "preflight_workflow",
-    description: "Dry-run the deterministic run-creation preflight for a workflow with JSON input. Returns ready | needs_input | blocked with questions, blockers, warnings, suggested defaults, and the normalized input — nothing is created or enqueued. Use before run_workflow when the input is rough or unverified.",
+    description: "Dry-run the deterministic run-creation preflight for a workflow with JSON input. Returns ready | needs_input | blocked with questions, blockers, warnings, suggested defaults, and the normalized input — nothing is created or enqueued. Use before run_workflow when the input is rough or unverified. An invalid budget or incomplete gateway-metering selection surfaces here as blockers.",
     inputSchema: {
       type: "object",
       required: ["id"],
@@ -65,7 +73,15 @@ export const MCP_TOOLS = [
         id: { type: "string" },
         input: { type: "object" },
         executionMode: { type: "string", enum: ["local", "remote", "auto"] },
-        runnerLocation: { type: "string" }
+        runnerLocation: { type: "string" },
+        budget: {
+          type: "object",
+          description: "Optional hard spend ceiling to validate.",
+          properties: {
+            maxTokens: { type: "number" },
+            maxCostMicros: { type: "number" }
+          }
+        }
       }
     }
   },
@@ -75,19 +91,20 @@ export const MCP_TOOLS = [
   { name: "import_workflow_package", description: "Import a .runyard-workflow.json package as a disabled workflow draft. Requires an admin-scoped token.", inputSchema: { type: "object", required: ["workflowPackage"], properties: { workflowPackage: { type: "object" }, slug: { type: "string" } } } },
   { name: "list_run_drafts", description: "List negotiated workflow run drafts.", inputSchema: { type: "object", properties: { status: { type: "string" }, workflow: { type: "string" } } } },
   { name: "get_run_draft", description: "Inspect a negotiated workflow run draft.", inputSchema: { type: "object", required: ["draftId"], properties: { draftId: { type: "string" } } } },
-  { name: "create_run_draft", description: "Create a negotiated workflow run draft and run deterministic preflight.", inputSchema: { type: "object", required: ["id"], properties: { id: { type: "string" }, input: { type: "object" }, executionMode: { type: "string", enum: ["local", "remote", "auto"] }, runnerLocation: { type: "string" } } } },
-  { name: "update_run_draft", description: "Edit a negotiated workflow run draft and re-run preflight.", inputSchema: { type: "object", required: ["draftId"], properties: { draftId: { type: "string" }, input: { type: "object" }, executionMode: { type: "string", enum: ["local", "remote", "auto"] }, runnerLocation: { type: "string" } } } },
+  { name: "create_run_draft", description: "Create a negotiated workflow run draft and run deterministic preflight. A spend budget rides the input as input.budget ({ maxTokens, maxCostMicros }) and is validated by preflight.", inputSchema: { type: "object", required: ["id"], properties: { id: { type: "string" }, input: { type: "object" }, executionMode: { type: "string", enum: ["local", "remote", "auto"] }, runnerLocation: { type: "string" } } } },
+  { name: "update_run_draft", description: "Edit a negotiated workflow run draft and re-run preflight. A spend budget rides the input as input.budget ({ maxTokens, maxCostMicros }).", inputSchema: { type: "object", required: ["draftId"], properties: { draftId: { type: "string" }, input: { type: "object" }, executionMode: { type: "string", enum: ["local", "remote", "auto"] }, runnerLocation: { type: "string" } } } },
   { name: "submit_run_draft", description: "Submit a ready negotiated workflow run draft.", inputSchema: { type: "object", required: ["draftId"], properties: { draftId: { type: "string" } } } },
   { name: "discard_run_draft", description: "Discard a negotiated workflow run draft.", inputSchema: { type: "object", required: ["draftId"], properties: { draftId: { type: "string" } } } },
   { name: "list_runs", description: "List workflow runs with optional status/query/workflow filters.", inputSchema: { type: "object", properties: { status: { type: "string" }, query: { type: "string" }, workflow: { type: "string" }, limit: { type: "number" } } } },
-  { name: "get_run_status", description: "Get run status and summary.", inputSchema: { type: "object", required: ["runId"], properties: { runId: { type: "string" } } } },
+  { name: "get_run_status", description: "Get run status and summary, including metered usage totals (run.usage: tokens/costMicros/byModel) and the run budget when set.", inputSchema: { type: "object", required: ["runId"], properties: { runId: { type: "string" } } } },
   { name: "get_run_events", description: "Get structured events for a run.", inputSchema: { type: "object", required: ["runId"], properties: { runId: { type: "string" } } } },
   { name: "get_run_timeline", description: "Get normalized timeline entries for a run. Pass since (the nextSince value from a previous call) to page forward.", inputSchema: { type: "object", required: ["runId"], properties: { runId: { type: "string" }, since: { type: "string" }, limit: { type: "number" } } } },
+  { name: "get_run_usage", description: "Get a run's metered model-call usage: aggregate totals (totalTokens, costMicros, byModel, byProvider), the optional budget, per-call usage records, and budgetStop when the run was terminated on its budget.", inputSchema: { type: "object", required: ["runId"], properties: { runId: { type: "string" } } } },
   { name: "get_run_diagnostics", description: "Get diagnostics and log summary for a run.", inputSchema: { type: "object", required: ["runId"], properties: { runId: { type: "string" } } } },
   { name: "get_run_logs", description: "Get run event log text.", inputSchema: { type: "object", required: ["runId"], properties: { runId: { type: "string" } } } },
   { name: "get_run_artifacts", description: "List artifacts for a run.", inputSchema: { type: "object", required: ["runId"], properties: { runId: { type: "string" } } } },
   { name: "download_artifact", description: "Download an artifact's content by artifact id (from get_run_artifacts or search_artifacts). Text artifacts return their content directly; binary artifacts return base64 with the mime type noted.", inputSchema: { type: "object", required: ["artifactId"], properties: { artifactId: { type: "string" } } } },
-  { name: "rerun_workflow_run", description: "Create a linked rerun from a previous run, optionally overriding input.", inputSchema: { type: "object", required: ["runId"], properties: { runId: { type: "string" }, input: { type: "object" }, executionMode: { type: "string", enum: ["local", "remote", "auto"] }, runnerLocation: { type: "string" } } } },
+  { name: "rerun_workflow_run", description: "Create a linked rerun from a previous run, optionally overriding input. The rerun inherits the previous run's budget unless budget/input.budget overrides it.", inputSchema: { type: "object", required: ["runId"], properties: { runId: { type: "string" }, input: { type: "object" }, executionMode: { type: "string", enum: ["local", "remote", "auto"] }, runnerLocation: { type: "string" }, budget: { type: "object", description: "Optional hard spend ceiling ({ maxTokens, maxCostMicros }).", properties: { maxTokens: { type: "number" }, maxCostMicros: { type: "number" } } } } } },
   { name: "promote_run", description: "Promote a successful run's mutation/artifact according to server policy.", inputSchema: { type: "object", required: ["runId"], properties: { runId: { type: "string" }, note: { type: "string" } } } },
   { name: "list_runners", description: "List registered runners, heartbeat state, capacity, active slots, and pool summary.", inputSchema: { type: "object", properties: {} } },
   { name: "whoami", description: "Show the authenticated identity: token name and granted scopes.", inputSchema: { type: "object", properties: {} } },

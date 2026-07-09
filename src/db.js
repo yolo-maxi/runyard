@@ -39,8 +39,10 @@ import {
   applyDashboardPoolStats,
   dashboardCountQuery,
   DASHBOARD_COUNT_TABLES,
+  normalizeUsageTotalsRow,
   pendingApprovalsCountQuery,
-  runningRunsCountQuery
+  runningRunsCountQuery,
+  usageTotalsQuery
 } from "./dashboardStats.js";
 import { createScheduleStore } from "./scheduleStore.js";
 import { createRunStore } from "./runStore.js";
@@ -49,6 +51,8 @@ import { createRunCreateStore } from "./runCreateStore.js";
 import { createRunDraftStore } from "./runDraftStore.js";
 import { createRunMutationStore } from "./runMutationStore.js";
 import { createRunClaimStore } from "./runClaimStore.js";
+import { createRunUsageStore } from "./runUsageStore.js";
+import { runGatewayPin } from "./meteringGateway.js";
 
 export { normalizeSchedule } from "./scheduleRecords.js";
 
@@ -103,7 +107,18 @@ const runClaimStore = createRunClaimStore({
   getRun,
   getDecryptedSecretEnv,
   buildAgentRuntimePack,
+  buildRunGatewayPin: (claimedRun, capability) => runGatewayPin({ run: claimedRun, capability, secret: env.sessionSecret }),
   getWorkflowBundle
+});
+const runUsageStore = createRunUsageStore({
+  all,
+  one,
+  run,
+  id,
+  now,
+  getRun,
+  updateRun,
+  addRunEvent
 });
 const runCreateStore = createRunCreateStore({
   run,
@@ -172,6 +187,7 @@ export function initDb() {
   migrateCapabilityDeadlineColumn();
   migrateCapabilityDefinitionHashColumn();
   migrateRunsCapabilityVersioningColumns();
+  migrateRunsUsageBudgetColumns();
   migrateRunnerAuthHealthColumn();
   migrateRunsSupervisorColumns();
   migrateApprovalsTimerColumns();
@@ -233,6 +249,17 @@ function migrateRunsCapabilityVersioningColumns() {
   migrateMissingColumns("runs", [
     { name: "capability_sha", definition: "capability_sha TEXT" },
     { name: "parent_run_id", definition: "parent_run_id TEXT" }
+  ]);
+}
+
+// Metered model-call usage aggregate + optional spend budget. Both nullable —
+// NULL until the first usage record arrives / when no budget was requested —
+// so existing rows and rollbacks are unaffected. Detail rows live in the
+// additive run_usage_records table (created by DB_SCHEMA_SQL).
+function migrateRunsUsageBudgetColumns() {
+  migrateMissingColumns("runs", [
+    { name: "usage", definition: "usage TEXT" },
+    { name: "budget", definition: "budget TEXT" }
   ]);
 }
 
@@ -697,6 +724,18 @@ export function listRunEvents(runId) {
   return runStore.listRunEvents(runId);
 }
 
+export function recordRunUsage(runId, body) {
+  return runUsageStore.recordRunUsage(runId, body);
+}
+
+export function getRunUsage(runId) {
+  return runUsageStore.getRunUsage(runId);
+}
+
+export function listRunUsageRecords(runId, options = {}) {
+  return runUsageStore.listRunUsageRecords(runId, options);
+}
+
 export function registerRunner(input, tokenId = null) {
   return runnerStore.registerRunner(input, tokenId);
 }
@@ -940,6 +979,8 @@ export function dashboardStats() {
   for (const query of [pendingApprovalsCountQuery(), runningRunsCountQuery(VISIBLE_RUN_WHERE)]) {
     counts[query.key] = one(query.sql, query.params).count;
   }
+  const usageQuery = usageTotalsQuery(VISIBLE_RUN_WHERE);
+  counts[usageQuery.key] = normalizeUsageTotalsRow(one(usageQuery.sql, usageQuery.params));
   // Pool / queue breakdown so the UI can render runner capacity and a
   // queue-depth chip without having to fan-out to /api/runners + /api/runs.
   return applyDashboardPoolStats(counts, runnerPoolStats());

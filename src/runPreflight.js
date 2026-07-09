@@ -26,6 +26,8 @@ import {
   normalizeExecutionMode
 } from "./runExecution.js";
 import { resolveHarnessSelection } from "./runHarnessSelection.js";
+import { gatewayMeteringIssues } from "./meteringGateway.js";
+import { normalizeRunBudget, requestedRunBudget } from "./runBudget.js";
 import { secretNamesForRun } from "./runnerAssignment.js";
 import { eligibleHookProfiles } from "./hookProfileRecords.js";
 import { buildRepoCatalog } from "./repoCatalog.js";
@@ -215,6 +217,22 @@ export function evaluateRunPreflight({ capability, input, options = {}, context 
     for (const issue of harness.issues) blocker("harness_selection_invalid", issue);
   } else {
     check("harness_selection", "pass", "harness selection is valid");
+  }
+
+  // --- gateway metering (must be fully pinnable or the run must not launch) ------
+  const meteringIssues = gatewayMeteringIssues(harness.selection);
+  if (meteringIssues.length) {
+    for (const issue of meteringIssues) blocker("metering_gateway_invalid", issue);
+  } else if (harness.selection.metering === "gateway") {
+    check("metering_gateway", "pass", "gateway metering selection is complete (pi harness, model, endpoint, named key)");
+  }
+
+  // --- budget ----------------------------------------------------------------------
+  const { budget, issues: budgetIssues } = normalizeRunBudget(requestedRunBudget(normalizedInput, options));
+  if (budgetIssues.length) {
+    for (const issue of budgetIssues) blocker("budget_invalid", issue);
+  } else if (budget) {
+    check("budget", "pass", `run budget accepted (${Object.entries(budget).map(([key, value]) => `${key}=${value}`).join(", ")})`);
   }
 
   // --- secrets ------------------------------------------------------------------

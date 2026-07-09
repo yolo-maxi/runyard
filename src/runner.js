@@ -16,7 +16,8 @@ import { normalizeRunnerTags } from "./runExecution.js";
 import { collectAuthHealth } from "./runnerAuthHealth.js";
 import { classifyFailureStatus, RUN_FAILURE_CLASSES } from "./runFailureClass.js";
 import { DEFAULT_MAX_INLINE_INPUT_BYTES } from "./runnerPolicy.js";
-import { smithersEventMessage } from "./runnerSmithersEvents.js";
+import { smithersEventMessage, smithersTokenUsage } from "./runnerSmithersEvents.js";
+import { materializeGatewayPin } from "./runnerGateway.js";
 import { createEngineApprovalBridge } from "./runnerEngineApprovals.js";
 import { readClaudeOauthToken } from "./claudeOauthToken.js";
 import { isDraining, resolveDataDir } from "./drain.js";
@@ -297,6 +298,16 @@ async function event(runId, type, message, data = {}) {
   }
 }
 
+// Report one observed model call to the Hub's usage ledger. Best-effort: a
+// failed post never disturbs the run; the requestId keeps replays idempotent.
+async function postRunUsage(runId, usage) {
+  try {
+    await client.post(`/api/runs/${runId}/usage`, usage);
+  } catch (error) {
+    console.error("usage post failed:", error.message);
+  }
+}
+
 async function register() {
   const res = await client.post("/api/runners/register", {
     id: runnerId || undefined,
@@ -442,7 +453,31 @@ async function executeAssignment(assignment) {
     // Per-run harness/endpoint selection (validated by preflight above) rides
     // the runEnv channel so it outranks the runner's ambient RUNYARD_* env.
     const harnessEnv = harnessSelectionRunEnv(resolveHarnessSelection({ capability, input: run.input || {} }).selection);
-    const sid = await launch(entry, run.input, { ...runtimeEnv, ...secretEnv }, resume, run.id, harnessEnv);
+
+    // Gateway-metered run: pin the child agent to the Hub's metering gateway
+    // (per-run pi config dir + run-scoped token) and make sure the withheld
+    // provider key can't reach the child even if a stale Hub sent it.
+    const gateway = assignment.gateway && typeof assignment.gateway === "object" ? assignment.gateway : null;
+    const effectiveSecretEnv = { ...runtimeEnv, ...secretEnv };
+    let gatewayEnv = {};
+    if (gateway) {
+      try {
+        gatewayEnv = materializeGatewayPin({ workspace, runId: run.id, gateway, hubUrl: baseUrl });
+      } catch (error) {
+        const message = `metering gateway pin failed: ${error.message || error}`;
+        await event(run.id, "runner.preflight_failed", message, { runnerId, failureClass: RUN_FAILURE_CLASSES.BLOCKED_BY_PREFLIGHT });
+        await failRun(run.id, message, RUN_FAILURE_CLASSES.BLOCKED_BY_PREFLIGHT);
+        return;
+      }
+      for (const name of gateway.excludeSecretNames || []) delete effectiveSecretEnv[name];
+      await event(
+        run.id,
+        "runner.metering_gateway",
+        `Child agent pinned to metering gateway at ${gatewayEnv.RUNYARD_RUN_PI_BASE_URL} (model ${gateway.model}); provider key withheld from child env`,
+        { model: gateway.model, provider: gateway.provider }
+      );
+    }
+    const sid = await launch(entry, run.input, effectiveSecretEnv, resume, run.id, { ...harnessEnv, ...gatewayEnv });
     smithersRegistry.register(run.id, sid);
     if (resume?.smithersRunId) {
       await event(run.id, "runner.resumed", `Resuming Smithers run ${sid} from checkpoint (attempt ${resume.attempt || "?"})`, {
@@ -483,6 +518,14 @@ async function executeAssignment(assignment) {
       for (let i = posted; i < lines.length; i++) {
         engineApprovals.observeEventLine(lines[i]);
         await event(run.id, "smithers.event", smithersEventMessage(lines[i]));
+        // Runner-observed usage: the engine's TokenUsageReported telemetry is
+        // reported per call. Gateway-pinned model calls are already metered at
+        // the gateway; report only OTHER models (e.g. a claude fallback) so
+        // nothing double-counts.
+        const usage = smithersTokenUsage(lines[i]);
+        if (usage && (!gateway || usage.model !== gateway.model)) {
+          await postRunUsage(run.id, usage);
+        }
       }
       posted = lines.length;
       try {

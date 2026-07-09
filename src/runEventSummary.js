@@ -30,7 +30,8 @@ export const DIAGNOSTIC_STATUSES = new Set([
   "timed_out",
   "invalid_output",
   "infra_unavailable",
-  "needs_human"
+  "needs_human",
+  "budget_exceeded"
 ]);
 
 const GATE_RE = /(test|build|deploy|commit|push|gate|verify)/i;

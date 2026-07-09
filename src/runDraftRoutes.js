@@ -56,6 +56,12 @@ export function draftOptionsFromBody(body = {}) {
   if (body.runnerLocation !== undefined && body.runnerLocation !== null && String(body.runnerLocation).trim() !== "") {
     options.runnerLocation = String(body.runnerLocation).trim();
   }
+  // Optional spend budget rides negotiation options so preflight validates it
+  // and a draft submit creates the run with the same ceiling (input.budget is
+  // the equivalent in-input channel).
+  if (body.budget !== undefined && body.budget !== null) {
+    options.budget = body.budget;
+  }
   return options;
 }
 
@@ -196,7 +202,10 @@ export function createRunDraftHandlers({
       const dispatched = dispatchRun(capability, preflight.input, {
         requestedBy: origin.requestedBy,
         origin: { ...origin.origin, draftId: draft.id },
-        execution: preflight.execution
+        execution: preflight.execution,
+        // The negotiated budget (validated by the preflight above) survives
+        // draft submission; input.budget also flows via createRun's fallback.
+        ...(draft.options?.budget !== undefined ? { budget: draft.options.budget } : {})
       });
       const run = dispatched.run;
       const updated = markRunDraftSubmitted(draft.id, { runId: run.id, preflight });

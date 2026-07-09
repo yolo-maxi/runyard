@@ -40,6 +40,30 @@ export function runningRunsCountQuery(visibleRunWhere) {
   };
 }
 
+// Fleet-wide metered usage rolled up from the per-run aggregates. Costs are
+// summed only where a record carried/estimated one, so this is a floor.
+export function usageTotalsQuery(visibleRunWhere) {
+  return {
+    key: "usage",
+    sql: `SELECT
+        COALESCE(SUM(json_extract(usage, '$.totalTokens')), 0) AS total_tokens,
+        COALESCE(SUM(json_extract(usage, '$.costMicros')), 0) AS cost_micros,
+        COALESCE(SUM(json_extract(usage, '$.calls')), 0) AS calls,
+        COUNT(*) AS metered_runs
+      FROM runs WHERE usage IS NOT NULL AND ${visibleRunWhere}`,
+    params: []
+  };
+}
+
+export function normalizeUsageTotalsRow(row = {}) {
+  return {
+    totalTokens: Number(row.total_tokens) || 0,
+    costMicros: Number(row.cost_micros) || 0,
+    calls: Number(row.calls) || 0,
+    meteredRuns: Number(row.metered_runs) || 0
+  };
+}
+
 export function applyDashboardPoolStats(counts = {}, pool = {}) {
   return {
     ...counts,

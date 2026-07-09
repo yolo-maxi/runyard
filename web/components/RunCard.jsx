@@ -2,7 +2,7 @@ import { deepLinks } from "../lib/router.js";
 import {
   isActiveRun, isDiagnosticRun, runTitle, runDescription, runProject, runBranch,
   runExecutionLabel, runDurationMs, formatDuration, relativeTime, truncate, runStatusLabel,
-  artifactDisplayName, formatBytes, runChangedFiles, runChurn, runDigest
+  artifactDisplayName, formatBytes, runChangedFiles, runChurn, runDigest, runUsageChip
 } from "../lib/runHelpers.js";
 import { rerunRun, editRerunById } from "../lib/runActions.js";
 import { promoteRun, runPromotionCandidate } from "../lib/runPromotion.js";
@@ -75,6 +75,7 @@ export function RunCard({ run, artifacts = [], now = Date.now(), variant = "card
   const changed = runChangedFiles(run);
   const churn = runChurn(run);
   const digest = runDigest(run);
+  const usageChip = runUsageChip(run);
   // Hover-tooltip the actual file list on the "N files" chip when the outcome
   // summary carries specifics; otherwise the count still renders so the runs
   // history reflects that files did change.
@@ -119,6 +120,7 @@ export function RunCard({ run, artifacts = [], now = Date.now(), variant = "card
           {branch ? <span className="chip chip-branch" title="Branch"><Icon name="branch" /> {branch}</span> : null}
           {changed ? <span className="chip chip-files" title={changedTitle}>{changed.count} file{changed.count === 1 ? "" : "s"}</span> : null}
           {churn ? <CodeChurn churn={churn} /> : null}
+          {usageChip ? <span className="chip chip-usage" title="Metered model usage (tokens · estimated cost)">{usageChip}</span> : null}
         </div>
         <div className="run-history-meta">
           <span title={run.createdAt || ""}>{created}</span>
@@ -161,7 +163,7 @@ export function RunCard({ run, artifacts = [], now = Date.now(), variant = "card
       <p className="muted run-desc">{description}</p>
       <RunProgressStrip run={run} now={now} />
       {run.status === "queued" ? <QueueBanner run={run} /> : null}
-      {project || branch || run.workflowVersion || execution || churn || changed ? (
+      {project || branch || run.workflowVersion || execution || churn || changed || usageChip ? (
         <div className="run-card-chips">
           {project ? <span className="chip chip-project" title="Project / target"><Icon name="project" /> {project}</span> : null}
           {branch ? <span className="chip chip-branch" title="Branch"><Icon name="branch" /> {branch}</span> : null}
@@ -169,6 +171,7 @@ export function RunCard({ run, artifacts = [], now = Date.now(), variant = "card
           {execution ? <span className="chip chip-runner" title="Execution target">{execution}</span> : null}
           {changed ? <span className="chip chip-files" title={changedTitle}>{changed.count} file{changed.count === 1 ? "" : "s"}</span> : null}
           {churn ? <CodeChurn churn={churn} /> : null}
+          {usageChip ? <span className="chip chip-usage" title="Metered model usage (tokens · estimated cost)">{usageChip}</span> : null}
         </div>
       ) : null}
       {digest ? (

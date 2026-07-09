@@ -24,6 +24,7 @@ function harness(overrides = {}) {
       calls.countRuns.push(filters);
       return overrides.total ?? runs.length;
     },
+    getRunUsage: overrides.getRunUsage,
     decorateSingleRun: (run) => ({ ...run, single: true }),
     getRun: overrides.getRun || ((id) => runs.find((run) => run.id === id) || null),
     hiddenRunSlugs: ["support-agent"],
@@ -125,6 +126,35 @@ describe("run read route helpers", () => {
     const disabledRes = response();
     disabled.handlers.getRunTimeline({ params: { id: "run_1" }, query: {} }, disabledRes);
     assert.equal(disabledRes.statusCode, 404);
+  });
+
+  it("serves run usage with budget-stop presentation", () => {
+    const usage = { totalTokens: 120, costMicros: 900, calls: 2, byModel: {} };
+    const { handlers } = harness({
+      runs: [{
+        id: "run_1",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        status: "budget_exceeded",
+        capabilitySlug: "alpha",
+        input: {},
+        error: "budget exceeded: 120 tokens used, budget.maxTokens is 100",
+        budget: { maxTokens: 100 }
+      }],
+      getRunUsage: (id) => ({ runId: id, usage, budget: { maxTokens: 100 }, records: [{ id: "usg_1" }] })
+    });
+    const res = response();
+    handlers.getRunUsage({ params: { id: "run_1" } }, res);
+    assert.equal(res.body.runId, "run_1");
+    assert.deepEqual(res.body.usage, usage);
+    assert.equal(res.body.records.length, 1);
+    assert.equal(res.body.status, "budget_exceeded");
+    assert.equal(res.body.budgetStop.stopped, true);
+    assert.match(res.body.budgetStop.reason, /budget exceeded/);
+
+    const missing = harness({ getRunUsage: () => null });
+    const notFound = response();
+    missing.handlers.getRunUsage({ params: { id: "run_missing" } }, notFound);
+    assert.equal(notFound.statusCode, 404);
   });
 
   it("streams run events and unsubscribes when the connection closes", () => {

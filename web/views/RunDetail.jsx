@@ -7,7 +7,7 @@ import {
   runTitle, runDescription, runProject, runBranch, runExecutionLabel, isActiveRun, formatBytes
 } from "../lib/runHelpers.js";
 import { Breadcrumbs, Icon, ShareButton } from "../components/ui.jsx";
-import { RunBanner, RunMetaStrip, RunOutcomeSummary, RunDiagnostics, RunIO, RunArtifacts, payloadBytes } from "../components/RunDetailParts.jsx";
+import { RunBanner, RunBudgetNotice, RunMetaStrip, RunOutcomeSummary, RunDiagnostics, RunIO, RunArtifacts, payloadBytes } from "../components/RunDetailParts.jsx";
 import { RunLog } from "../components/RunLog.jsx";
 import { LiveConsole } from "../components/LiveConsole.jsx";
 
@@ -118,6 +118,7 @@ export function RunDetail({ runId, focus = "" }) {
           <span className="run-queue-detail muted">{run.queue?.position ? `#${run.queue.position}${run.queue.total ? ` of ${run.queue.total}` : ""} · ` : ""}waiting for a runner slot</span>
         </p>
       ) : null}
+      <RunBudgetNotice run={run} />
       <RunOutcomeSummary summary={run.outcomeSummary} />
       {focus === "logs" ? <p className="muted">Linked directly to this run's log.</p> : null}
       {focus === "artifacts" ? <p className="muted">Linked directly to this run's artifacts.</p> : null}

@@ -25,14 +25,21 @@
 
 export const HARNESS_CHOICES = new Set(["pi", "claude", "codex"]);
 
-export const HARNESS_SELECTION_FIELDS = ["agentHarness", "piProvider", "piModel", "piBaseUrl", "piApiKeyEnv"];
+// metering: how this run's model calls are captured. "observed" (default)
+// records the engine's TokenUsageReported events; "gateway" pins the child
+// agent to the Hub's metering gateway and withholds the provider key from the
+// child env entirely (src/meteringGateway.js).
+export const METERING_CHOICES = new Set(["gateway", "observed"]);
+
+export const HARNESS_SELECTION_FIELDS = ["agentHarness", "piProvider", "piModel", "piBaseUrl", "piApiKeyEnv", "metering"];
 
 const FIELD_ENV_NAMES = {
   agentHarness: "RUNYARD_RUN_AGENT_CLI",
   piProvider: "RUNYARD_RUN_PI_PROVIDER",
   piModel: "RUNYARD_RUN_PI_MODEL",
   piBaseUrl: "RUNYARD_RUN_PI_BASE_URL",
-  piApiKeyEnv: "RUNYARD_RUN_PI_API_KEY_ENV"
+  piApiKeyEnv: "RUNYARD_RUN_PI_API_KEY_ENV",
+  metering: "RUNYARD_RUN_METERING"
 };
 
 // Labels are short identifier-ish strings; model ids may carry "/" (openrouter)
@@ -56,6 +63,11 @@ const FIELD_RULES = {
   piApiKeyEnv: {
     ok: (value) => ENV_NAME_PATTERN.test(value),
     expected: "an environment variable NAME like VENICE_API_KEY (uppercase letters, digits, underscores) — never the key itself"
+  },
+  metering: {
+    ok: (value) => METERING_CHOICES.has(value.toLowerCase()),
+    normalize: (value) => value.toLowerCase(),
+    expected: 'one of "gateway", "observed"'
   }
 };
 

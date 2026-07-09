@@ -108,6 +108,52 @@ export function formatBytes(b) {
   return `${(b / 1024 / 1024).toFixed(1)} MB`;
 }
 
+// --- Metered usage (run.usage aggregate written by the Hub) ------------------
+export function formatTokens(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`;
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(n >= 10_000 ? 0 : 1)}k`;
+  return String(Math.floor(n));
+}
+
+export function formatCostMicros(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  const usd = n / 1_000_000;
+  if (usd >= 100) return `$${usd.toFixed(0)}`;
+  if (usd >= 1) return `$${usd.toFixed(2)}`;
+  return `$${usd.toFixed(usd >= 0.01 ? 2 : 4)}`;
+}
+
+// Null when the run has no metered usage yet.
+export function runUsage(run) {
+  const usage = run?.usage;
+  if (!usage || typeof usage !== "object") return null;
+  const totalTokens = Number(usage.totalTokens) || 0;
+  const costMicros = Number(usage.costMicros) || 0;
+  if (totalTokens <= 0 && costMicros <= 0) return null;
+  return {
+    totalTokens,
+    costMicros,
+    calls: Number(usage.calls) || 0,
+    tokensLabel: formatTokens(totalTokens),
+    costLabel: formatCostMicros(costMicros),
+    byModel: usage.byModel && typeof usage.byModel === "object" ? usage.byModel : {}
+  };
+}
+
+// Short "12.3k tok · $0.42" chip text, or "" when unmetered.
+export function runUsageChip(run) {
+  const usage = runUsage(run);
+  if (!usage) return "";
+  const parts = [];
+  if (usage.tokensLabel) parts.push(`${usage.tokensLabel} tok`);
+  if (usage.costLabel) parts.push(usage.costLabel);
+  return parts.join(" · ");
+}
+
 const MIME_EXT = {
   "text/markdown": ".md", "text/plain": ".txt", "application/json": ".json",
   "text/html": ".html", "application/pdf": ".pdf", "image/png": ".png",
@@ -130,6 +176,20 @@ export function artifactDisplayName(artifact) {
   return name;
 }
 
+// Terminal failure-class statuses (mirrors src/runFailureClass.js).
+const FAILURE_RUN_STATUSES = new Set([
+  "failed",
+  "error",
+  "blocked_by_gate",
+  "blocked_by_preflight",
+  "provider_limited",
+  "timed_out",
+  "invalid_output",
+  "infra_unavailable",
+  "needs_human",
+  "budget_exceeded"
+]);
+
 // --- Progress strip phase logic (drives RunProgressStrip) -------------------
 const STALL_THRESHOLD_MS = 10_000;
 
@@ -145,7 +205,7 @@ export function runPhaseStates(run, now = Date.now()) {
   else running = "done";
   let outcome;
   if (status === "succeeded") outcome = "ok";
-  else if (status === "failed" || status === "error") outcome = "fail";
+  else if (FAILURE_RUN_STATUSES.has(status)) outcome = "fail";
   else if (status === "cancelled" || status === "rejected") outcome = "cancel";
   else outcome = "pending";
   return { queued, running, outcome };
@@ -199,6 +259,7 @@ export function summarizeFailure(run) {
   let label;
   if (run.status === "rejected") label = "Approval rejected";
   else if (run.status === "cancelled") label = "Cancelled";
+  else if (run.status === "budget_exceeded" || /\bbudget exceeded\b/.test(low)) label = "Stopped at budget";
   else if (/\b(?:timed?\s*out|timeout|etimedout|deadline)\b/.test(low)) label = "Timed out";
   else if (/\b(?:econnrefused|enotfound|socket hang|fetch failed|getaddrinfo)\b/.test(low) || /\bnetwork\b/.test(low)) label = "Network error";
   else if (/\b(?:type|reference|syntax|range)error\b/.test(low)) label = "Workflow code error";
@@ -265,7 +326,8 @@ const RUN_STATUS_LABELS = {
   failed: "Failed",
   error: "Failed",
   cancelled: "Cancelled",
-  rejected: "Rejected"
+  rejected: "Rejected",
+  budget_exceeded: "Stopped at budget"
 };
 
 export function runStatusLabel(status) {

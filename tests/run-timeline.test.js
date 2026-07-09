@@ -122,6 +122,21 @@ describe("GET /api/runs/:id/timeline", () => {
         body: { type: "runner.warning", message: "retry/fallback evidence for obstruction timeline" }
       });
       await sleep(5);
+      const usageResponse = await api(`/api/runs/${runId}/usage`, {
+        method: "POST",
+        body: {
+          provider: "anthropic",
+          model: "claude-opus-4-7",
+          promptTokens: 6,
+          completionTokens: 1744,
+          source: "runner",
+          nodeId: "factory",
+          requestId: "smithers-run:18"
+        }
+      });
+      assert.equal(usageResponse.usage.totalTokens, 1750);
+      assert.equal(usageResponse.budget.exceeded, false);
+      await sleep(5);
       await api(`/api/runs/${runId}/artifacts`, {
         method: "POST",
         body: {
@@ -171,6 +186,22 @@ describe("GET /api/runs/:id/timeline", () => {
 
       const eventEntries = page.entries.filter((e) => e.kind === "event");
       assert.ok(eventEntries.every((e) => e.source === "run_events"));
+
+      // Usage streams as a first-class run event and lands in timeline order.
+      const usageEntry = eventEntries.find((e) => e.payload.type === "run.usage");
+      assert.ok(usageEntry, "timeline should include the run.usage event");
+      assert.equal(usageEntry.payload.data.record.model, "claude-opus-4-7");
+      assert.equal(usageEntry.payload.data.totals.totalTokens, 1750);
+
+      // The aggregate is persisted on the run and served on detail + /usage.
+      const detail = await api(`/api/runs/${runId}`);
+      assert.equal(detail.run.usage.totalTokens, 1750);
+      assert.equal(detail.run.usage.byModel["claude-opus-4-7"].calls, 1);
+      const usagePayload = await api(`/api/runs/${runId}/usage`);
+      assert.equal(usagePayload.usage.totalTokens, 1750);
+      assert.equal(usagePayload.records.length, 1);
+      assert.equal(usagePayload.records[0].source, "runner");
+      assert.equal(usagePayload.budgetStop, null);
 
       const artifactEntries = page.entries.filter((e) => e.kind === "artifact");
       assert.ok(artifactEntries.every((e) => e.source === "artifacts:runner"));

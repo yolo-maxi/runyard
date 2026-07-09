@@ -26,6 +26,8 @@ async function loadRenderSmoke() {
         import { ApprovalList } from "./web/components/ApprovalList.jsx";
         import { RunProgressStrip } from "./web/components/RunProgressStrip.jsx";
         import { CodeBlock } from "./web/components/CodeBlock.jsx";
+        import { RunCard } from "./web/components/RunCard.jsx";
+        import { RunBudgetNotice, RunMetaStrip } from "./web/components/RunDetailParts.jsx";
 
         export function renderSmoke() {
           const run = {
@@ -52,7 +54,31 @@ async function loadRenderSmoke() {
               }
             }]} />),
             progress: renderToStaticMarkup(<RunProgressStrip run={run} now={Date.parse("2026-06-26T20:00:40.000Z")} />),
-            code: renderToStaticMarkup(<CodeBlock code={"const answer = 42;"} language="js" />)
+            code: renderToStaticMarkup(<CodeBlock code={"const answer = 42;"} language="js" />),
+            meteredCard: renderToStaticMarkup(<RunCard variant="row" now={Date.parse("2026-06-26T21:00:00.000Z")} run={{
+              id: "run_metered",
+              status: "succeeded",
+              capabilitySlug: "research",
+              createdAt: "2026-06-26T20:00:00.000Z",
+              startedAt: "2026-06-26T20:00:10.000Z",
+              completedAt: "2026-06-26T20:05:10.000Z",
+              usage: { totalTokens: 12345, costMicros: 420000, calls: 3, byModel: {} }
+            }} />),
+            budgetMeta: renderToStaticMarkup(<RunMetaStrip run={{
+              id: "run_budget",
+              status: "budget_exceeded",
+              createdAt: "2026-06-26T20:00:00.000Z",
+              startedAt: "2026-06-26T20:00:10.000Z",
+              completedAt: "2026-06-26T20:05:10.000Z",
+              usage: { totalTokens: 120, costMicros: 0, calls: 2, byModel: { m1: { totalTokens: 120, costMicros: 0 } } },
+              budget: { maxTokens: 100 }
+            }} />),
+            budgetNotice: renderToStaticMarkup(<RunBudgetNotice run={{
+              id: "run_budget",
+              status: "budget_exceeded",
+              error: "budget exceeded: 120 tokens used, budget.maxTokens is 100"
+            }} />),
+            budgetNoticeHidden: renderToStaticMarkup(<div>{RunBudgetNotice({ run: { id: "r", status: "succeeded" } })}</div>)
           };
         }
       `
@@ -88,5 +114,21 @@ describe("React render smoke", () => {
 
     assert.match(html.code, /class="hljs language-javascript"/);
     assert.match(html.code, /answer/);
+
+    // Metered usage renders as a chip on run cards…
+    assert.match(html.meteredCard, /chip-usage/);
+    assert.match(html.meteredCard, /12k tok/);
+    assert.match(html.meteredCard, /\$0\.42/);
+    // …and on the run-detail meta strip, alongside the budget ceiling.
+    assert.match(html.budgetMeta, /Usage/);
+    assert.match(html.budgetMeta, /120 tok/);
+    assert.match(html.budgetMeta, /Budget/);
+    assert.match(html.budgetMeta, /100 tok/);
+    // Budget stops get an explicit, plain-English callout — and nothing
+    // renders for runs that were not budget-stopped.
+    assert.match(html.budgetNotice, /run-budget-notice/);
+    assert.match(html.budgetNotice, /Stopped at budget/);
+    assert.match(html.budgetNotice, /budget exceeded: 120 tokens/);
+    assert.equal(html.budgetNoticeHidden, "<div></div>");
   });
 });

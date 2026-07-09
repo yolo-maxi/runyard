@@ -1,5 +1,6 @@
 const FOCUS_EVENT_PATTERNS = [
   /^run\.(?:failed|cancelled|errored|started|succeeded|created)$/i,
+  /^run\.budget[._]exceeded$/i,
   /^(?:node|task|step|workflow)\.(?:started|finished|completed|failed|errored|cancelled)$/i,
   /^approval\.(?:requested|resolved|approved|rejected|changes_requested|auto_queued)$/i,
   /^engine\.approval\.(?:waiting|resumed|applied|apply_failed)$/i,
@@ -29,7 +30,10 @@ const NOISY_EVENT_TYPES = new Set([
 
 const APPROVAL_EVENT_RE = /^(?:engine\.)?approval\./i;
 const NODE_EVENT_RE = /^(?:node|task|step)\.(?:started|finished|completed|failed|errored|cancelled|skipped)$/i;
-const RUN_EVENT_RE = /^run\.(?:created|started|succeeded|failed|cancelled|errored|chain\..*|rerun_.*)$/i;
+const RUN_EVENT_RE = /^run\.(?:created|started|succeeded|failed|cancelled|errored|budget[._]exceeded|chain\..*|rerun_.*)$/i;
+// Metered model-call usage: agent activity, not run lifecycle — grouped with
+// agent summaries so a chatty workflow doesn't drown lifecycle events.
+const USAGE_EVENT_RE = /^run\.usage$/i;
 const STEP_MARKER_RE = /^workflow\.step$/i;
 const AGENT_SUMMARY_RE = /^(?:agent|claude|codex)\.(?:summary|result|completed|final)$/i;
 const ERROR_HINT_RE = /(?:^|\s|:)(error|failed|panic|fatal|exception|timeout)\b/i;
@@ -54,6 +58,7 @@ export function eventCategory(event) {
   if (NOISY_EVENT_TYPES.has(type) || /\.(?:heartbeat|tick|ping)$/i.test(type)) return "noise";
   if (/\.(?:trace|span|delta|chunk|tool_use|tool_result|thinking)$/i.test(type)) return "trace";
   if (APPROVAL_EVENT_RE.test(type)) return "approval";
+  if (USAGE_EVENT_RE.test(type)) return "agent";
   if (RUN_EVENT_RE.test(type)) return "run";
   if (NODE_EVENT_RE.test(type)) return "node";
   if (STEP_MARKER_RE.test(type)) return "step";
@@ -64,6 +69,8 @@ export function eventCategory(event) {
 
 export function eventSeverity(event) {
   const type = String(event?.type || "");
+  if (/^run\.budget[._]exceeded$/i.test(type)) return "error";
+  if (USAGE_EVENT_RE.test(type)) return "info";
   if (/(?:^|\.)(?:failed|errored|fatal|panic)$/i.test(type)) return "error";
   if (type === "stderr") return "error";
   if (/(?:^|\.)(?:cancelled|skipped|warn|warning|deprecated)$/i.test(type)) return "warn";

@@ -13,6 +13,7 @@ export function eventCategoryClient(event) {
   if (/(?:^|\.)heartbeat$|^heartbeat$|\.tick$|\.ping$/i.test(type)) return "noise";
   if (/\.(?:trace|span|delta|chunk|tool_use|tool_result|thinking)$/i.test(type)) return "trace";
   if (/^approval\./i.test(type)) return "approval";
+  if (/^run\.usage$/i.test(type)) return "agent";
   if (/^run\./i.test(type)) return "run";
   if (/^(?:node|task|step)\./i.test(type)) return "node";
   if (/^workflow\.step$/i.test(type)) return "step";
@@ -23,6 +24,8 @@ export function eventCategoryClient(event) {
 
 export function eventSeverityClient(event) {
   const type = String(event?.type || "");
+  if (/^run\.budget[._]exceeded$/i.test(type)) return "error";
+  if (/^run\.usage$/i.test(type)) return "info";
   if (/(?:^|\.)(?:failed|errored|fatal|panic)$/i.test(type)) return "error";
   if (type === "stderr") return "error";
   if (/(?:^|\.)(?:cancelled|skipped|warn|warning|deprecated)$/i.test(type)) return "warn";

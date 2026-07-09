@@ -797,10 +797,24 @@ export const API_SURFACE = [
     mcp: ["get_run_timeline"]
   },
   {
+    method: "get", path: "/api/runs/:id/usage", handler: "runReadHandlers.getRunUsage",
+    group: "runs", v1Path: "/api/v1/runs/:id/usage",
+    auth: true, ui: true,
+    summary: "Get the run's metered model-call usage: aggregate totals (tokens, costMicros, byModel/byProvider), the optional budget, and per-call usage records",
+    mcp: ["get_run_usage"]
+  },
+  {
     method: "post", path: "/api/runs/:id/events", handler: "runLifecycleHandlers.recordRunEvent",
     group: "runs",
     auth: true, scopes: ["runner"], runnerOwner: true,
     summary: "Append run event (runner protocol)",
+    mcpExempt: "Runner-to-Hub machine protocol (runner scope + run ownership)."
+  },
+  {
+    method: "post", path: "/api/runs/:id/usage", handler: "runLifecycleHandlers.recordRunUsage",
+    group: "runs",
+    auth: true, scopes: ["runner"], runnerOwner: true,
+    summary: "Record one metered model-call usage record for a run and fold it into the run's usage aggregate; enforces the run budget (runner protocol)",
     mcpExempt: "Runner-to-Hub machine protocol (runner scope + run ownership)."
   },
   {
@@ -844,6 +858,24 @@ export const API_SURFACE = [
     auth: true, scopes: ["api", "mcp"], ui: true,
     summary: "Merge a successful isolated worktree run into its target branch, run gates, push, and clean up the branch/worktree",
     mcp: ["promote_run"]
+  },
+
+  // --- Metering gateway (inference boundary) ---
+  // Provider-shaped proxy endpoints served to gateway-metered runs. They are
+  // authenticated by the per-run gateway token minted at claim time (never an
+  // operator/API token), so they carry no `auth`/`scopes` middleware — like
+  // the workflow-endpoint submit route, auth lives in the handler.
+  {
+    method: "post", path: "/api/gateway/openai/v1/chat/completions", handler: "gatewayHandlers.openAiChatCompletions", wrap: "async",
+    group: "runs",
+    summary: "OpenAI-compatible chat-completions proxy for gateway-metered runs: authenticates the per-run gateway token, enforces the run budget before forwarding, calls the run's configured upstream with the Hub-held key, and records usage from the provider response",
+    mcpExempt: "Inference-boundary machine protocol authenticated by a per-run gateway token; not an operator-facing tool."
+  },
+  {
+    method: "post", path: "/api/gateway/anthropic/v1/messages", handler: "gatewayHandlers.anthropicMessages", wrap: "async",
+    group: "runs",
+    summary: "Anthropic-compatible messages proxy for gateway-metered runs: same per-run token auth, budget enforcement, Hub-held upstream key, and usage capture as the OpenAI-compatible route",
+    mcpExempt: "Inference-boundary machine protocol authenticated by a per-run gateway token; not an operator-facing tool."
   },
 
   // --- Artifacts ---

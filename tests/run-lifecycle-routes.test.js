@@ -15,7 +15,17 @@ function harness(overrides = {}) {
   const updates = [];
   const transitions = [];
   const engineResumes = [];
+  const usageRecords = [];
+  const budgetChecks = [];
   const handlers = createRunLifecycleHandlers({
+    recordRunUsage: overrides.recordRunUsage || ((runId, body) => {
+      usageRecords.push({ runId, body });
+      return { ok: true, duplicate: false, record: { id: "usg_1", ...body }, usage: { totalTokens: body.totalTokens || 0 } };
+    }),
+    enforceRunBudget: overrides.enforceRunBudget || ((runId) => {
+      budgetChecks.push(runId);
+      return { exceeded: false };
+    }),
     resolveEngineApprovalOnResume: (runId, data) => {
       engineResumes.push({ runId, data });
       return [];
@@ -41,7 +51,7 @@ function harness(overrides = {}) {
     updateRun: (runId, patch) => updates.push({ runId, patch }),
     withRunLinks: (run) => ({ ...run, deepLink: `#/runs/${run.id}` })
   });
-  return { createdRuns, engineResumes, events, failureAlerts, handlers, terminalArtifacts, transitions, updates };
+  return { budgetChecks, createdRuns, engineResumes, events, failureAlerts, handlers, terminalArtifacts, transitions, updates, usageRecords };
 }
 
 function req(body = {}, params = { id: "run_1" }) {
@@ -167,6 +177,48 @@ describe("run lifecycle route handlers", () => {
     assert.equal(events[0].type, "run.cancelled");
     assert.equal(events[0].message, "operator stop");
     assert.deepEqual(terminalArtifacts, ["run_1"]);
+  });
+
+  it("records usage, enforces the budget, and reports enforcement in the response", () => {
+    const { budgetChecks, handlers, usageRecords } = harness();
+    const res = response();
+    handlers.recordRunUsage(req({ model: "m", promptTokens: 10, completionTokens: 5, totalTokens: 15, source: "runner" }), res);
+
+    assert.equal(usageRecords.length, 1);
+    assert.equal(usageRecords[0].runId, "run_1");
+    assert.deepEqual(budgetChecks, ["run_1"]);
+    assert.equal(res.body.record.id, "usg_1");
+    assert.equal(res.body.usage.totalTokens, 15);
+    assert.equal(res.body.duplicate, false);
+    assert.deepEqual(res.body.budget, { exceeded: false });
+  });
+
+  it("reports a budget stop on the usage response and surfaces store errors", () => {
+    const stopped = harness({
+      enforceRunBudget: () => ({ exceeded: true, stopped: true, reason: "budget exceeded: 20 tokens used, budget.maxTokens is 10" })
+    });
+    const res = response();
+    stopped.handlers.recordRunUsage(req({ model: "m", promptTokens: 20, source: "runner" }), res);
+    assert.equal(res.body.budget.exceeded, true);
+    assert.equal(res.body.budget.stopped, true);
+    assert.match(res.body.budget.reason, /budget exceeded/);
+
+    const invalid = harness({ recordRunUsage: () => ({ ok: false, code: 400, error: "bad usage" }) });
+    const res2 = response();
+    invalid.handlers.recordRunUsage(req({}), res2);
+    assert.equal(res2.statusCode, 400);
+    assert.deepEqual(res2.body, { error: "bad usage" });
+    assert.deepEqual(invalid.budgetChecks, []);
+  });
+
+  it("skips budget enforcement for duplicate usage replays", () => {
+    const { budgetChecks, handlers } = harness({
+      recordRunUsage: () => ({ ok: true, duplicate: true, record: { id: "usg_1" }, usage: { totalTokens: 5 } })
+    });
+    const res = response();
+    handlers.recordRunUsage(req({ model: "m", promptTokens: 5, source: "runner", requestId: "sid:1" }), res);
+    assert.equal(res.body.duplicate, true);
+    assert.deepEqual(budgetChecks, []);
   });
 
   it("returns transition errors without recording side effects", () => {

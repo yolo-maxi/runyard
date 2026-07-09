@@ -1,0 +1,99 @@
+---
+title: Usage metering & budgets
+description: Per-run model-call usage as a first-class streamed signal, hard spend budgets, and the metering gateway at the inference boundary.
+---
+
+Every run durably records not just what it produced, but **what it consumed**. Each model call a run's child agents make is captured as a usage record, streamed as a run event while the run executes, aggregated onto the run, and included in terminal payloads — so dashboards, delegated callers, and budget enforcement all work off real numbers, never log scraping.
+
+## Usage records and the run aggregate
+
+A usage record is one observed model call:
+
+```json
+{
+  "ts": "2026-07-08T12:00:00.000Z",
+  "provider": "anthropic",
+  "model": "claude-opus-4-7",
+  "promptTokens": 6,
+  "completionTokens": 1744,
+  "totalTokens": 1750,
+  "costMicros": 130890,
+  "nodeId": "factory",
+  "source": "runner"
+}
+```
+
+Records fold into the run's persisted aggregate the moment they arrive:
+
+```json
+"usage": {
+  "totalTokens": 1750,
+  "promptTokens": 6,
+  "completionTokens": 1744,
+  "costMicros": 130890,
+  "calls": 1,
+  "byModel": { "claude-opus-4-7": { "totalTokens": 1750, "costMicros": 130890, "calls": 1 } },
+  "byProvider": { "anthropic": { "totalTokens": 1750, "costMicros": 130890, "calls": 1 } }
+}
+```
+
+`costMicros` is micro-USD (1&nbsp;000&nbsp;000 = $1). When the provider reports the call's cost it is used verbatim (`costSource: "provider"`); otherwise the Hub estimates from a list-price table for well-known models (`costSource: "price-table"`) and records **no cost at all** for unknown models — totals are a floor, never a guess.
+
+Where usage appears:
+
+- `GET /api/runs` and `GET /api/runs/{id}` — the `usage` aggregate (and `budget`) on every run object.
+- `GET /api/runs/{id}/usage` — the aggregate, the budget, per-call records, and `budgetStop`.
+- `run.usage` events on the run's event stream and timeline, emitted in the same write that updates the aggregate.
+- Terminal [response-endpoint payloads](./runs.mdx) — `usage`, `budget`, and `budgetStop` fields, so delegated callers can bill or cap against real consumption.
+- MCP: `get_run_usage`, plus `get_run_status`/`list_runs` responses.
+- The web app: a usage chip on run cards, usage/budget on run detail, and fleet-wide totals in `GET /api/dashboard` (`stats.usage`).
+
+## Budgets
+
+Run creation accepts an optional hard spend ceiling — as a top-level `budget` field or `input.budget`, on direct runs, negotiated runs, drafts, schedules, endpoint submissions, and reruns (reruns inherit the previous run's budget unless overridden):
+
+```json
+{ "input": { "title": "Audit checkout flow" }, "budget": { "maxTokens": 200000, "maxCostMicros": 2000000 } }
+```
+
+Budgets are hard stops, not advisories:
+
+- **Before** each gateway-metered call, the Hub refuses to forward (`402`) if the aggregate has already reached the ceiling.
+- **After** every accepted usage record, the Hub re-evaluates; a breach emits `run.budget.exceeded` and terminates the run with the distinct terminal status **`budget_exceeded`** — never a generic `failed` — with the stop reason on `run.error` and `budgetStop`.
+- The runner observes the terminal status on its next poll and cancels the detached engine run, and the gateway refuses further calls from that run's token (`403`).
+
+An invalid budget is rejected with `400 budget_invalid` at creation (and surfaces as a preflight blocker in negotiation) — a requested cap is never silently dropped.
+
+## Capture paths: what is metered today
+
+Usage is captured at the **inference boundary**, through two paths:
+
+| Path | Source label | Coverage | Key custody |
+| --- | --- | --- | --- |
+| Metering gateway | `gateway` | Runs that select `metering: "gateway"` with the pi harness (`piModel`, `piBaseUrl`, `piApiKeyEnv`) | Provider key stays on the Hub; the child only holds a run-scoped gateway token |
+| Runner-observed engine telemetry | `runner` | Every claude / codex / pi CLI call the Smithers engine reports via its structured `TokenUsageReported` events | Keys delivered per-run via the encrypted secretEnv channel (as before) |
+
+**Gateway-metered runs** are pinned at claim time: the Hub mints a stateless per-run token, withholds the named provider key from the child environment entirely, and the runner materializes a per-run pi configuration whose *only* provider is the Hub's OpenAI-compatible gateway (`POST /api/gateway/openai/v1/chat/completions`; an Anthropic-shaped `/api/gateway/anthropic/v1/messages` is also served). The gateway authenticates the token, enforces the budget before forwarding, calls the run's configured upstream with the Hub-held key, streams the response back, and records usage from the provider's own response metadata (including streamed SSE usage frames).
+
+**Runner-observed runs** (the default, `metering: "observed"`) report the engine's per-call usage telemetry to `POST /api/runs/{id}/usage` with a stable per-call `requestId`, so replays after a runner restart never double-count. This is real, agent-reported usage from the engine's event stream — but the child still holds its own credentials (e.g. a Claude subscription token), so it is metered without being egress-locked.
+
+**Not yet metered:** model calls that bypass both paths — e.g. a child agent calling a provider directly with an ad-hoc key from a tool script, or CLI paths the engine does not report usage for. Full egress locking (denying children any network path except the gateway) is a follow-up; the current sandbox shares the host network so the gateway pin is config-level, not network-level.
+
+## Selecting gateway metering
+
+Gateway metering rides the same per-run [harness selection](../guides/workflows-authoring.mdx) surface as the pi custom-endpoint fields:
+
+```json
+{
+  "input": {
+    "agentHarness": "pi",
+    "piProvider": "venice",
+    "piModel": "llama-3.3-70b",
+    "piBaseUrl": "https://api.venice.ai/api/v1",
+    "piApiKeyEnv": "VENICE_API_KEY",
+    "metering": "gateway"
+  }
+}
+```
+
+Preflight blocks the run unless the selection is complete (pi harness, model, endpoint URL, and the Hub-secret name for the key) — a run never launches half-pinned. The endpoint key must be stored as a Hub secret; with gateway metering it is decrypted only inside the Hub per call and never enters the child environment.

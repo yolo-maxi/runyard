@@ -12,6 +12,7 @@ export const HUB_TERMINAL_STATUSES = new Set([
   "invalid_output",
   "infra_unavailable",
   "needs_human",
+  "budget_exceeded",
   "cancelled"
 ]);
 

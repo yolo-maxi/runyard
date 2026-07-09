@@ -37,6 +37,8 @@ const RUN_TITLE_RECOMMENDATION = "For agent-created runs, include input.title: a
 
 const RUN_PREFLIGHT_RECOMMENDATION = "When the input is rough or unverified, preflight first (preflight_workflow / POST /api/workflows/{id}/preflight or run_workflow with negotiate: true): a non-ready request comes back as ready|needs_input|blocked with questions and blockers instead of becoming a failed run.";
 
+const RUN_BUDGET_RECOMMENDATION = "To hard-cap spend, pass budget: { maxTokens?, maxCostMicros? } at run creation (top-level body or input.budget). Metered usage streams as run.usage events, aggregates on run.usage (totalTokens, costMicros, byModel), and a breach terminates the run with the distinct terminal status budget_exceeded.";
+
 export function hubMenuPayload({ baseUrl, workflows = null, capabilities = [], pool = null } = {}) {
   const catalog = workflows || capabilities;
   const linkedWorkflows = catalog.map((linked) => ({
@@ -89,7 +91,8 @@ export function hubMenuPayload({ baseUrl, workflows = null, capabilities = [], p
     ],
     runInputGuidance: {
       title: RUN_TITLE_RECOMMENDATION,
-      preflight: RUN_PREFLIGHT_RECOMMENDATION
+      preflight: RUN_PREFLIGHT_RECOMMENDATION,
+      budget: RUN_BUDGET_RECOMMENDATION
     },
     tools: [...HUB_TOOL_NAMES],
     workflows: linkedWorkflows,
@@ -208,6 +211,26 @@ export function renderLlmsTxt(baseUrl) {
   lines.push("  attempts / last_error / delivered_at) is visible on GET /api/runs/:id");
   lines.push("  under responseEndpoints[].");
   lines.push("");
+  lines.push("Usage metering & budgets:");
+  lines.push("- Every run records the model calls it consumed. Per-call usage");
+  lines.push("  records stream as run.usage events and aggregate onto the run as");
+  lines.push("  run.usage: { totalTokens, promptTokens, completionTokens,");
+  lines.push("  costMicros, calls, byModel, byProvider } — visible on GET /api/runs,");
+  lines.push("  GET /api/runs/{id}, GET /api/runs/{id}/usage (per-call records +");
+  lines.push("  budget), the get_run_usage MCP tool, and terminal response-endpoint");
+  lines.push("  payloads (usage / budget / budgetStop fields).");
+  lines.push("- Run creation accepts an optional budget: { maxTokens?, maxCostMicros? }");
+  lines.push("  (top-level body field or input.budget; micro-USD, 1000000 = $1).");
+  lines.push("  The budget is a hard ceiling: when metered usage reaches it the Hub");
+  lines.push("  emits run.budget.exceeded and terminates the run with the distinct");
+  lines.push("  terminal status budget_exceeded (not a generic failure), refusing");
+  lines.push("  further metered provider calls.");
+  lines.push("- Capture is at the inference boundary: gateway-metered runs route the");
+  lines.push("  child agent's model calls through the Hub's metering gateway with a");
+  lines.push("  run-scoped token (the provider key stays on the Hub), and all");
+  lines.push("  engine-observed model calls are recorded from structured usage");
+  lines.push("  telemetry — never scraped from logs.");
+  lines.push("");
   lines.push("Run-creation negotiation (preflight + drafts):");
   lines.push("- POST /api/workflows/{id}/preflight dry-runs the deterministic");
   lines.push("  preflight (required input fields, runner tags, secrets, hooks,");
@@ -256,6 +279,8 @@ export function openApiDocument({ baseUrl, version }) {
         "Every grouped operation is also reachable at a stable /v1 alias (e.g. /v1/automation/schedules for /schedules); aliases share the canonical route's handler, auth, and scopes, and carry x-canonical-path. " +
         "Unversioned paths remain fully supported. Paths under /capabilities are deprecated legacy aliases of /workflows. " +
         "Typical flow: discover workflows (GET /menu or /workflows), start a run (POST /workflows/{id}/run with executionMode local|remote), then poll /runs/{id} and read /runs/{id}/timeline, /logs, and /artifacts. " +
+        "Runs meter their model-call usage: per-call records stream as run.usage events and aggregate onto the run object as usage { totalTokens, promptTokens, completionTokens, costMicros, calls, byModel, byProvider } (see GET /runs/{id}/usage for records + budget). " +
+        "Run creation accepts an optional budget { maxTokens?, maxCostMicros? } (top-level field or input.budget); when metered usage reaches the ceiling the Hub emits run.budget.exceeded and terminates the run with the distinct terminal status budget_exceeded. " +
         "Runs that need a human checkpoint enter waiting_approval and are resolved via /approvals/{id}/approve|reject|request-changes. " +
         "Liveness endpoints (/healthz, /readyz, /api/version) and discovery copy (/llms.txt, this document) are unauthenticated and served from the repo root, not under /api."
     },

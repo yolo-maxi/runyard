@@ -21,7 +21,11 @@ Terminal states are final: late reports racing a terminal state are absorbed ide
 
 ### Failure classes
 
-Failures are classified into specific terminal statuses so operators can tell config problems from real failures: `failed` (generic), `blocked_by_gate` (a verification gate failed), `blocked_by_preflight` (the run could never start as configured), `provider_limited` (rate limits/quota), `timed_out`, `invalid_output` (schema mismatch), `infra_unavailable` (network/runner infrastructure), and `needs_human`.
+Failures are classified into specific terminal statuses so operators can tell config problems from real failures: `failed` (generic), `blocked_by_gate` (a verification gate failed), `blocked_by_preflight` (the run could never start as configured), `provider_limited` (rate limits/quota), `timed_out`, `invalid_output` (schema mismatch), `infra_unavailable` (network/runner infrastructure), `needs_human`, and `budget_exceeded` (the run's metered usage reached its spend budget and it was hard-stopped).
+
+### Usage and budgets
+
+Runs also meter the model calls they consume: per-call usage records stream as `run.usage` events and aggregate onto the run as `usage` (`totalTokens`, `costMicros`, `byModel`, ...), and run creation accepts an optional `budget: { maxTokens?, maxCostMicros? }` hard ceiling. See [Usage metering & budgets](./metering.mdx) for the data model, the metering gateway, and budget enforcement.
 
 ## Preflight and run drafts (negotiation)
 

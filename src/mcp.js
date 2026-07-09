@@ -48,6 +48,7 @@ async function callTool(name, args = {}) {
         input: args.input || {},
         executionMode: args.executionMode || args.where || undefined,
         runnerLocation: args.runnerLocation || undefined,
+        ...(args.budget !== undefined ? { budget: args.budget } : {}),
         ...(args.negotiate === true ? { negotiate: true } : {}),
         origin: {
           type: "mcp",
@@ -67,7 +68,8 @@ async function callTool(name, args = {}) {
     return result(await client.post(`/api/workflows/${encodeURIComponent(workflowId(args))}/preflight`, {
       input: args.input || {},
       executionMode: args.executionMode || args.where || undefined,
-      runnerLocation: args.runnerLocation || undefined
+      runnerLocation: args.runnerLocation || undefined,
+      ...(args.budget !== undefined ? { budget: args.budget } : {})
     }));
   }
   if (name === "export_workflow_package") return result(await client.get(`/api/workflow-packages/workflows/${encodeURIComponent(workflowId(args))}/export`));
@@ -100,6 +102,7 @@ async function callTool(name, args = {}) {
   if (name === "get_run_status") return result(await client.get(`/api/runs/${encodeURIComponent(args.runId)}`));
   if (name === "get_run_events") return result(await client.get(`/api/runs/${encodeURIComponent(args.runId)}/events`));
   if (name === "get_run_timeline") return result(await client.get(`/api/runs/${encodeURIComponent(args.runId)}/timeline${queryString({ since: args.since || args.cursor, limit: args.limit })}`));
+  if (name === "get_run_usage") return result(await client.get(`/api/runs/${encodeURIComponent(args.runId)}/usage`));
   if (name === "get_run_diagnostics") return result(await client.get(`/api/runs/${encodeURIComponent(args.runId)}/diagnostics`));
   if (name === "get_run_logs") {
     const response = await fetch(`${client.baseUrl}/api/runs/${encodeURIComponent(args.runId)}/logs`, { headers: { authorization: `Bearer ${client.token}` } });
@@ -120,7 +123,8 @@ async function callTool(name, args = {}) {
   if (name === "rerun_workflow_run" || name === "rerun_run") return result(await client.post(`/api/runs/${encodeURIComponent(args.runId)}/rerun`, {
     input: args.input || undefined,
     executionMode: args.executionMode || args.where || undefined,
-    runnerLocation: args.runnerLocation || undefined
+    runnerLocation: args.runnerLocation || undefined,
+    ...(args.budget !== undefined ? { budget: args.budget } : {})
   }));
   if (name === "promote_run") return result(await client.post(`/api/runs/${encodeURIComponent(args.runId)}/promote`, { note: args.note || "" }));
   if (name === "list_runners") return result(await client.get("/api/runners"));

@@ -19,6 +19,7 @@ export const STATUS_LABELS = {
   invalid_output: "Invalid output",
   infra_unavailable: "Infrastructure unavailable",
   needs_human: "Needs a human decision",
+  budget_exceeded: "Stopped at budget",
   // Approvals
   pending: "Pending",
   approved: "Approved",

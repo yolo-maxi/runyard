@@ -46,7 +46,9 @@ function createHarness(overrides = {}) {
     adjustRunnerActiveRuns: (...args) => releases.push(args),
     addRunEvent: (...args) => events.push(args),
     getRun: (id) => ({ ...queuedRun, id, input: overrides.claimedInput || { secretNames: ["API_KEY"] } }),
-    getDecryptedSecretEnv: (names) => names.includes("API_KEY") ? { API_KEY: "secret-value" } : {},
+    getDecryptedSecretEnv: overrides.getDecryptedSecretEnv
+      || ((names) => names.includes("API_KEY") ? { API_KEY: "secret-value" } : {}),
+    buildRunGatewayPin: overrides.buildRunGatewayPin,
     buildAgentRuntimePack: () => ({
       schemaVersion: 1,
       capturedAt: "2026-07-01T00:00:00.000Z",
@@ -112,6 +114,41 @@ describe("run claim store", () => {
     const bundleEvent = events.find((event) => event[1] === "run.workflow_bundle");
     assert.deepEqual(bundleEvent[3], { bundleId: "wfb_1", version: 2, sha256: "abc123", sizeBytes: 22 });
     assert.equal(JSON.stringify(bundleEvent[3]).includes("export default"), false);
+  });
+
+  it("attaches the gateway pin and withholds the provider key from secretEnv", () => {
+    const requestedNames = [];
+    const pin = {
+      kind: "openai",
+      path: "/api/gateway/openai/v1",
+      provider: "runyard-gateway",
+      model: "llama-3.3-70b",
+      tokenEnv: "RUNYARD_GATEWAY_TOKEN",
+      token: "ryg_run_1.mac",
+      excludeSecretNames: ["VENICE_API_KEY"]
+    };
+    const { events, store } = createHarness({
+      claimedInput: { secretNames: ["API_KEY", "VENICE_API_KEY"] },
+      buildRunGatewayPin: () => pin,
+      getDecryptedSecretEnv: (names) => {
+        requestedNames.push(...names);
+        return Object.fromEntries(names.map((name) => [name, `${name}-value`]));
+      }
+    });
+
+    const payload = store.claimNextRun("runner_1");
+
+    assert.deepEqual(payload.gateway, pin);
+    // The withheld key is never even requested from the secret store for the
+    // child env, so it cannot reach the runner.
+    assert.equal(requestedNames.includes("VENICE_API_KEY"), false);
+    assert.equal(payload.secretEnv.VENICE_API_KEY, undefined);
+    assert.equal(payload.secretEnv.API_KEY, "API_KEY-value");
+    // A metering event is recorded — with metadata only, never the token.
+    const gatewayEvent = events.find((event) => event[1] === "run.metering_gateway");
+    assert.ok(gatewayEvent);
+    assert.equal(JSON.stringify(gatewayEvent[3]).includes("ryg_"), false);
+    assert.deepEqual(gatewayEvent[3].withheldSecretNames, ["VENICE_API_KEY"]);
   });
 
   it("claims but flags a missing configured bundle so the runner fails closed", () => {
