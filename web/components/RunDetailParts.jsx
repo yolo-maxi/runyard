@@ -4,7 +4,7 @@ import {
   isActiveRun, runDurationMs, formatDuration, relativeTime, formatTimestamp,
   artifactDisplayName, formatBytes, truncate, runStatusLabel, runUsage, formatTokens, formatCostMicros
 } from "../lib/runHelpers.js";
-import { rerunRun, editRerunRun, cancelRun } from "../lib/runActions.js";
+import { rerunRun, editRerunRun, cancelRun, resumeRun } from "../lib/runActions.js";
 import { promoteRun, runPromotionCandidate } from "../lib/runPromotion.js";
 import { StatusBadge, ShareButton, Icon, JsonBlock, CodeChurn } from "./ui.jsx";
 
@@ -23,6 +23,7 @@ export function RunBanner({ run, diagnostics, title, slug, onChanged }) {
   const workflowHref = slug ? deepLinks.workflow(slug) : deepLinks.workflows();
   const workflowLabel = run.capabilityName || slug || "Workflow";
   const canCancel = isActiveRun(run);
+  const canResume = statusKey === "paused" && run.pause?.resumable !== false;
   const promotion = runPromotionCandidate(run);
 
   return (
@@ -49,6 +50,18 @@ export function RunBanner({ run, diagnostics, title, slug, onChanged }) {
             onClick={async () => { await promoteRun(run.id); onChanged?.(); }}
           >
             <Icon name="branch" /> Merge to main
+          </button>
+        ) : null}
+        {canResume ? (
+          <button
+            type="button"
+            className="primary"
+            title={run.pause?.resume?.smithersRunId
+              ? `Resume from checkpoint ${run.pause.resume.smithersRunId}`
+              : "Re-queue this run (no engine checkpoint was recorded, so it restarts from scratch)"}
+            onClick={async () => { await resumeRun(run.id); onChanged?.(); }}
+          >
+            ▶ Resume run
           </button>
         ) : null}
         <button type="button" className="primary" title="Re-run with the same input (no editor)" onClick={() => rerunRun(run.id)}>Re-run same input</button>
@@ -113,6 +126,38 @@ export function RunBudgetNotice({ run }) {
   );
 }
 
+// Pause callout: why the run is parked, what unblocks it, and the resume
+// action. Shown only for paused runs; mirrors the RunBudgetNotice pattern.
+const PAUSE_REASON_LABELS = {
+  credits_exhausted: "Provider credits exhausted",
+  quota_exhausted: "Provider quota exhausted",
+  provider_limited: "Provider limited",
+  manual: "Paused by an operator",
+  unknown: "Paused"
+};
+
+export function RunPauseNotice({ run, onChanged }) {
+  if (!run || run.status !== "paused") return null;
+  const pause = run.pause && typeof run.pause === "object" ? run.pause : {};
+  const reasonLabel = PAUSE_REASON_LABELS[pause.reason] || PAUSE_REASON_LABELS.unknown;
+  const actionLabel = pause.requiredAction?.label || "Resolve the interruption, then resume";
+  const checkpoint = pause.resume?.smithersRunId || "";
+  const resumable = pause.resumable !== false;
+  return (
+    <div className="run-pause-notice" role="status" aria-label="Run paused">
+      <strong>{reasonLabel}.</strong>{" "}
+      <span>{truncate(String(pause.message || "This run was interrupted by a recoverable condition and is parked, not failed."), 240)}</span>{" "}
+      <span className="muted">
+        {actionLabel}
+        {checkpoint ? ` · resumes from checkpoint ${checkpoint}` : " · no engine checkpoint was recorded, so resuming restarts from scratch"}
+      </span>
+      {resumable ? (
+        <button type="button" className="primary" onClick={async () => { await resumeRun(run.id); onChanged?.(); }}>▶ Resume run</button>
+      ) : null}
+    </div>
+  );
+}
+
 export function RunOutcomeSummary({ summary }) {
   if (!summary) return null;
   const files = Array.isArray(summary.files) ? summary.files : [];
@@ -170,11 +215,13 @@ export function RunDiagnostics({ diagnostics }) {
   const statusKey = diagnostics.status || "";
   const intro = statusKey === "waiting_approval"
     ? "This run is paused waiting for an approval decision."
-    : statusKey === "budget_exceeded"
-      ? "This run was stopped by its spend budget. Diagnostic details below."
-      : statusKey === "failed" || statusKey === "error"
-        ? "This run failed. Diagnostic details below."
-        : "This run was cancelled. Diagnostic details below.";
+    : statusKey === "paused"
+      ? "This run is paused on a recoverable interruption — it is parked, not failed, and can be resumed."
+      : statusKey === "budget_exceeded"
+        ? "This run was stopped by its spend budget. Diagnostic details below."
+        : statusKey === "failed" || statusKey === "error"
+          ? "This run failed. Diagnostic details below."
+          : "This run was cancelled. Diagnostic details below.";
   const isLive = LIVE_STATUSES.has(statusKey);
   const timeline = Array.isArray(diagnostics.timeline) ? diagnostics.timeline : [];
   const logs = Array.isArray(diagnostics.logExcerpts) ? diagnostics.logExcerpts : [];
@@ -184,7 +231,7 @@ export function RunDiagnostics({ diagnostics }) {
   return (
     <section className={`panel diagnostics-panel diagnostics-${statusKey}`} aria-label="Run diagnostics">
       <header className="diagnostics-head">
-        <h2>Why this run {statusKey === "waiting_approval" ? "is paused" : statusKey === "failed" || statusKey === "error" ? "failed" : "was cancelled"}</h2>
+        <h2>Why this run {statusKey === "waiting_approval" || statusKey === "paused" ? "is paused" : statusKey === "failed" || statusKey === "error" ? "failed" : "was cancelled"}</h2>
         <StatusBadge value={statusKey} label={runStatusLabel(statusKey)} />
       </header>
       <p className="muted diagnostics-intro">{intro}</p>

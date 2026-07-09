@@ -117,6 +117,7 @@ export const DB_SCHEMA_SQL = `
     error TEXT,
     usage TEXT,
     budget TEXT,
+    pause TEXT,
     created_at TEXT NOT NULL,
     assigned_at TEXT,
     started_at TEXT,

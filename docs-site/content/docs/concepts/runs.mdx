@@ -13,11 +13,33 @@ A **run** is a single execution of a [workflow](./workflows.mdx) with a JSON inp
 | `queued` | Ready for a matching runner to claim. |
 | `assigned` | Claimed by a runner, not yet started. |
 | `running` | Executing on the runner. |
+| `paused` | Parked on a recoverable external interruption (provider credits or quota exhausted, or an operator pause). Non-terminal: the run keeps its engine checkpoint, frees its runner slot, is never reaped, and waits for resume or cancel. |
 | `succeeded` | Finished with outputs. |
 | `cancelled` | Stopped by an operator or a rejected approval — a human "no" is a decision, not a failure. |
 | `failed` (+ classes) | Terminal failure; see failure classes below. |
 
 Terminal states are final: late reports racing a terminal state are absorbed idempotently rather than overwriting the first decision.
+
+### Paused runs (recoverable interruptions)
+
+When execution is interrupted by a condition a human can fix — the classic case is **the provider account ran out of credits** — the run parks as `paused` instead of failing. Pause metadata lives on `run.pause`:
+
+```json
+{
+  "reason": "credits_exhausted",
+  "message": "Provider returned 402: credit balance is too low",
+  "pausedAt": "2026-07-09T12:00:00.000Z",
+  "pausedBy": "gateway",
+  "resumable": true,
+  "resume": { "smithersRunId": "run-1751234567", "strategy": "smithers_resume" },
+  "requiredAction": { "type": "add_credits", "label": "Add credits, then resume" }
+}
+```
+
+- **How runs pause.** The metering gateway pauses a gateway-metered run when the upstream provider answers with a credit/quota-exhaustion response (e.g. HTTP 402) — a structured signal at the inference boundary. The runner pauses a run whose engine failure text clearly means exhausted credits/quota (today Smithers 0.22 exposes no structured pause/credit event, so this path classifies the engine's error text; it will sharpen as engines emit richer signals). Operators can pause explicitly via `POST /api/runs/{id}/pause` (`pause_run`, `runyard pause`).
+- **What paused means.** The run releases its runner slot (a parked run never occupies capacity), keeps its `runner_id` so resume lands on the runner holding the local engine checkpoint, and is exempt from liveness/stall/deadline reaping. `run.paused` / `run.resumed` timeline events record the transitions.
+- **Resume.** `POST /api/runs/{id}/resume` (`resume_run`, `runyard resume`) re-queues the *same* run. With a recorded checkpoint it continues via the engine's resume (`smithers up --resume`); without one it re-runs from scratch and the response (`resume.strategy: "rerun_from_scratch"`) plus the run timeline say so explicitly. Cancel still works from `paused`.
+- **Not a budget stop.** `budget_exceeded` remains a distinct *terminal* status for the Hub's own hard spend ceiling; a budget breach is never converted into a pause.
 
 ### Failure classes
 
@@ -69,6 +91,8 @@ A run request may include `responseEndpoint: {type: "http" | "telegram", config}
 | `GET /api/runs/{id}/events`, `/timeline`, `/diagnostics`, `/logs` | `get_run_events`, `get_run_timeline`, `get_run_diagnostics`, `get_run_logs` |
 | `GET /api/runs/{id}/artifacts`, `GET /api/artifacts`, `GET /api/artifacts/{id}/download` | `get_run_artifacts`, `search_artifacts`, `download_artifact` |
 | `POST /api/runs/{id}/cancel` | `cancel_run` |
+| `POST /api/runs/{id}/pause` | `pause_run` |
+| `POST /api/runs/{id}/resume` | `resume_run` |
 | `POST /api/runs/{id}/rerun` | `rerun_workflow_run` |
 | `POST /api/runs/{id}/promote` | `promote_run` |
 | `GET /api/dashboard` | `get_dashboard` |

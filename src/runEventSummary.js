@@ -24,6 +24,7 @@ export const DIAGNOSTIC_STATUSES = new Set([
   "cancelled",
   "rejected",
   "waiting_approval",
+  "paused",
   "blocked_by_gate",
   "blocked_by_preflight",
   "provider_limited",

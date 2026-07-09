@@ -24,13 +24,14 @@ describe("runner pool record helpers", () => {
       "queued",
       "assigned",
       "running",
-      "waitingApproval"
+      "waitingApproval",
+      "paused"
     ]);
   });
 
   it("summarizes normalized runner pool capacity and health", () => {
     assert.deepEqual(runnerPoolSummary({
-      counts: { queued: 3, assigned: 2, running: 1, waitingApproval: 4 },
+      counts: { queued: 3, assigned: 2, running: 1, waitingApproval: 4, paused: 1 },
       runners: [
         { online: true, capacity: 3, workRuns: 2, health: { state: "healthy" } },
         { online: true, capacity: 2, workRuns: 0, health: { state: "degraded" } },
@@ -41,6 +42,7 @@ describe("runner pool record helpers", () => {
       assigned: 2,
       running: 1,
       waitingApproval: 4,
+      paused: 1,
       totalCapacity: 5,
       totalActive: 2,
       availableSlots: 3,

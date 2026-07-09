@@ -846,6 +846,20 @@ export const API_SURFACE = [
     mcp: ["cancel_run"]
   },
   {
+    method: "post", path: "/api/runs/:id/pause", handler: "runLifecycleHandlers.pauseRun",
+    group: "runs", v1Path: "/api/v1/runs/:id/pause",
+    auth: true, scopes: ["api", "mcp", "runner"],
+    summary: "Pause an active run for a recoverable external interruption (credits/quota exhausted, provider limit, manual): records pause metadata plus the Smithers checkpoint for resume, and frees the runner slot",
+    mcp: ["pause_run"]
+  },
+  {
+    method: "post", path: "/api/runs/:id/resume", handler: "runLifecycleHandlers.resumeRun",
+    group: "runs", v1Path: "/api/v1/runs/:id/resume",
+    auth: true, scopes: ["api", "mcp"], ui: true,
+    summary: "Resume a paused run: re-queues the same run and continues from the recorded Smithers checkpoint when one exists (otherwise it re-runs from scratch, flagged in the response)",
+    mcp: ["resume_run"]
+  },
+  {
     method: "post", path: "/api/runs/:id/rerun", handler: "runRerunHandlers.rerunRun", wrap: "async",
     group: "runs", v1Path: "/api/v1/runs/:id/rerun",
     auth: true, scopes: ["api", "mcp"], ui: true,

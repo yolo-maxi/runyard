@@ -42,7 +42,7 @@ describe("dashboard stats helpers", () => {
     });
     assert.deepEqual(runningRunsCountQuery("visible = 1"), {
       key: "runningRuns",
-      sql: "SELECT COUNT(*) AS count FROM runs WHERE status IN ('queued', 'assigned', 'running', 'waiting_approval') AND visible = 1",
+      sql: "SELECT COUNT(*) AS count FROM runs WHERE status IN ('queued', 'assigned', 'running', 'waiting_approval', 'paused') AND visible = 1",
       params: []
     });
   });

@@ -1,5 +1,5 @@
 const FOCUS_EVENT_PATTERNS = [
-  /^run\.(?:failed|cancelled|errored|started|succeeded|created)$/i,
+  /^run\.(?:failed|cancelled|errored|started|succeeded|created|paused|resumed)$/i,
   /^run\.budget[._]exceeded$/i,
   /^(?:node|task|step|workflow)\.(?:started|finished|completed|failed|errored|cancelled)$/i,
   /^approval\.(?:requested|resolved|approved|rejected|changes_requested|auto_queued)$/i,
@@ -30,7 +30,7 @@ const NOISY_EVENT_TYPES = new Set([
 
 const APPROVAL_EVENT_RE = /^(?:engine\.)?approval\./i;
 const NODE_EVENT_RE = /^(?:node|task|step)\.(?:started|finished|completed|failed|errored|cancelled|skipped)$/i;
-const RUN_EVENT_RE = /^run\.(?:created|started|succeeded|failed|cancelled|errored|budget[._]exceeded|chain\..*|rerun_.*)$/i;
+const RUN_EVENT_RE = /^run\.(?:created|started|succeeded|failed|cancelled|errored|paused|resumed|pause_updated|budget[._]exceeded|chain\..*|rerun_.*)$/i;
 // Metered model-call usage: agent activity, not run lifecycle — grouped with
 // agent summaries so a chatty workflow doesn't drown lifecycle events.
 const USAGE_EVENT_RE = /^run\.usage$/i;
@@ -70,6 +70,8 @@ export function eventCategory(event) {
 export function eventSeverity(event) {
   const type = String(event?.type || "");
   if (/^run\.budget[._]exceeded$/i.test(type)) return "error";
+  // A pause is a recoverable interruption awaiting action — warn, not error.
+  if (/^run\.paused$/i.test(type)) return "warn";
   if (USAGE_EVENT_RE.test(type)) return "info";
   if (/(?:^|\.)(?:failed|errored|fatal|panic)$/i.test(type)) return "error";
   if (type === "stderr") return "error";

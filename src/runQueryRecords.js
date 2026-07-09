@@ -110,6 +110,10 @@ export function runReapReason(row, {
   hasEngineApprovalWait = () => false
 } = {}) {
   if (row.status === "waiting_approval") return null;
+  // Paused runs are parked on a recoverable external condition (e.g. credits
+  // exhausted) with no runner attached to heartbeat for them. Liveness, stall,
+  // and deadline backstops all stand down until an explicit resume or cancel.
+  if (row.status === "paused") return null;
   if (row.runner_id && ageMs(row.last_heartbeat_at, nowMs) > runnerOfflineMs) {
     return {
       currentStep: "runner offline",

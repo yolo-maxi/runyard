@@ -86,6 +86,8 @@ runyard tail <runId>             # follow the unified timeline as NDJSON
 runyard tail <runId> --once      # one snapshot, then exit (--since <iso> to resume)
 runyard artifacts <runId>        # list a run's artifacts (omit runId to search across runs)
 runyard cancel <runId> -r "no longer needed"
+runyard pause <runId> -r credits_exhausted   # park a run; keeps its checkpoint
+runyard resume <runId>                       # re-queue a paused run from its checkpoint
 ```
 
 `tail` emits `{ts, kind, source, payload}` lines built from status transitions,

@@ -851,6 +851,61 @@ describe("Smithers Hub API", () => {
     const forced = await api(`/api/runs/${created.run.id}/rerun`, { method: "POST", body: { force: true } });
     assert.notEqual(forced.run.id, first.run.id);
   });
+
+  it("pauses a running run over HTTP and resumes it on the /api/v1 alias", async () => {
+    const created = await api("/api/capabilities/hello/run", {
+      method: "POST",
+      body: { input: { goal: "pause me" } }
+    });
+    const runner = await api("/api/runners/register", {
+      method: "POST",
+      body: { name: "pause runner", hostname: "test", platform: "linux", tags: ["smithers", "node"] }
+    });
+    const assignment = await api(`/api/runners/${runner.runner.id}/next-run`);
+    assert.equal(assignment.run.id, created.run.id);
+    await api(`/api/runs/${created.run.id}/start`, { method: "POST", body: {} });
+
+    const paused = await api(`/api/runs/${created.run.id}/pause`, {
+      method: "POST",
+      body: {
+        reason: "credits_exhausted",
+        message: "credit balance is too low",
+        pausedBy: "runner",
+        resume: { smithersRunId: "run-4242" }
+      }
+    });
+    assert.equal(paused.run.status, "paused");
+    assert.equal(paused.pause.reason, "credits_exhausted");
+    assert.equal(paused.pause.resume.smithersRunId, "run-4242");
+    assert.match(paused.pause.requiredAction.label, /Add credits/);
+
+    // The pause is durable + visible: detail carries run.pause, the event
+    // trail records run.paused, and the runner slot is free again.
+    const detail = await api(`/api/runs/${created.run.id}`);
+    assert.equal(detail.run.status, "paused");
+    assert.equal(detail.run.pause.pausedBy, "runner");
+    assert.ok(detail.events.some((event) => event.type === "run.paused"));
+    const runners = await api("/api/runners");
+    assert.equal(runners.runners.find((entry) => entry.id === runner.runner.id).activeRuns, 0);
+
+    const resumed = await api(`/api/v1/runs/${created.run.id}/resume`, { method: "POST", body: {} });
+    assert.equal(resumed.run.status, "queued");
+    assert.deepEqual(resumed.resume, { strategy: "smithers_resume", smithersRunId: "run-4242", attempt: 1 });
+    assert.deepEqual(resumed.run.input.__resume, { smithersRunId: "run-4242", attempt: 1 });
+    assert.ok(resumed.run.pause.resumedAt);
+
+    // The same runner reclaims the resumed run and receives the checkpoint.
+    const reclaim = await api(`/api/runners/${runner.runner.id}/next-run`);
+    assert.equal(reclaim.run.id, created.run.id);
+    assert.equal(reclaim.run.input.__resume.smithersRunId, "run-4242");
+
+    // Cancel still works from paused.
+    await api(`/api/runs/${created.run.id}/start`, { method: "POST", body: {} });
+    const reparked = await api(`/api/runs/${created.run.id}/pause`, { method: "POST", body: { reason: "manual", pausedBy: "operator" } });
+    assert.equal(reparked.run.status, "paused");
+    const cancelled = await api(`/api/runs/${created.run.id}/cancel`, { method: "POST", body: { reason: "operator gave up" } });
+    assert.equal(cancelled.run.status, "cancelled");
+  });
 });
 
 describe("Run response endpoints (slice 1)", () => {

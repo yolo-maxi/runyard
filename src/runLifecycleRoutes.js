@@ -18,6 +18,10 @@ export function createRunLifecycleHandlers({
   recordRunTerminalArtifacts,
   recordRunUsage = () => ({ ok: false, code: 501, error: "usage recording unavailable" }),
   resolveEngineApprovalOnResume = () => [],
+  runPause = {
+    pauseRun: () => ({ ok: false, code: 501, error: "pause unavailable" }),
+    resumeRun: () => ({ ok: false, code: 501, error: "resume unavailable" })
+  },
   scrubStoredSecrets,
   transitionRun,
   updateRun,
@@ -126,6 +130,28 @@ export function createRunLifecycleHandlers({
         recordRunTerminalArtifacts(result.run.id);
       });
       res.json({ run: result.run });
+    },
+
+    pauseRun(req, res) {
+      const body = req.body || {};
+      const result = runPause.pauseRun(req.params.id, {
+        reason: scrubStoredSecrets(body.reason || ""),
+        message: scrubStoredSecrets(body.message || ""),
+        pausedBy: body.pausedBy || "operator",
+        resumable: body.resumable,
+        resume: body.resume,
+        requiredAction: body.requiredAction
+      });
+      if (sendTransitionError(res, result)) return;
+      res.json({ run: result.run, pause: result.run?.pause || null });
+    },
+
+    resumeRun(req, res) {
+      const result = runPause.resumeRun(req.params.id, {
+        resumedBy: String(req.body?.resumedBy || "operator")
+      });
+      if (sendTransitionError(res, result)) return;
+      res.json({ run: result.run, resume: result.resume || null });
     },
 
     cancelRun(req, res) {

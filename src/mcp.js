@@ -203,6 +203,8 @@ async function callTool(name, args = {}) {
   if (name === "reject_run") return result(await client.post(`/api/approvals/${encodeURIComponent(args.approvalId)}/reject`, { comment: args.comment || "Rejected through MCP" }));
   if (name === "request_changes_run") return result(await client.post(`/api/approvals/${encodeURIComponent(args.approvalId)}/request-changes`, { comment: args.comment || "Changes requested through MCP" }));
   if (name === "cancel_run") return result(await client.post(`/api/runs/${encodeURIComponent(args.runId)}/cancel`, { reason: args.reason || "Cancelled through MCP" }));
+  if (name === "pause_run") return result(await client.post(`/api/runs/${encodeURIComponent(args.runId)}/pause`, { reason: args.reason || "manual", message: args.message || "Paused through MCP", pausedBy: "operator" }));
+  if (name === "resume_run") return result(await client.post(`/api/runs/${encodeURIComponent(args.runId)}/resume`, {}));
   if (name === "search_artifacts") return result(await client.get(`/api/artifacts?q=${encodeURIComponent(args.query || "")}`));
   if (name === "list_agents") return result(await client.get("/api/agents"));
   if (name === "list_skills") return result(await client.get("/api/skills"));

@@ -51,6 +51,7 @@ const RUN_STATUS_LABELS = {
   running: "Running",
   pending: "Pending",
   waiting_approval: "Waiting for approval",
+  paused: "Paused",
   succeeded: "Succeeded",
   failed: "Failed",
   error: "Failed",

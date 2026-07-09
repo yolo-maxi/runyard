@@ -457,6 +457,14 @@ program.command("cancel <runId>").description("Cancel a run").option("-r, --reas
   print(await client(program.opts()).post(`/api/runs/${runId}/cancel`, { reason: opts.reason }), program.opts().json);
 });
 
+program.command("pause <runId>").description("Pause an active run (recoverable interruption; keeps its checkpoint for resume)").option("-r, --reason <reason>", "pause reason, e.g. credits_exhausted, manual").option("-m, --message <message>", "").action(async (runId, opts) => {
+  print(await client(program.opts()).post(`/api/runs/${runId}/pause`, { reason: opts.reason || "manual", message: opts.message || "", pausedBy: "operator" }), program.opts().json);
+});
+
+program.command("resume <runId>").description("Resume a paused run from its recorded checkpoint").action(async (runId) => {
+  print(await client(program.opts()).post(`/api/runs/${runId}/resume`, {}), program.opts().json);
+});
+
 program.command("agents").description("List agents").action(async () => print((await client(program.opts()).get("/api/agents")).agents, program.opts().json));
 program.command("skills").description("List skills").action(async () => print((await client(program.opts()).get("/api/skills")).skills, program.opts().json));
 program.command("knowledge").description("List knowledge resources").option("-q, --query <query>").action(async (opts) => {

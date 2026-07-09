@@ -29,6 +29,7 @@ import { createRunLifecycleHandlers } from "./runLifecycleRoutes.js";
 import { createRunReadHandlers } from "./runReadRoutes.js";
 import { createGatewayHandlers } from "./gatewayRoutes.js";
 import { createRunBudgetEnforcer } from "./runBudget.js";
+import { createRunPauseStore } from "./runPauseStore.js";
 import { now } from "./ids.js";
 import { createRunPromotionHandlers } from "./runPromotionRoutes.js";
 import { createCapabilityHandlers } from "./capabilityRoutes.js";
@@ -274,10 +275,21 @@ export function createServerComposition({
     now
   });
 
+  // Pause/resume domain ops shared by the run lifecycle endpoints and the
+  // metering gateway's provider credit-exhaustion hook.
+  const runPause = createRunPauseStore({
+    getRun,
+    transitionRun,
+    updateRun,
+    addRunEvent,
+    now
+  });
+
   const runLifecycleHandlers = createRunLifecycleHandlers({
     addRunEvent,
     createRun,
     enforceRunBudget,
+    runPause,
     getCapability,
     maybeRecordFailureClassAlert,
     recordRunTerminalArtifacts,
@@ -296,7 +308,8 @@ export function createServerComposition({
     getCapability,
     getDecryptedSecretEnv,
     recordRunUsage,
-    enforceRunBudget
+    enforceRunBudget,
+    pauseRun: runPause.pauseRun
   });
 
   const runReadHandlers = createRunReadHandlers({

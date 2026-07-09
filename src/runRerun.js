@@ -11,6 +11,7 @@ export function logicalRerunInput(run) {
   const rawInput = run?.input && typeof run.input === "object" && !Array.isArray(run.input) ? run.input : {};
   const clean = { ...rawInput };
   delete clean.__origin;
+  delete clean.__resume;
   return {
     capabilitySlug: run?.capabilitySlug,
     input: clean,
@@ -33,6 +34,9 @@ export function findActiveDuplicateRerun(runs = [], { previousRunId, capabilityS
 export function cleanRerunInput(input, previousRunId) {
   const clean = input && typeof input === "object" && !Array.isArray(input) ? { ...input } : {};
   delete clean.__origin;
+  // A rerun is a fresh execution: never inherit a resumed run's checkpoint
+  // pointer, or the "new" run would silently continue the old Smithers run.
+  delete clean.__resume;
   clean.rerunOf = previousRunId;
   return clean;
 }

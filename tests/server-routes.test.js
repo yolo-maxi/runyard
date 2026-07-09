@@ -114,7 +114,7 @@ function routeDeps() {
     },
     runDraftHandlers: handlers(["listRunDrafts", "createRunDraft", "getRunDraft", "patchRunDraft", "submitRunDraft", "discardRunDraft"]),
     gatewayHandlers: handlers(["openAiChatCompletions", "anthropicMessages"]),
-    runLifecycleHandlers: handlers(["recordRunEvent", "recordRunUsage", "startRun", "completeRun", "failRun", "cancelRun"]),
+    runLifecycleHandlers: handlers(["recordRunEvent", "recordRunUsage", "startRun", "completeRun", "failRun", "cancelRun", "pauseRun", "resumeRun"]),
     runPromotionHandlers: handlers(["promoteRun"]),
     runReadHandlers: handlers(["listRuns", "getRun", "listRunEvents", "streamRunEvents", "getRunLogSummary", "getRunDiagnostics", "getRunLogs", "getRunTimeline", "getRunUsage"]),
     runRerunHandlers: handlers(["rerunRun"]),

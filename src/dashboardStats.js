@@ -35,7 +35,7 @@ export function pendingApprovalsCountQuery() {
 export function runningRunsCountQuery(visibleRunWhere) {
   return {
     key: "runningRuns",
-    sql: `SELECT COUNT(*) AS count FROM runs WHERE status IN ('queued', 'assigned', 'running', 'waiting_approval') AND ${visibleRunWhere}`,
+    sql: `SELECT COUNT(*) AS count FROM runs WHERE status IN ('queued', 'assigned', 'running', 'waiting_approval', 'paused') AND ${visibleRunWhere}`,
     params: []
   };
 }

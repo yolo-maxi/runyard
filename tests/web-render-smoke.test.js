@@ -27,7 +27,8 @@ async function loadRenderSmoke() {
         import { RunProgressStrip } from "./web/components/RunProgressStrip.jsx";
         import { CodeBlock } from "./web/components/CodeBlock.jsx";
         import { RunCard } from "./web/components/RunCard.jsx";
-        import { RunBudgetNotice, RunMetaStrip } from "./web/components/RunDetailParts.jsx";
+        import { RunBudgetNotice, RunPauseNotice, RunMetaStrip } from "./web/components/RunDetailParts.jsx";
+        import { StatusBadge } from "./web/components/ui.jsx";
 
         export function renderSmoke() {
           const run = {
@@ -78,7 +79,22 @@ async function loadRenderSmoke() {
               status: "budget_exceeded",
               error: "budget exceeded: 120 tokens used, budget.maxTokens is 100"
             }} />),
-            budgetNoticeHidden: renderToStaticMarkup(<div>{RunBudgetNotice({ run: { id: "r", status: "succeeded" } })}</div>)
+            budgetNoticeHidden: renderToStaticMarkup(<div>{RunBudgetNotice({ run: { id: "r", status: "succeeded" } })}</div>),
+            pausedBadge: renderToStaticMarkup(<StatusBadge value="paused" />),
+            pauseNotice: renderToStaticMarkup(<RunPauseNotice run={{
+              id: "run_paused",
+              status: "paused",
+              pause: {
+                reason: "credits_exhausted",
+                message: "Provider returned 402: credit balance is too low",
+                pausedAt: "2026-07-09T12:00:00.000Z",
+                pausedBy: "gateway",
+                resumable: true,
+                resume: { smithersRunId: "run-1234", strategy: "smithers_resume" },
+                requiredAction: { type: "add_credits", label: "Add credits, then resume" }
+              }
+            }} />),
+            pauseNoticeHidden: renderToStaticMarkup(<div>{RunPauseNotice({ run: { id: "r", status: "running" } })}</div>)
           };
         }
       `
@@ -130,5 +146,17 @@ describe("React render smoke", () => {
     assert.match(html.budgetNotice, /Stopped at budget/);
     assert.match(html.budgetNotice, /budget exceeded: 120 tokens/);
     assert.equal(html.budgetNoticeHidden, "<div></div>");
+
+    // Paused runs: amber badge, plain-English pause callout with the reason,
+    // required action, checkpoint, and a resume control — and nothing renders
+    // for runs that are not paused.
+    assert.match(html.pausedBadge, /class="status paused"/);
+    assert.match(html.pausedBadge, /Paused/);
+    assert.match(html.pauseNotice, /run-pause-notice/);
+    assert.match(html.pauseNotice, /Provider credits exhausted/);
+    assert.match(html.pauseNotice, /Add credits, then resume/);
+    assert.match(html.pauseNotice, /run-1234/);
+    assert.match(html.pauseNotice, /Resume run/);
+    assert.equal(html.pauseNoticeHidden, "<div></div>");
   });
 });

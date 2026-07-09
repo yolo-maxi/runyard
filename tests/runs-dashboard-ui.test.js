@@ -211,6 +211,9 @@ describe("Runs page: filter toolbar, history rows, and detail order", () => {
       // Waiting for approval — also active.
       { id: "r-waiting", status: "waiting_approval", createdAt: "2026-07-01T14:00:00Z",
         startedAt: "2026-07-01T14:05:00Z" },
+      // Paused on a recoverable interruption (e.g. credits) — in flight, not failed.
+      { id: "r-paused", status: "paused", createdAt: "2026-07-01T13:30:00Z",
+        startedAt: "2026-07-01T13:35:00Z" },
       // Failed yesterday.
       { id: "r-failed-yday", status: "failed", createdAt: "2026-06-30T10:00:00Z",
         startedAt: "2026-06-30T10:01:00Z", completedAt: "2026-06-30T10:20:00Z" }
@@ -219,12 +222,12 @@ describe("Runs page: filter toolbar, history rows, and detail order", () => {
     assert.equal(groups[0].key, "active", "the first group must be the In flight group");
     assert.equal(groups[0].label, "In flight");
     const activeIds = groups[0].runs.map((r) => r.id);
-    assert.deepEqual(new Set(activeIds), new Set(["r-running", "r-queued", "r-waiting"]));
+    assert.deepEqual(new Set(activeIds), new Set(["r-running", "r-queued", "r-waiting", "r-paused"]));
     // No active run may be grouped under a day heading — a completed run from
     // today must not appear above an in-flight run.
     for (let i = 1; i < groups.length; i += 1) {
       for (const run of groups[i].runs) {
-        assert.ok(!["queued", "running", "waiting_approval", "assigned", "pending"].includes(run.status),
+        assert.ok(!["queued", "running", "waiting_approval", "assigned", "pending", "paused"].includes(run.status),
           `active run ${run.id} leaked into non-active group ${groups[i].key}`);
       }
     }

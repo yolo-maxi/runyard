@@ -188,6 +188,7 @@ export function initDb() {
   migrateCapabilityDefinitionHashColumn();
   migrateRunsCapabilityVersioningColumns();
   migrateRunsUsageBudgetColumns();
+  migrateRunsPauseColumn();
   migrateRunnerAuthHealthColumn();
   migrateRunsSupervisorColumns();
   migrateApprovalsTimerColumns();
@@ -260,6 +261,17 @@ function migrateRunsUsageBudgetColumns() {
   migrateMissingColumns("runs", [
     { name: "usage", definition: "usage TEXT" },
     { name: "budget", definition: "budget TEXT" }
+  ]);
+}
+
+// First-class paused runs (recoverable external interruption, e.g. credits
+// exhausted). JSON blob built by src/runPause.js: {reason, message, pausedAt,
+// pausedBy, resumable, resume, requiredAction, resumedAt?, resumedBy?}.
+// Nullable — NULL until a run first pauses — so existing rows and rollbacks
+// are unaffected.
+function migrateRunsPauseColumn() {
+  migrateMissingColumns("runs", [
+    { name: "pause", definition: "pause TEXT" }
   ]);
 }
 

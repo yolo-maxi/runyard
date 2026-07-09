@@ -959,7 +959,8 @@ body.logged-out .mobile-primary-nav {
 .status.running,
 .status.queued,
 .status.pending,
-.status.waiting_approval {
+.status.waiting_approval,
+.status.paused {
   color: var(--warn);
   border-color: #fed7aa;
   background: #fffbeb;
@@ -1794,7 +1795,8 @@ details.advanced[open] summary {
   color: var(--ok);
 }
 
-.run-card.active.waiting_approval .run-pulse {
+.run-card.active.waiting_approval .run-pulse,
+.run-card.active.paused .run-pulse {
   background: var(--warn);
   color: var(--warn);
 }
@@ -1931,6 +1933,7 @@ details.advanced[open] summary {
 }
 .run-history-row.active.running { border-left-color: var(--ok); }
 .run-history-row.active.waiting_approval { border-left-color: var(--warn); }
+.run-history-row.active.paused { border-left-color: var(--warn); }
 .run-history-row.active.queued { border-left-color: var(--muted); }
 
 .run-history-status {
@@ -2217,6 +2220,27 @@ details.advanced[open] summary {
   border-radius: 8px;
   padding: 10px 14px;
   margin: 10px 0;
+}
+
+/* Pause callout: recoverable interruption + the action that unblocks it.
+ * Amber like waiting_approval (parked, not failed); the resume button rides
+ * inside the notice. */
+.run-pause-notice {
+  border: 1px solid #fcd34d;
+  border-left: 4px solid #d97706;
+  background: #fffbeb;
+  color: #78350f;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin: 10px 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.run-pause-notice button {
+  margin-left: auto;
 }
 
 /* ---- Semantic chip modifiers --------------------------------------------
@@ -3195,7 +3219,8 @@ button.run-id-mono:focus-visible,
   margin-bottom: 16px;
 }
 
-.diagnostics-panel.diagnostics-waiting_approval {
+.diagnostics-panel.diagnostics-waiting_approval,
+.diagnostics-panel.diagnostics-paused {
   border-left-color: var(--warn);
   background: linear-gradient(180deg, #fffbeb, #ffffff 70%);
 }
@@ -4978,6 +5003,7 @@ button.run-id-mono:focus-visible,
 .wf-run-row[data-status="pending"] { border-left-color: var(--ok); }
 .wf-run-row[data-status="queued"] { border-left-color: var(--brand-2); }
 .wf-run-row[data-status="waiting_approval"] { border-left-color: var(--warn); }
+.wf-run-row[data-status="paused"] { border-left-color: var(--warn); }
 .wf-run-row[data-status="succeeded"],
 .wf-run-row[data-status="approved"] { border-left-color: var(--brand); }
 .wf-run-row[data-status="failed"],
@@ -4997,6 +5023,7 @@ button.run-id-mono:focus-visible,
 .wf-run-row[data-status="pending"] .wf-run-glyph { color: var(--ok); }
 .wf-run-row[data-status="queued"] .wf-run-glyph { color: var(--brand-2); }
 .wf-run-row[data-status="waiting_approval"] .wf-run-glyph { color: var(--warn); }
+.wf-run-row[data-status="paused"] .wf-run-glyph { color: var(--warn); }
 .wf-run-row[data-status="succeeded"] .wf-run-glyph,
 .wf-run-row[data-status="approved"] .wf-run-glyph { color: var(--brand); }
 .wf-run-row[data-status="failed"] .wf-run-glyph,
@@ -5737,6 +5764,10 @@ button.run-id-mono:focus-visible,
 }
 
 .run-banner[data-status="waiting_approval"] {
+  border-left-color: var(--warn);
+}
+
+.run-banner[data-status="paused"] {
   border-left-color: var(--warn);
 }
 

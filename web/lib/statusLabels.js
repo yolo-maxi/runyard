@@ -8,6 +8,7 @@ export const STATUS_LABELS = {
   assigned: "Assigned",
   running: "Running",
   waiting_approval: "Waiting for approval",
+  paused: "Paused",
   succeeded: "Succeeded",
   failed: "Failed",
   cancelled: "Cancelled",

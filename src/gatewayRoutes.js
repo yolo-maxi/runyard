@@ -12,6 +12,7 @@ import {
   verifyGatewayToken
 } from "./meteringGateway.js";
 import { resolveHarnessSelection } from "./runHarnessSelection.js";
+import { pauseSignalFromProviderResponse } from "./runPause.js";
 
 // A gateway call is only valid while the run is actually executing on a
 // runner. Terminal runs (incl. budget_exceeded) get a hard 403 — that is the
@@ -38,6 +39,7 @@ export function createGatewayHandlers({
   getDecryptedSecretEnv,
   recordRunUsage,
   enforceRunBudget,
+  pauseRun = () => ({ ok: false }),
   fetchImpl = fetch,
   upstreamTimeoutMs = DEFAULT_UPSTREAM_TIMEOUT_MS,
   log = console.error
@@ -88,6 +90,23 @@ export function createGatewayHandlers({
     };
   }
 
+  // The gateway is the one place the Hub sees the provider's raw response, so
+  // an upstream "no credits/quota" answer becomes a structured pause here —
+  // the run parks as resumable `paused` instead of dying on a scraped stderr
+  // line. Distinct from the Hub's OWN pre-forward 402 (budget_exceeded), which
+  // never reaches this hook and stays a terminal hard stop.
+  function maybePauseOnProviderSignal(run, status, bodyText) {
+    const signal = pauseSignalFromProviderResponse({ status, bodyText });
+    if (!signal) return;
+    const result = pauseRun(run.id, {
+      reason: signal.reason,
+      message: signal.message,
+      pausedBy: "gateway",
+      resumable: true
+    });
+    if (result.ok) log(`gateway paused run ${run.id}: ${signal.reason} (upstream ${status})`);
+  }
+
   async function proxyCall(req, res, { flavor, requestHeaders }) {
     const run = authenticateGatewayRun(req, res, flavor);
     if (!run) return;
@@ -135,6 +154,7 @@ export function createGatewayHandlers({
       }
       res.end();
       if (response.ok) usage = sseUsage(scanBuffer, flavor);
+      else maybePauseOnProviderSignal(run, response.status, scanBuffer);
     } else {
       const text = await response.text();
       res.status(response.status);
@@ -146,6 +166,8 @@ export function createGatewayHandlers({
         } catch {
           usage = null;
         }
+      } else {
+        maybePauseOnProviderSignal(run, response.status, text);
       }
     }
 

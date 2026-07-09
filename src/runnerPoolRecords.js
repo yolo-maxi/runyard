@@ -16,7 +16,8 @@ export function runnerPoolStatusQueries(visibleRunWhere) {
     queued: runStatusCountQuery("queued", { visibleRunWhere }),
     assigned: runStatusCountQuery("assigned", { visibleRunWhere }),
     running: runStatusCountQuery("running", { visibleRunWhere }),
-    waitingApproval: runStatusCountQuery("waiting_approval", { visibleRunWhere })
+    waitingApproval: runStatusCountQuery("waiting_approval", { visibleRunWhere }),
+    paused: runStatusCountQuery("paused", { visibleRunWhere })
   };
 }
 
@@ -32,6 +33,8 @@ export function runnerPoolSummary({ counts, runners }) {
     assigned: counts.assigned,
     running: counts.running,
     waitingApproval: counts.waitingApproval,
+    // Parked on a recoverable interruption; occupies no runner slot.
+    paused: counts.paused || 0,
     totalCapacity,
     totalActive,
     availableSlots: Math.max(0, totalCapacity - totalActive),

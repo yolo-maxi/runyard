@@ -147,6 +147,7 @@ require any token):
 | `GET /api/runs/:id/events` · `/logs` · `/diagnostics` | Structured events, log lines, diagnostics + log summary |
 | `GET /api/runs/:id/artifacts` · `GET /api/artifacts/:id/download` | List a run's artifacts; download bytes |
 | `POST /api/runs/:id/cancel` · `/rerun` · `/promote` | Cancel; re-queue with same/edited input; merge a successful isolated run into its target branch |
+| `POST /api/runs/:id/pause` · `/resume` | Park an active run on a recoverable interruption (e.g. `credits_exhausted`; records pause metadata + the engine checkpoint, frees the runner slot); resume re-queues the same run and continues from the checkpoint when one exists |
 
 Other resources (see `/openapi.json` for the rest — schedules, catalog
 agents/skills/knowledge, hooks, workflow bundles and packages, workflow

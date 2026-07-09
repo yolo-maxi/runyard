@@ -15,6 +15,7 @@ import { HubClient } from "./apiClient.js";
 import { normalizeRunnerTags } from "./runExecution.js";
 import { collectAuthHealth } from "./runnerAuthHealth.js";
 import { classifyFailureStatus, RUN_FAILURE_CLASSES } from "./runFailureClass.js";
+import { classifyPauseReason } from "./runPause.js";
 import { DEFAULT_MAX_INLINE_INPUT_BYTES } from "./runnerPolicy.js";
 import { smithersEventMessage, smithersTokenUsage } from "./runnerSmithersEvents.js";
 import { materializeGatewayPin } from "./runnerGateway.js";
@@ -198,6 +199,27 @@ const MAX_INLINE_INPUT_BYTES = Number(process.env.RUNYARD_MAX_INLINE_INPUT_BYTES
 async function failRun(runId, error, status = "") {
   const failureStatus = status || classifyFailureStatus(error);
   return client.post(`/api/runs/${runId}/fail`, { error, status: failureStatus });
+}
+
+// Report a recoverable interruption (credits/quota exhausted) as a pause
+// instead of a failure. Best-effort by design: on any refusal (older Hub
+// without the endpoint, a lost race with a terminal transition) the caller
+// falls back to the plain fail path, so a run can never get stuck between
+// the two reports.
+async function pauseRunOnHub(runId, { reason = "", message = "", smithersRunId = "" } = {}) {
+  try {
+    await client.post(`/api/runs/${runId}/pause`, {
+      ...(reason ? { reason } : {}),
+      ...(message ? { message: String(message).slice(0, 2000) } : {}),
+      pausedBy: "runner",
+      resumable: true,
+      ...(smithersRunId ? { resume: { smithersRunId, strategy: "smithers_resume" } } : {})
+    });
+    return true;
+  } catch (error) {
+    console.error(`pause report for ${runId} not accepted (falling back):`, error.message);
+    return false;
+  }
 }
 
 function materializeAgentRuntimePack(run, pack) {
@@ -548,6 +570,23 @@ async function executeAssignment(assignment) {
         state = "cancelled";
         break;
       }
+      // Hub/gateway/operator paused the run: halt the detached engine run
+      // (smithers cancel stops the agents; the checkpoint in local .smithers
+      // state persists), attach that checkpoint to the pause record so resume
+      // can continue from it, and release this slot WITHOUT reporting
+      // complete/fail — paused is the run's durable state now.
+      if (hubRun.status === "paused") {
+        await event(
+          run.id,
+          "runner.hub_pause_observed",
+          `Hub paused run; halting Smithers run ${sid} and preserving its checkpoint for resume.`,
+          { smithersRunId: sid }
+        );
+        await cancelSmithersRun(sid, "hub paused run");
+        await pauseRunOnHub(run.id, { smithersRunId: sid });
+        console.log(`Run ${run.id} paused by hub; detached from smithers ${sid}`);
+        return;
+      }
       if (TERMINAL.has(state)) break;
       // An approval-held run is blocked on a pending human decision. Approvals
       // are blocking by contract: a late human must never turn into a timed_out
@@ -607,6 +646,23 @@ async function executeAssignment(assignment) {
       await client.post(`/api/runs/${run.id}/complete`, { output: outcome.output });
       console.log(`Completed ${run.id} via smithers ${sid}`);
     } else {
+      // A failure whose error text clearly means exhausted credits/quota is a
+      // recoverable interruption: report a pause carrying the Smithers
+      // checkpoint instead of a terminal failure. Today this classifies the
+      // engine's error text (Smithers 0.22 exposes no structured pause/credit
+      // event); the Hub-side gateway sees the raw provider 402 for
+      // gateway-metered runs. Any refusal falls through to the normal fail.
+      const pauseReason = deadlineExceeded ? null : classifyPauseReason(outcome.error);
+      if (pauseReason && sid) {
+        await event(run.id, "runner.pause_detected", `Recoverable provider interruption (${pauseReason}); reporting pause instead of failure.`, {
+          smithersRunId: sid,
+          reason: pauseReason
+        });
+        if (await pauseRunOnHub(run.id, { reason: pauseReason, message: outcome.error, smithersRunId: sid })) {
+          console.log(`Run ${run.id} paused (${pauseReason}) with checkpoint smithers ${sid}`);
+          return;
+        }
+      }
       await failRun(run.id, outcome.error, outcome.status);
       console.log(`Run ${run.id} ended '${state}' (smithers ${sid})`);
     }

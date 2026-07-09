@@ -94,6 +94,8 @@ describe("read-only scope", () => {
       { method: "POST", path: "/api/approvals", body: { title: "x" } },
       { method: "POST", path: "/api/approvals/nope/approve" },
       { method: "POST", path: "/api/runs/nope/cancel" },
+      { method: "POST", path: "/api/runs/nope/pause" },
+      { method: "POST", path: "/api/runs/nope/resume" },
       { method: "POST", path: "/api/runs/nope/rerun" },
       { method: "POST", path: "/api/runs/nope/start" },
       { method: "PUT", path: "/api/secrets/some-key", body: { value: "v" } },

@@ -3,7 +3,10 @@
 // Kept as plain functions (not components) so any view can reuse them.
 export { formatDuration, runDurationMs, relativeTime, formatTimestamp } from "./format.js";
 
-export const ACTIVE_STATUSES = new Set(["queued", "assigned", "running", "waiting_approval", "pending"]);
+// `paused` counts as active: a paused run is in flight, parked on a
+// recoverable interruption (e.g. add credits) — it groups with In flight,
+// never with terminal failures.
+export const ACTIVE_STATUSES = new Set(["queued", "assigned", "running", "waiting_approval", "pending", "paused"]);
 export const isActiveRun = (run) => ACTIVE_STATUSES.has(run?.status);
 
 const DIAGNOSTIC_STATUSES = new Set(["failed", "error", "cancelled", "rejected", "waiting_approval"]);
@@ -293,7 +296,8 @@ export const RUN_STATUS_OPTIONS = [
   { value: "succeeded", label: "Succeeded" },
   { value: "failed", label: "Failed" },
   { value: "cancelled", label: "Cancelled" },
-  { value: "waiting_approval", label: "Waiting approval" }
+  { value: "waiting_approval", label: "Waiting approval" },
+  { value: "paused", label: "Paused" }
 ];
 
 export const TIME_RANGE_OPTIONS = [
@@ -322,6 +326,7 @@ const RUN_STATUS_LABELS = {
   running: "Running",
   pending: "Pending",
   waiting_approval: "Waiting for approval",
+  paused: "Paused",
   succeeded: "Succeeded",
   failed: "Failed",
   error: "Failed",

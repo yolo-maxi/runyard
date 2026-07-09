@@ -64,6 +64,17 @@ export async function editRerunById(id) {
   editRerunRun(data.run);
 }
 
+// Resume a paused run: it re-queues and continues from its recorded engine
+// checkpoint when one exists (the server response says which strategy ran).
+export async function resumeRun(id) {
+  const result = await api(`/api/runs/${id}/resume`, { method: "POST", body: {} });
+  toast(result.resume?.strategy === "rerun_from_scratch"
+    ? "Run re-queued — no checkpoint was recorded, so it restarts from scratch"
+    : "Run resumed from its checkpoint", "ok");
+  await refreshCollection("runs");
+  return result.run;
+}
+
 export async function cancelRun(id, reason) {
   const result = await api(`/api/runs/${id}/cancel`, { method: "POST", body: reason ? { reason } : {} });
   toast("Run cancelled", "ok");
