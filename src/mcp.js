@@ -99,6 +99,8 @@ async function callTool(name, args = {}) {
     capability: args.workflow || args.capability,
     limit: args.limit
   })}`));
+  if (name === "list_attention_runs") return result(await client.get("/api/runs/attention"));
+  if (name === "get_usage_summary") return result(await client.get(`/api/usage/summary${queryString({ days: args.days })}`));
   if (name === "get_run_status") return result(await client.get(`/api/runs/${encodeURIComponent(args.runId)}`));
   if (name === "get_run_events") return result(await client.get(`/api/runs/${encodeURIComponent(args.runId)}/events`));
   if (name === "get_run_timeline") return result(await client.get(`/api/runs/${encodeURIComponent(args.runId)}/timeline${queryString({ since: args.since || args.cursor, limit: args.limit })}`));

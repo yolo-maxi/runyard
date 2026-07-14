@@ -44,6 +44,13 @@ import {
   runningRunsCountQuery,
   usageTotalsQuery
 } from "./dashboardStats.js";
+import {
+  normalizeUsageSummaryTotals,
+  normalizeUsageSummaryWorkflowRow,
+  usageSummaryBudgetStopsQuery,
+  usageSummaryByWorkflowQuery,
+  usageSummaryTotalsQuery
+} from "./usageSummary.js";
 import { createScheduleStore } from "./scheduleStore.js";
 import { createRunStore } from "./runStore.js";
 import { createRunnerStore } from "./runnerStore.js";
@@ -980,6 +987,23 @@ export function claimScheduleFire(idValue, expectedNextRunAt, nowIso = now()) {
 // without touching next_run_at — that is owned by claimScheduleFire.
 export function recordScheduleFireResult(idValue, runId, status = "queued", firedAtIso = now()) {
   return scheduleStore.recordScheduleFireResult(idValue, runId, status, firedAtIso);
+}
+
+// Windowed cross-run usage rollup behind GET /api/usage/summary: fleet totals,
+// a per-workflow breakdown (highest spend first), and how many runs hit their
+// budget in the window. Same visibility rules as every other run read.
+export function usageSummary({ since }) {
+  const sinceIso = String(since || "");
+  return {
+    totals: normalizeUsageSummaryTotals(one(usageSummaryTotalsQuery(VISIBLE_RUN_WHERE).sql, [sinceIso])),
+    byWorkflow: all(usageSummaryByWorkflowQuery(VISIBLE_RUN_WHERE).sql, [sinceIso]).map(normalizeUsageSummaryWorkflowRow),
+    budgetStopped: Number(one(usageSummaryBudgetStopsQuery(VISIBLE_RUN_WHERE).sql, [sinceIso]).count) || 0
+  };
+}
+
+export function countPendingApprovals() {
+  const query = pendingApprovalsCountQuery();
+  return Number(one(query.sql, query.params).count) || 0;
 }
 
 export function dashboardStats() {

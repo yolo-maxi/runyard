@@ -47,7 +47,17 @@ Failures are classified into specific terminal statuses so operators can tell co
 
 ### Usage and budgets
 
-Runs also meter the model calls they consume: per-call usage records stream as `run.usage` events and aggregate onto the run as `usage` (`totalTokens`, `costMicros`, `byModel`, ...), and run creation accepts an optional `budget: { maxTokens?, maxCostMicros? }` hard ceiling. See [Usage metering & budgets](./metering.mdx) for the data model, the metering gateway, and budget enforcement.
+Runs also meter the model calls they consume: per-call usage records stream as `run.usage` events and aggregate onto the run as `usage` (`totalTokens`, `costMicros`, `byModel`, ...), and run creation accepts an optional `budget: { maxTokens?, maxCostMicros? }` hard ceiling. Budgeted runs additionally carry a computed `budgetStatus` (spent vs limit, remaining, percent used, `nearLimit` at 80%) in list and detail payloads. See [Usage metering & budgets](./metering.mdx) for the data model, the fleet rollup (`GET /api/usage/summary`), the metering gateway, and budget enforcement.
+
+### The needs-attention queue
+
+`GET /api/runs/attention` (`list_attention_runs`, `runyard attention`) returns every run whose next step is a human action, grouped with counts:
+
+- **`paused`** — resume them once the interruption is fixed;
+- **`waitingApproval`** — a decision is pending on an approval card;
+- **`budgetStopped`** — hit their spend ceiling in the last 7 days; raise the budget and re-run to finish the work.
+
+`counts` also includes `pendingApprovals` (open approval cards). The web Home view renders this as a triage strip above the runs list with resume/review/inspect actions inline; it disappears entirely when nothing needs a human. `GET /api/runs?status=paused` (or any other status) remains the raw filter underneath.
 
 ## Preflight and run drafts (negotiation)
 
@@ -88,6 +98,8 @@ A run request may include `responseEndpoint: {type: "http" | "telegram", config}
 | `POST /api/workflows/{id}/preflight` | `preflight_workflow` |
 | `GET/POST /api/run-drafts`, `GET/PATCH /api/run-drafts/{id}`, `POST .../submit`, `POST .../discard` | `list_run_drafts`, `create_run_draft`, `get_run_draft`, `update_run_draft`, `submit_run_draft`, `discard_run_draft` |
 | `GET /api/runs`, `GET /api/runs/{id}` | `list_runs`, `get_run_status` |
+| `GET /api/runs/attention` | `list_attention_runs` |
+| `GET /api/runs/{id}/usage`, `GET /api/usage/summary` | `get_run_usage`, `get_usage_summary` |
 | `GET /api/runs/{id}/events`, `/timeline`, `/diagnostics`, `/logs` | `get_run_events`, `get_run_timeline`, `get_run_diagnostics`, `get_run_logs` |
 | `GET /api/runs/{id}/artifacts`, `GET /api/artifacts`, `GET /api/artifacts/{id}/download` | `get_run_artifacts`, `search_artifacts`, `download_artifact` |
 | `POST /api/runs/{id}/cancel` | `cancel_run` |

@@ -14,6 +14,9 @@ const HUB_TOOL_NAMES = [
   "get_run_status",
   "get_run_logs",
   "get_run_artifacts",
+  "get_run_usage",
+  "get_usage_summary",
+  "list_attention_runs",
   "resume_run",
   "list_runners",
   "list_pending_approvals",
@@ -231,6 +234,11 @@ export function renderLlmsTxt(baseUrl) {
   lines.push("  run-scoped token (the provider key stays on the Hub), and all");
   lines.push("  engine-observed model calls are recorded from structured usage");
   lines.push("  telemetry — never scraped from logs.");
+  lines.push("- Budgeted runs carry a computed budgetStatus (spent vs limit,");
+  lines.push("  remaining, percentUsed, nearLimit at 80%) in list/detail payloads.");
+  lines.push("- GET /api/usage/summary (get_usage_summary) rolls up metered usage");
+  lines.push("  for a window (?days=, default 30): fleet totals, a per-workflow");
+  lines.push("  breakdown sorted by spend, and how many runs stopped at budget.");
   lines.push("");
   lines.push("Paused runs (recoverable interruptions):");
   lines.push("- A run interrupted by a recoverable external condition — provider");
@@ -246,6 +254,10 @@ export function renderLlmsTxt(baseUrl) {
   lines.push("  checkpoint when one exists — otherwise it re-runs from scratch and");
   lines.push("  says so. Cancel still works from paused. budget_exceeded remains a");
   lines.push("  distinct terminal hard stop and is never converted to a pause.");
+  lines.push("- GET /api/runs/attention (list_attention_runs) is the triage queue:");
+  lines.push("  every run whose next step is a human action — paused, waiting for");
+  lines.push("  approval, or stopped at its budget in the last 7 days — with counts");
+  lines.push("  including pending approval cards.");
   lines.push("");
   lines.push("Run-creation negotiation (preflight + drafts):");
   lines.push("- POST /api/workflows/{id}/preflight dry-runs the deterministic");

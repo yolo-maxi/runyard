@@ -71,6 +71,8 @@ runyard run my-workflow \
 | `--negotiate` | Preflight first: enqueue only when ready, otherwise print the negotiation state (questions/blockers and a saved draft) without creating a run |
 | `--chain <json>` | JSON array of next workflow steps to queue after each run succeeds |
 | `--pin <sha>` | Pin the run to a specific workflow git SHA (requires workflow versioning) |
+| `--max-tokens <n>` | Hard budget: stop the run once its metered usage reaches this many tokens |
+| `--max-cost <usd>` | Hard budget: stop the run once its metered cost reaches this many US dollars |
 
 Related: `runyard workflow versions <workflow>` lists SHAs seen across runs and
 `runyard workflow rollback <workflow> <sha>` re-runs pinned to a prior SHA
@@ -80,6 +82,9 @@ Related: `runyard workflow versions <workflow>` lists SHAs seen across runs and
 
 ```bash
 runyard runs -s running          # list runs (filter by status)
+runyard attention                # triage queue: paused / waiting approval / stopped at budget
+runyard usage                    # fleet usage rollup per workflow (--days 7 to narrow)
+runyard usage <runId>            # one run's metered usage, budget, and per-call records
 runyard run-status <id>          # run detail (alias: run-detail)
 runyard logs <id>                # print run logs
 runyard tail <runId>             # follow the unified timeline as NDJSON
@@ -122,6 +127,7 @@ runyard workflow-package import my-workflow.runyard-workflow.json
 Admin-scoped commands:
 
 ```bash
+runyard token-scopes             # what each scope grants + named presets
 runyard token-create ci-bot --scopes api,mcp --expires-in-days 90
 runyard token-list
 runyard token-revoke <id>

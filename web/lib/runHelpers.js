@@ -157,6 +157,30 @@ export function runUsageChip(run) {
   return parts.join(" · ");
 }
 
+// One label map for pause reasons, shared by the run detail notice, the runs
+// list chip, and the attention strip.
+export const PAUSE_REASON_LABELS = {
+  credits_exhausted: "Provider credits exhausted",
+  quota_exhausted: "Provider quota exhausted",
+  provider_limited: "Provider limited",
+  manual: "Paused by an operator",
+  unknown: "Paused"
+};
+
+export function pauseReasonLabel(reason) {
+  return PAUSE_REASON_LABELS[reason] || PAUSE_REASON_LABELS.unknown;
+}
+
+// Budget chip for run lists. run.budgetStatus is server-computed (spent vs
+// limit); this only decides when it deserves a chip: a near-limit warning
+// while the run can still be saved, and the hard stop after.
+export function runBudgetChip(run) {
+  if (run?.status === "budget_exceeded") return { label: "Stopped at budget", tone: "stop" };
+  const status = run?.budgetStatus;
+  if (!status || typeof status !== "object" || !status.nearLimit) return null;
+  return { label: `Budget ${status.percentUsed}% used`, tone: "warn" };
+}
+
 const MIME_EXT = {
   "text/markdown": ".md", "text/plain": ".txt", "application/json": ".json",
   "text/html": ".html", "application/pdf": ".pdf", "image/png": ".png",
@@ -297,7 +321,8 @@ export const RUN_STATUS_OPTIONS = [
   { value: "failed", label: "Failed" },
   { value: "cancelled", label: "Cancelled" },
   { value: "waiting_approval", label: "Waiting approval" },
-  { value: "paused", label: "Paused" }
+  { value: "paused", label: "Paused" },
+  { value: "budget_exceeded", label: "Stopped at budget" }
 ];
 
 export const TIME_RANGE_OPTIONS = [

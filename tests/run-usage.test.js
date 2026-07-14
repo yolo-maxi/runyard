@@ -11,7 +11,7 @@ import {
   usageEventMessage
 } from "../src/runUsage.js";
 import { estimateCostMicros, modelPrice, providerForModel } from "../src/modelPricing.js";
-import { evaluateRunBudget, normalizeRunBudget, requestedRunBudget, runBudgetStop } from "../src/runBudget.js";
+import { evaluateRunBudget, normalizeRunBudget, requestedRunBudget, runBudgetStatus, runBudgetStop } from "../src/runBudget.js";
 
 describe("normalizeUsageInput", () => {
   it("accepts a full record and derives totalTokens", () => {
@@ -145,6 +145,34 @@ describe("run budgets", () => {
     assert.equal(cost.dimension, "cost");
     assert.equal(evaluateRunBudget(null, { totalTokens: 1e9 }).exceeded, false);
     assert.equal(evaluateRunBudget({}, { totalTokens: 1e9 }).exceeded, false);
+  });
+
+  it("pairs spent with limit in runBudgetStatus", () => {
+    assert.equal(runBudgetStatus(null, { totalTokens: 100 }), null);
+    assert.equal(runBudgetStatus({}, { totalTokens: 100 }), null);
+    const tokensOnly = runBudgetStatus({ maxTokens: 1000 }, { totalTokens: 250 });
+    assert.equal(tokensOnly.tokensUsed, 250);
+    assert.equal(tokensOnly.tokensRemaining, 750);
+    assert.equal(tokensOnly.tokensPercentUsed, 25);
+    assert.equal(tokensOnly.percentUsed, 25);
+    assert.equal(tokensOnly.nearLimit, false);
+    assert.equal(tokensOnly.maxCostMicros, undefined);
+    // Worst dimension wins: cost at 90% flags nearLimit even with tokens low.
+    const both = runBudgetStatus(
+      { maxTokens: 1000, maxCostMicros: 1_000_000 },
+      { totalTokens: 100, costMicros: 900_000 }
+    );
+    assert.equal(both.percentUsed, 90);
+    assert.equal(both.nearLimit, true);
+    assert.equal(both.costMicrosRemaining, 100_000);
+    // Overspend clamps to 100% / zero remaining rather than going negative.
+    const over = runBudgetStatus({ maxTokens: 100 }, { totalTokens: 250 });
+    assert.equal(over.tokensPercentUsed, 100);
+    assert.equal(over.tokensRemaining, 0);
+    // No usage yet: 0% spent, full budget remaining.
+    const fresh = runBudgetStatus({ maxTokens: 100 }, null);
+    assert.equal(fresh.tokensPercentUsed, 0);
+    assert.equal(fresh.tokensRemaining, 100);
   });
 
   it("presents budgetStop only for budget_exceeded runs", () => {

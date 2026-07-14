@@ -64,6 +64,7 @@ export function createServerComposition({
     createArtifact,
     createRun,
     DEFAULT_HIDDEN_RUN_SLUGS,
+    countPendingApprovals,
     countWorkflowEndpointInvocations,
     dashboardStats,
     findRecentWorkflowEndpointInvocation,
@@ -132,6 +133,7 @@ export function createServerComposition({
     upsertSkill,
     upsertWorkflowEndpoint,
     updateRun,
+    usageSummary,
     listSecretMeta,
     secretExists,
     upsertSecret,
@@ -313,6 +315,7 @@ export function createServerComposition({
   });
 
   const runReadHandlers = createRunReadHandlers({
+    countPendingApprovals,
     countRuns,
     decorateSingleRun,
     getRun,
@@ -330,6 +333,7 @@ export function createServerComposition({
     runnerPoolStats,
     runTimelineEnabled: () => env.runTimelineEnabled,
     subscribeRunEvents,
+    usageSummary,
     withArtifactLinks,
     withRunLinks
   });

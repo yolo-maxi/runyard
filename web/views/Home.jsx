@@ -11,6 +11,7 @@ import {
 import { groupRunsByEndedDate } from "../lib/runGrouping.js";
 import { peekRerunDraft, clearRerunDraft } from "../lib/runActions.js";
 import { RunCard } from "../components/RunCard.jsx";
+import { AttentionStrip } from "../components/AttentionStrip.jsx";
 import { relativeTime } from "../lib/format.js";
 import { humanizeStatus } from "../lib/statusLabels.js";
 
@@ -336,6 +337,7 @@ export function Home() {
   return (
     <>
       <RerunDraftBanner draft={draft} onDiscard={() => setDraftTick((n) => n + 1)} />
+      <AttentionStrip />
       <HomeFilterBar
         filters={filters}
         capabilities={capabilities}

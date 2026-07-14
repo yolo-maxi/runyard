@@ -142,6 +142,12 @@ export function Connect() {
                 <p className="muted">Install command:</p>
                 <CopyRow value={installCmd} ariaLabel="Install command" />
                 <p className="muted">Then they run <code>runyard mcp install --all</code>. Revoke anytime on this page.</p>
+                <h3>Ready-to-paste, with this token filled in</h3>
+                <p className="muted">Masked like the token itself — Copy grabs the working command. CLI login (saves the remote):</p>
+                <SecretRow id="invite-cli" value={`runyard login --url ${origin} --token ${issued.token}`} label="CLI login command with token" />
+                <p className="muted">Raw HTTP (list runs — works for read-only tokens too):</p>
+                <SecretRow id="invite-curl" value={`curl -H "authorization: Bearer ${issued.token}" ${origin}/api/runs`} label="curl example with token" />
+                <p className="muted">Read-only tokens can inspect everything but change nothing; execution scopes (<code>api</code>, <code>mcp</code>) can also run workflows. Full endpoint list: <code>{origin}/openapi.json</code>.</p>
               </>
             ) : null}
           </div>

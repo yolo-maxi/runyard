@@ -12,6 +12,7 @@ import {
   uniqueNonempty
 } from "./presentation.js";
 import { executionIntentFromInput } from "./runExecution.js";
+import { runBudgetStatus } from "./runBudget.js";
 import { quickFailedStep, quickReasonHint } from "./runDiagnostics.js";
 import { runOutcomeSummary } from "./runOutcomePresentation.js";
 
@@ -111,6 +112,9 @@ export function withRunLinks(run, queueIndex = null, deps = {}) {
   const queue = run.status === "queued" && queueIndex
     ? { position: queueIndex.map.get(run.id) || null, total: queueIndex.total }
     : null;
+  // Spent-vs-limit pairing for budgeted runs, computed once here so list,
+  // detail, and terminal payloads all carry the same numbers.
+  const budgetStatus = runBudgetStatus(run.budget, run.usage);
   return {
     ...run,
     capabilitySlug: visibleRun.capabilitySlug,
@@ -136,6 +140,7 @@ export function withRunLinks(run, queueIndex = null, deps = {}) {
     reasonHint,
     failedStep,
     ...(queue ? { queue } : {}),
+    ...(budgetStatus ? { budgetStatus } : {}),
     deepLink: deepLinks.run(run.id),
     deepLinkLogs: deepLinks.runLogs(run.id),
     deepLinkArtifacts: deepLinks.runArtifacts(run.id),

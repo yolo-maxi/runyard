@@ -748,6 +748,21 @@ export const API_SURFACE = [
     mcp: ["list_runs"]
   },
   {
+    // Literal path — must register ahead of the parameterized /api/runs/:id siblings.
+    method: "get", path: "/api/runs/attention", handler: "runReadHandlers.listAttentionRuns",
+    group: "runs", v1Path: "/api/v1/runs/attention",
+    auth: true, ui: true,
+    summary: "The operator triage queue: runs whose next step is a human action — paused (resume them), waiting for approval (decide), or stopped at their budget in the last 7 days (raise the budget and rerun) — plus counts including pending approval cards",
+    mcp: ["list_attention_runs"]
+  },
+  {
+    method: "get", path: "/api/usage/summary", handler: "runReadHandlers.getUsageSummary",
+    group: "runs", v1Path: "/api/v1/usage/summary",
+    auth: true, ui: true,
+    summary: "Cross-run metered usage rollup for a time window (?days=, default 30, max 365): fleet totals (tokens, costMicros, calls, meteredRuns), a per-workflow breakdown sorted by spend, and how many runs stopped at their budget",
+    mcp: ["get_usage_summary"]
+  },
+  {
     method: "get", path: "/api/runs/:id", handler: "runReadHandlers.getRun",
     group: "runs", v1Path: "/api/v1/runs/:id",
     auth: true, ui: true,

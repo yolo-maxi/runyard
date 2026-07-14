@@ -51,6 +51,24 @@ function printNegotiation(data, json) {
   for (const line of renderNegotiation(data)) console.log(line);
 }
 
+// --max-tokens / --max-cost flags → a run budget body ({ maxTokens,
+// maxCostMicros }). --max-cost is US dollars for humans; the API speaks
+// micro-USD. Returns null when neither flag was passed.
+function budgetFromFlags(opts = {}) {
+  const budget = {};
+  if (opts.maxTokens !== undefined) {
+    const tokens = Number(opts.maxTokens);
+    if (!Number.isFinite(tokens) || tokens <= 0) throw new Error("--max-tokens must be a positive number");
+    budget.maxTokens = Math.floor(tokens);
+  }
+  if (opts.maxCost !== undefined) {
+    const usd = Number(opts.maxCost);
+    if (!Number.isFinite(usd) || usd <= 0) throw new Error("--max-cost must be a positive number of US dollars");
+    budget.maxCostMicros = Math.floor(usd * 1_000_000);
+  }
+  return Object.keys(budget).length ? budget : null;
+}
+
 function ask(query, { hidden = false } = {}) {
   return new Promise((resolve) => {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: true });
@@ -266,6 +284,8 @@ program
   .option("--execution-mode <mode>", "execution mode alias: local | remote")
   .option("--runner-location <location>", "specific runner location tag")
   .option("--pin <sha>", "pin this run to a specific workflow git SHA (RUNYARD_CAPABILITY_VERSIONING)")
+  .option("--max-tokens <tokens>", "hard budget: stop the run once its metered usage reaches this many tokens")
+  .option("--max-cost <usd>", "hard budget: stop the run once its metered cost reaches this many US dollars")
   .option("--negotiate", "preflight first: enqueue only when ready; otherwise print the negotiation state (and saved draft) without creating a run")
   .action(async (workflow, opts) => {
     const input = parseJsonOption(opts.input, "--input");
@@ -286,6 +306,8 @@ program
       body.pin = opts.pin;
       body.origin.pin = opts.pin;
     }
+    const budget = budgetFromFlags(opts);
+    if (budget) body.budget = budget;
     if (opts.negotiate) body.negotiate = true;
     try {
       printRunCreated(await client(program.opts()).post(`/api/workflows/${workflow}/run`, body), program.opts().json);
@@ -308,10 +330,14 @@ program
   .option("--where <mode>", "execution mode: local | remote")
   .option("--execution-mode <mode>", "execution mode alias: local | remote")
   .option("--runner-location <location>", "specific runner location tag")
+  .option("--max-tokens <tokens>", "hard budget to validate: maximum metered tokens for the run")
+  .option("--max-cost <usd>", "hard budget to validate: maximum metered cost in US dollars")
   .action(async (workflow, opts) => {
     const body = { input: parseJsonOption(opts.input, "--input") };
     if (opts.where || opts.executionMode) body.executionMode = opts.where || opts.executionMode;
     if (opts.runnerLocation) body.runnerLocation = opts.runnerLocation;
+    const budget = budgetFromFlags(opts);
+    if (budget) body.budget = budget;
     printNegotiation(await client(program.opts()).post(`/api/workflows/${workflow}/preflight`, body), program.opts().json);
   });
 
@@ -362,6 +388,52 @@ program.command("runs").description("List runs").option("-s, --status <status>")
   const data = await client(program.opts()).get(`/api/runs${opts.status ? `?status=${encodeURIComponent(opts.status)}` : ""}`);
   print(data.runs, program.opts().json);
 });
+
+program
+  .command("attention")
+  .description("Show runs whose next step is a human action: paused (resume), waiting for approval (decide), or stopped at their budget in the last 7 days (raise the budget and re-run)")
+  .action(async () => {
+    const data = await client(program.opts()).get("/api/runs/attention");
+    if (program.opts().json) return print(data, true);
+    const { counts = {}, attention = {} } = data;
+    const total = (counts.paused || 0) + (counts.waitingApproval || 0) + (counts.budgetStopped || 0);
+    if (!total) {
+      console.log("Nothing needs attention.");
+      if (counts.pendingApprovals) console.log(`${counts.pendingApprovals} approval card(s) pending — see: runyard approvals`);
+      return;
+    }
+    const sections = [
+      ["Paused (resume with: runyard resume <id>)", attention.paused],
+      ["Waiting for approval (decide with: runyard approvals)", attention.waitingApproval],
+      ["Stopped at budget in the last 7 days (raise the budget and re-run)", attention.budgetStopped]
+    ];
+    for (const [heading, runs] of sections) {
+      if (!runs?.length) continue;
+      console.log(`${heading} — ${runs.length}`);
+      for (const run of runs) {
+        const reason = run.pause?.reason || run.reasonHint || run.error || "";
+        console.log(`  ${run.id}  ${run.capabilitySlug || ""}  ${run.title || ""}${reason ? `  (${String(reason).slice(0, 80)})` : ""}`);
+      }
+    }
+  });
+
+program
+  .command("usage [runId]")
+  .description("Show metered usage/cost: a fleet rollup per workflow (no run id) or one run's usage detail")
+  .option("--days <days>", "rollup window in days (1-365)", "30")
+  .action(async (runId, opts) => {
+    const hub = client(program.opts());
+    if (runId) return print(await hub.get(`/api/runs/${encodeURIComponent(runId)}/usage`), program.opts().json);
+    const data = await hub.get(`/api/usage/summary?days=${encodeURIComponent(opts.days)}`);
+    if (program.opts().json) return print(data, true);
+    const fmtCost = (micros) => `$${((Number(micros) || 0) / 1_000_000).toFixed(2)}`;
+    const totals = data.totals || {};
+    console.log(`Last ${data.window?.days} days: ${totals.totalTokens || 0} tokens · ${fmtCost(totals.costMicros)} · ${totals.calls || 0} calls · ${totals.meteredRuns || 0} metered runs`);
+    if (data.budgetStopped) console.log(`${data.budgetStopped} run(s) stopped at their budget in this window.`);
+    for (const row of data.byWorkflow || []) {
+      console.log(`  ${row.workflow}  ${row.totalTokens} tokens · ${fmtCost(row.costMicros)} · ${row.meteredRuns} run(s)`);
+    }
+  });
 
 program.command("runners").description("List registered runners and pool stats").action(async () => {
   print(await client(program.opts()).get("/api/runners"), program.opts().json);
@@ -481,6 +553,20 @@ program
     const scopes = opts.scopes.split(",").map((scope) => scope.trim()).filter(Boolean);
     print(await client(program.opts()).post("/api/tokens", { name, scopes, expiresInDays: Number(opts.expiresInDays || 0) }), true);
   });
+
+program.command("token-scopes").description("Explain the token scope vocabulary and named presets (admin)").action(async () => {
+  const data = await client(program.opts()).get("/api/tokens/scopes");
+  if (program.opts().json) return print(data, true);
+  console.log("Scopes:");
+  for (const meta of data.scopes || []) {
+    console.log(`  ${String(meta.scope || "").padEnd(10)} ${meta.summary || ""}`);
+  }
+  console.log("Presets (pass the scopes to token-create --scopes):");
+  for (const preset of data.presets || []) {
+    console.log(`  ${String(preset.id || "").padEnd(16)} ${(preset.scopes || []).join(",")}  ${preset.summary || ""}`);
+  }
+  if (data.defaultScopes) console.log(`Default scopes: ${data.defaultScopes.join(",")}`);
+});
 
 program.command("token-list").description("List access tokens (admin)").action(async () => {
   print((await client(program.opts()).get("/api/tokens")).tokens, program.opts().json);

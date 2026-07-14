@@ -1,5 +1,6 @@
 import { buildRunTimeline, timelinePage } from "./runTimeline.js";
-import { runBudgetStop } from "./runBudget.js";
+import { runBudgetStatus, runBudgetStop } from "./runBudget.js";
+import { usageSummaryDays } from "./usageSummary.js";
 import { redactSnippet, summarizeRunEvents } from "./runEventSummary.js";
 import { buildQueueIndex } from "./runPresentation.js";
 import {
@@ -10,7 +11,13 @@ import {
 
 export { runListQuery } from "./runReadList.js";
 
+// budget_exceeded runs older than this stop demanding attention: their fix
+// (raise the budget and rerun) has usually been taken or consciously skipped.
+const ATTENTION_BUDGET_STOP_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+const ATTENTION_LIST_LIMIT = 100;
+
 export function createRunReadHandlers({
+  countPendingApprovals = () => 0,
   countRuns,
   decorateSingleRun,
   getRun,
@@ -28,6 +35,7 @@ export function createRunReadHandlers({
   runnerPoolStats,
   runTimelineEnabled,
   subscribeRunEvents,
+  usageSummary = () => ({ totals: null, byWorkflow: [], budgetStopped: 0 }),
   withArtifactLinks,
   withRunLinks
 } = {}) {
@@ -59,6 +67,37 @@ export function createRunReadHandlers({
         ...(query.workflowSlugs.length ? { workflows: query.workflowSlugs } : {}),
         ...(query.filtered ? { filters: runListFilterResponse(query) } : {})
       });
+    },
+
+    // The operator triage queue: every run whose next step is a human action —
+    // paused (resume), waiting on an approval (decide), or stopped at its
+    // budget recently (raise the budget and rerun, or accept the stop). One
+    // call answers "is anything silently stuck?" for dashboards, MCP agents,
+    // and `runyard attention`.
+    listAttentionRuns(_req, res) {
+      const pick = (options) => listRuns({ limit: ATTENTION_LIST_LIMIT, ...options }).map((run) => withRunLinks(run));
+      const paused = pick({ status: "paused" });
+      const waitingApproval = pick({ status: "waiting_approval" });
+      const budgetStopped = pick({
+        status: "budget_exceeded",
+        since: new Date(Date.now() - ATTENTION_BUDGET_STOP_WINDOW_MS).toISOString()
+      });
+      res.json({
+        attention: { paused, waitingApproval, budgetStopped },
+        counts: {
+          paused: paused.length,
+          waitingApproval: waitingApproval.length,
+          budgetStopped: budgetStopped.length,
+          pendingApprovals: countPendingApprovals()
+        },
+        generatedAt: new Date().toISOString()
+      });
+    },
+
+    getUsageSummary(req, res) {
+      const days = usageSummaryDays(req.query?.days);
+      const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+      res.json({ window: { days, since }, ...usageSummary({ since }) });
     },
 
     getRun(req, res) {
@@ -119,6 +158,7 @@ export function createRunReadHandlers({
       res.json({
         ...usage,
         status: run.status,
+        budgetStatus: runBudgetStatus(run.budget, run.usage),
         budgetStop: runBudgetStop(run)
       });
     },
@@ -164,6 +204,9 @@ export function runDetailPayload({
     events,
     artifacts,
     responseEndpoints,
+    // Non-null only for budget_exceeded runs; saves detail readers a second
+    // request to /runs/{id}/usage just to learn why the run stopped.
+    budgetStop: runBudgetStop(run),
     diagnostics: runDiagnostics(run, events, artifacts),
     logSummary: summarizeRunEvents(events),
     pool: runnerPoolStats()

@@ -2,7 +2,8 @@ import { deepLinks } from "../lib/router.js";
 import { copyText } from "../lib/clipboard.js";
 import {
   isActiveRun, runDurationMs, formatDuration, relativeTime, formatTimestamp,
-  artifactDisplayName, formatBytes, truncate, runStatusLabel, runUsage, formatTokens, formatCostMicros
+  artifactDisplayName, formatBytes, truncate, runStatusLabel, runUsage, formatTokens, formatCostMicros,
+  pauseReasonLabel
 } from "../lib/runHelpers.js";
 import { rerunRun, editRerunRun, cancelRun, resumeRun } from "../lib/runActions.js";
 import { promoteRun, runPromotionCandidate } from "../lib/runPromotion.js";
@@ -104,7 +105,24 @@ export function RunMetaStrip({ run }) {
       </li>
     );
   }
-  if (run.budget && typeof run.budget === "object") {
+  // Budget renders as spent / limit (percent) — the server pairs the numbers
+  // in run.budgetStatus so this never re-derives arithmetic. Falls back to the
+  // bare ceiling for payloads without the computed status.
+  const budgetStatus = run.budgetStatus && typeof run.budgetStatus === "object" ? run.budgetStatus : null;
+  if (budgetStatus) {
+    const parts = [];
+    if (budgetStatus.maxTokens) {
+      parts.push(`${formatTokens(budgetStatus.tokensUsed) || "0"} / ${formatTokens(budgetStatus.maxTokens)} tok (${budgetStatus.tokensPercentUsed}%)`);
+    }
+    if (budgetStatus.maxCostMicros) {
+      parts.push(`${formatCostMicros(budgetStatus.costMicrosUsed) || "$0"} / ${formatCostMicros(budgetStatus.maxCostMicros)} (${budgetStatus.costPercentUsed}%)`);
+    }
+    items.push(
+      <li key="b" data-near-limit={budgetStatus.nearLimit ? "true" : "false"} title="Hard spend ceiling — spent / limit (percent used)">
+        <span className="muted">Budget</span> {parts.join(" · ")}
+      </li>
+    );
+  } else if (run.budget && typeof run.budget === "object") {
     const parts = [];
     if (run.budget.maxTokens) parts.push(`${formatTokens(run.budget.maxTokens)} tok`);
     if (run.budget.maxCostMicros) parts.push(formatCostMicros(run.budget.maxCostMicros));
@@ -118,28 +136,27 @@ export function RunMetaStrip({ run }) {
 // ended, shown only for budget_exceeded runs.
 export function RunBudgetNotice({ run }) {
   if (!run || run.status !== "budget_exceeded") return null;
+  const status = run.budgetStatus && typeof run.budgetStatus === "object" ? run.budgetStatus : null;
+  const numbers = [];
+  if (status?.maxTokens) numbers.push(`${formatTokens(status.tokensUsed) || "0"} of ${formatTokens(status.maxTokens)} budgeted tokens`);
+  if (status?.maxCostMicros) numbers.push(`${formatCostMicros(status.costMicrosUsed) || "$0"} of the ${formatCostMicros(status.maxCostMicros)} cost ceiling`);
   return (
     <div className="run-budget-notice" role="status" aria-label="Budget stop">
       <strong>Stopped at budget.</strong>{" "}
       <span>{truncate(String(run.error || "This run reached its spend budget and was terminated before further model calls."), 240)}</span>
+      {numbers.length ? <span className="muted"> — used {numbers.join(" and ")}. Raise the budget and re-run to finish the work.</span> : null}
     </div>
   );
 }
 
 // Pause callout: why the run is parked, what unblocks it, and the resume
 // action. Shown only for paused runs; mirrors the RunBudgetNotice pattern.
-const PAUSE_REASON_LABELS = {
-  credits_exhausted: "Provider credits exhausted",
-  quota_exhausted: "Provider quota exhausted",
-  provider_limited: "Provider limited",
-  manual: "Paused by an operator",
-  unknown: "Paused"
-};
-
+// Reason labels live in runHelpers (shared with the runs-list chip and the
+// attention strip).
 export function RunPauseNotice({ run, onChanged }) {
   if (!run || run.status !== "paused") return null;
   const pause = run.pause && typeof run.pause === "object" ? run.pause : {};
-  const reasonLabel = PAUSE_REASON_LABELS[pause.reason] || PAUSE_REASON_LABELS.unknown;
+  const reasonLabel = pauseReasonLabel(pause.reason);
   const actionLabel = pause.requiredAction?.label || "Resolve the interruption, then resume";
   const checkpoint = pause.resume?.smithersRunId || "";
   const resumable = pause.resumable !== false;

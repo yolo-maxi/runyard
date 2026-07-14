@@ -2,7 +2,8 @@ import { deepLinks } from "../lib/router.js";
 import {
   isActiveRun, isDiagnosticRun, runTitle, runDescription, runProject, runBranch,
   runExecutionLabel, runDurationMs, formatDuration, relativeTime, truncate, runStatusLabel,
-  artifactDisplayName, formatBytes, runChangedFiles, runChurn, runDigest, runUsageChip
+  artifactDisplayName, formatBytes, runChangedFiles, runChurn, runDigest, runUsageChip,
+  runBudgetChip, pauseReasonLabel
 } from "../lib/runHelpers.js";
 import { rerunRun, editRerunById } from "../lib/runActions.js";
 import { promoteRun, runPromotionCandidate } from "../lib/runPromotion.js";
@@ -76,6 +77,12 @@ export function RunCard({ run, artifacts = [], now = Date.now(), variant = "card
   const churn = runChurn(run);
   const digest = runDigest(run);
   const usageChip = runUsageChip(run);
+  // Paused and near-/over-budget runs carry their own list chips: the status
+  // badge alone reads as "in flight", but these runs need a human next.
+  const pausedChip = run.status === "paused"
+    ? { label: pauseReasonLabel(run.pause?.reason), title: run.pause?.message || "Paused — resume from the run page" }
+    : null;
+  const budgetChip = runBudgetChip(run);
   // Hover-tooltip the actual file list on the "N files" chip when the outcome
   // summary carries specifics; otherwise the count still renders so the runs
   // history reflects that files did change.
@@ -121,6 +128,8 @@ export function RunCard({ run, artifacts = [], now = Date.now(), variant = "card
           {changed ? <span className="chip chip-files" title={changedTitle}>{changed.count} file{changed.count === 1 ? "" : "s"}</span> : null}
           {churn ? <CodeChurn churn={churn} /> : null}
           {usageChip ? <span className="chip chip-usage" title="Metered model usage (tokens · estimated cost)">{usageChip}</span> : null}
+          {pausedChip ? <span className="chip chip-paused" title={pausedChip.title}>⏸ {pausedChip.label}</span> : null}
+          {budgetChip ? <span className={`chip chip-budget chip-budget-${budgetChip.tone}`} title="Spend budget (spent vs limit) — see the run page for numbers">{budgetChip.label}</span> : null}
         </div>
         <div className="run-history-meta">
           <span title={run.createdAt || ""}>{created}</span>
@@ -163,7 +172,7 @@ export function RunCard({ run, artifacts = [], now = Date.now(), variant = "card
       <p className="muted run-desc">{description}</p>
       <RunProgressStrip run={run} now={now} />
       {run.status === "queued" ? <QueueBanner run={run} /> : null}
-      {project || branch || run.workflowVersion || execution || churn || changed || usageChip ? (
+      {project || branch || run.workflowVersion || execution || churn || changed || usageChip || pausedChip || budgetChip ? (
         <div className="run-card-chips">
           {project ? <span className="chip chip-project" title="Project / target"><Icon name="project" /> {project}</span> : null}
           {branch ? <span className="chip chip-branch" title="Branch"><Icon name="branch" /> {branch}</span> : null}
@@ -172,6 +181,8 @@ export function RunCard({ run, artifacts = [], now = Date.now(), variant = "card
           {changed ? <span className="chip chip-files" title={changedTitle}>{changed.count} file{changed.count === 1 ? "" : "s"}</span> : null}
           {churn ? <CodeChurn churn={churn} /> : null}
           {usageChip ? <span className="chip chip-usage" title="Metered model usage (tokens · estimated cost)">{usageChip}</span> : null}
+          {pausedChip ? <span className="chip chip-paused" title={pausedChip.title}>⏸ {pausedChip.label}</span> : null}
+          {budgetChip ? <span className={`chip chip-budget chip-budget-${budgetChip.tone}`} title="Spend budget (spent vs limit) — see the run page for numbers">{budgetChip.label}</span> : null}
         </div>
       ) : null}
       {digest ? (

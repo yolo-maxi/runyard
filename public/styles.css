@@ -2210,6 +2210,100 @@ details.advanced[open] summary {
   font-variant-numeric: tabular-nums;
 }
 
+/* Paused chip on run lists: the run is parked on a recoverable interruption
+ * and needs a human to resume it. Same amber family as the pause notice. */
+.chip-paused {
+  background: #fffbeb;
+  border-color: #fcd34d;
+  color: #92400e;
+}
+
+/* Budget chips on run lists: near-limit warning while the run can still be
+ * saved (warn), and the hard stop after (stop). */
+.chip-budget-warn {
+  background: #fffbeb;
+  border-color: #fbbf24;
+  color: #92400e;
+  font-variant-numeric: tabular-nums;
+}
+
+.chip-budget-stop {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #991b1b;
+}
+
+/* Needs-attention triage strip above the runs list: paused, waiting-approval,
+ * and budget-stopped runs, each with its unblocking action inline. Amber
+ * frame — parked work, not failure. Renders only when something needs a
+ * human. */
+.attention-strip {
+  border: 1px solid #fcd34d;
+  border-left: 4px solid #d97706;
+  background: #fffbeb;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin: 10px 0;
+}
+
+.attention-strip-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.attention-strip-head strong {
+  color: #78350f;
+}
+
+.attention-approvals-link {
+  margin-left: auto;
+}
+
+.attention-group-heading {
+  margin: 8px 0 2px;
+  font-weight: var(--fw-bold);
+  color: #92400e;
+}
+
+.attention-run-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.attention-run {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 0;
+}
+
+.attention-run-title {
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attention-run-detail {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attention-run-action {
+  margin-left: auto;
+}
+
+/* Near-limit budget pairing on the run-detail meta strip. */
+.run-meta-strip li[data-near-limit="true"] {
+  color: #92400e;
+  font-weight: var(--fw-bold);
+}
+
 /* Budget-stop callout on run detail: the run was terminated on purpose by its
  * spend ceiling — visually distinct from a generic failure banner. */
 .run-budget-notice {

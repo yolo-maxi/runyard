@@ -71,6 +71,41 @@ export function evaluateRunBudget(budget, usage) {
   return { exceeded: false };
 }
 
+// Legibility companion to evaluateRunBudget: pairs each budget ceiling with
+// what the run's aggregate has actually consumed, so every payload that
+// carries a budget can also say "spent / limit / remaining" without clients
+// re-deriving the arithmetic. Null when no budget is set. percentUsed is the
+// worst dimension (the one that will stop the run first); nearLimit trips at
+// 80% so UIs can warn before the hard stop.
+export const BUDGET_NEAR_LIMIT_PERCENT = 80;
+
+export function runBudgetStatus(budget, usage) {
+  if (!budget || typeof budget !== "object") return null;
+  const totals = usage && typeof usage === "object" ? usage : {};
+  const status = {};
+  const percents = [];
+  if (budget.maxTokens) {
+    const used = Number(totals.totalTokens) || 0;
+    status.maxTokens = budget.maxTokens;
+    status.tokensUsed = used;
+    status.tokensRemaining = Math.max(0, budget.maxTokens - used);
+    status.tokensPercentUsed = Math.min(100, Math.round((used / budget.maxTokens) * 100));
+    percents.push(status.tokensPercentUsed);
+  }
+  if (budget.maxCostMicros) {
+    const used = Number(totals.costMicros) || 0;
+    status.maxCostMicros = budget.maxCostMicros;
+    status.costMicrosUsed = used;
+    status.costMicrosRemaining = Math.max(0, budget.maxCostMicros - used);
+    status.costPercentUsed = Math.min(100, Math.round((used / budget.maxCostMicros) * 100));
+    percents.push(status.costPercentUsed);
+  }
+  if (!percents.length) return null;
+  status.percentUsed = Math.max(...percents);
+  status.nearLimit = status.percentUsed >= BUDGET_NEAR_LIMIT_PERCENT;
+  return status;
+}
+
 // A run's `budgetStop` presentation: non-null only when the run terminated on
 // its budget, so API/UI/delegated callers get one stable place to look.
 export function runBudgetStop(run) {

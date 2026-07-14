@@ -41,12 +41,31 @@ Records fold into the run's persisted aggregate the moment they arrive:
 
 Where usage appears:
 
-- `GET /api/runs` and `GET /api/runs/{id}` — the `usage` aggregate (and `budget`) on every run object.
-- `GET /api/runs/{id}/usage` — the aggregate, the budget, per-call records, and `budgetStop`.
+- `GET /api/runs` and `GET /api/runs/{id}` — the `usage` aggregate (and `budget` + computed `budgetStatus`) on every run object.
+- `GET /api/runs/{id}/usage` — the aggregate, the budget, per-call records, `budgetStatus`, and `budgetStop`.
+- `GET /api/usage/summary` — the windowed fleet rollup (below).
 - `run.usage` events on the run's event stream and timeline, emitted in the same write that updates the aggregate.
 - Terminal [response-endpoint payloads](./runs.mdx) — `usage`, `budget`, and `budgetStop` fields, so delegated callers can bill or cap against real consumption.
-- MCP: `get_run_usage`, plus `get_run_status`/`list_runs` responses.
-- The web app: a usage chip on run cards, usage/budget on run detail, and fleet-wide totals in `GET /api/dashboard` (`stats.usage`).
+- MCP: `get_run_usage` and `get_usage_summary`, plus `get_run_status`/`list_runs` responses.
+- CLI: `runyard usage` (fleet rollup) and `runyard usage <runId>` (one run's detail).
+- The web app: a usage chip on run cards, spent-vs-limit budget pairing on run detail, and fleet-wide totals in `GET /api/dashboard` (`stats.usage`).
+
+## The fleet rollup: `GET /api/usage/summary`
+
+One call answers "what is this deployment spending, and on what?" for a time window (`?days=`, default 30, max 365):
+
+```json
+{
+  "window": { "days": 30, "since": "2026-06-14T00:00:00.000Z" },
+  "totals": { "totalTokens": 1234000, "costMicros": 8120000, "calls": 310, "meteredRuns": 42 },
+  "byWorkflow": [
+    { "workflow": "research", "name": "Research", "totalTokens": 800000, "costMicros": 5000000, "calls": 190, "meteredRuns": 20, "lastRunAt": "2026-07-13T09:00:00.000Z" }
+  ],
+  "budgetStopped": 2
+}
+```
+
+`byWorkflow` is sorted by spend (highest first); `budgetStopped` counts runs that hit their budget inside the window. MCP: `get_usage_summary`; CLI: `runyard usage --days 7`. Totals follow the same floor semantics as everywhere else — unknown-model calls contribute tokens but no cost.
 
 ## Budgets
 
@@ -63,6 +82,19 @@ Budgets are hard stops, not advisories:
 - The runner observes the terminal status on its next poll and cancels the detached engine run, and the gateway refuses further calls from that run's token (`403`).
 
 An invalid budget is rejected with `400 budget_invalid` at creation (and surfaces as a preflight blocker in negotiation) — a requested cap is never silently dropped.
+
+The CLI takes budgets as flags: `runyard run research --max-tokens 200000 --max-cost 2` (`--max-cost` is US dollars; the same flags work on `runyard preflight`).
+
+Every budgeted run also carries a computed **`budgetStatus`** — spent vs limit, per dimension — so no client re-derives the arithmetic:
+
+```json
+"budgetStatus": {
+  "maxTokens": 200000, "tokensUsed": 164000, "tokensRemaining": 36000, "tokensPercentUsed": 82,
+  "percentUsed": 82, "nearLimit": true
+}
+```
+
+`percentUsed` is the worst dimension (the one that will stop the run first) and `nearLimit` trips at 80%. The web run list shows a "Budget 82% used" chip on near-limit runs and "Stopped at budget" after a stop; the run detail page pairs spent / limit with the percentage. Runs that stopped on their budget appear in the [needs-attention queue](./runs.mdx) for 7 days so the recovery path (raise the budget, re-run) is visible, not archaeological.
 
 ## Capture paths: what is metered today
 
