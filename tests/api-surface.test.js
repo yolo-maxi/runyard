@@ -322,6 +322,15 @@ function routeDeps() {
     scheduleHandlers: handlers(["listSchedules", "previewSchedule", "getSchedule", "createSchedule", "updateSchedule", "enableSchedule", "disableSchedule", "deleteSchedule", "runScheduleNowRoute"]),
     workItemHandlers: handlers(["listWorkItems", "getWorkItem", "createWorkItem", "updateWorkItem", "deleteWorkItem", "linkWorkItemRun", "unlinkWorkItemRun"]),
     boardHandlers: handlers(["listBoards", "getBoard", "createBoard", "updateBoard"]),
+    boardDefinitionHandlers: handlers([
+      "listBoardDefinitions",
+      "getExampleBoardDefinition",
+      "exportBoardDefinition",
+      "describeBoardTransitions",
+      "checkBoardTransition",
+      "validateBoardDefinition",
+      "importBoardDefinition"
+    ]),
     secretHandlers: handlers(["requireSecretsEnabled", "listSecrets", "upsertSecret", "deleteSecret"]),
     supportChatHandlers: handlers(["status", "chat"]),
     tokenHandlers: handlers(["listTokens", "listTokenScopes", "createToken", "revokeToken"]),

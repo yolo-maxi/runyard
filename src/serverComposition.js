@@ -36,6 +36,7 @@ import { createCapabilityHandlers } from "./capabilityRoutes.js";
 import { createScheduleHandlers } from "./scheduleRoutes.js";
 import { createWorkItemHandlers } from "./workItemRoutes.js";
 import { createBoardHandlers } from "./boardRoutes.js";
+import { createBoardDefinitionHandlers } from "./boardDefinitionRoutes.js";
 import {
   deriveWorkflowGraph,
   deriveWorkflowGraphFromMetadata,
@@ -469,6 +470,7 @@ export function createServerComposition({
     linkRunToWorkItem,
     listApprovals,
     listArtifacts,
+    listBoards,
     listWorkItemEvents,
     listWorkItemRuns,
     listWorkItems,
@@ -488,6 +490,18 @@ export function createServerComposition({
     recordAudit,
     updateBoard,
     workItemRunSummaries
+  });
+
+  const boardDefinitionHandlers = createBoardDefinitionHandlers({
+    createBoard,
+    createSchedule,
+    getBoard,
+    getSchedule,
+    listBoards,
+    listSchedules,
+    recordAudit,
+    updateBoard,
+    updateSchedule
   });
 
   const catalogHandlers = createCatalogHandlers({
@@ -657,7 +671,8 @@ export function createServerComposition({
       workflowPackageHandlers,
       workflowEndpointHandlers,
       workItemHandlers,
-      boardHandlers
+      boardHandlers,
+      boardDefinitionHandlers
     },
     telegramApprovalTarget
   };

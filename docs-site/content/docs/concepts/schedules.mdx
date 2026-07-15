@@ -23,6 +23,10 @@ The preview returns a human-readable description plus the next fire instants —
 
 Provide `runAt` (an ISO timestamp) instead of `cron` to fire exactly once. A schedule takes one or the other.
 
+## Schedules from board definitions
+
+A portable [board definition](./boards.mdx#portable-board-definitions) can carry a `schedules[]` array. Importing the definition creates each listed schedule keyed by `board:<slug>:<schedule-slug>` so re-imports reconcile in-place instead of duplicating cron jobs. The optional `laneId` on a definition schedule marks which lane's trigger the schedule backs — the factory template uses it for the "Ready → In motion" nightly smoke check. This is the write path a board's lane trigger uses to hook into the existing schedule surface without a second round-trip.
+
 ## Enable, disable, run now
 
 - **Disable** stops a schedule from firing without deleting it; **enable** resumes the cadence. Both are admin actions.

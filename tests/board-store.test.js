@@ -96,6 +96,33 @@ describe("board records", () => {
       allowFromStatuses: ["review"],
       message: "Review first"
     });
+    // A transition targeting a non-existent lane is rejected; a normalized
+    // rule preserves manual by default and the workflow allow-list.
+    const badTransition = validateBoardBody({
+      slug: "ok", title: "x",
+      lanes: [
+        { id: "ready", label: "Ready", statuses: ["ready"], transitions: [{ to: "phantom" }] },
+        { id: "running", label: "In motion", statuses: ["running"] }
+      ]
+    });
+    assert.equal(badTransition.ok, false);
+    assert.match(badTransition.error, /unknown lane/);
+    const okTransition = validateBoardBody({
+      slug: "ok", title: "x",
+      lanes: [
+        { id: "ready", label: "Ready", statuses: ["ready"], transitions: [
+          { to: "running", allow: { workflows: ["implement-change-gated"] } }
+        ] },
+        { id: "running", label: "In motion", statuses: ["running"] }
+      ]
+    });
+    assert.equal(okTransition.ok, true);
+    const readyLane = okTransition.value.lanes.find((lane) => lane.id === "ready");
+    assert.equal(readyLane.transitions[0].allow.workflows[0], "implement-change-gated");
+    // manual defaults to false when other channels are declared and manual
+    // wasn't explicitly set — the whole point of listing workflows is to
+    // constrain the move to them.
+    assert.equal(readyLane.transitions[0].allow.manual, false);
   });
 
   it("accepts partial update bodies without slug/title", () => {

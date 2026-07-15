@@ -165,4 +165,98 @@ describe("work item routes", () => {
     handlers.deleteWorkItem(req({ params: { id: "nope" } }), missing);
     assert.equal(missing.statusCode, 404);
   });
+
+  // A board's transition policy rides on PATCH: crossing lanes evaluates
+  // every applicable board; a denial rejects with 409 + the board's message
+  // and the offending {from, to} so the caller can retry as the right role.
+  it("enforces board transition policy on status changes", () => {
+    const boardWithPolicy = {
+      slug: "factory",
+      title: "Factory",
+      project: "",
+      lanes: [
+        { id: "ready", label: "Ready", statuses: ["ready"], transitions: [
+          { from: "ready", to: "review", allow: { actorRoles: ["human"] }, message: "Ready only ships to review when a human drives it." }
+        ] },
+        { id: "review", label: "Review", statuses: ["review"] }
+      ]
+    };
+    const { handlers } = createHarness({
+      listBoards: () => [boardWithPolicy]
+    });
+
+    // A workflow-driven PATCH should be denied.
+    const denied = mockResponse();
+    handlers.updateWorkItem(req({
+      params: { id: "wi_1" },
+      body: { status: "review", workflowSlug: "auto-move", actorRole: "workflow" },
+      token: { name: "runner", scopes: ["runner"] }
+    }), denied);
+    assert.equal(denied.statusCode, 409);
+    assert.match(denied.body.error, /human drives it/);
+    assert.equal(denied.body.board, "factory");
+    assert.deepEqual(denied.body.transition, { from: "ready", to: "review" });
+
+    // Same PATCH from a manual/human caller succeeds (default role).
+    const allowed = mockResponse();
+    handlers.updateWorkItem(req({
+      params: { id: "wi_1" },
+      body: { status: "review", actorRole: "human" }
+    }), allowed);
+    assert.equal(allowed.statusCode, 200);
+    assert.equal(allowed.body.workItem.status, "review");
+  });
+
+  it("does not trust caller-supplied workflow identity without runner/admin scope", () => {
+    const boardWithWorkflowPolicy = {
+      slug: "factory",
+      title: "Factory",
+      project: "",
+      lanes: [
+        { id: "ready", label: "Ready", statuses: ["ready"], transitions: [
+          { from: "ready", to: "review", allow: { workflows: ["auto-move"] }, message: "Only auto-move can drive this transition." }
+        ] },
+        { id: "review", label: "Review", statuses: ["review"] }
+      ]
+    };
+    const { handlers } = createHarness({
+      listBoards: () => [boardWithWorkflowPolicy]
+    });
+
+    const spoofed = mockResponse();
+    handlers.updateWorkItem(req({
+      params: { id: "wi_1" },
+      body: { status: "review", workflowSlug: "auto-move", actorRole: "workflow" },
+      token: { name: "normal-api", scopes: ["api"] }
+    }), spoofed);
+    assert.equal(spoofed.statusCode, 409);
+    assert.match(spoofed.body.error, /Only auto-move/);
+
+    const runner = mockResponse();
+    handlers.updateWorkItem(req({
+      params: { id: "wi_1" },
+      body: { status: "review", workflowSlug: "auto-move", actorRole: "workflow" },
+      token: { name: "runner", scopes: ["runner"] }
+    }), runner);
+    assert.equal(runner.statusCode, 200);
+    assert.equal(runner.body.workItem.status, "review");
+  });
+
+  it("does not enforce policy for non-status updates", () => {
+    const strict = {
+      slug: "factory",
+      title: "Factory",
+      project: "",
+      lanes: [
+        { id: "ready", label: "Ready", statuses: ["ready"], transitions: [
+          { from: "ready", to: "review", allow: { manual: false }, message: "no one" }
+        ] },
+        { id: "review", label: "Review", statuses: ["review"] }
+      ]
+    };
+    const { handlers } = createHarness({ listBoards: () => [strict] });
+    const nudged = mockResponse();
+    handlers.updateWorkItem(req({ params: { id: "wi_1" }, body: { nextAction: "carry on" } }), nudged);
+    assert.equal(nudged.statusCode, 200);
+  });
 });

@@ -981,6 +981,64 @@ export const API_SURFACE = [
     mcp: ["update_board"]
   },
 
+  // --- Board definitions (portable kanban documents + transition policy) ---
+  //
+  // A definition is a portable JSON document that fully describes a kanban:
+  // lanes, statuses, guards, lane-enter triggers, transition policy, and
+  // optional schedule hookups. Board rows are the DB *instances* of these
+  // definitions; the endpoints below let agents validate, import, export,
+  // and inspect them so a company can provision many kanbans from portable
+  // files without touching SQL or the web UI.
+  {
+    method: "get", path: "/api/board-definitions", handler: "boardDefinitionHandlers.listBoardDefinitions",
+    group: "work", v1Path: "/api/v1/work/board-definitions",
+    auth: true,
+    summary: "List boards as portable definition summaries (slug, title, lane count, project scope, whether a transition policy is set) and the built-in example slugs.",
+    mcp: ["list_board_definitions"]
+  },
+  {
+    method: "get", path: "/api/board-definitions/examples/:slug", handler: "boardDefinitionHandlers.getExampleBoardDefinition",
+    group: "work", v1Path: "/api/v1/work/board-definitions/examples/:slug",
+    auth: true,
+    summary: "Fetch a built-in example board definition (runyard-development-factory) as a portable JSON document — ready to POST to /api/board-definitions/import.",
+    mcp: ["get_example_board_definition"]
+  },
+  {
+    method: "get", path: "/api/boards/:slug/definition", handler: "boardDefinitionHandlers.exportBoardDefinition",
+    group: "work", v1Path: "/api/v1/work/boards/:slug/definition",
+    auth: true,
+    summary: "Export a board as a portable definition document: lanes, statuses, guards, triggers, transition policy, defaultWorkflows. Round-trips through /api/board-definitions/import.",
+    mcp: ["export_board_definition"]
+  },
+  {
+    method: "get", path: "/api/boards/:slug/transitions", handler: "boardDefinitionHandlers.describeBoardTransitions",
+    group: "work", v1Path: "/api/v1/work/boards/:slug/transitions",
+    auth: true,
+    summary: "Describe a board's transition policy: every allowed cross-lane move, who can drive it (manual, workflow, run origin, actor id/role), and the message returned when denied.",
+    mcp: ["describe_board_transitions"]
+  },
+  {
+    method: "post", path: "/api/boards/:slug/transitions/check", handler: "boardDefinitionHandlers.checkBoardTransition",
+    group: "work", v1Path: "/api/v1/work/boards/:slug/transitions/check",
+    auth: true,
+    summary: "Preflight a proposed move against a board's transition policy without mutating anything. Body: {fromStatus, toStatus, actorRole?, workflowSlug?, runOrigin?, runId?}.",
+    mcp: ["check_board_transition"]
+  },
+  {
+    method: "post", path: "/api/board-definitions/validate", handler: "boardDefinitionHandlers.validateBoardDefinition",
+    group: "work", v1Path: "/api/v1/work/board-definitions/validate",
+    auth: true,
+    summary: "Validate a portable board definition document without importing it. Returns {valid, definition?, preview: {laneCount, scheduleCount, transitions}, error?}.",
+    mcp: ["validate_board_definition"]
+  },
+  {
+    method: "post", path: "/api/board-definitions/import", handler: "boardDefinitionHandlers.importBoardDefinition",
+    group: "work", v1Path: "/api/v1/work/board-definitions/import",
+    auth: true, scopes: ["api", "mcp", "admin"],
+    summary: "Import a board definition — create the board when new, update lanes/triggers/policy when a board with the same slug exists, and reconcile any embedded schedule hookups by slug so re-imports never duplicate cron jobs.",
+    mcp: ["import_board_definition"]
+  },
+
   // --- Metering gateway (inference boundary) ---
   // Provider-shaped proxy endpoints served to gateway-metered runs. They are
   // authenticated by the per-run gateway token minted at claim time (never an

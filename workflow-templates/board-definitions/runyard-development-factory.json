@@ -1,0 +1,127 @@
+{
+  "kind": "runyard.board",
+  "version": 1,
+  "slug": "runyard-development-factory",
+  "title": "RunYard Development Factory",
+  "description": "Software factory for a product team: triage → plan → ready → run → review → ship. Agents/workflows drive routine transitions; a human gate protects shipping. Wire GitHub/CI/deploy secrets through the existing secrets and hook profiles; the release-notes/social hook point is documented in docs/concepts/boards.mdx but not wired in this template.",
+  "project": "",
+  "defaultWorkflows": [
+    "runyard-smoke-check",
+    "implement-change-gated",
+    "docs-update"
+  ],
+  "isDefault": false,
+  "lanes": [
+    {
+      "id": "intake",
+      "label": "Needs triage",
+      "hint": "New requests that need scope, owner, or priority.",
+      "empty": "No untriaged asks.",
+      "statuses": ["intake"]
+    },
+    {
+      "id": "triaged",
+      "label": "Plan next",
+      "hint": "Known work that still needs the next concrete action.",
+      "empty": "Nothing waiting for planning.",
+      "statuses": ["triaged"]
+    },
+    {
+      "id": "ready",
+      "label": "Ready to start",
+      "hint": "Work that can be launched or assigned now.",
+      "empty": "No launch-ready work.",
+      "statuses": ["ready"],
+      "trigger": {
+        "mode": "suggest",
+        "label": "Ready to launch",
+        "workflow": "runyard-smoke-check",
+        "description": "Suggest launching the smoke workflow when a card lands here."
+      },
+      "transitions": [
+        {
+          "to": "running",
+          "allow": {
+            "manual": true,
+            "workflows": ["runyard-smoke-check", "implement-change-gated"],
+            "runOrigins": ["schedule"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "running",
+      "label": "In motion",
+      "hint": "Work with an active run or ongoing owner action.",
+      "empty": "Nothing currently moving.",
+      "statuses": ["running"],
+      "trigger": {
+        "mode": "confirm",
+        "label": "Launch linked run",
+        "workflow": "runyard-smoke-check",
+        "description": "Confirm before enqueueing the lane workflow and linking it to the ticket."
+      },
+      "transitions": [
+        {
+          "to": "review",
+          "allow": {
+            "manual": true,
+            "runOrigins": ["workflow", "schedule"]
+          }
+        },
+        {
+          "to": "attention",
+          "allow": {
+            "manual": true,
+            "runOrigins": ["workflow"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "attention",
+      "label": "Needs decision",
+      "hint": "Waiting, blocked, paused, failed, or approval-heavy work.",
+      "empty": "No blockers or human decisions.",
+      "statuses": ["waiting", "blocked"]
+    },
+    {
+      "id": "review",
+      "label": "Review / approve",
+      "hint": "Done enough to inspect, merge, accept, or send back.",
+      "empty": "Nothing awaiting review.",
+      "statuses": ["review"],
+      "transitions": [
+        {
+          "to": "shipped",
+          "allow": { "manual": true, "actorRoles": ["human"] },
+          "message": "Only humans mark shipped from Review — raise an approval instead of a bare PATCH."
+        }
+      ]
+    },
+    {
+      "id": "shipped",
+      "label": "Done",
+      "hint": "Shipped or accepted work that can be archived later.",
+      "empty": "No completed work on this board.",
+      "statuses": ["shipped", "accepted"],
+      "guard": {
+        "allowFromStatuses": ["review"],
+        "message": "Move work through Review / approve before marking it done."
+      }
+    }
+  ],
+  "schedules": [
+    {
+      "slug": "runyard-nightly-smoke",
+      "name": "RunYard nightly smoke",
+      "workflow": "runyard-smoke-check",
+      "cron": "0 3 * * *",
+      "timezone": "UTC",
+      "description": "Nightly smoke-check that the deployment can execute a workflow end-to-end. Disabled by default; enable when the workflow slug exists on this Hub.",
+      "input": {},
+      "enabled": false,
+      "laneId": "ready"
+    }
+  ]
+}

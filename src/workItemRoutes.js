@@ -1,3 +1,4 @@
+import { actorContextFromRequest, evaluateBoardMove } from "./boardTransitionPolicy.js";
 import { boundedLimit } from "./httpQuery.js";
 import { actorName } from "./routeActors.js";
 import { validateWorkItemBody, withWorkItemView } from "./workItemHelpers.js";
@@ -15,6 +16,7 @@ export function createWorkItemHandlers({
   linkRunToWorkItem,
   listApprovals,
   listArtifacts,
+  listBoards,
   listWorkItemEvents,
   listWorkItemRuns,
   listWorkItems,
@@ -25,6 +27,15 @@ export function createWorkItemHandlers({
   withRunLinks,
   workItemRunSummaries
 } = {}) {
+  // Boards whose scope includes this ticket. Every board with a matching
+  // project (or an empty "all projects" scope) applies its transition policy
+  // to the move; if any board's explicit rule denies, the PATCH is rejected.
+  // Preserves today's behaviour when no board declares a matching rule.
+  const applicableBoards = (workItem) => {
+    if (typeof listBoards !== "function") return [];
+    const project = workItem.project || "";
+    return listBoards().filter((board) => !board.project || board.project === project);
+  };
   const workItemOr404 = (req, res) => {
     const workItem = getWorkItem(req.params.id);
     if (!workItem) {
@@ -100,9 +111,41 @@ export function createWorkItemHandlers({
     },
 
     updateWorkItem(req, res) {
-      if (!workItemOr404(req, res)) return;
+      const existing = workItemOr404(req, res);
+      if (!existing) return;
       const validated = validateWorkItemBody(req.body || {}, { partial: true });
       if (sendValidationError(res, validated)) return;
+      // Transition policy: when the PATCH changes status, evaluate every
+      // in-scope board's transition policy before mutating state. A denied
+      // move short-circuits with 409 + the board's message; policy-free
+      // moves fall through (today's behaviour). `boardSlug`/`actorRole` on
+      // the body let an agent or workflow declare itself when driving the
+      // move; without them the caller is treated as manual/human.
+      if (validated.value.status && validated.value.status !== existing.status) {
+        const actorContext = actorContextFromRequest(req, {
+          role: req.body?.actorRole,
+          runOrigin: req.body?.runOrigin,
+          runId: req.body?.runId,
+          workflowSlug: req.body?.workflowSlug
+        });
+        const boards = req.body?.boardSlug
+          ? applicableBoards(existing).filter((board) => board.slug === req.body.boardSlug)
+          : applicableBoards(existing);
+        for (const board of boards) {
+          const decision = evaluateBoardMove(board, {
+            fromStatus: existing.status,
+            toStatus: validated.value.status,
+            actor: actorContext
+          });
+          if (!decision.ok) {
+            return res.status(409).json({
+              error: decision.error,
+              board: board.slug,
+              transition: decision.transition ? { from: decision.transition.from, to: decision.transition.to } : undefined
+            });
+          }
+        }
+      }
       const actor = actorName(req.token);
       const workItem = updateWorkItem(req.params.id, validated.value, { actor });
       recordAudit(actor, "work_item.updated", workItem.id, { fields: Object.keys(validated.value) });

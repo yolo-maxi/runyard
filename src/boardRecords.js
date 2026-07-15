@@ -204,6 +204,8 @@ export function validateBoardBody(body = {}, { partial = false } = {}) {
       if (!trigger.ok) return { ok: false, error: `lane ${id} trigger invalid: ${trigger.error}` };
       const guard = normalizeLaneGuard(lane.guard);
       if (!guard.ok) return { ok: false, error: `lane ${id} guard invalid: ${guard.error}` };
+      const transitions = normalizeLaneTransitions(lane.transitions, id);
+      if (!transitions.ok) return { ok: false, error: `lane ${id} transitions invalid: ${transitions.error}` };
       lanes.push({
         id,
         label,
@@ -211,8 +213,23 @@ export function validateBoardBody(body = {}, { partial = false } = {}) {
         empty: String(lane.empty || "").slice(0, 200),
         statuses,
         ...(trigger.value ? { trigger: trigger.value } : {}),
-        ...(guard.value ? { guard: guard.value } : {})
+        ...(guard.value ? { guard: guard.value } : {}),
+        ...(transitions.value.length ? { transitions: transitions.value } : {})
       });
+    }
+    // Second pass: every transition target must be a real lane id on this
+    // same board. Deferred until after the whole lanes[] is normalized so
+    // forward references between lanes validate cleanly.
+    const laneIds = new Set(lanes.map((lane) => lane.id));
+    for (const lane of lanes) {
+      for (const transition of lane.transitions || []) {
+        if (!laneIds.has(transition.to)) {
+          return { ok: false, error: `lane ${lane.id} transition references unknown lane: ${transition.to}` };
+        }
+        if (transition.to === lane.id) {
+          return { ok: false, error: `lane ${lane.id} cannot transition to itself` };
+        }
+      }
     }
     value.lanes = lanes;
   }
@@ -268,6 +285,91 @@ function normalizeLaneGuard(raw) {
       ...(message ? { message } : {})
     }
   };
+}
+
+// Actor-role vocabulary for transition allow rules. Kept in this module so
+// boardRecords owns the whole lane schema (statuses + guards + triggers +
+// transitions); boardDefinition.js re-exports it for the definition doc.
+export const BOARD_TRANSITION_ACTOR_ROLES = [
+  "manual",
+  "human",
+  "agent",
+  "runner",
+  "schedule",
+  "workflow",
+  "system"
+];
+
+// Normalize per-lane transition policy: an array of {to, allow, message?}
+// where `allow` is the union of channels permitted to drive the move — a
+// missing `allow` defaults to manual-only, matching today's behaviour.
+function normalizeLaneTransitions(raw, laneId) {
+  if (raw === undefined || raw === null) return { ok: true, value: [] };
+  if (!Array.isArray(raw)) return { ok: false, error: "must be an array" };
+  const values = [];
+  const seenTargets = new Set();
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      return { ok: false, error: `transition must be an object` };
+    }
+    const to = String(entry.to || "").trim();
+    if (!to) return { ok: false, error: "transition needs a `to` lane id" };
+    if (seenTargets.has(to)) return { ok: false, error: `duplicate transition target: ${to}` };
+    seenTargets.add(to);
+    const allow = normalizeTransitionAllow(entry.allow);
+    if (!allow.ok) return { ok: false, error: `${to} allow ${allow.error}` };
+    const message = String(entry.message || "").trim().slice(0, 240);
+    values.push({
+      from: laneId,
+      to,
+      allow: allow.value,
+      ...(message ? { message } : {})
+    });
+  }
+  return { ok: true, value: values };
+}
+
+function normalizeTransitionAllow(raw) {
+  if (raw === undefined || raw === null) return { ok: true, value: { manual: true } };
+  if (typeof raw !== "object" || Array.isArray(raw)) return { ok: false, error: "must be an object" };
+  const value = {};
+  if (raw.manual !== undefined) value.manual = Boolean(raw.manual);
+  const list = (name) => {
+    const raw2 = raw[name];
+    if (raw2 === undefined || raw2 === null) return { ok: true, value: [] };
+    if (!Array.isArray(raw2)) return { ok: false, error: `${name} must be an array` };
+    const out = [];
+    for (const item of raw2) {
+      const text = String(item || "").trim();
+      if (!text) continue;
+      if (!out.includes(text)) out.push(text);
+    }
+    return { ok: true, value: out };
+  };
+  const workflows = list("workflows");
+  if (!workflows.ok) return workflows;
+  const runOrigins = list("runOrigins");
+  if (!runOrigins.ok) return runOrigins;
+  const actors = list("actors");
+  if (!actors.ok) return actors;
+  const actorRoles = list("actorRoles");
+  if (!actorRoles.ok) return actorRoles;
+  for (const role of actorRoles.value) {
+    if (!BOARD_TRANSITION_ACTOR_ROLES.includes(role)) {
+      return { ok: false, error: `actorRoles has unknown role: ${role}` };
+    }
+  }
+  if (workflows.value.length) value.workflows = workflows.value;
+  if (runOrigins.value.length) value.runOrigins = runOrigins.value;
+  if (actors.value.length) value.actors = actors.value;
+  if (actorRoles.value.length) value.actorRoles = actorRoles.value;
+  // A non-manual channel without manual: false locks manual out — the
+  // whole point of listing agents/workflows/schedules is to constrain to
+  // them. Preserve manual: true only when the caller asked for it.
+  if (value.manual === undefined) {
+    value.manual = !(value.workflows || value.runOrigins || value.actors || value.actorRoles);
+  }
+  return { ok: true, value };
 }
 
 function normalizeGuardStatuses(raw, field) {
