@@ -600,6 +600,99 @@ boardCommand
     print(await client(program.opts()).patch(`/api/boards/${encodeURIComponent(slug)}`, body), program.opts().json);
   });
 
+// Board definitions: portable JSON documents describing a whole kanban —
+// lanes, guards, triggers, transition policy, and optional schedule
+// hookups. The subcommands mirror the API/MCP surface so agents can
+// provision, validate, export, and inspect boards from files without
+// touching the web UI.
+const boardDefinitionCommand = boardCommand
+  .command("definition")
+  .description("Portable board definitions (JSON documents): validate, import, export, examples");
+boardDefinitionCommand
+  .command("list")
+  .description("List boards as portable definition summaries plus built-in example slugs")
+  .action(async () => {
+    const data = await client(program.opts()).get("/api/board-definitions");
+    if (program.opts().json) return print(data, true);
+    for (const summary of data.definitions || []) {
+      console.log(`${summary.slug}${summary.isDefault ? "  (default)" : ""}  ${summary.title}  lanes=${summary.laneCount}  policy=${summary.hasTransitionPolicy ? "yes" : "no"}${summary.project ? `  [project: ${summary.project}]` : ""}`);
+    }
+    if (data.examples?.length) {
+      console.log("\nExamples:");
+      for (const example of data.examples) console.log(`  ${example.slug}  ${example.title}`);
+    }
+  });
+boardDefinitionCommand
+  .command("example <slug>")
+  .description("Print a built-in example board definition as JSON")
+  .action(async (slug) => {
+    const data = await client(program.opts()).get(`/api/board-definitions/examples/${encodeURIComponent(slug)}`);
+    console.log(JSON.stringify(data.definition, null, 2));
+  });
+boardDefinitionCommand
+  .command("export <slug>")
+  .description("Export a board as a portable JSON definition document (stdout)")
+  .action(async (slug) => {
+    const data = await client(program.opts()).get(`/api/boards/${encodeURIComponent(slug)}/definition`);
+    console.log(JSON.stringify(data.definition, null, 2));
+  });
+boardDefinitionCommand
+  .command("validate")
+  .description("Validate a board definition JSON file without importing it")
+  .requiredOption("--file <path>", "path to a JSON document")
+  .action(async (opts) => {
+    const definition = JSON.parse(readFileSync(opts.file, "utf8"));
+    print(await client(program.opts()).post("/api/board-definitions/validate", { definition }), program.opts().json);
+  });
+boardDefinitionCommand
+  .command("import")
+  .description("Import a board definition JSON file, creating or updating the board and reconciling any schedule hookups")
+  .requiredOption("--file <path>", "path to a JSON document")
+  .option("--slug <slug>", "override the definition's slug (provision multiple boards from one template)")
+  .action(async (opts) => {
+    const definition = JSON.parse(readFileSync(opts.file, "utf8"));
+    const body = { definition, ...(opts.slug ? { slug: opts.slug } : {}) };
+    print(await client(program.opts()).post("/api/board-definitions/import", body), program.opts().json);
+  });
+boardCommand
+  .command("policy <slug>")
+  .description("Show a board's transition policy: every allowed move, who can drive it, and the denied-move message")
+  .action(async (slug) => {
+    const data = await client(program.opts()).get(`/api/boards/${encodeURIComponent(slug)}/transitions`);
+    if (program.opts().json) return print(data, true);
+    if (!data.transitions?.length) return console.log(`No explicit transition policy for board "${slug}" — every cross-lane move is unrestricted.`);
+    console.log(`Board ${data.board?.title || slug} transition policy:`);
+    for (const row of data.transitions) {
+      const bits = [];
+      if (row.allow.manual) bits.push("manual");
+      if (row.allow.workflows?.length) bits.push(`workflows: ${row.allow.workflows.join(", ")}`);
+      if (row.allow.runOrigins?.length) bits.push(`runOrigins: ${row.allow.runOrigins.join(", ")}`);
+      if (row.allow.actors?.length) bits.push(`actors: ${row.allow.actors.join(", ")}`);
+      if (row.allow.actorRoles?.length) bits.push(`roles: ${row.allow.actorRoles.join(", ")}`);
+      console.log(`  ${row.fromLabel || row.from} → ${row.toLabel || row.to}  allow: ${bits.join(" · ") || "(nobody)"}${row.message ? `\n    ${row.message}` : ""}`);
+    }
+  });
+boardCommand
+  .command("check <slug>")
+  .description("Preflight a proposed lane move against a board's transition policy (no state changes)")
+  .requiredOption("--from <status>", "current status")
+  .requiredOption("--to <status>", "target status")
+  .option("--actor-role <role>", "manual, human, agent, runner, schedule, workflow, system")
+  .option("--workflow <slug>", "declare the acting workflow slug")
+  .option("--run-origin <origin>", "e.g. schedule, workflow, cli")
+  .option("--run-id <id>")
+  .action(async (slug, opts) => {
+    const body = {
+      fromStatus: opts.from,
+      toStatus: opts.to,
+      actorRole: opts.actorRole,
+      workflowSlug: opts.workflow,
+      runOrigin: opts.runOrigin,
+      runId: opts.runId
+    };
+    print(await client(program.opts()).post(`/api/boards/${encodeURIComponent(slug)}/transitions/check`, body), program.opts().json);
+  });
+
 program
   .command("usage [runId]")
   .description("Show metered usage/cost: a fleet rollup per workflow (no run id) or one run's usage detail")

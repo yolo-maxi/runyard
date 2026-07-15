@@ -46,6 +46,7 @@ describe("server composition", () => {
       "approvalHandlers",
       "artifactHandlers",
       "authHandlers",
+      "boardDefinitionHandlers",
       "boardHandlers",
       "capabilityHandlers",
       "catalogHandlers",

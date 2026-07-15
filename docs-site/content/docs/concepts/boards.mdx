@@ -34,6 +34,7 @@ The Work surface has two views over the same board configuration:
 - **`defaultWorkflows`** lists workflow slugs the board suggests for launching from its tickets.
 - **`lane.trigger`** makes lane movement workflow-aware without hidden magic. `mode: "suggest"` only nudges the operator toward a workflow; `mode: "confirm"` asks before enqueueing and linking a run; `mode: "auto"` enqueues from config and should be reserved for trusted/cheap/idempotent lanes. A trigger can set `workflow`, `label`, `description`, and default `input`.
 - **`lane.guard`** makes some moves impossible from the board. `allowFromStatuses` permits entry only from specific lifecycle statuses; `denyFromStatuses` blocks entry from specific lifecycle statuses; `message` explains the blocked drop to the operator.
+- **`lane.transitions`** is the [transition policy](#transition-policy): a per-move allow-list of who can drive the cross-lane hop (manual users, specific workflows, run origins, actor ids/roles). A lane without `transitions` stays unrestricted, matching today's behaviour.
 - **`isDefault`** marks the board the web app opens at `/app#work`.
 
 The seeded RunYard Factory board uses conservative triggers:
@@ -57,6 +58,86 @@ Linked runs keep the board honest without an operator shepherding every card. Th
 
 Tickets in `shipped`, `accepted`, or `archived` are never touched, and terminal outcomes (`succeeded`/`failed`) wait until no sibling linked run is still live. Every automated move lands in ticket history as a `work_item.status_changed` event attributed to the run (`actor: "run:run_…"`), with the reason.
 
+## Transition policy
+
+A **transition** is a cross-lane move on the board (e.g. Ready → In motion). By default every move a work-item PATCH proposes is allowed — that's what today's Work board does. Adding a `transitions[]` entry to a lane turns it into an **allow-list**: the move is permitted only when the caller matches one of the listed channels.
+
+```json
+{
+  "id": "review",
+  "label": "Review / approve",
+  "statuses": ["review"],
+  "transitions": [
+    {
+      "to": "shipped",
+      "allow": {
+        "manual": true,
+        "workflows": ["release-cut"],
+        "runOrigins": ["schedule"],
+        "actors": ["release-bot"],
+        "actorRoles": ["human"]
+      },
+      "message": "Only humans mark shipped from Review — raise an approval instead of a bare PATCH."
+    }
+  ]
+}
+```
+
+The `allow` clause is a **union**: any single match permits the move. Channels available today:
+
+| Channel | What it matches |
+| --- | --- |
+| `manual` | A human or an authenticated token that hasn't declared a workflow/run origin (the default for any PATCH). |
+| `workflows` | A workflow slug — set `workflowSlug` on the PATCH body (or the run whose status change is driving the move). |
+| `runOrigins` | The originating run's `origin.type` (e.g. `schedule`, `workflow`, `mcp`, `cli`). |
+| `actors` | A stable actor label: a token name, a run id (`run:<id>`), or a specific caller identity. |
+| `actorRoles` | A role slug: `manual`, `human`, `agent`, `runner`, `schedule`, `workflow`, `system`. |
+
+Enforcement runs on **every board whose project scope covers the ticket**. A denial from any board rejects the PATCH with `409 Conflict`, the board's `message`, and the offending `{from, to}` transition. Callers driving a move on behalf of a workflow or run should declare it on the PATCH body:
+
+```json
+{
+  "status": "review",
+  "workflowSlug": "implement-change-gated",
+  "runOrigin": "workflow",
+  "runId": "run_…"
+}
+```
+
+The **read-only Flow view** at `/app#work` continues to render the board's static topology; when a board declares a transition policy the Flow view labels each edge with who can drive it. Editing the policy still happens through the API/CLI/MCP write path — the graph UI stays inspection-only.
+
+## Portable board definitions
+
+A board **definition** is a portable JSON document describing a whole kanban — lanes, statuses, triggers, guards, transition policy, `defaultWorkflows`, and optional `schedules[]` (see [Schedules](./schedules.mdx)). Definitions are the write path agents use to provision or reconcile boards; the DB row is one *instance* of a definition.
+
+```json
+{
+  "kind": "runyard.board",
+  "version": 1,
+  "slug": "runyard-development-factory",
+  "title": "RunYard Development Factory",
+  "lanes": [ /* … lane definitions with trigger/guard/transitions … */ ],
+  "schedules": [
+    {
+      "slug": "runyard-nightly-smoke",
+      "workflow": "runyard-smoke-check",
+      "cron": "0 3 * * *",
+      "timezone": "UTC",
+      "enabled": false,
+      "laneId": "ready"
+    }
+  ]
+}
+```
+
+The importer is idempotent: creating on new slugs, updating when the slug exists, and reconciling `schedules[]` by slug so re-imports never duplicate cron jobs. A production-ready example ships in the repo at [`workflow-templates/board-definitions/runyard-development-factory.json`](https://github.com/yolo-maxi/runyard/blob/main/workflow-templates/board-definitions/runyard-development-factory.json); fetch the same document at `GET /api/board-definitions/examples/runyard-development-factory` or with `runyard board definition example runyard-development-factory`.
+
+YAML is deliberately deferred: the format itself is trivially expressible in YAML, but the CLI/MCP stay dependency-free, so today the documented syntax is JSON only.
+
+### Release-notes / social hook point
+
+The example factory board leaves a **documented but unwired** hook point for release-notes and social automation: the natural place is a lane trigger on `shipped` that runs a `docs-update` or `release-notes` workflow, plus a schedule entry (e.g. cron `0 15 * * FRI`) that posts a weekly digest. Wiring Twitter or another network is a matter of adding the corresponding secret, a hook profile that consumes it, and a workflow that reads the run's artifacts — none of which this template ships, because the credentials must be operator-provided.
+
 ## API & MCP
 
 | Endpoint | MCP tool | Notes |
@@ -65,7 +146,32 @@ Tickets in `shipped`, `accepted`, or `archived` are never touched, and terminal 
 | `GET /api/boards/{slug}` | `get_board` | Board + lanes with per-lane ticket counts + the decorated work items in scope. |
 | `POST /api/boards` | `create_board` | `api`/`mcp` scope. Body: `slug`, `title` (+ optional fields above). |
 | `PATCH /api/boards/{slug}` | `update_board` | Any subset; `slug` is immutable. |
+| `GET /api/board-definitions` | `list_board_definitions` | Portable-definition summaries + built-in example slugs. |
+| `GET /api/board-definitions/examples/{slug}` | `get_example_board_definition` | Fetch a built-in example definition as JSON. |
+| `GET /api/boards/{slug}/definition` | `export_board_definition` | Round-trippable JSON document for a board. |
+| `POST /api/board-definitions/validate` | `validate_board_definition` | Schema check without touching the DB. |
+| `POST /api/board-definitions/import` | `import_board_definition` | Create-or-update the board and reconcile schedule hookups. |
+| `GET /api/boards/{slug}/transitions` | `describe_board_transitions` | Flatten the transition policy. |
+| `POST /api/boards/{slug}/transitions/check` | `check_board_transition` | Preflight a proposed move without mutating anything. |
 
-CLI: `runyard board list`, `runyard board show <slug>` (lanes with counts and tickets), `runyard board create --slug … --title …`, `runyard board update <slug> …`.
+CLI:
 
-Grouped `/api/v1` aliases live under `/api/v1/work/boards…`.
+```bash
+# The existing verbs still work as before:
+runyard board list
+runyard board show <slug>
+runyard board create --slug factory --title "Product factory"
+
+# Portable definitions:
+runyard board definition list
+runyard board definition example runyard-development-factory > factory.json
+runyard board definition validate --file factory.json
+runyard board definition import --file factory.json
+runyard board definition export <slug>
+
+# Transition policy inspection:
+runyard board policy <slug>
+runyard board check <slug> --from ready --to running --workflow implement-change-gated --run-origin workflow
+```
+
+Grouped `/api/v1` aliases live under `/api/v1/work/boards…` and `/api/v1/work/board-definitions…`.

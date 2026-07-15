@@ -187,6 +187,22 @@ async function callTool(name, args = {}) {
     if (name === "create_board") return result(await client.post("/api/boards", body));
     return result(await client.patch(`/api/boards/${encodeURIComponent(args.boardSlug || args.slug)}`, body));
   }
+  if (name === "list_board_definitions") return result(await client.get("/api/board-definitions"));
+  if (name === "get_example_board_definition") return result(await client.get(`/api/board-definitions/examples/${encodeURIComponent(args.slug)}`));
+  if (name === "export_board_definition") return result(await client.get(`/api/boards/${encodeURIComponent(args.boardSlug || args.slug)}/definition`));
+  if (name === "describe_board_transitions") return result(await client.get(`/api/boards/${encodeURIComponent(args.boardSlug || args.slug)}/transitions`));
+  if (name === "check_board_transition") {
+    return result(await client.post(`/api/boards/${encodeURIComponent(args.boardSlug || args.slug)}/transitions/check`, {
+      fromStatus: args.fromStatus,
+      toStatus: args.toStatus,
+      actorRole: args.actorRole,
+      workflowSlug: args.workflowSlug,
+      runOrigin: args.runOrigin,
+      runId: args.runId
+    }));
+  }
+  if (name === "validate_board_definition") return result(await client.post("/api/board-definitions/validate", { definition: args.definition || args }));
+  if (name === "import_board_definition") return result(await client.post("/api/board-definitions/import", { definition: args.definition || args, ...(args.slug ? { slug: args.slug } : {}) }));
   if (name === "list_repo_options") return result(await client.get("/api/repo-options"));
   if (name === "list_workflow_endpoints") return result(await client.get("/api/workflow-endpoints"));
   if (name === "get_workflow_endpoint") return result(await client.get(`/api/workflow-endpoints/${encodeURIComponent(args.endpointSlug || args.slug)}`));

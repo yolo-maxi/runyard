@@ -80,7 +80,7 @@ below.
 
 ## The tool surface
 
-The server exposes **87 tools**, generated from the same API surface registry
+The server exposes tools generated from the same API surface registry
 the Hub's routes and `/openapi.json` come from. Grouped by resource:
 
 | Group | Tools |
@@ -101,6 +101,8 @@ the Hub's routes and `/openapi.json` come from. Grouped by resource:
 | Workflow bundles | `list_workflow_bundles`, `get_workflow_bundle`, `publish_workflow_bundle`† |
 | Workflow packages | `export_workflow_package`†, `validate_workflow_package`†, `preview_workflow_import`†, `import_workflow_package`† |
 | Catalog | `list_agents`, `list_skills`, `search_knowledge`, `create_agent`†, `update_agent`†, `create_skill`†, `update_skill`†, `create_knowledge`†, `update_knowledge`† |
+| Work items | `list_work_items`, `get_work_item`, `create_work_item`, `update_work_item`, `delete_work_item`†, `link_work_item_run`, `unlink_work_item_run` |
+| Boards | `list_boards`, `get_board`, `create_board`, `update_board`, `list_board_definitions`, `get_example_board_definition`, `export_board_definition`, `validate_board_definition`, `import_board_definition`, `describe_board_transitions`, `check_board_transition` |
 | Admin & updates | `get_audit_log`†, `list_alerts`†, `get_update_status`†, `apply_update`† |
 | Assistant | `get_assistant_status`, `ask_assistant` |
 

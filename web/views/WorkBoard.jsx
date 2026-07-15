@@ -482,6 +482,9 @@ function buildBoardGraph({ lanes = [], items = [], workflows = [], defaultWorkfl
     }
     if (lane.guard?.allowFromStatuses?.length) details.push(`requires: ${lane.guard.allowFromStatuses.join(" / ")}`);
     if (lane.guard?.denyFromStatuses?.length) details.push(`blocks: ${lane.guard.denyFromStatuses.join(" / ")}`);
+    if (Array.isArray(lane.transitions) && lane.transitions.length) {
+      details.push(`policy: ${lane.transitions.length} outbound move${lane.transitions.length === 1 ? "" : "s"}`);
+    }
     return {
       id: lane.id,
       kind: lane.guard ? "approval" : lane.trigger ? "deploy" : "tag",
@@ -489,6 +492,26 @@ function buildBoardGraph({ lanes = [], items = [], workflows = [], defaultWorkfl
       sublabel: details.join("\n")
     };
   });
+  // Extra edges for lane.transitions[] — the read-only graph now surfaces
+  // each explicitly declared cross-lane hop and its allow-clause.
+  const transitionEdges = [];
+  for (const lane of lanes) {
+    for (const transition of lane.transitions || []) {
+      const allow = transition.allow || {};
+      const bits = [];
+      if (allow.manual) bits.push("manual");
+      if (allow.workflows?.length) bits.push(`wf: ${allow.workflows.join(", ")}`);
+      if (allow.runOrigins?.length) bits.push(`origins: ${allow.runOrigins.join(", ")}`);
+      if (allow.actorRoles?.length) bits.push(`roles: ${allow.actorRoles.join(", ")}`);
+      transitionEdges.push({
+        id: `${lane.id}-${transition.to}-policy`,
+        source: lane.id,
+        target: transition.to,
+        kind: "policy",
+        label: bits.length ? `allow: ${bits.join(" · ")}` : "policy"
+      });
+    }
+  }
   const edges = [];
   for (let i = 0; i < lanes.length - 1; i += 1) {
     const target = lanes[i + 1];
@@ -524,6 +547,12 @@ function buildBoardGraph({ lanes = [], items = [], workflows = [], defaultWorkfl
     if (!laneIds.has(run.target)) continue;
     nodes.push({ id: run.id, kind: "entry", label: run.label, sublabel: run.sublabel });
     edges.push({ id: `${run.id}-${run.target}`, source: run.id, target: run.target, kind: "automatic", label: "auto" });
+  }
+  // Append transition-policy edges last so the linear lane→lane skeleton
+  // renders first, then declared policy edges overlay it with allow-clause
+  // labels (agents/workflows/roles).
+  for (const edge of transitionEdges) {
+    if (laneIds.has(edge.source) && laneIds.has(edge.target)) edges.push(edge);
   }
   return { nodes, edges };
 }

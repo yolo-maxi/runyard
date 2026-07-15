@@ -109,6 +109,25 @@ runyard reject <id> -c "wrong repo"
 runyard request-changes <id> -c "tighten the scope first"
 ```
 
+## Boards and portable definitions
+
+Boards are configured software-factory views over work items. Board **definitions** are portable JSON documents describing a whole kanban — lanes, guards, triggers, transition policy, and optional schedule hookups. Agents provision boards from these documents; the DB row is one instance of a definition.
+
+```bash
+runyard board list                                   # boards on this Hub
+runyard board show <slug>                            # lanes with counts + tickets
+runyard board create --slug factory --title …       # ad-hoc create
+runyard board definition list                        # portable summaries + example slugs
+runyard board definition example runyard-development-factory > factory.json
+runyard board definition validate --file factory.json
+runyard board definition import --file factory.json  # create or update + reconcile schedules
+runyard board definition export <slug>               # round-trippable JSON
+runyard board policy <slug>                          # inspect transition policy
+runyard board check <slug> --from ready --to running --workflow implement-change-gated --run-origin workflow
+```
+
+The example ships in the repo at `workflow-templates/board-definitions/runyard-development-factory.json` and is fetchable over the API too. YAML is a future syntax; JSON is the documented format today.
+
 ## Workflow packages
 
 Workflows move between Hubs as portable `.runyard-workflow.json` package files
