@@ -36,6 +36,9 @@ export function capabilityRunDispatchOptions({ body = {}, capability, env = proc
     execution,
     capabilitySha: versionOptions.capabilitySha,
     parentRunId: versionOptions.parentRunId,
+    // Optional work-item ("ticket") linkage; validated at the route layer and
+    // again inside createRun.
+    ...(body.workItemId ? { workItemId: String(body.workItemId).trim() } : {}),
     // Optional spend budget: top-level body.budget wins over input.budget
     // (both are accepted; createRun normalizes/validates).
     ...(body.budget !== undefined ? { budget: body.budget } : {})

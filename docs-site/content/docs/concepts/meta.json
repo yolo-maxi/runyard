@@ -4,6 +4,7 @@
     "index",
     "workflows",
     "runs",
+    "work-items",
     "approvals",
     "runners",
     "schedules",

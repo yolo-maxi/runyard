@@ -25,6 +25,7 @@ const PRIMARY_VIEWS = new Map([
   ["home", "home"],
   ["runs", "home"],
   ["dashboard", "home"],
+  ["work", "work"],
   ["workflows", "workflows"],
   ["workflows", "workflows"],
   ["schedules", "schedules"],
@@ -113,6 +114,9 @@ export function Shell({ me }) {
           <a href="#runs" data-primary-view="home" className={current === "home" ? "active" : undefined}>
             Runs<NavBadge kind="runs" count={badges.runs} />
           </a>
+          <a href="#work" data-primary-view="work" className={current === "work" ? "active" : undefined}>
+            Work
+          </a>
           <a href="#workflows" data-primary-view="workflows" className={current === "workflows" ? "active" : undefined}>
             Workflows
           </a>
@@ -170,6 +174,7 @@ export function Shell({ me }) {
       <main id="app" className="shell">
         <nav className="sidebar" aria-label="Primary navigation">
           <SidebarButton view="home" primary="home" label="Runs" current={current} />
+          <SidebarButton view="work" primary="work" label="Work" current={current} />
           <SidebarButton view="workflows" primary="workflows" label="Workflows" current={current} />
           <SidebarButton view="schedules" primary="schedules" label="Schedules" current={current} />
           <SidebarButton view="agents" primary="agents" label="Agents" current={current} />

@@ -65,6 +65,7 @@ describe("server composition", () => {
       "supportChatHandlers",
       "tokenHandlers",
       "updateHandlers",
+      "workItemHandlers",
       "workflowBundleHandlers",
       "workflowEndpointHandlers",
       "workflowPackageHandlers"

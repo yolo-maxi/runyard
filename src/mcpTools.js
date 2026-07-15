@@ -59,7 +59,8 @@ export const MCP_TOOLS = [
             maxCostMicros: { type: "number", description: "Maximum cost in micro-USD (1000000 = $1)." }
           }
         },
-        negotiate: { type: "boolean" }
+        negotiate: { type: "boolean" },
+        workItemId: { type: "string", description: "Optional work item (ticket) id to attach the run to; the run then appears on that ticket's board card and detail." }
       }
     }
   },
@@ -101,6 +102,7 @@ export const MCP_TOOLS = [
   { name: "get_run_status", description: "Get run status and summary, including metered usage totals (run.usage: tokens/costMicros/byModel) and the run budget when set.", inputSchema: { type: "object", required: ["runId"], properties: { runId: { type: "string" } } } },
   { name: "get_run_events", description: "Get structured events for a run.", inputSchema: { type: "object", required: ["runId"], properties: { runId: { type: "string" } } } },
   { name: "get_run_timeline", description: "Get normalized timeline entries for a run. Pass since (the nextSince value from a previous call) to page forward.", inputSchema: { type: "object", required: ["runId"], properties: { runId: { type: "string" }, since: { type: "string" }, limit: { type: "number" } } } },
+  { name: "get_run_flow", description: "Get a run's execution flow: the workflow's static step graph with this run's events folded on — one state per step (pending/active/done/failed/waiting/cancelled/skipped), timings, and pending approvals. Answers \"where is this run in its workflow?\".", inputSchema: { type: "object", required: ["runId"], properties: { runId: { type: "string" } } } },
   { name: "get_run_usage", description: "Get a run's metered model-call usage: aggregate totals (totalTokens, costMicros, byModel, byProvider), the optional budget, per-call usage records, and budgetStop when the run was terminated on its budget.", inputSchema: { type: "object", required: ["runId"], properties: { runId: { type: "string" } } } },
   { name: "get_run_diagnostics", description: "Get diagnostics and log summary for a run.", inputSchema: { type: "object", required: ["runId"], properties: { runId: { type: "string" } } } },
   { name: "get_run_logs", description: "Get run event log text.", inputSchema: { type: "object", required: ["runId"], properties: { runId: { type: "string" } } } },
@@ -154,6 +156,55 @@ export const MCP_TOOLS = [
   { name: "disable_schedule", description: "Disable a schedule without deleting it; it keeps its definition but stops firing. Requires an admin-scoped token.", inputSchema: { type: "object", required: ["scheduleId"], properties: { scheduleId: { type: "string" } } } },
   { name: "delete_schedule", description: "Delete a schedule. Requires an admin-scoped token.", inputSchema: { type: "object", required: ["scheduleId"], properties: { scheduleId: { type: "string" } } } },
   { name: "run_schedule_now", description: "Fire a schedule immediately, creating a run outside its normal cadence. Requires an admin-scoped token.", inputSchema: { type: "object", required: ["scheduleId"], properties: { scheduleId: { type: "string" } } } },
+  { name: "list_work_items", description: "List work items (tickets) on the company work board, each with a linked-run rollup (total, byStatus, attention count). Filters: status (intake|triaged|ready|running|waiting|blocked|review|shipped|accepted|archived), project, owner, type, query. Archived items are hidden unless includeArchived is true.", inputSchema: { type: "object", properties: { status: { type: "string" }, project: { type: "string" }, owner: { type: "string" }, type: { type: "string" }, query: { type: "string" }, includeArchived: { type: "boolean" }, limit: { type: "number" } } } },
+  { name: "get_work_item", description: "Get a work item (ticket) with its linked runs, their approvals and artifacts, and the ticket history (status moves, run links, edits).", inputSchema: { type: "object", required: ["workItemId"], properties: { workItemId: { type: "string" } } } },
+  {
+    name: "create_work_item",
+    description: "Create a work item (ticket): the durable unit of company work, distinct from workflows (recipes) and runs (execution attempts). Give it a clear title and, when known, acceptance criteria and a next action. Statuses: intake, triaged, ready, running, waiting, blocked, review, shipped, accepted, archived.",
+    inputSchema: {
+      type: "object",
+      required: ["title"],
+      properties: {
+        title: { type: "string" },
+        description: { type: "string", description: "What we are trying to do and why." },
+        project: { type: "string" },
+        type: { type: "string", enum: ["feature", "bug", "research", "release", "maintenance", "idea"] },
+        status: { type: "string", enum: ["intake", "triaged", "ready", "running", "waiting", "blocked", "review", "shipped", "accepted", "archived"] },
+        priority: { type: "string", enum: ["urgent", "high", "normal", "low"] },
+        owner: { type: "string" },
+        requester: { type: "string" },
+        acceptanceCriteria: { type: "string", description: "How we will know the ask is satisfied." },
+        nextAction: { type: "string", description: "The single next concrete action." },
+        dueAt: { type: "string", description: "Optional ISO due/target date." }
+      }
+    }
+  },
+  {
+    name: "update_work_item",
+    description: "Update a work item (ticket): edit fields or move it across the board by setting status. A failed run never moves a ticket by itself — park it in blocked/waiting/review here with blockedReason/nextAction explaining the human-legible next step.",
+    inputSchema: {
+      type: "object",
+      required: ["workItemId"],
+      properties: {
+        workItemId: { type: "string" },
+        title: { type: "string" },
+        description: { type: "string" },
+        project: { type: "string" },
+        type: { type: "string", enum: ["feature", "bug", "research", "release", "maintenance", "idea"] },
+        status: { type: "string", enum: ["intake", "triaged", "ready", "running", "waiting", "blocked", "review", "shipped", "accepted", "archived"] },
+        priority: { type: "string", enum: ["urgent", "high", "normal", "low"] },
+        owner: { type: "string" },
+        requester: { type: "string" },
+        acceptanceCriteria: { type: "string" },
+        nextAction: { type: "string" },
+        blockedReason: { type: "string", description: "Why the ticket cannot progress; set when moving to blocked." },
+        dueAt: { type: "string" }
+      }
+    }
+  },
+  { name: "delete_work_item", description: "Delete a work item (ticket). Linked runs survive unlinked; prefer update_work_item with status 'archived' to keep ticket history. Requires an admin-scoped token.", inputSchema: { type: "object", required: ["workItemId"], properties: { workItemId: { type: "string" } } } },
+  { name: "link_work_item_run", description: "Link an existing run to a work item (ticket). A run belongs to at most one ticket; relinking moves it. To link at creation time instead, pass workItemId to run_workflow.", inputSchema: { type: "object", required: ["workItemId", "runId"], properties: { workItemId: { type: "string" }, runId: { type: "string" } } } },
+  { name: "unlink_work_item_run", description: "Unlink a run from a work item (ticket).", inputSchema: { type: "object", required: ["workItemId", "runId"], properties: { workItemId: { type: "string" }, runId: { type: "string" } } } },
   { name: "list_repo_options", description: "List allowlisted repos/projects this Hub can target without exposing raw paths.", inputSchema: { type: "object", properties: {} } },
   { name: "list_workflow_endpoints", description: "List fixed-purpose authenticated workflow endpoints. Requires an admin-scoped token.", inputSchema: { type: "object", properties: {} } },
   { name: "get_workflow_endpoint", description: "Inspect a fixed-purpose authenticated workflow endpoint. Requires an admin-scoped token.", inputSchema: { type: "object", required: ["endpointSlug"], properties: { endpointSlug: { type: "string" } } } },

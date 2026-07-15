@@ -286,6 +286,7 @@ program
   .option("--pin <sha>", "pin this run to a specific workflow git SHA (RUNYARD_CAPABILITY_VERSIONING)")
   .option("--max-tokens <tokens>", "hard budget: stop the run once its metered usage reaches this many tokens")
   .option("--max-cost <usd>", "hard budget: stop the run once its metered cost reaches this many US dollars")
+  .option("--work-item <id>", "attach the run to a work item (ticket) on the Work board")
   .option("--negotiate", "preflight first: enqueue only when ready; otherwise print the negotiation state (and saved draft) without creating a run")
   .action(async (workflow, opts) => {
     const input = parseJsonOption(opts.input, "--input");
@@ -308,6 +309,7 @@ program
     }
     const budget = budgetFromFlags(opts);
     if (budget) body.budget = budget;
+    if (opts.workItem) body.workItemId = opts.workItem;
     if (opts.negotiate) body.negotiate = true;
     try {
       printRunCreated(await client(program.opts()).post(`/api/workflows/${workflow}/run`, body), program.opts().json);
@@ -417,6 +419,123 @@ program
     }
   });
 
+// --- Work items (tickets) ---
+// The work-item body fields shared by create and update, from CLI flags.
+function workItemBodyFromFlags(opts = {}) {
+  const body = {};
+  if (opts.title !== undefined) body.title = opts.title;
+  if (opts.description !== undefined) body.description = opts.description;
+  if (opts.project !== undefined) body.project = opts.project;
+  if (opts.type !== undefined) body.type = opts.type;
+  if (opts.status !== undefined) body.status = opts.status;
+  if (opts.priority !== undefined) body.priority = opts.priority;
+  if (opts.owner !== undefined) body.owner = opts.owner;
+  if (opts.requester !== undefined) body.requester = opts.requester;
+  if (opts.acceptance !== undefined) body.acceptanceCriteria = opts.acceptance;
+  if (opts.nextAction !== undefined) body.nextAction = opts.nextAction;
+  if (opts.blockedReason !== undefined) body.blockedReason = opts.blockedReason;
+  if (opts.due !== undefined) body.dueAt = opts.due;
+  return body;
+}
+
+function printWorkItemLine(item) {
+  const runs = item.runs || {};
+  const extras = [
+    item.priority && item.priority !== "normal" ? item.priority : "",
+    item.project || "",
+    item.owner ? `@${item.owner}` : "",
+    runs.total ? `${runs.total} run(s)` : "",
+    runs.attention ? `${runs.attention} need(s) attention` : ""
+  ].filter(Boolean).join(" · ");
+  console.log(`${item.id}  [${item.status}]  ${item.title}${extras ? `  (${extras})` : ""}`);
+}
+
+program
+  .command("work")
+  .description("List work items (tickets) on the Work board")
+  .option("-s, --status <status>", "filter by lifecycle status (intake..archived)")
+  .option("--project <project>", "filter by project")
+  .option("--owner <owner>", "filter by owner")
+  .option("--type <type>", "filter by type (feature, bug, research, release, maintenance, idea)")
+  .option("-q, --query <text>", "substring search across title/description/project/id")
+  .option("--archived", "include archived items")
+  .action(async (opts) => {
+    const query = new URLSearchParams();
+    if (opts.status) query.set("status", opts.status);
+    if (opts.project) query.set("project", opts.project);
+    if (opts.owner) query.set("owner", opts.owner);
+    if (opts.type) query.set("type", opts.type);
+    if (opts.query) query.set("q", opts.query);
+    if (opts.archived) query.set("includeArchived", "true");
+    const qs = query.toString();
+    const data = await client(program.opts()).get(`/api/work-items${qs ? `?${qs}` : ""}`);
+    if (program.opts().json) return print(data, true);
+    const items = data.workItems || [];
+    if (!items.length) return console.log("No work items. Create one with: runyard work-item create --title \"...\"");
+    for (const item of items) printWorkItemLine(item);
+  });
+
+const workItemCommand = program.command("work-item").description("Work item (ticket) commands");
+workItemCommand
+  .command("show <id>")
+  .description("Show a work item with linked runs, approvals, artifacts, and ticket history")
+  .action(async (id) => {
+    print(await client(program.opts()).get(`/api/work-items/${encodeURIComponent(id)}`), program.opts().json);
+  });
+workItemCommand
+  .command("create")
+  .description("Create a work item (ticket)")
+  .requiredOption("--title <title>", "short human-readable title")
+  .option("--description <text>", "what we are trying to do and why")
+  .option("--project <project>")
+  .option("--type <type>", "feature | bug | research | release | maintenance | idea")
+  .option("--status <status>", "lifecycle status (default intake)")
+  .option("--priority <priority>", "urgent | high | normal | low")
+  .option("--owner <owner>")
+  .option("--requester <requester>")
+  .option("--acceptance <text>", "acceptance criteria")
+  .option("--next-action <text>", "the single next concrete action")
+  .option("--due <iso>", "due/target date")
+  .action(async (opts) => {
+    const data = await client(program.opts()).post("/api/work-items", workItemBodyFromFlags(opts));
+    if (program.opts().json) return print(data, true);
+    printWorkItemLine(data.workItem);
+  });
+workItemCommand
+  .command("update <id>")
+  .description("Update a work item: edit fields or move it across the board with --status")
+  .option("--title <title>")
+  .option("--description <text>")
+  .option("--project <project>")
+  .option("--type <type>")
+  .option("--status <status>", "intake | triaged | ready | running | waiting | blocked | review | shipped | accepted | archived")
+  .option("--priority <priority>")
+  .option("--owner <owner>")
+  .option("--requester <requester>")
+  .option("--acceptance <text>")
+  .option("--next-action <text>")
+  .option("--blocked-reason <text>", "why the ticket cannot progress (set when moving to blocked)")
+  .option("--due <iso>")
+  .action(async (id, opts) => {
+    const body = workItemBodyFromFlags(opts);
+    if (!Object.keys(body).length) throw new Error("Nothing to update — pass at least one field flag.");
+    const data = await client(program.opts()).patch(`/api/work-items/${encodeURIComponent(id)}`, body);
+    if (program.opts().json) return print(data, true);
+    printWorkItemLine(data.workItem);
+  });
+workItemCommand
+  .command("link <id> <runId>")
+  .description("Link a run to a work item (a run belongs to at most one ticket; relinking moves it)")
+  .action(async (id, runId) => {
+    print(await client(program.opts()).post(`/api/work-items/${encodeURIComponent(id)}/link-run`, { runId }), program.opts().json);
+  });
+workItemCommand
+  .command("unlink <id> <runId>")
+  .description("Unlink a run from a work item")
+  .action(async (id, runId) => {
+    print(await client(program.opts()).post(`/api/work-items/${encodeURIComponent(id)}/unlink-run`, { runId }), program.opts().json);
+  });
+
 program
   .command("usage [runId]")
   .description("Show metered usage/cost: a fleet rollup per workflow (no run id) or one run's usage detail")
@@ -442,6 +561,23 @@ program.command("runners").description("List registered runners and pool stats")
 program.command("run-status <id>").alias("run-detail").description("Show run detail").action(async (id) => {
   print(await client(program.opts()).get(`/api/runs/${id}`), program.opts().json);
 });
+
+program
+  .command("flow <id>")
+  .description("Show a run's execution flow: the workflow's steps with per-step states folded from the run's events")
+  .action(async (id) => {
+    const data = await client(program.opts()).get(`/api/runs/${encodeURIComponent(id)}/flow`);
+    if (program.opts().json) return print(data, true);
+    const glyphs = { done: "✓", active: "▶", failed: "✗", waiting: "⏸", cancelled: "⊘", skipped: "»", pending: "·" };
+    console.log(`${data.name}  [${data.status}]${data.currentStep ? `  step: ${data.currentStep}` : ""}`);
+    for (const node of data.nodes || []) {
+      if (node.kind === "entry" || node.type === "entry") continue;
+      console.log(`  ${glyphs[node.state] || "·"} ${node.label || node.id}  ${node.state}${node.errors ? `  (${node.errors} error event(s))` : ""}`);
+    }
+    for (const approval of data.pendingApprovals || []) {
+      console.log(`  ⏸ approval pending: ${approval.title} (${approval.id})`);
+    }
+  });
 
 program.command("logs <id>").description("Print run logs").action(async (id) => {
   const hub = client(program.opts());

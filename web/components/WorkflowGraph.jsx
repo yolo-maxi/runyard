@@ -67,16 +67,32 @@ function nodeColor(kind) {
   }
 }
 
+// Per-run flow state palette (Work-item execution flow). Nodes without a
+// `state` — every WorkflowDetail graph node — keep the kind palette above, so
+// the static graph tab renders exactly as before.
+function stateColor(state) {
+  switch (state) {
+    case "done": return { background: "#dcfce7", color: "#166534", border: "#86efac" };
+    case "active": return { background: "#e0f2fe", color: "#075985", border: "#38bdf8" };
+    case "failed": return { background: "#fef2f2", color: "#b91c1c", border: "#fca5a5" };
+    case "waiting": return { background: "#fffbeb", color: "#b45309", border: "#fcd34d" };
+    case "cancelled":
+    case "skipped": return { background: "#f1f5f9", color: "#64748b", border: "#cbd5e1" };
+    default: return null; // pending → kind palette, dimmed by opacity below
+  }
+}
+
 function nodeLabel(node) {
   const lines = [node.label || node.id];
   if (node.sublabel) lines.push(node.sublabel);
+  if (node.state && node.state !== "pending" && node.kind !== "entry") lines.push(node.state);
   return lines.join("\n");
 }
 
 // Build the ReactFlow node array. Mirrors mountReactFlowGraph()'s node styling.
 function toReactNodes(graph, positions) {
   return (graph.nodes || []).map((node) => {
-    const palette = nodeColor(node.kind);
+    const palette = (node.kind !== "entry" && node.state && stateColor(node.state)) || nodeColor(node.kind);
     return {
       id: node.id,
       data: { label: nodeLabel(node) },
@@ -89,7 +105,8 @@ function toReactNodes(graph, positions) {
         padding: "10px 14px",
         minWidth: 168,
         fontSize: 13,
-        boxShadow: "0 4px 12px rgba(15, 25, 35, 0.08)"
+        boxShadow: "0 4px 12px rgba(15, 25, 35, 0.08)",
+        ...(node.state === "pending" ? { opacity: 0.55 } : {})
       },
       type: node.kind === "entry" ? "input" : "default"
     };

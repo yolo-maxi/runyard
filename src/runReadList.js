@@ -20,6 +20,7 @@ export function runListQuery(rawQuery = {}, hiddenRunSlugs = []) {
   const since = String(rawQuery.since || "").trim();
   const until = String(rawQuery.until || "").trim();
   const cursor = String(rawQuery.cursor || "").trim();
+  const workItemId = String(rawQuery.workItem || rawQuery.workItemId || "").trim();
   return {
     status,
     limit,
@@ -32,7 +33,8 @@ export function runListQuery(rawQuery = {}, hiddenRunSlugs = []) {
     since,
     until,
     cursor,
-    filtered: Boolean(q || since || until || cursor || workflowSlugs.length || explicitEmptyWorkflowFilter)
+    workItemId,
+    filtered: Boolean(q || since || until || cursor || workItemId || workflowSlugs.length || explicitEmptyWorkflowFilter)
   };
 }
 
@@ -43,6 +45,7 @@ export function runListPage({ countRuns, listRuns, query }) {
     since: query.since,
     until: query.until,
     capabilitySlugs: query.capabilitySlugs,
+    workItemId: query.workItemId,
     includeInternal: query.includeInternal
   };
   if (!query.filtered) {
@@ -69,6 +72,7 @@ export function runListFilterResponse(query) {
     since: query.since,
     until: query.until,
     cursor: query.cursor,
-    workflows: query.workflowSlugs
+    workflows: query.workflowSlugs,
+    workItem: query.workItemId
   };
 }

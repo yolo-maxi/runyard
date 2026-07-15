@@ -29,6 +29,9 @@ export function normalizeRun(row) {
     // existing path (RUNYARD_CAPABILITY_VERSIONING unset); see src/runExecution.js.
     capabilitySha: row.capability_sha || null,
     parentRunId: row.parent_run_id || null,
+    // Durable work item ("ticket") this run executes for. Null = unlinked
+    // (every pre-existing run); see src/workItemStore.js for link/unlink.
+    workItemId: row.work_item_id || null,
     // Historical columns retained for old databases; no active runtime path
     // mutates them after supervisor removal.
     attempt: Number(row.attempt) || 0,
@@ -57,6 +60,7 @@ export function runCreateRecord({
 }) {
   const capabilitySha = options.capabilitySha ? String(options.capabilitySha).trim() || null : null;
   const parentRunId = options.parentRunId ? String(options.parentRunId).trim() || null : null;
+  const workItemId = options.workItemId ? String(options.workItemId).trim() || null : null;
   return [
     runId,
     capability.id,
@@ -69,6 +73,7 @@ export function runCreateRecord({
     jsonField(input, {}),
     capabilitySha,
     parentRunId,
+    workItemId,
     budget ? JSON.stringify(budget) : null,
     timestamp,
     timestamp
@@ -78,8 +83,8 @@ export function runCreateRecord({
 export function runInsertQuery() {
   return {
     sql: `INSERT INTO runs (id, capability_id, capability_slug, capability_name, workflow_version, runner_id, status,
-      current_step, input, capability_sha, parent_run_id, budget, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      current_step, input, capability_sha, parent_run_id, work_item_id, budget, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   };
 }
 

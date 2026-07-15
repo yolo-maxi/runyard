@@ -20,6 +20,7 @@ describe("run read list helpers", () => {
       since: "",
       until: "",
       cursor: "",
+      workItemId: "",
       filtered: true
     });
 

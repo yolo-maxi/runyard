@@ -13,6 +13,8 @@ import { Onboarding } from "../views/Onboarding.jsx";
 import { Schedules, ScheduleDetail } from "../views/Schedules.jsx";
 import { Workflows } from "../views/Workflows.jsx";
 import { WorkflowDetail } from "../views/WorkflowDetail.jsx";
+import { WorkBoard } from "../views/WorkBoard.jsx";
+import { WorkItemDetail } from "../views/WorkItemDetail.jsx";
 import { Brand } from "../views/Brand.jsx";
 
 // Views reachable only with an admin-scoped session. Deep links still resolve
@@ -49,6 +51,12 @@ export function Content({ me }) {
   }
   if (view === "home" || view === "runs" || view === "dashboard") {
     return <Home />;
+  }
+  if (view === "work") {
+    // #work → board, #work/:id → ticket detail, #work/:id/flow → detail
+    // scrolled to the execution-flow section.
+    if (!segments[1]) return <WorkBoard />;
+    return <WorkItemDetail key={segments[1]} id={segments[1]} focus={segments[2] || ""} me={me} />;
   }
   if (view === "workflows" || view === "workflows") {
     return segments[1] ? (

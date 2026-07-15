@@ -28,6 +28,7 @@ export function createRunStore({ all, one, run, id, now, visibleRunWhere = "" })
     until = "",
     cursor = "",
     capabilitySlugs = [],
+    workItemId = "",
     includeInternal = false
   } = {}) {
     const query = runListQuery({
@@ -38,6 +39,7 @@ export function createRunStore({ all, one, run, id, now, visibleRunWhere = "" })
       until,
       cursor,
       capabilitySlugs,
+      workItemId,
       includeInternal,
       visibleRunWhere
     });
@@ -50,9 +52,10 @@ export function createRunStore({ all, one, run, id, now, visibleRunWhere = "" })
     since = "",
     until = "",
     capabilitySlugs = [],
+    workItemId = "",
     includeInternal = false
   } = {}) {
-    const query = runCountQuery({ status, q, since, until, capabilitySlugs, includeInternal, visibleRunWhere });
+    const query = runCountQuery({ status, q, since, until, capabilitySlugs, workItemId, includeInternal, visibleRunWhere });
     return one(query.sql, query.params).count;
   }
 

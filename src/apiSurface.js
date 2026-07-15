@@ -61,6 +61,10 @@ export const API_GROUPS = {
     title: "Runs",
     description: "Observe and control executions: status, events, logs, diagnostics, timeline, artifacts, and run drafts."
   },
+  work: {
+    title: "Work",
+    description: "Durable work items (tickets): the company work board — lifecycle lanes, linked runs, and ticket history."
+  },
   approvals: {
     title: "Approvals",
     description: "Human decision checkpoints: approval cards and their approve/reject/request-changes decisions."
@@ -812,6 +816,13 @@ export const API_SURFACE = [
     mcp: ["get_run_timeline"]
   },
   {
+    method: "get", path: "/api/runs/:id/flow", handler: "runReadHandlers.getRunFlow",
+    group: "runs", v1Path: "/api/v1/runs/:id/flow",
+    auth: true, ui: true,
+    summary: "Execution flow: the workflow's static step graph with this run's events folded on — one state per step (pending/active/done/failed/waiting/cancelled/skipped), timings, and pending approvals. Degrades to an event-derived stepper when no source graph exists.",
+    mcp: ["get_run_flow"]
+  },
+  {
     method: "get", path: "/api/runs/:id/usage", handler: "runReadHandlers.getRunUsage",
     group: "runs", v1Path: "/api/v1/runs/:id/usage",
     auth: true, ui: true,
@@ -887,6 +898,57 @@ export const API_SURFACE = [
     auth: true, scopes: ["api", "mcp"], ui: true,
     summary: "Merge a successful isolated worktree run into its target branch, run gates, push, and clean up the branch/worktree",
     mcp: ["promote_run"]
+  },
+
+  // --- Work items (tickets: the durable company work board) ---
+  {
+    method: "get", path: "/api/work-items", handler: "workItemHandlers.listWorkItems",
+    group: "work", v1Path: "/api/v1/work/items",
+    auth: true, ui: true,
+    summary: "List work items (tickets) with linked-run rollups. Filters: status, project, owner, type, q, limit; archived items are hidden unless includeArchived=true or status=archived.",
+    mcp: ["list_work_items"]
+  },
+  {
+    method: "get", path: "/api/work-items/:id", handler: "workItemHandlers.getWorkItem",
+    group: "work", v1Path: "/api/v1/work/items/:id",
+    auth: true, ui: true,
+    summary: "Get a work item with its linked runs, their approvals and artifacts, and the ticket history",
+    mcp: ["get_work_item"]
+  },
+  {
+    method: "post", path: "/api/work-items", handler: "workItemHandlers.createWorkItem",
+    group: "work", v1Path: "/api/v1/work/items",
+    auth: true, scopes: ["api", "mcp", "admin"], ui: true,
+    summary: "Create a work item (ticket). Body: {title, description?, project?, type?, status?, priority?, owner?, requester?, acceptanceCriteria?, nextAction?, blockedReason?, dueAt?}. Statuses: intake, triaged, ready, running, waiting, blocked, review, shipped, accepted, archived. Types: feature, bug, research, release, maintenance, idea. Priorities: urgent, high, normal, low.",
+    mcp: ["create_work_item"]
+  },
+  {
+    method: "patch", path: "/api/work-items/:id", handler: "workItemHandlers.updateWorkItem",
+    group: "work", v1Path: "/api/v1/work/items/:id",
+    auth: true, scopes: ["api", "mcp", "admin"], ui: true,
+    summary: "Update a work item: any create field, including moving status across the board. A failed run never moves a ticket by itself — park it in blocked/waiting/review here, with blockedReason/nextAction explaining the human-legible next step.",
+    mcp: ["update_work_item"]
+  },
+  {
+    method: "delete", path: "/api/work-items/:id", handler: "workItemHandlers.deleteWorkItem",
+    group: "work", v1Path: "/api/v1/work/items/:id",
+    auth: true, scopes: ["admin"], ui: true,
+    summary: "Delete a work item (admin). Linked runs survive unlinked; prefer status=archived to keep ticket history.",
+    mcp: ["delete_work_item"]
+  },
+  {
+    method: "post", path: "/api/work-items/:id/link-run", handler: "workItemHandlers.linkWorkItemRun",
+    group: "work", v1Path: "/api/v1/work/items/:id/link-run",
+    auth: true, scopes: ["api", "mcp", "admin"], ui: true,
+    summary: "Link a run to this work item. Body: {runId}. A run belongs to at most one ticket; relinking moves it (the old ticket keeps an unlink event).",
+    mcp: ["link_work_item_run"]
+  },
+  {
+    method: "post", path: "/api/work-items/:id/unlink-run", handler: "workItemHandlers.unlinkWorkItemRun",
+    group: "work", v1Path: "/api/v1/work/items/:id/unlink-run",
+    auth: true, scopes: ["api", "mcp", "admin"], ui: true,
+    summary: "Unlink a run from this work item. Body: {runId}.",
+    mcp: ["unlink_work_item_run"]
   },
 
   // --- Metering gateway (inference boundary) ---

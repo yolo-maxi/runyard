@@ -16,7 +16,15 @@ const HUB_TOOL_NAMES = [
   "get_run_artifacts",
   "get_run_usage",
   "get_usage_summary",
+  "get_run_flow",
   "list_attention_runs",
+  "list_work_items",
+  "get_work_item",
+  "create_work_item",
+  "update_work_item",
+  "delete_work_item",
+  "link_work_item_run",
+  "unlink_work_item_run",
   "resume_run",
   "list_runners",
   "list_pending_approvals",
@@ -158,10 +166,11 @@ export function renderLlmsTxt(baseUrl) {
   lines.push("");
   lines.push("API groups:");
   lines.push("- The API is organized into groups, exposed as OpenAPI tags:");
-  lines.push("  workflows, runs, approvals, automation (schedules + endpoints),");
-  lines.push("  library (agents, skills, knowledge, hooks), distribution (bundles,");
-  lines.push("  packages), admin (tokens, secrets, audit, alerts, updates), and");
-  lines.push("  system (health, version, menu, dashboard, runners).");
+  lines.push("  workflows, runs, work (work items / tickets), approvals,");
+  lines.push("  automation (schedules + endpoints), library (agents, skills,");
+  lines.push("  knowledge, hooks), distribution (bundles, packages), admin (tokens,");
+  lines.push("  secrets, audit, alerts, updates), and system (health, version,");
+  lines.push("  menu, dashboard, runners).");
   lines.push("- Grouped operations also answer at stable /api/v1 aliases, e.g.");
   lines.push(`  ${baseUrl}/api/v1/automation/schedules or ${baseUrl}/api/v1/runs.`);
   lines.push("  Aliases share the canonical route's auth and scopes; unversioned");
@@ -265,6 +274,27 @@ export function renderLlmsTxt(baseUrl) {
   lines.push("  every run whose next step is a human action — paused, waiting for");
   lines.push("  approval, or stopped at its budget in the last 7 days — with counts");
   lines.push("  including pending approval cards.");
+  lines.push("");
+  lines.push("Work items (tickets and the kanban board):");
+  lines.push("- A work item is the durable unit of company work — distinct from");
+  lines.push("  workflows (reusable recipes) and runs (single execution attempts).");
+  lines.push("  The web app's Work board shows them as kanban lanes.");
+  lines.push("- Lifecycle statuses: intake, triaged, ready, running, waiting,");
+  lines.push("  blocked, review, shipped, accepted, archived. A failed run never");
+  lines.push("  fails a ticket; move it to blocked/waiting/review with a reason.");
+  lines.push(`- HTTP lifecycle: GET/POST ${baseUrl}/api/work-items, per-item`);
+  lines.push("  GET/PATCH/DELETE /api/work-items/{id}, and");
+  lines.push("  POST /api/work-items/{id}/link-run | /unlink-run ({ runId }).");
+  lines.push("- Equivalent MCP tools: list_work_items, get_work_item,");
+  lines.push("  create_work_item, update_work_item, delete_work_item,");
+  lines.push("  link_work_item_run, unlink_work_item_run.");
+  lines.push("- Attach a run at creation time by passing workItemId to");
+  lines.push("  run_workflow / POST /api/workflows/{id}/run; runs linked to a");
+  lines.push("  ticket appear on its board card and detail with a status rollup.");
+  lines.push("- GET /api/runs/{id}/flow (get_run_flow) returns the run's execution");
+  lines.push("  flow: the workflow's step graph with per-step states");
+  lines.push("  (pending/active/done/failed/waiting/cancelled/skipped) folded from");
+  lines.push("  the run's events — the ticket detail's flow view.");
   lines.push("");
   lines.push("Run-creation negotiation (preflight + drafts):");
   lines.push("- POST /api/workflows/{id}/preflight dry-runs the deterministic");

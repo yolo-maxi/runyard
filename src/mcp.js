@@ -49,6 +49,7 @@ async function callTool(name, args = {}) {
         executionMode: args.executionMode || args.where || undefined,
         runnerLocation: args.runnerLocation || undefined,
         ...(args.budget !== undefined ? { budget: args.budget } : {}),
+        ...(args.workItemId ? { workItemId: args.workItemId } : {}),
         ...(args.negotiate === true ? { negotiate: true } : {}),
         origin: {
           type: "mcp",
@@ -104,6 +105,7 @@ async function callTool(name, args = {}) {
   if (name === "get_run_status") return result(await client.get(`/api/runs/${encodeURIComponent(args.runId)}`));
   if (name === "get_run_events") return result(await client.get(`/api/runs/${encodeURIComponent(args.runId)}/events`));
   if (name === "get_run_timeline") return result(await client.get(`/api/runs/${encodeURIComponent(args.runId)}/timeline${queryString({ since: args.since || args.cursor, limit: args.limit })}`));
+  if (name === "get_run_flow") return result(await client.get(`/api/runs/${encodeURIComponent(args.runId)}/flow`));
   if (name === "get_run_usage") return result(await client.get(`/api/runs/${encodeURIComponent(args.runId)}/usage`));
   if (name === "get_run_diagnostics") return result(await client.get(`/api/runs/${encodeURIComponent(args.runId)}/diagnostics`));
   if (name === "get_run_logs") {
@@ -151,6 +153,27 @@ async function callTool(name, args = {}) {
   if (name === "disable_schedule") return result(await client.post(`/api/schedules/${encodeURIComponent(args.scheduleId || args.id)}/disable`, {}));
   if (name === "delete_schedule") return result(await client.delete(`/api/schedules/${encodeURIComponent(args.scheduleId || args.id)}`));
   if (name === "run_schedule_now") return result(await client.post(`/api/schedules/${encodeURIComponent(args.scheduleId || args.id)}/run-now`, {}));
+  if (name === "list_work_items") return result(await client.get(`/api/work-items${queryString({
+    status: args.status,
+    project: args.project,
+    owner: args.owner,
+    type: args.type,
+    q: args.query || args.q,
+    includeArchived: args.includeArchived === true ? "true" : undefined,
+    limit: args.limit
+  })}`));
+  if (name === "get_work_item") return result(await client.get(`/api/work-items/${encodeURIComponent(args.workItemId || args.id)}`));
+  if (name === "create_work_item" || name === "update_work_item") {
+    const body = {};
+    for (const field of ["title", "description", "project", "type", "status", "priority", "owner", "requester", "acceptanceCriteria", "nextAction", "blockedReason", "dueAt"]) {
+      if (args[field] !== undefined) body[field] = args[field];
+    }
+    if (name === "create_work_item") return result(await client.post("/api/work-items", body));
+    return result(await client.patch(`/api/work-items/${encodeURIComponent(args.workItemId || args.id)}`, body));
+  }
+  if (name === "delete_work_item") return result(await client.delete(`/api/work-items/${encodeURIComponent(args.workItemId || args.id)}`));
+  if (name === "link_work_item_run") return result(await client.post(`/api/work-items/${encodeURIComponent(args.workItemId || args.id)}/link-run`, { runId: args.runId }));
+  if (name === "unlink_work_item_run") return result(await client.post(`/api/work-items/${encodeURIComponent(args.workItemId || args.id)}/unlink-run`, { runId: args.runId }));
   if (name === "list_repo_options") return result(await client.get("/api/repo-options"));
   if (name === "list_workflow_endpoints") return result(await client.get("/api/workflow-endpoints"));
   if (name === "get_workflow_endpoint") return result(await client.get(`/api/workflow-endpoints/${encodeURIComponent(args.endpointSlug || args.slug)}`));

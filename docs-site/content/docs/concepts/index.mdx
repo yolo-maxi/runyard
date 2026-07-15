@@ -3,7 +3,7 @@ title: Concepts
 description: A map of the core Runyard concepts and how they fit together.
 ---
 
-Runyard is a self-hosted control plane for agent runs. You install **workflows** into a catalog, start **runs** of those workflows from the API, MCP, web app, or a **schedule**, and **runners** claim and execute them. Anything that needs a human decision surfaces as an **approval** card, sensitive values live in the encrypted **secrets** store, and optional side effects after a run are handled by admin-defined **hooks**. Access is governed by scoped **tokens**, and every page in the Hub is a shareable **deep link**.
+Runyard is a self-hosted control plane for agent runs. You install **workflows** into a catalog, start **runs** of those workflows from the API, MCP, web app, or a **schedule**, and **runners** claim and execute them. The durable company asks those runs work on are **work items** — tickets on the Work board. Anything that needs a human decision surfaces as an **approval** card, sensitive values live in the encrypted **secrets** store, and optional side effects after a run are handled by admin-defined **hooks**. Access is governed by scoped **tokens**, and every page in the Hub is a shareable **deep link**.
 
 ## The catalog
 
@@ -13,6 +13,7 @@ Runyard is a self-hosted control plane for agent runs. You install **workflows**
 ## Execution
 
 - **[Runs](./runs.mdx)** — a single execution of a workflow: lifecycle statuses, preflight and run drafts, events, logs, artifacts, reruns, and promotion.
+- **[Work items](./work-items.mdx)** — tickets on the Work board: the durable unit of company work that runs attach to, with a human-legible kanban lifecycle and a per-run execution flow view.
 - **[Runners](./runners.mdx)** — the machines that claim queued runs and execute them via the Smithers engine, with tags, capacity, and optional sandboxing.
 - **[Schedules](./schedules.mdx)** — cron or one-shot triggers that create ordinary runs on a cadence.
 

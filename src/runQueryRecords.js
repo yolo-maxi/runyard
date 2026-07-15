@@ -5,6 +5,7 @@ export function buildRunFilterClause({
   until = "",
   cursor = "",
   capabilitySlugs = [],
+  workItemId = "",
   includeInternal = false,
   visibleRunWhere = ""
 } = {}) {
@@ -12,6 +13,10 @@ export function buildRunFilterClause({
   const params = [];
   if (!includeInternal && visibleRunWhere) {
     where.push(visibleRunWhere);
+  }
+  if (workItemId) {
+    where.push("work_item_id = ?");
+    params.push(workItemId);
   }
   const slugs = Array.isArray(capabilitySlugs)
     ? [...new Set(capabilitySlugs.map((slug) => String(slug || "").trim()).filter(Boolean))]

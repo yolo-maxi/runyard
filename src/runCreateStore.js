@@ -18,7 +18,9 @@ export function createRunCreateStore({
   scrubStoredSecrets,
   addRunEvent,
   createApproval,
-  getRun
+  getRun,
+  getWorkItem,
+  addWorkItemEvent
 }) {
   function createRun(capability, input, options = {}) {
     const timestamp = now();
@@ -42,6 +44,12 @@ export function createRunCreateStore({
     const { budget, issues: budgetIssues } = normalizeRunBudget(requestedRunBudget(storedInput, options));
     if (budgetIssues.length) throw new Error(budgetIssues.join("; "));
 
+    // Optional work-item ("ticket") linkage. Rejected loudly when the item is
+    // unknown: silently dropping the link would strand the run outside the
+    // ticket the caller thought it was working on.
+    const workItemId = options.workItemId ? String(options.workItemId).trim() : "";
+    if (workItemId && !getWorkItem(workItemId)) throw new Error(`unknown work item: ${workItemId}`);
+
     run(
       runInsertQuery().sql,
       runCreateRecord({
@@ -56,8 +64,15 @@ export function createRunCreateStore({
     );
     addRunEvent(runId, "run.created", `Run created for ${capability.name}`, {
       capability: capability.slug,
-      ...(execution.requested ? { execution } : {})
+      ...(execution.requested ? { execution } : {}),
+      ...(workItemId ? { workItemId } : {})
     });
+    if (workItemId) {
+      addWorkItemEvent(workItemId, "work_item.run_linked", `Run ${runId} linked at creation`, {
+        runId,
+        capability: capability.slug
+      });
+    }
 
     if (approvalRequired) {
       const requestedBy = options.requestedBy || "workflow";

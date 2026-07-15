@@ -41,6 +41,7 @@ export function createCapabilityHandlers({
   dispatchRun,
   evaluatePreflight = null,
   getCapability,
+  getWorkItem = () => null,
   getWorkflowBundle,
   publishWorkflowBundle,
   deleteCapability,
@@ -308,6 +309,14 @@ export function createCapabilityHandlers({
     const budgetResult = normalizeRunBudget(requestedRunBudget(req.body?.input || req.body || {}, req.body || {}));
     if (budgetResult.issues.length) {
       return res.status(400).json({ error: "budget_invalid", issues: budgetResult.issues });
+    }
+
+    // A requested work-item link must point at a real ticket — silently
+    // dropping it would strand the run outside the ticket the caller thought
+    // it was working on.
+    const workItemId = String(req.body?.workItemId || "").trim();
+    if (workItemId && !getWorkItem(workItemId)) {
+      return res.status(400).json({ error: "work_item_not_found", workItemId });
     }
 
     let negotiation = null;

@@ -62,7 +62,7 @@ async function readDashboard() {
   const aliasBacklinks = v1Paths.filter((p) =>
     Object.values(paths[p]).every((operation) => operation["x-canonical-path"])
   );
-  step("openapi", openapi.status === 200 && tags.length === 8 && v1Paths.length >= 60 && aliasBacklinks.length === v1Paths.length, {
+  step("openapi", openapi.status === 200 && tags.length === 9 && v1Paths.length >= 60 && aliasBacklinks.length === v1Paths.length, {
     status: openapi.status,
     groups: tags,
     v1PathCount: v1Paths.length

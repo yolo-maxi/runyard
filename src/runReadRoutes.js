@@ -1,3 +1,5 @@
+import { buildRunFlow } from "./runFlow.js";
+import { withWorkItemView } from "./workItemHelpers.js";
 import { buildRunTimeline, timelinePage } from "./runTimeline.js";
 import { runBudgetStatus, runBudgetStop } from "./runBudget.js";
 import { usageSummaryDays } from "./usageSummary.js";
@@ -22,11 +24,13 @@ export function createRunReadHandlers({
   decorateSingleRun,
   getRun,
   getRunUsage = () => null,
+  getWorkItem = () => null,
   hiddenRunSlugs = [],
   listArtifacts,
   listRunEvents,
   listRunResponseEndpointsForRun,
   listRuns,
+  pendingApprovalsForRun = () => [],
   presentRunResponseEndpoint,
   reapStuckRunsWithRetrospectives,
   runApprovalHold = () => false,
@@ -34,6 +38,7 @@ export function createRunReadHandlers({
   runDiagnostics,
   runnerPoolStats,
   runTimelineEnabled,
+  runWorkflowGraph = () => null,
   subscribeRunEvents,
   usageSummary = () => ({ totals: null, byWorkflow: [], budgetStopped: 0 }),
   withArtifactLinks,
@@ -112,7 +117,8 @@ export function createRunReadHandlers({
         presentRunResponseEndpoint,
         run,
         runDiagnostics,
-        runnerPoolStats
+        runnerPoolStats,
+        workItem: run.workItemId ? getWorkItem(run.workItemId) : null
       }));
     },
 
@@ -163,6 +169,21 @@ export function createRunReadHandlers({
       });
     },
 
+    // Execution flow: the static workflow graph with the run's event stream
+    // folded onto it — one state per step (pending/active/done/failed/waiting/
+    // cancelled/skipped). Degrades to an event-derived stepper when no source
+    // graph is available; see src/runFlow.js for the fold rules.
+    getRunFlow(req, res) {
+      const run = loadRun(req, res);
+      if (!run) return;
+      res.json(buildRunFlow({
+        run,
+        graph: runWorkflowGraph(run),
+        events: runEvents(run),
+        pendingApprovals: pendingApprovalsForRun(run.id)
+      }));
+    },
+
     getRunTimeline(req, res) {
       if (!runTimelineEnabled()) return res.status(404).json({ error: "run timeline disabled" });
       const run = loadRun(req, res);
@@ -192,11 +213,14 @@ export function runDetailPayload({
   presentRunResponseEndpoint,
   run,
   runDiagnostics,
-  runnerPoolStats
+  runnerPoolStats,
+  workItem = null
 }) {
   const responseEndpoints = listRunResponseEndpointsForRun(run.id).map(presentRunResponseEndpoint);
   return {
     run: decorateSingleRun(run),
+    // Hydrated work item ("ticket") this run executes for; null when unlinked.
+    ...(workItem ? { workItem: withWorkItemView(workItem) } : {}),
     // True while a human decision is pending on this run. Runners use this to
     // defer their execution deadline instead of timing the run out under the
     // human.

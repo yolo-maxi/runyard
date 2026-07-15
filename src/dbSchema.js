@@ -118,6 +118,7 @@ export const DB_SCHEMA_SQL = `
     usage TEXT,
     budget TEXT,
     pause TEXT,
+    work_item_id TEXT,
     created_at TEXT NOT NULL,
     assigned_at TEXT,
     started_at TEXT,
@@ -365,6 +366,43 @@ export const DB_SCHEMA_SQL = `
     created_at TEXT NOT NULL
   );
 
+  -- Durable company work items ("tickets"): the unit of work a human plans
+  -- and tracks, distinct from workflows (reusable recipes) and runs (single
+  -- execution attempts). Lifecycle status is the human-legible enum in
+  -- src/workItemRecords.js (intake..archived); a failed run never fails a
+  -- work item — it moves to waiting/blocked/review with an explicit reason.
+  -- Runs attach via the nullable runs.work_item_id column (many runs per
+  -- item; unlinked runs stay NULL). Additive: older code never reads this
+  -- table, so rollbacks boot cleanly against a migrated DB.
+  CREATE TABLE IF NOT EXISTS work_items (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    project TEXT NOT NULL DEFAULT '',
+    type TEXT NOT NULL DEFAULT 'feature',
+    status TEXT NOT NULL DEFAULT 'intake',
+    priority TEXT NOT NULL DEFAULT 'normal',
+    owner TEXT NOT NULL DEFAULT '',
+    requester TEXT NOT NULL DEFAULT '',
+    acceptance_criteria TEXT NOT NULL DEFAULT '',
+    next_action TEXT NOT NULL DEFAULT '',
+    blocked_reason TEXT NOT NULL DEFAULT '',
+    due_at TEXT,
+    created_by TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  -- Ticket history mirroring run_events: status moves, run link/unlink, edits.
+  CREATE TABLE IF NOT EXISTS work_item_events (
+    id TEXT PRIMARY KEY,
+    work_item_id TEXT NOT NULL REFERENCES work_items(id) ON DELETE CASCADE,
+    type TEXT NOT NULL,
+    message TEXT NOT NULL DEFAULT '',
+    data TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS secrets (
     key TEXT PRIMARY KEY,
     value_encrypted BLOB NOT NULL,
@@ -405,4 +443,11 @@ export const DB_SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_run_lineage_run ON run_lineage(run_id, created_at);
   -- Status/recency lookups are common in maintenance and run-history paths.
   CREATE INDEX IF NOT EXISTS idx_runs_status_updated ON runs(status, updated_at);
+  CREATE INDEX IF NOT EXISTS idx_work_items_status ON work_items(status, updated_at);
+  CREATE INDEX IF NOT EXISTS idx_work_item_events_item ON work_item_events(work_item_id, created_at);
 `;
+
+// The runs(work_item_id) index lives in src/db.js (migrateRunsWorkItemColumn)
+// because on pre-existing databases the column is added by ALTER TABLE after
+// this schema string runs — a CREATE INDEX here would reference a column that
+// does not exist yet.

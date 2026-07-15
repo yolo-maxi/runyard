@@ -29,6 +29,8 @@ async function loadRenderSmoke() {
         import { RunCard } from "./web/components/RunCard.jsx";
         import { RunBudgetNotice, RunPauseNotice, RunMetaStrip } from "./web/components/RunDetailParts.jsx";
         import { StatusBadge } from "./web/components/ui.jsx";
+        import { WorkCard } from "./web/components/WorkCard.jsx";
+        import { WorkFlowStepper } from "./web/components/WorkFlowStepper.jsx";
 
         export function renderSmoke() {
           const run = {
@@ -106,7 +108,37 @@ async function loadRenderSmoke() {
                 requiredAction: { type: "operator_resume", label: "Resume again to re-run from scratch, or cancel" }
               }
             }} />),
-            pauseNoticeHidden: renderToStaticMarkup(<div>{RunPauseNotice({ run: { id: "r", status: "running" } })}</div>)
+            pauseNoticeHidden: renderToStaticMarkup(<div>{RunPauseNotice({ run: { id: "r", status: "running" } })}</div>),
+            workCard: renderToStaticMarkup(<WorkCard now={Date.parse("2026-07-15T12:00:00.000Z")} onMove={() => {}} item={{
+              id: "wi_smoke",
+              title: "Make pause/resume fully supported",
+              status: "blocked",
+              type: "feature",
+              priority: "high",
+              project: "runyard",
+              owner: "fran",
+              nextAction: "Decide the resume strategy default",
+              blockedReason: "Waiting on provider credits",
+              updatedAt: "2026-07-15T11:00:00.000Z",
+              runs: { total: 3, byStatus: { succeeded: 1, running: 1, paused: 1 }, attention: 1, lastRunAt: "2026-07-15T10:00:00.000Z" }
+            }} />),
+            workFlow: renderToStaticMarkup(<WorkFlowStepper now={Date.parse("2026-07-15T12:00:00.000Z")} flow={{
+              runId: "run_flow",
+              status: "running",
+              currentStep: "verify",
+              name: "idea-to-product",
+              source: "workflow-source",
+              counts: { done: 1, active: 1, waiting: 1, pending: 1 },
+              nodes: [
+                { id: "workflow", kind: "entry", label: "idea-to-product", state: "done" },
+                { id: "plan", kind: "task", label: "plan", state: "done", startedAt: "2026-07-15T11:00:00.000Z", finishedAt: "2026-07-15T11:05:00.000Z", events: 4, errors: 0 },
+                { id: "build", kind: "task", label: "build", state: "active", startedAt: "2026-07-15T11:05:00.000Z", events: 9, errors: 0, lastEventType: "node.started" },
+                { id: "gate", kind: "approval", label: "gate", state: "waiting", events: 1, errors: 0 },
+                { id: "ship", kind: "deploy", label: "ship", state: "pending", events: 0, errors: 0 }
+              ],
+              edges: [],
+              pendingApprovals: [{ id: "appr_flow", title: "Approve the ship step", kind: "workflow_gate", createdAt: "2026-07-15T11:30:00.000Z" }]
+            }} />)
           };
         }
       `
@@ -158,6 +190,23 @@ describe("React render smoke", () => {
     assert.match(html.budgetNotice, /Stopped at budget/);
     assert.match(html.budgetNotice, /budget exceeded: 120 tokens/);
     assert.equal(html.budgetNoticeHidden, "<div></div>");
+
+    // Work board card: chips, run rollup, attention badge, move select.
+    assert.match(html.workCard, /data-work-item="wi_smoke"/);
+    assert.match(html.workCard, /Make pause\/resume fully supported/);
+    assert.match(html.workCard, /work-priority-high/);
+    assert.match(html.workCard, /3 runs/);
+    assert.match(html.workCard, /1 need attention/);
+    assert.match(html.workCard, /Waiting on provider credits/);
+    assert.match(html.workCard, /data-move-work-item="wi_smoke"/);
+    // Execution-flow stepper: per-step states + pending approval link.
+    assert.match(html.workFlow, /data-flow-run="run_flow"/);
+    assert.match(html.workFlow, /state-done/);
+    assert.match(html.workFlow, /state-active/);
+    assert.match(html.workFlow, /state-waiting/);
+    assert.match(html.workFlow, /state-pending/);
+    assert.match(html.workFlow, /Approve the ship step/);
+    assert.doesNotMatch(html.workFlow, /data-flow-node="workflow"/); // entry node skipped
 
     // Paused runs: amber badge, plain-English pause callout with the reason,
     // required action, checkpoint, and a resume control — and nothing renders

@@ -19,14 +19,14 @@ export const TOKEN_SCOPE_METADATA = [
   {
     scope: "api",
     title: "API",
-    summary: "Full HTTP/CLI client power: run, preflight, rerun, cancel, and promote runs; manage run drafts; create and decide approvals. No admin or runner rights.",
-    groups: ["workflows", "runs", "approvals"]
+    summary: "Full HTTP/CLI client power: run, preflight, rerun, cancel, and promote runs; manage run drafts and work items; create and decide approvals. No admin or runner rights.",
+    groups: ["workflows", "runs", "work", "approvals"]
   },
   {
     scope: "mcp",
     title: "MCP",
     summary: "Same power as api, conventionally issued to MCP/agent clients. Endpoints that accept api also accept mcp.",
-    groups: ["workflows", "runs", "approvals"]
+    groups: ["workflows", "runs", "work", "approvals"]
   },
   {
     scope: "approvals",
@@ -50,7 +50,7 @@ export const TOKEN_SCOPE_METADATA = [
     scope: "admin",
     title: "Admin",
     summary: "Superscope: satisfies every scope requirement and unlocks admin-only surfaces — tokens, secrets, audit, alerts, updates, and workflow/schedule/library management.",
-    groups: ["workflows", "runs", "approvals", "automation", "library", "distribution", "admin", "system"]
+    groups: ["workflows", "runs", "work", "approvals", "automation", "library", "distribution", "admin", "system"]
   }
 ];
 

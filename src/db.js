@@ -52,6 +52,7 @@ import {
   usageSummaryTotalsQuery
 } from "./usageSummary.js";
 import { createScheduleStore } from "./scheduleStore.js";
+import { createWorkItemStore } from "./workItemStore.js";
 import { createRunStore } from "./runStore.js";
 import { createRunnerStore } from "./runnerStore.js";
 import { createRunCreateStore } from "./runCreateStore.js";
@@ -134,7 +135,9 @@ const runCreateStore = createRunCreateStore({
   scrubStoredSecrets,
   addRunEvent,
   createApproval,
-  getRun
+  getRun,
+  getWorkItem,
+  addWorkItemEvent
 });
 const runDraftStore = createRunDraftStore({
   all,
@@ -155,6 +158,7 @@ const runnerStore = createRunnerStore({
 });
 const operatorStore = createOperatorStore({ all, one, run, id, now, addRunEvent, getRun, updateRun });
 const scheduleStore = createScheduleStore({ all, one, run, id, now });
+const workItemStore = createWorkItemStore({ all, one, run, id, now });
 const workflowEndpointStore = createWorkflowEndpointStore({ all, one, run, id, now, hashToken });
 const hookProfileStore = createHookProfileStore({ all, one, run, id, now });
 const workflowBundleStore = createWorkflowBundleStore({ all, one, run, id, now });
@@ -196,6 +200,7 @@ export function initDb() {
   migrateRunsCapabilityVersioningColumns();
   migrateRunsUsageBudgetColumns();
   migrateRunsPauseColumn();
+  migrateRunsWorkItemColumn();
   migrateRunnerAuthHealthColumn();
   migrateRunsSupervisorColumns();
   migrateApprovalsTimerColumns();
@@ -280,6 +285,18 @@ function migrateRunsPauseColumn() {
   migrateMissingColumns("runs", [
     { name: "pause", definition: "pause TEXT" }
   ]);
+}
+
+// Work-item ("ticket") linkage: which durable work item a run is executing
+// for. Nullable — NULL means the run is unlinked (every pre-existing run) —
+// so existing rows and rollbacks are unaffected. The index is created here,
+// not in DB_SCHEMA_SQL, because on existing installs the column only exists
+// after this ALTER runs.
+function migrateRunsWorkItemColumn() {
+  migrateMissingColumns("runs", [
+    { name: "work_item_id", definition: "work_item_id TEXT" }
+  ]);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_runs_work_item ON runs(work_item_id)");
 }
 
 // Per-runner CLI auth health (Codex/Claude subscription auth) rides along on
@@ -622,12 +639,12 @@ export function getRun(runId) {
   return runStore.getRun(runId);
 }
 
-export function listRuns({ status = "", limit = 100, q = "", since = "", until = "", cursor = "", capabilitySlugs = [], includeInternal = false } = {}) {
-  return runStore.listRuns({ status, limit, q, since, until, cursor, capabilitySlugs, includeInternal });
+export function listRuns({ status = "", limit = 100, q = "", since = "", until = "", cursor = "", capabilitySlugs = [], workItemId = "", includeInternal = false } = {}) {
+  return runStore.listRuns({ status, limit, q, since, until, cursor, capabilitySlugs, workItemId, includeInternal });
 }
 
-export function countRuns({ status = "", q = "", since = "", until = "", capabilitySlugs = [], includeInternal = false } = {}) {
-  return runStore.countRuns({ status, q, since, until, capabilitySlugs, includeInternal });
+export function countRuns({ status = "", q = "", since = "", until = "", capabilitySlugs = [], workItemId = "", includeInternal = false } = {}) {
+  return runStore.countRuns({ status, q, since, until, capabilitySlugs, workItemId, includeInternal });
 }
 
 // Distinct `capability_sha` values seen across this capability's runs, with
@@ -987,6 +1004,56 @@ export function claimScheduleFire(idValue, expectedNextRunAt, nowIso = now()) {
 // without touching next_run_at — that is owned by claimScheduleFire.
 export function recordScheduleFireResult(idValue, runId, status = "queued", firedAtIso = now()) {
   return scheduleStore.recordScheduleFireResult(idValue, runId, status, firedAtIso);
+}
+
+// --- Work items (tickets) ----------------------------------------------------
+// Durable company work objects: the unit a human plans and tracks, distinct
+// from workflows (recipes) and runs (execution attempts). Runs attach via the
+// nullable runs.work_item_id column; a work item aggregates its runs but never
+// inherits a run's failure as its own state.
+
+export function createWorkItem(input) {
+  return workItemStore.createWorkItem(input);
+}
+
+export function getWorkItem(idValue) {
+  return workItemStore.getWorkItem(idValue);
+}
+
+export function listWorkItems(filters = {}) {
+  return workItemStore.listWorkItems(filters);
+}
+
+export function updateWorkItem(idValue, updates = {}, options = {}) {
+  return workItemStore.updateWorkItem(idValue, updates, options);
+}
+
+export function deleteWorkItem(idValue) {
+  return workItemStore.deleteWorkItem(idValue);
+}
+
+export function addWorkItemEvent(workItemId, type, message = "", data = {}) {
+  return workItemStore.addWorkItemEvent(workItemId, type, message, data);
+}
+
+export function listWorkItemEvents(workItemId, limit = 200) {
+  return workItemStore.listWorkItemEvents(workItemId, limit);
+}
+
+export function listWorkItemRuns(workItemId) {
+  return workItemStore.listWorkItemRuns(workItemId);
+}
+
+export function linkRunToWorkItem(workItemId, runId, options = {}) {
+  return workItemStore.linkRunToWorkItem(workItemId, runId, options);
+}
+
+export function unlinkRunFromWorkItem(workItemId, runId, options = {}) {
+  return workItemStore.unlinkRunFromWorkItem(workItemId, runId, options);
+}
+
+export function workItemRunSummaries() {
+  return workItemStore.workItemRunSummaries();
 }
 
 // Windowed cross-run usage rollup behind GET /api/usage/summary: fleet totals,

@@ -1,0 +1,69 @@
+---
+title: Work items
+description: Tickets on the Work board — the durable unit of company work that workflows and runs execute for.
+---
+
+A **work item** (ticket) is the durable unit of company work: *"Make pause/resume fully supported"*, *"Fix the flaky release gate"*. It is deliberately distinct from the two execution concepts:
+
+- a [workflow](./workflows.mdx) is a reusable **recipe**;
+- a [run](./runs.mdx) is **one execution attempt** of a workflow.
+
+A work item can use one workflow, many workflows, or none yet. Many runs can attach to one work item; a run belongs to at most one work item, and old runs can stay unlinked. Crucially, **a failed run never fails a ticket** — run failures are execution facts, while a ticket's state is a human decision: park it in `blocked`, `waiting`, or `review` with a reason, then retry.
+
+## Lifecycle
+
+Work items move through a human-legible lifecycle, shown as lanes on the Work board (`/app#work`):
+
+| Status | Meaning |
+| --- | --- |
+| `intake` | Raw ask, idea, bug, or product need. |
+| `triaged` | Priority, type, owner, and acceptance criteria clarified. |
+| `ready` | Next workflow/action selected; dependencies known. |
+| `running` | One or more runs actively working on it. |
+| `waiting` | Paused for an approval, human decision, credential, budget, or dependency. |
+| `blocked` | Cannot progress without a specific intervention (`blockedReason` says which). |
+| `review` | A deliverable exists and needs inspection. |
+| `shipped` | Merged/released/deployed with evidence. |
+| `accepted` | Confirmed to satisfy the original ask. |
+| `archived` | Closed historical item (hidden from lists by default). |
+
+Status moves are explicit `PATCH`es (by a human or an agent) and are recorded in the ticket history as `work_item.status_changed` events, alongside run link/unlink events and field edits.
+
+Each item also carries `type` (`feature`, `bug`, `research`, `release`, `maintenance`, `idea`), `priority` (`urgent`, `high`, `normal`, `low`), `project`, `owner`/`requester`, `acceptanceCriteria`, `nextAction`, `blockedReason`, and an optional `dueAt`.
+
+## Linked runs and attention
+
+List and detail payloads carry a linked-run rollup — `runs: { total, byStatus, lastRunAt, attention }` — where `attention` counts linked runs whose next step is a human action (`paused`, `waiting_approval`, or `budget_exceeded`), the same signal as [`GET /api/runs/attention`](./runs.mdx). The board surfaces it as a badge; the ticket still only moves lanes when someone moves it.
+
+Attach runs three ways:
+
+- pass `workItemId` at run creation (`POST /api/workflows/{id}/run`, the `run_workflow` MCP tool, or `runyard run --work-item <id>`);
+- link an existing run: `POST /api/work-items/{id}/link-run` with `{ "runId": "run_..." }` (relinking moves the run and leaves an unlink event on the old ticket);
+- launch a workflow from the ticket detail in the web app.
+
+Linked runs bring their [approvals](./approvals.mdx) and artifacts with them: the ticket detail aggregates both across all linked runs.
+
+## Execution flow
+
+`GET /api/runs/{id}/flow` (MCP `get_run_flow`, CLI `runyard flow <runId>`) answers *"where is this run in its workflow?"*. It takes the workflow's static step graph and folds the run's event stream onto it, yielding one state per step:
+
+`pending · active · done · failed · waiting · cancelled · skipped`
+
+The fold is derived, never stored: explicit `node.*` lifecycle events win; an unresolved `engine.approval.waiting` parks its step in `waiting`; the run's own terminal status closes the books (succeeded finishes unfinished active steps, cancelled cancels them, a failure-terminal status fails the step the run died on). When no source graph exists the flow degrades to an event-derived stepper rather than hiding observed work. The ticket detail renders this as the flow view for the active or latest linked run.
+
+## API & MCP
+
+| Endpoint | MCP tool | Notes |
+| --- | --- | --- |
+| `GET /api/work-items` | `list_work_items` | Filters: `status`, `project`, `owner`, `type`, `q`; `includeArchived=true` shows archived. |
+| `GET /api/work-items/{id}` | `get_work_item` | Item + linked runs, approvals, artifacts, ticket history. |
+| `POST /api/work-items` | `create_work_item` | `api`/`mcp` scope. Body: `title` (required) + the fields above. |
+| `PATCH /api/work-items/{id}` | `update_work_item` | Any subset; move lanes by setting `status`. |
+| `DELETE /api/work-items/{id}` | `delete_work_item` | Admin; prefer `status: "archived"`. |
+| `POST /api/work-items/{id}/link-run` | `link_work_item_run` | Body: `{ runId }`. |
+| `POST /api/work-items/{id}/unlink-run` | `unlink_work_item_run` | Body: `{ runId }`. |
+| `GET /api/runs/{id}/flow` | `get_run_flow` | Per-step execution states for the flow view. |
+
+CLI: `runyard work` (board list), `runyard work-item show|create|update|link|unlink`, `runyard flow <runId>`, and `runyard run <workflow> --work-item <id>`.
+
+Grouped `/api/v1` aliases live under `/api/v1/work/items...`.

@@ -34,6 +34,12 @@ import { now } from "./ids.js";
 import { createRunPromotionHandlers } from "./runPromotionRoutes.js";
 import { createCapabilityHandlers } from "./capabilityRoutes.js";
 import { createScheduleHandlers } from "./scheduleRoutes.js";
+import { createWorkItemHandlers } from "./workItemRoutes.js";
+import {
+  deriveWorkflowGraph,
+  deriveWorkflowGraphFromMetadata,
+  loadWorkflowSource
+} from "./workflowSource.js";
 import { createCatalogHandlers } from "./catalogRoutes.js";
 import { createApprovalHandlers } from "./approvalHttpRoutes.js";
 import { createArtifactHandlers } from "./artifactRoutes.js";
@@ -146,8 +152,37 @@ export function createServerComposition({
     latestAlert,
     setApprovalTelegramMessage,
     sweepSupersededApprovals,
-    sweepTimedApprovals
+    sweepTimedApprovals,
+    createWorkItem,
+    deleteWorkItem,
+    getWorkItem,
+    linkRunToWorkItem,
+    listWorkItemEvents,
+    listWorkItemRuns,
+    listWorkItems,
+    unlinkRunFromWorkItem,
+    updateWorkItem,
+    workItemRunSummaries
   } = db;
+
+  // Static workflow graph for a run's capability, for the flow view. Falls
+  // back to the metadata-derived two-node graph, then to null (src/runFlow.js
+  // degrades to an event-derived stepper). Never throws: a missing bundle is
+  // a source-browsing error, not a reason to hide observed execution.
+  const runWorkflowGraph = (run) => {
+    const capability = getCapability(run.capabilitySlug);
+    if (!capability) return null;
+    try {
+      const source = loadWorkflowSource(capability, { root: env.root, getWorkflowBundle });
+      if (source) return deriveWorkflowGraph(source.code, capability);
+    } catch {
+      // fall through to the metadata graph
+    }
+    return deriveWorkflowGraphFromMetadata(capability);
+  };
+
+  const pendingApprovalsForRun = (runId) =>
+    listApprovals("pending").filter((approval) => approval.runId === runId);
 
   const {
     approvalContext,
@@ -322,11 +357,13 @@ export function createServerComposition({
     decorateSingleRun,
     getRun,
     getRunUsage,
+    getWorkItem,
     hiddenRunSlugs: DEFAULT_HIDDEN_RUN_SLUGS,
     listArtifacts,
     listRunEvents,
     listRunResponseEndpointsForRun,
     listRuns,
+    pendingApprovalsForRun,
     presentRunResponseEndpoint,
     reapStuckRunsWithRetrospectives,
     runApprovalHold,
@@ -334,6 +371,7 @@ export function createServerComposition({
     runDiagnostics,
     runnerPoolStats,
     runTimelineEnabled: () => env.runTimelineEnabled,
+    runWorkflowGraph,
     subscribeRunEvents,
     usageSummary,
     withArtifactLinks,
@@ -366,6 +404,7 @@ export function createServerComposition({
     dispatchRun,
     evaluatePreflight,
     getCapability,
+    getWorkItem,
     getWorkflowBundle,
     publishWorkflowBundle,
     listApprovals,
@@ -414,6 +453,23 @@ export function createServerComposition({
     setScheduleEnabled,
     updateSchedule,
     withRunLinks
+  });
+
+  const workItemHandlers = createWorkItemHandlers({
+    createWorkItem,
+    deleteWorkItem,
+    getWorkItem,
+    linkRunToWorkItem,
+    listApprovals,
+    listArtifacts,
+    listWorkItemEvents,
+    listWorkItemRuns,
+    listWorkItems,
+    recordAudit,
+    unlinkRunFromWorkItem,
+    updateWorkItem,
+    withRunLinks,
+    workItemRunSummaries
   });
 
   const catalogHandlers = createCatalogHandlers({
@@ -581,7 +637,8 @@ export function createServerComposition({
       updateHandlers,
       workflowBundleHandlers,
       workflowPackageHandlers,
-      workflowEndpointHandlers
+      workflowEndpointHandlers,
+      workItemHandlers
     },
     telegramApprovalTarget
   };

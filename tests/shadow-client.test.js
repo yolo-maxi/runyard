@@ -74,7 +74,7 @@ describe("shadow client (external API consumer)", () => {
     assert.equal(exitCode, 0, JSON.stringify(report?.steps, null, 2));
     assert.equal(report.ok, true);
     const byName = new Map(report.steps.map((step) => [step.name, step]));
-    assert.deepEqual(byName.get("openapi").groups, ["admin", "approvals", "automation", "distribution", "library", "runs", "system", "workflows"]);
+    assert.deepEqual(byName.get("openapi").groups, ["admin", "approvals", "automation", "distribution", "library", "runs", "system", "work", "workflows"]);
     assert.ok(byName.get("openapi").v1PathCount >= 60);
     assert.deepEqual(byName.get("whoami").scopes, ["read"]);
     assert.ok(byName.get("menu").tools > 20, "menu lists MCP tools");
