@@ -11,6 +11,8 @@ import { WORK_ITEM_STATUSES } from "./workItemRecords.js";
 // The default lane set: seven columns in operator language over the ten
 // lifecycle statuses. This is the single server-side source; the web app
 // keeps a copy only as an offline fallback (web/lib/workItems.js).
+export const BOARD_LANE_TRIGGER_MODES = ["none", "suggest", "confirm", "auto"];
+
 export const DEFAULT_BOARD_LANES = [
   {
     id: "intake",
@@ -31,14 +33,26 @@ export const DEFAULT_BOARD_LANES = [
     label: "Ready to start",
     hint: "Work that can be launched or assigned now.",
     empty: "No launch-ready work.",
-    statuses: ["ready"]
+    statuses: ["ready"],
+    trigger: {
+      mode: "suggest",
+      label: "Ready to launch",
+      workflow: "runyard-smoke-check",
+      description: "Surface the default workflow launcher without enqueueing anything."
+    }
   },
   {
     id: "running",
     label: "In motion",
     hint: "Work with an active run or ongoing owner action.",
     empty: "Nothing currently moving.",
-    statuses: ["running"]
+    statuses: ["running"],
+    trigger: {
+      mode: "confirm",
+      label: "Launch linked run",
+      workflow: "runyard-smoke-check",
+      description: "Confirm before enqueueing the lane workflow and linking it to the ticket."
+    }
   },
   {
     id: "attention",
@@ -182,15 +196,48 @@ export function validateBoardBody(body = {}, { partial = false } = {}) {
       for (const status of statuses) {
         if (!WORK_ITEM_STATUSES.includes(status)) return { ok: false, error: `lane ${id} references unknown status: ${status}` };
       }
+      const trigger = normalizeLaneTrigger(lane.trigger);
+      if (!trigger.ok) return { ok: false, error: `lane ${id} trigger invalid: ${trigger.error}` };
       lanes.push({
         id,
         label,
         hint: String(lane.hint || "").slice(0, 200),
         empty: String(lane.empty || "").slice(0, 200),
-        statuses
+        statuses,
+        ...(trigger.value ? { trigger: trigger.value } : {})
       });
     }
     value.lanes = lanes;
   }
   return { ok: true, value };
+}
+
+function normalizeLaneTrigger(raw) {
+  if (raw === undefined || raw === null || raw === false) return { ok: true, value: null };
+  if (typeof raw !== "object" || Array.isArray(raw)) return { ok: false, error: "trigger must be an object" };
+  const mode = String(raw.mode || "none").trim();
+  if (!BOARD_LANE_TRIGGER_MODES.includes(mode)) {
+    return { ok: false, error: `mode must be one of ${BOARD_LANE_TRIGGER_MODES.join(", ")}` };
+  }
+  if (mode === "none") return { ok: true, value: null };
+  const workflow = String(raw.workflow || "").trim();
+  const label = String(raw.label || "").trim() || triggerModeLabel(mode);
+  const description = String(raw.description || "").trim().slice(0, 240);
+  const input = raw.input && typeof raw.input === "object" && !Array.isArray(raw.input) ? raw.input : undefined;
+  return {
+    ok: true,
+    value: {
+      mode,
+      label: label.slice(0, 80),
+      ...(workflow ? { workflow } : {}),
+      ...(description ? { description } : {}),
+      ...(input ? { input } : {})
+    }
+  };
+}
+
+function triggerModeLabel(mode) {
+  if (mode === "auto") return "Auto launch";
+  if (mode === "confirm") return "Confirm launch";
+  return "Suggest workflow";
 }

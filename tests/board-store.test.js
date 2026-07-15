@@ -54,6 +54,28 @@ describe("board records", () => {
     });
     assert.equal(dupLane.ok, false);
     assert.match(dupLane.error, /duplicate lane/);
+    const badTrigger = validateBoardBody({
+      slug: "ok", title: "x",
+      lanes: [{ id: "ready", label: "Ready", statuses: ["ready"], trigger: { mode: "explode" } }]
+    });
+    assert.equal(badTrigger.ok, false);
+    assert.match(badTrigger.error, /trigger invalid/);
+    const trigger = validateBoardBody({
+      slug: "ok", title: "x",
+      lanes: [{
+        id: "ready",
+        label: "Ready",
+        statuses: ["ready"],
+        trigger: { mode: "confirm", workflow: "runyard-smoke-check", label: "Launch smoke", input: { expectRunner: true } }
+      }]
+    });
+    assert.equal(trigger.ok, true);
+    assert.deepEqual(trigger.value.lanes[0].trigger, {
+      mode: "confirm",
+      workflow: "runyard-smoke-check",
+      label: "Launch smoke",
+      input: { expectRunner: true }
+    });
   });
 
   it("accepts partial update bodies without slug/title", () => {
@@ -96,6 +118,8 @@ describe("board store", () => {
     assert.equal(seeded.title, "RunYard Factory");
     assert.equal(seeded.isDefault, true);
     assert.equal(seeded.lanes.length, DEFAULT_BOARD_LANES.length);
+    assert.deepEqual(seeded.defaultWorkflows, ["runyard-smoke-check", "implement-change-gated", "docs-update"]);
+    assert.equal(seeded.lanes.find((lane) => lane.id === "running").trigger.mode, "confirm");
     assert.equal(boards.ensureDefaultBoard({ instanceName: "RunYard" }), null);
     assert.equal(boards.listBoards().length, 1);
   });

@@ -21,7 +21,7 @@ export const DEFAULT_BOARD_SEED = {
   description: "This deployment's own software-factory board: product, infra, docs, and release work, executed and updated by workflows.",
   project: "",
   lanes: DEFAULT_BOARD_LANES,
-  defaultWorkflows: [],
+  defaultWorkflows: ["runyard-smoke-check", "implement-change-gated", "docs-update"],
   isDefault: true,
   createdBy: "system"
 };

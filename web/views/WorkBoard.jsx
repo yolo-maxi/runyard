@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useLiveQuery } from "@tanstack/react-db";
 import { api } from "../lib/api.js";
-import { deepLinks } from "../lib/router.js";
+import { workflowsCollection, refreshCollection } from "../lib/collections.js";
+import { deepLinks, navigate } from "../lib/router.js";
 import { relativeTime } from "../lib/format.js";
 import { toast } from "../lib/toast.js";
 import { Badge, Toolbar } from "../components/ui.jsx";
@@ -23,6 +25,7 @@ export function WorkBoard() {
   const [dropLaneId, setDropLaneId] = useState("");
   const [optimisticStatuses, setOptimisticStatuses] = useState({});
   const queryClient = useQueryClient();
+  const { data: workflows = [] } = useLiveQuery((q) => workflowsCollection);
 
   const { data, error } = useQuery({
     queryKey: ["work-items", { includeArchived: showArchived }],
@@ -108,12 +111,15 @@ export function WorkBoard() {
     };
   }, [items]);
 
-  async function moveItem(item, status) {
+  async function moveItem(item, status, lane = null) {
     if (status === item.status) return;
+    const trigger = laneTrigger(lane);
+    const launchHandled = await maybeRunLaneTrigger(item, lane, trigger);
+    if (launchHandled) return;
     setOptimisticStatus(item.id, status);
     try {
       await api(`/api/work-items/${item.id}`, { method: "PATCH", body: { status } });
-      toast(`Moved to ${status}`, "ok");
+      toast(trigger ? `${trigger.label}: moved to ${status}` : `Moved to ${status}`, "ok");
       await queryClient.invalidateQueries({ queryKey: ["work-items"] });
     } catch (err) {
       setOptimisticStatus(item.id, item.status);
@@ -163,7 +169,90 @@ export function WorkBoard() {
     setDropLaneId("");
     setDragItemId("");
     if (!item || !lane.statuses?.length) return;
-    moveItem(item, lane.statuses[0]);
+    moveItem(item, lane.statuses[0], lane);
+  }
+
+  function laneTrigger(lane) {
+    const trigger = lane?.trigger || null;
+    if (!trigger || !trigger.mode || trigger.mode === "none") return null;
+    return trigger;
+  }
+
+  function triggerWorkflow(trigger) {
+    return trigger?.workflow || board?.defaultWorkflows?.[0] || "";
+  }
+
+  function liveRunCount(item) {
+    const byStatus = item?.runs?.byStatus || {};
+    return ["queued", "assigned", "running", "waiting_approval", "paused"]
+      .reduce((sum, status) => sum + Number(byStatus[status] || 0), 0);
+  }
+
+  async function maybeRunLaneTrigger(item, lane, trigger) {
+    if (!trigger) return false;
+    const workflow = triggerWorkflow(trigger);
+    if (!workflow) {
+      toast(`${trigger.label || "Lane trigger"} has no workflow configured`, "info");
+      return false;
+    }
+    if (trigger.mode === "suggest") {
+      const wf = workflows.find((candidate) => candidate.slug === workflow);
+      toast(`${trigger.label || "Ready"}: ${wf?.name || workflow} is available from the ticket`, "info");
+      return false;
+    }
+    if (trigger.mode === "confirm" && liveRunCount(item)) {
+      toast("Ticket already has an active linked run", "info");
+      return false;
+    }
+    if (trigger.mode === "confirm") {
+      const ok = window.confirm(`Launch ${workflow} for "${item.title}" and link the run to this ticket?`);
+      if (!ok) return true;
+    }
+    if (trigger.mode === "auto" || trigger.mode === "confirm") {
+      return launchTriggeredWorkflow(item, workflow, trigger);
+    }
+    return false;
+  }
+
+  async function launchTriggeredWorkflow(item, workflow, trigger) {
+    const input = {
+      title: item.title,
+      label: item.title,
+      ...(trigger.input || {})
+    };
+    try {
+      const result = await api(`/api/workflows/${encodeURIComponent(workflow)}/run`, {
+        method: "POST",
+        body: {
+          input,
+          workItemId: item.id,
+          negotiate: true
+        }
+      });
+      toast(`Launched ${workflow} and linked the run`, "ok");
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["work-items"] }),
+        refreshCollection("runs")
+      ]);
+      if (result?.run?.id) navigate(deepLinks.run(result.run.id));
+      return true;
+    } catch (error) {
+      if (error.body?.draft) {
+        await api(`/api/work-items/${item.id}`, {
+          method: "PATCH",
+          body: {
+            status: "waiting",
+            nextAction: `Answer the ${workflow} run draft, then submit it.`
+          }
+        });
+        toast(`${workflow} needs input; draft saved`, "info");
+        await queryClient.invalidateQueries({ queryKey: ["work-items"] });
+        navigate(deepLinks.workflowRun(workflow));
+        return true;
+      }
+      toast(error.message, "error");
+      return true;
+    }
   }
 
   if (error) {
@@ -302,6 +391,11 @@ export function WorkBoard() {
                   <Badge>{laneItems.length}</Badge>
                 </header>
                 <p className="board-col-hint" title={lane.hint}>{lane.hint}</p>
+                {lane.trigger?.mode && lane.trigger.mode !== "none" ? (
+                  <p className={`board-col-trigger mode-${lane.trigger.mode}`} title={lane.trigger.description || ""}>
+                    {lane.trigger.label || lane.trigger.mode}
+                  </p>
+                ) : null}
                 <div className="board-col-cards">
                   {laneItems.map((item) => (
                     <WorkCard

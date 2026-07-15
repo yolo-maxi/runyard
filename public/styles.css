@@ -7219,6 +7219,32 @@ button.cron-preset:hover {
   line-height: var(--lh-2xs);
   font-weight: var(--fw-normal);
 }
+.board-col-trigger {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  max-width: calc(100% - (2 * var(--space-1)));
+  min-height: 24px;
+  margin: calc(-1 * var(--space-1)) var(--space-1) var(--space-2);
+  padding: 3px 8px;
+  border: var(--border-width) solid color-mix(in srgb, var(--accent) 22%, var(--border));
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  color: var(--text);
+  font-size: var(--fs-2xs);
+  line-height: var(--lh-2xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.board-col-trigger.mode-confirm {
+  border-color: color-mix(in srgb, var(--info-fg) 26%, var(--border));
+  background: color-mix(in srgb, var(--info-fg) 8%, var(--surface));
+}
+.board-col-trigger.mode-auto {
+  border-color: color-mix(in srgb, var(--warn-fg) 32%, var(--border));
+  background: color-mix(in srgb, var(--warn-fg) 9%, var(--surface));
+}
 .board-col-cards {
   display: flex;
   flex-direction: column;

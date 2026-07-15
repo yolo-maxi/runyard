@@ -84,6 +84,12 @@ describe("Work: board view", () => {
     assert.match(boardJsx, /setOptimisticStatus\(item\.id, status\)/);
     assert.match(boardJsx, /onDrop=\{\(e\) => dropOnLane\(e, lane\)\}/);
     assert.match(boardJsx, /startViewTransition/);
+    assert.match(boardJsx, /laneTrigger\(lane\)/);
+    assert.match(boardJsx, /maybeRunLaneTrigger\(item, lane, trigger\)/);
+    assert.match(boardJsx, /window\.confirm/);
+    assert.match(boardJsx, /negotiate: true/);
+    assert.match(boardJsx, /workItemId: item\.id/);
+    assert.match(boardJsx, /board-col-trigger/);
   });
 });
 
@@ -91,6 +97,7 @@ describe("Work: board instances", () => {
   it("fetches boards and drives lanes/title/scope from the picked board", () => {
     assert.match(boardJsx, /api\("\/api\/boards"\)/);
     assert.match(boardJsx, /board\?\.lanes\?\.length \? board\.lanes : BOARD_LANES/);
+    assert.match(boardJsx, /board\?\.defaultWorkflows\?\.\[0\]/);
     assert.match(boardJsx, /board\?\.title \|\| "Work"/);
     assert.match(boardJsx, /board\?\.project && item\.project !== board\.project/);
     assert.match(boardJsx, /id="work-board-picker"/);
@@ -161,7 +168,7 @@ describe("Work: execution flow", () => {
 
 describe("Work: styles", () => {
   it("ships the board, card, and stepper styles", () => {
-    for (const cls of [".work-command", ".work-operator-item", ".board", ".board-col", ".board-col.is-drop-target", ".board-col-header", ".work-card", ".work-card.is-dragging", ".work-card-action", ".work-attention", ".work-flow-step", ".work-flow-step.state-active", ".work-flow-step.state-failed", ".work-blocked-reason", ".work-priority-urgent"]) {
+    for (const cls of [".work-command", ".work-operator-item", ".board", ".board-col", ".board-col.is-drop-target", ".board-col-header", ".board-col-trigger", ".board-col-trigger.mode-confirm", ".work-card", ".work-card.is-dragging", ".work-card-action", ".work-attention", ".work-flow-step", ".work-flow-step.state-active", ".work-flow-step.state-failed", ".work-blocked-reason", ".work-priority-urgent"]) {
       assert.ok(css.includes(cls), `styles.css is missing ${cls}`);
     }
   });

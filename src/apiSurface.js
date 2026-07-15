@@ -970,14 +970,14 @@ export const API_SURFACE = [
     method: "post", path: "/api/boards", handler: "boardHandlers.createBoard",
     group: "work", v1Path: "/api/v1/work/boards",
     auth: true, scopes: ["api", "mcp", "admin"], ui: true,
-    summary: "Create a board. Body: {slug, title, description?, project?, lanes?, defaultWorkflows?, isDefault?}. Lanes default to the standard seven-column factory layout; project scopes membership ('' = all work items).",
+    summary: "Create a board. Body: {slug, title, description?, project?, lanes?, defaultWorkflows?, isDefault?}. Lanes default to the standard seven-column factory layout; project scopes membership ('' = all work items). A lane may include trigger {mode: none|suggest|confirm|auto, workflow?, label?, description?, input?}.",
     mcp: ["create_board"]
   },
   {
     method: "patch", path: "/api/boards/:slug", handler: "boardHandlers.updateBoard",
     group: "work", v1Path: "/api/v1/work/boards/:slug",
     auth: true, scopes: ["api", "mcp", "admin"], ui: true,
-    summary: "Update a board: title, description, project scope, lane definitions, defaultWorkflows, isDefault. Slug is immutable.",
+    summary: "Update a board: title, description, project scope, lane definitions/triggers, defaultWorkflows, isDefault. Slug is immutable.",
     mcp: ["update_board"]
   },
 
