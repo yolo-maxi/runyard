@@ -59,7 +59,9 @@ describe("run mutation store", () => {
 
   it("transitions active runs and releases their runner slot once", () => {
     const succeeded = { ...runningRun, status: "succeeded" };
-    const { releases, store } = createHarness({ runs: [runningRun, succeeded] });
+    // getRun sequence: transition decision, updateRun's before-status
+    // snapshot (for the status-change observer), then the post-write reload.
+    const { releases, store } = createHarness({ runs: [runningRun, runningRun, succeeded] });
 
     assert.deepEqual(store.transitionRun("run_1", "succeeded", { completed_at: "done" }), {
       ok: true,

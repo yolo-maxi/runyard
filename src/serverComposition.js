@@ -35,6 +35,7 @@ import { createRunPromotionHandlers } from "./runPromotionRoutes.js";
 import { createCapabilityHandlers } from "./capabilityRoutes.js";
 import { createScheduleHandlers } from "./scheduleRoutes.js";
 import { createWorkItemHandlers } from "./workItemRoutes.js";
+import { createBoardHandlers } from "./boardRoutes.js";
 import {
   deriveWorkflowGraph,
   deriveWorkflowGraphFromMetadata,
@@ -162,7 +163,12 @@ export function createServerComposition({
     listWorkItems,
     unlinkRunFromWorkItem,
     updateWorkItem,
-    workItemRunSummaries
+    workItemRunSummaries,
+    syncWorkItemForRun,
+    listBoards,
+    getBoard,
+    createBoard,
+    updateBoard
   } = db;
 
   // Static workflow graph for a run's capability, for the flow view. Falls
@@ -458,6 +464,7 @@ export function createServerComposition({
   const workItemHandlers = createWorkItemHandlers({
     createWorkItem,
     deleteWorkItem,
+    getRun,
     getWorkItem,
     linkRunToWorkItem,
     listApprovals,
@@ -466,9 +473,20 @@ export function createServerComposition({
     listWorkItemRuns,
     listWorkItems,
     recordAudit,
+    syncWorkItemForRun,
     unlinkRunFromWorkItem,
     updateWorkItem,
     withRunLinks,
+    workItemRunSummaries
+  });
+
+  const boardHandlers = createBoardHandlers({
+    createBoard,
+    getBoard,
+    listBoards,
+    listWorkItems,
+    recordAudit,
+    updateBoard,
     workItemRunSummaries
   });
 
@@ -638,7 +656,8 @@ export function createServerComposition({
       workflowBundleHandlers,
       workflowPackageHandlers,
       workflowEndpointHandlers,
-      workItemHandlers
+      workItemHandlers,
+      boardHandlers
     },
     telegramApprovalTarget
   };

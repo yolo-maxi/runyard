@@ -20,7 +20,8 @@ export function createRunCreateStore({
   createApproval,
   getRun,
   getWorkItem,
-  addWorkItemEvent
+  addWorkItemEvent,
+  syncWorkItemForRun
 }) {
   function createRun(capability, input, options = {}) {
     const timestamp = now();
@@ -100,7 +101,12 @@ export function createRunCreateStore({
       });
     }
 
-    return getRun(runId);
+    const created = getRun(runId);
+    // A run launched against a ticket moves it on the board immediately
+    // (queued -> In motion, waiting_approval -> Needs decision) — the board
+    // reflects the launch without waiting for the runner to pick it up.
+    if (workItemId) syncWorkItemForRun?.(created, { trigger: "run_created" });
+    return created;
   }
 
   return { createRun };

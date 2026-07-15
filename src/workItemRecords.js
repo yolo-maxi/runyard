@@ -1,9 +1,9 @@
 import { parseMaybeJson } from "./dbNormalization.js";
 
-// The human-legible ticket lifecycle. A failed run NEVER moves a work item to
-// a "failed" state — humans (or agents) park it in waiting/blocked/review with
-// an explicit reason instead, because the ticket is the durable ask, not one
-// execution attempt.
+// The human-legible ticket lifecycle. There is deliberately no "failed"
+// ticket state — the ticket is the durable ask, not one execution attempt.
+// A failed linked run parks its ticket in blocked with an explicit reason
+// (src/workItemRunSync.js); humans/agents can always re-park or retry.
 export const WORK_ITEM_STATUSES = [
   "intake",
   "triaged",

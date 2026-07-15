@@ -4,12 +4,13 @@ import { validateWorkItemBody, withWorkItemView } from "./workItemHelpers.js";
 
 // Work items ("tickets"): the durable unit of company work. Handlers stay
 // thin — validation in workItemHelpers, persistence + ticket history in
-// workItemStore. A work item's state is owned by humans/agents through
-// PATCH; linked-run status is surfaced as a rollup, never written back onto
-// the ticket automatically.
+// workItemStore. Humans/agents own ticket state through PATCH; linked runs
+// also move tickets where the mapping is reliable (src/workItemRunSync.js),
+// and every automated move lands in ticket history with the run as actor.
 export function createWorkItemHandlers({
   createWorkItem,
   deleteWorkItem,
+  getRun,
   getWorkItem,
   linkRunToWorkItem,
   listApprovals,
@@ -18,6 +19,7 @@ export function createWorkItemHandlers({
   listWorkItemRuns,
   listWorkItems,
   recordAudit,
+  syncWorkItemForRun,
   unlinkRunFromWorkItem,
   updateWorkItem,
   withRunLinks,
@@ -42,6 +44,11 @@ export function createWorkItemHandlers({
     if (!result.ok) return res.status(result.code || 400).json({ error: result.error });
     const actor = actorName(req.token);
     recordAudit(actor, action, req.params.id, { runId: result.runId });
+    // Linking an existing run adopts its state: a running run puts the
+    // ticket In motion, a held one parks it in waiting, etc.
+    if (action === "work_item.run_linked" && syncWorkItemForRun && getRun) {
+      syncWorkItemForRun(getRun(result.runId), { trigger: "run_linked" });
+    }
     res.json({
       linked: action === "work_item.run_linked",
       workItem: withWorkItemView(getWorkItem(req.params.id)),

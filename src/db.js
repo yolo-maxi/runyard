@@ -53,6 +53,8 @@ import {
 } from "./usageSummary.js";
 import { createScheduleStore } from "./scheduleStore.js";
 import { createWorkItemStore } from "./workItemStore.js";
+import { createWorkItemRunSync } from "./workItemRunSync.js";
+import { createBoardStore } from "./boardStore.js";
 import { createRunStore } from "./runStore.js";
 import { createRunnerStore } from "./runnerStore.js";
 import { createRunCreateStore } from "./runCreateStore.js";
@@ -102,7 +104,19 @@ function run(sql, params = {}) {
 const catalogStore = createCatalogStore({ all, one, run, id, now });
 const capabilityStore = createCapabilityStore({ all, one, run, id, now });
 const runStore = createRunStore({ all, one, run, id, now, visibleRunWhere: VISIBLE_RUN_WHERE });
-const runMutationStore = createRunMutationStore({ one, run, now, getRun, adjustRunnerActiveRuns });
+// The status observer keeps the work board honest: every run status write
+// funnels through updateRun, and linked runs move their ticket where the
+// mapping is reliable (src/workItemRunSync.js). Lazy reference — the sync is
+// composed a few stores below; callbacks only fire at request time.
+const runMutationStore = createRunMutationStore({
+  one,
+  run,
+  now,
+  getRun,
+  adjustRunnerActiveRuns,
+  onRunStatusChange: (updatedRun, fromStatus) =>
+    workItemRunSync.syncWorkItemForRun(updatedRun, { trigger: "run_status", fromStatus })
+});
 const runClaimStore = createRunClaimStore({
   run,
   now,
@@ -137,7 +151,8 @@ const runCreateStore = createRunCreateStore({
   createApproval,
   getRun,
   getWorkItem,
-  addWorkItemEvent
+  addWorkItemEvent,
+  syncWorkItemForRun: (createdRun, options) => workItemRunSync.syncWorkItemForRun(createdRun, options)
 });
 const runDraftStore = createRunDraftStore({
   all,
@@ -159,6 +174,8 @@ const runnerStore = createRunnerStore({
 const operatorStore = createOperatorStore({ all, one, run, id, now, addRunEvent, getRun, updateRun });
 const scheduleStore = createScheduleStore({ all, one, run, id, now });
 const workItemStore = createWorkItemStore({ all, one, run, id, now });
+const workItemRunSync = createWorkItemRunSync({ getWorkItem, updateWorkItem, listWorkItemRuns });
+const boardStore = createBoardStore({ all, one, run, id, now });
 const workflowEndpointStore = createWorkflowEndpointStore({ all, one, run, id, now, hashToken });
 const hookProfileStore = createHookProfileStore({ all, one, run, id, now });
 const workflowBundleStore = createWorkflowBundleStore({ all, one, run, id, now });
@@ -211,6 +228,7 @@ export function initDb() {
   dbBootstrap.seedCatalog();
   dbBootstrap.seedWorkflowEndpoints();
   dbBootstrap.ensureBootstrapToken();
+  boardStore.ensureDefaultBoard({ instanceName: env.instanceName });
 }
 
 // Capacity / active_runs were added after the initial schema shipped. Existing
@@ -1054,6 +1072,26 @@ export function unlinkRunFromWorkItem(workItemId, runId, options = {}) {
 
 export function workItemRunSummaries() {
   return workItemStore.workItemRunSummaries();
+}
+
+export function syncWorkItemForRun(runRecord, options = {}) {
+  return workItemRunSync.syncWorkItemForRun(runRecord, options);
+}
+
+export function listBoards() {
+  return boardStore.listBoards();
+}
+
+export function getBoard(slugOrId) {
+  return boardStore.getBoard(slugOrId);
+}
+
+export function createBoard(input) {
+  return boardStore.createBoard(input);
+}
+
+export function updateBoard(slugOrId, updates = {}) {
+  return boardStore.updateBoard(slugOrId, updates);
 }
 
 // Windowed cross-run usage rollup behind GET /api/usage/summary: fleet totals,

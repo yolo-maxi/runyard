@@ -403,6 +403,25 @@ export const DB_SCHEMA_SQL = `
     created_at TEXT NOT NULL
   );
 
+  -- Boards: durable configured views over work_items (the software-factory
+  -- surfaces). Lane definitions and default workflow launch suggestions are
+  -- JSON; project scopes the board's membership ('' = all work items). One
+  -- row is seeded as the instance default on first boot (boardStore).
+  -- Additive: older code never reads this table, so rollbacks boot cleanly.
+  CREATE TABLE IF NOT EXISTS boards (
+    id TEXT PRIMARY KEY,
+    slug TEXT NOT NULL UNIQUE,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    project TEXT NOT NULL DEFAULT '',
+    lanes TEXT NOT NULL DEFAULT '[]',
+    default_workflows TEXT NOT NULL DEFAULT '[]',
+    is_default INTEGER NOT NULL DEFAULT 0,
+    created_by TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS secrets (
     key TEXT PRIMARY KEY,
     value_encrypted BLOB NOT NULL,

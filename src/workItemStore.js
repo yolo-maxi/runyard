@@ -48,7 +48,9 @@ export function createWorkItemStore({ all, one, run, id, now }) {
     return all(query.sql, query.params).map(normalizeWorkItem);
   }
 
-  function updateWorkItem(idValue, updates = {}, { actor = "" } = {}) {
+  // `reason` annotates automated moves (e.g. "run succeeded" from the run
+  // sync) so ticket history says why a status changed, not just what moved.
+  function updateWorkItem(idValue, updates = {}, { actor = "", reason = "" } = {}) {
     const lookup = workItemLookupQuery(idValue);
     const existing = one(lookup.sql, lookup.params);
     if (!existing) return null;
@@ -56,10 +58,11 @@ export function createWorkItemStore({ all, one, run, id, now }) {
     const query = workItemUpdateQuery({ idValue, values: workItemUpdateValues(existing, updates, timestamp) });
     run(query.sql, query.params);
     if (updates.status != null && updates.status !== existing.status) {
-      addWorkItemEvent(idValue, "work_item.status_changed", `${existing.status} -> ${updates.status}`, {
+      addWorkItemEvent(idValue, "work_item.status_changed", `${existing.status} -> ${updates.status}${reason ? ` — ${reason}` : ""}`, {
         from: existing.status,
         to: updates.status,
-        actor
+        actor,
+        ...(reason ? { reason } : {})
       });
     } else {
       addWorkItemEvent(idValue, "work_item.updated", "Fields updated", {

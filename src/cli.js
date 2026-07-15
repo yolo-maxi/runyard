@@ -536,6 +536,70 @@ workItemCommand
     print(await client(program.opts()).post(`/api/work-items/${encodeURIComponent(id)}/unlink-run`, { runId }), program.opts().json);
   });
 
+// --- Boards (configured software-factory views over work items) ---
+const boardCommand = program.command("board").description("Board commands: configured views over work items (the factory surfaces)");
+boardCommand
+  .command("list")
+  .description("List boards (the default board is what /app#work shows)")
+  .action(async () => {
+    const data = await client(program.opts()).get("/api/boards");
+    if (program.opts().json) return print(data, true);
+    const boards = data.boards || [];
+    if (!boards.length) return console.log("No boards.");
+    for (const board of boards) {
+      console.log(`${board.slug}${board.isDefault ? "  (default)" : ""}  ${board.title}${board.project ? `  [project: ${board.project}]` : ""}`);
+    }
+  });
+boardCommand
+  .command("show <slug>")
+  .description("Show a board: lanes with counts and the tickets in each")
+  .option("--archived", "include archived items")
+  .action(async (slug, opts) => {
+    const suffix = opts.archived ? "?includeArchived=true" : "";
+    const data = await client(program.opts()).get(`/api/boards/${encodeURIComponent(slug)}${suffix}`);
+    if (program.opts().json) return print(data, true);
+    const { board, lanes = [], workItems = [] } = data;
+    console.log(`${board.title} (${board.slug})${board.isDefault ? " — default board" : ""}`);
+    if (board.description) console.log(board.description);
+    for (const lane of lanes) {
+      console.log(`\n${lane.label} (${lane.count})${lane.hint ? ` — ${lane.hint}` : ""}`);
+      for (const item of workItems.filter((candidate) => lane.statuses.includes(candidate.status))) {
+        printWorkItemLine(item);
+      }
+    }
+  });
+boardCommand
+  .command("create")
+  .description("Create a board (lanes default to the standard seven-column factory layout)")
+  .requiredOption("--slug <slug>", "lowercase letters/digits/hyphens")
+  .requiredOption("--title <title>")
+  .option("--description <text>")
+  .option("--project <project>", "scope the board to one project ('' = all work items)")
+  .option("--default", "make this the instance default board")
+  .action(async (opts) => {
+    const body = { slug: opts.slug, title: opts.title };
+    if (opts.description !== undefined) body.description = opts.description;
+    if (opts.project !== undefined) body.project = opts.project;
+    if (opts.default) body.isDefault = true;
+    print(await client(program.opts()).post("/api/boards", body), program.opts().json);
+  });
+boardCommand
+  .command("update <slug>")
+  .description("Update a board's title, description, project scope, or default flag")
+  .option("--title <title>")
+  .option("--description <text>")
+  .option("--project <project>")
+  .option("--default", "make this the instance default board")
+  .action(async (slug, opts) => {
+    const body = {};
+    if (opts.title !== undefined) body.title = opts.title;
+    if (opts.description !== undefined) body.description = opts.description;
+    if (opts.project !== undefined) body.project = opts.project;
+    if (opts.default) body.isDefault = true;
+    if (!Object.keys(body).length) throw new Error("Nothing to update — pass at least one field flag.");
+    print(await client(program.opts()).patch(`/api/boards/${encodeURIComponent(slug)}`, body), program.opts().json);
+  });
+
 program
   .command("usage [runId]")
   .description("Show metered usage/cost: a fleet rollup per workflow (no run id) or one run's usage detail")

@@ -951,6 +951,36 @@ export const API_SURFACE = [
     mcp: ["unlink_work_item_run"]
   },
 
+  // --- Boards (configured software-factory views over work items) ---
+  {
+    method: "get", path: "/api/boards", handler: "boardHandlers.listBoards",
+    group: "work", v1Path: "/api/v1/work/boards",
+    auth: true, ui: true,
+    summary: "List boards: durable configured views over work items (lane definitions, project scope, default workflow launch suggestions). One board is the instance default.",
+    mcp: ["list_boards"]
+  },
+  {
+    method: "get", path: "/api/boards/:slug", handler: "boardHandlers.getBoard",
+    group: "work", v1Path: "/api/v1/work/boards/:slug",
+    auth: true, ui: true,
+    summary: "Get one board with its lane definitions (including per-lane ticket counts) and the decorated work items in its scope. includeArchived=true adds archived tickets.",
+    mcp: ["get_board"]
+  },
+  {
+    method: "post", path: "/api/boards", handler: "boardHandlers.createBoard",
+    group: "work", v1Path: "/api/v1/work/boards",
+    auth: true, scopes: ["api", "mcp", "admin"], ui: true,
+    summary: "Create a board. Body: {slug, title, description?, project?, lanes?, defaultWorkflows?, isDefault?}. Lanes default to the standard seven-column factory layout; project scopes membership ('' = all work items).",
+    mcp: ["create_board"]
+  },
+  {
+    method: "patch", path: "/api/boards/:slug", handler: "boardHandlers.updateBoard",
+    group: "work", v1Path: "/api/v1/work/boards/:slug",
+    auth: true, scopes: ["api", "mcp", "admin"], ui: true,
+    summary: "Update a board: title, description, project scope, lane definitions, defaultWorkflows, isDefault. Slug is immutable.",
+    mcp: ["update_board"]
+  },
+
   // --- Metering gateway (inference boundary) ---
   // Provider-shaped proxy endpoints served to gateway-metered runs. They are
   // authenticated by the per-run gateway token minted at claim time (never an

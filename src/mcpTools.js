@@ -205,6 +205,42 @@ export const MCP_TOOLS = [
   { name: "delete_work_item", description: "Delete a work item (ticket). Linked runs survive unlinked; prefer update_work_item with status 'archived' to keep ticket history. Requires an admin-scoped token.", inputSchema: { type: "object", required: ["workItemId"], properties: { workItemId: { type: "string" } } } },
   { name: "link_work_item_run", description: "Link an existing run to a work item (ticket). A run belongs to at most one ticket; relinking moves it. To link at creation time instead, pass workItemId to run_workflow.", inputSchema: { type: "object", required: ["workItemId", "runId"], properties: { workItemId: { type: "string" }, runId: { type: "string" } } } },
   { name: "unlink_work_item_run", description: "Unlink a run from a work item (ticket).", inputSchema: { type: "object", required: ["workItemId", "runId"], properties: { workItemId: { type: "string" }, runId: { type: "string" } } } },
+  { name: "list_boards", description: "List boards: durable configured views over work items (lane definitions, project scope, default workflow launch suggestions). One board is the instance default — usually the deployment's own software-factory board.", inputSchema: { type: "object", properties: {} } },
+  { name: "get_board", description: "Get one board with its lane definitions (including per-lane ticket counts) and the decorated work items in its scope — the whole factory picture in one call.", inputSchema: { type: "object", required: ["boardSlug"], properties: { boardSlug: { type: "string" }, includeArchived: { type: "boolean" } } } },
+  {
+    name: "create_board",
+    description: "Create a board: a configured view over work items for a product/infra/docs/release train. Lanes default to the standard seven-column factory layout; project scopes membership ('' = all work items).",
+    inputSchema: {
+      type: "object",
+      required: ["slug", "title"],
+      properties: {
+        slug: { type: "string", description: "Lowercase letters/digits/hyphens." },
+        title: { type: "string" },
+        description: { type: "string" },
+        project: { type: "string", description: "Scope the board to one project ('' = all work items)." },
+        lanes: { type: "array", description: "Lane definitions [{id, label, hint?, empty?, statuses[]}]; omit for the default seven lanes.", items: { type: "object" } },
+        defaultWorkflows: { type: "array", description: "Workflow slugs suggested for launching from this board's tickets.", items: { type: "string" } },
+        isDefault: { type: "boolean" }
+      }
+    }
+  },
+  {
+    name: "update_board",
+    description: "Update a board's title, description, project scope, lane definitions, defaultWorkflows, or isDefault. Slug is immutable.",
+    inputSchema: {
+      type: "object",
+      required: ["boardSlug"],
+      properties: {
+        boardSlug: { type: "string" },
+        title: { type: "string" },
+        description: { type: "string" },
+        project: { type: "string" },
+        lanes: { type: "array", items: { type: "object" } },
+        defaultWorkflows: { type: "array", items: { type: "string" } },
+        isDefault: { type: "boolean" }
+      }
+    }
+  },
   { name: "list_repo_options", description: "List allowlisted repos/projects this Hub can target without exposing raw paths.", inputSchema: { type: "object", properties: {} } },
   { name: "list_workflow_endpoints", description: "List fixed-purpose authenticated workflow endpoints. Requires an admin-scoped token.", inputSchema: { type: "object", properties: {} } },
   { name: "get_workflow_endpoint", description: "Inspect a fixed-purpose authenticated workflow endpoint. Requires an admin-scoped token.", inputSchema: { type: "object", required: ["endpointSlug"], properties: { endpointSlug: { type: "string" } } } },

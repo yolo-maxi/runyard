@@ -25,6 +25,10 @@ const HUB_TOOL_NAMES = [
   "delete_work_item",
   "link_work_item_run",
   "unlink_work_item_run",
+  "list_boards",
+  "get_board",
+  "create_board",
+  "update_board",
   "resume_run",
   "list_runners",
   "list_pending_approvals",
@@ -280,8 +284,14 @@ export function renderLlmsTxt(baseUrl) {
   lines.push("  workflows (reusable recipes) and runs (single execution attempts).");
   lines.push("  The web app's Work board shows them as kanban lanes.");
   lines.push("- Lifecycle statuses: intake, triaged, ready, running, waiting,");
-  lines.push("  blocked, review, shipped, accepted, archived. A failed run never");
-  lines.push("  fails a ticket; move it to blocked/waiting/review with a reason.");
+  lines.push("  blocked, review, shipped, accepted, archived. There is no failed");
+  lines.push("  ticket state: a failed linked run parks its ticket in blocked with");
+  lines.push("  an explicit reason; a succeeded run moves it to review; a held run");
+  lines.push("  (waiting_approval/paused/budget_exceeded) parks it in waiting.");
+  lines.push("- Boards are durable configured views over work items (lanes,");
+  lines.push(`  project scope, default workflows): GET/POST ${baseUrl}/api/boards,`);
+  lines.push("  GET/PATCH /api/boards/{slug}. MCP: list_boards, get_board,");
+  lines.push("  create_board, update_board. One board is the instance default.");
   lines.push(`- HTTP lifecycle: GET/POST ${baseUrl}/api/work-items, per-item`);
   lines.push("  GET/PATCH/DELETE /api/work-items/{id}, and");
   lines.push("  POST /api/work-items/{id}/link-run | /unlink-run ({ runId }).");

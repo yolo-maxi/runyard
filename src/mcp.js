@@ -174,6 +174,19 @@ async function callTool(name, args = {}) {
   if (name === "delete_work_item") return result(await client.delete(`/api/work-items/${encodeURIComponent(args.workItemId || args.id)}`));
   if (name === "link_work_item_run") return result(await client.post(`/api/work-items/${encodeURIComponent(args.workItemId || args.id)}/link-run`, { runId: args.runId }));
   if (name === "unlink_work_item_run") return result(await client.post(`/api/work-items/${encodeURIComponent(args.workItemId || args.id)}/unlink-run`, { runId: args.runId }));
+  if (name === "list_boards") return result(await client.get("/api/boards"));
+  if (name === "get_board") {
+    const suffix = args.includeArchived === true ? "?includeArchived=true" : "";
+    return result(await client.get(`/api/boards/${encodeURIComponent(args.boardSlug || args.slug)}${suffix}`));
+  }
+  if (name === "create_board" || name === "update_board") {
+    const body = {};
+    for (const field of ["slug", "title", "description", "project", "lanes", "defaultWorkflows", "isDefault"]) {
+      if (args[field] !== undefined) body[field] = args[field];
+    }
+    if (name === "create_board") return result(await client.post("/api/boards", body));
+    return result(await client.patch(`/api/boards/${encodeURIComponent(args.boardSlug || args.slug)}`, body));
+  }
   if (name === "list_repo_options") return result(await client.get("/api/repo-options"));
   if (name === "list_workflow_endpoints") return result(await client.get("/api/workflow-endpoints"));
   if (name === "get_workflow_endpoint") return result(await client.get(`/api/workflow-endpoints/${encodeURIComponent(args.endpointSlug || args.slug)}`));

@@ -13,8 +13,14 @@ import { runStatusCountQuery } from "./runnerPoolRecords.js";
 // carries the pause metadata record (src/runPauseStore.js).
 const RUN_UPDATE_FIELDS = ["runner_id", "status", "current_step", "input", "output", "error", "usage", "pause", "assigned_at", "started_at", "completed_at"];
 
-export function createRunMutationStore({ one, run, now, getRun, adjustRunnerActiveRuns }) {
+export function createRunMutationStore({ one, run, now, getRun, adjustRunnerActiveRuns, onRunStatusChange }) {
+  // updateRun is the single choke point where a run's status column is
+  // written (transitionRun AND the approval-resolution path both land here),
+  // so the optional onRunStatusChange observer sees every status move — it
+  // powers the work-item board sync. Observer failures never break the
+  // mutation (the sync layer already swallows its own errors).
   function updateRun(runId, updates) {
+    const before = updates.status !== undefined ? getRun(runId) : null;
     const { sets, params } = runUpdateParams({
       runId,
       updates,
@@ -24,7 +30,11 @@ export function createRunMutationStore({ one, run, now, getRun, adjustRunnerActi
     if (!sets.length) return getRun(runId);
     const query = runUpdateQuery({ sets, params });
     run(query.sql, query.params);
-    return getRun(runId);
+    const updated = getRun(runId);
+    if (before && updated && onRunStatusChange && updated.status !== before.status) {
+      onRunStatusChange(updated, before.status);
+    }
+    return updated;
   }
 
   function transitionRun(runId, toStatus, updates = {}) {
