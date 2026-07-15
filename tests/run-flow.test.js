@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { buildRunFlow, FLOW_NODE_STATES } from "../src/runFlow.js";
+import { buildRunFlow, FLOW_NODE_STATES, unwrapEngineEvent } from "../src/runFlow.js";
 
 const graph = {
   name: "Ship Feature",
@@ -134,6 +134,34 @@ describe("buildRunFlow", () => {
     assert.equal(node.derivedFromEvents, true);
     assert.deepEqual(flow.edges, []);
     assert.equal(flow.name, "Ship Feature");
+  });
+
+  it("unwraps raw smithers.event engine lines into foldable node events", () => {
+    const line = (type, nodeId, ts) => ({
+      id: `evt_${type}_${ts}`,
+      type: "smithers.event",
+      message: JSON.stringify({ runId: "run-1", seq: 1, timestampMs: 1, type, payload: { type, nodeId, iteration: 0 } }),
+      data: {},
+      createdAt: ts
+    });
+    const unwrapped = unwrapEngineEvent(line("NodeStarted", "plan", "t1"));
+    assert.equal(unwrapped.type, "NodeStarted");
+    assert.equal(unwrapped.data.nodeId, "plan");
+    // Non-engine and unparseable events pass through untouched.
+    assert.equal(unwrapEngineEvent({ type: "run.created", message: "x" }).type, "run.created");
+    assert.equal(unwrapEngineEvent({ type: "smithers.event", message: "not json" }).type, "smithers.event");
+
+    const flow = buildRunFlow({
+      run: run(),
+      graph,
+      events: [
+        line("NodeStarted", "plan", "2026-07-15T00:00:01.000Z"),
+        line("NodeFinished", "plan", "2026-07-15T00:00:02.000Z"),
+        line("NodeStarted", "implement", "2026-07-15T00:00:03.000Z")
+      ]
+    });
+    assert.equal(statesById(flow).plan, "done");
+    assert.equal(statesById(flow).implement, "active");
   });
 
   it("passes through pending approvals and counts every declared state", () => {

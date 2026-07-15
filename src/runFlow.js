@@ -29,6 +29,30 @@ function nodeEventState(type) {
   return "";
 }
 
+// The runner streams raw Smithers engine lines as `smithers.event` rows whose
+// message is the engine's JSON (type NodeStarted/NodeFinished/NodeFailed/...,
+// payload.nodeId). Unwrap those into foldable events so live runs show real
+// per-step lifecycle; anything unparseable passes through untouched.
+export function unwrapEngineEvent(event) {
+  if (String(event?.type || "") !== "smithers.event") return event;
+  try {
+    const parsed = JSON.parse(String(event.message || ""));
+    const type = String(parsed?.type || "");
+    if (!type) return event;
+    const payload = parsed.payload && typeof parsed.payload === "object" ? parsed.payload : parsed;
+    return {
+      ...event,
+      type,
+      data: {
+        ...(payload.nodeId ? { nodeId: String(payload.nodeId) } : {}),
+        ...(payload.iteration !== undefined ? { iteration: payload.iteration } : {})
+      }
+    };
+  } catch {
+    return event;
+  }
+}
+
 function entryNodeState(run) {
   if (run.status === "waiting_approval") return "waiting";
   if (run.status === "queued") return "pending";
@@ -44,7 +68,7 @@ function entryNodeState(run) {
 //     fails the node the run died on, paused/waiting_approval park it.
 // Nodes never touched by any rule stay `pending`.
 export function buildRunFlow({ run, graph = null, events = [], pendingApprovals = [] }) {
-  const sorted = [...events].sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+  const sorted = events.map(unwrapEngineEvent).sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
   const graphNodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
   const stats = new Map();
 
