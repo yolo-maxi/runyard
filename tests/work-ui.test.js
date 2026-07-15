@@ -85,11 +85,13 @@ describe("Work: board view", () => {
     assert.match(boardJsx, /onDrop=\{\(e\) => dropOnLane\(e, lane\)\}/);
     assert.match(boardJsx, /startViewTransition/);
     assert.match(boardJsx, /laneTrigger\(lane\)/);
+    assert.match(boardJsx, /laneGuardError\(item, lane\)/);
     assert.match(boardJsx, /maybeRunLaneTrigger\(item, lane, trigger\)/);
     assert.match(boardJsx, /window\.confirm/);
     assert.match(boardJsx, /negotiate: true/);
     assert.match(boardJsx, /workItemId: item\.id/);
     assert.match(boardJsx, /board-col-trigger/);
+    assert.match(boardJsx, /board-col-guard/);
   });
 });
 
@@ -168,7 +170,7 @@ describe("Work: execution flow", () => {
 
 describe("Work: styles", () => {
   it("ships the board, card, and stepper styles", () => {
-    for (const cls of [".work-command", ".work-operator-item", ".board", ".board-col", ".board-col.is-drop-target", ".board-col-header", ".board-col-trigger", ".board-col-trigger.mode-confirm", ".work-card", ".work-card.is-dragging", ".work-card-action", ".work-attention", ".work-flow-step", ".work-flow-step.state-active", ".work-flow-step.state-failed", ".work-blocked-reason", ".work-priority-urgent"]) {
+    for (const cls of [".work-command", ".work-operator-item", ".board", ".board-col", ".board-col.is-drop-target", ".board-col-header", ".board-col-trigger", ".board-col-trigger.mode-confirm", ".board-col-guard", ".work-card", ".work-card.is-dragging", ".work-card-action", ".work-attention", ".work-flow-step", ".work-flow-step.state-active", ".work-flow-step.state-failed", ".work-blocked-reason", ".work-priority-urgent"]) {
       assert.ok(css.includes(cls), `styles.css is missing ${cls}`);
     }
   });

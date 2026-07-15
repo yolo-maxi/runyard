@@ -113,6 +113,11 @@ export function WorkBoard() {
 
   async function moveItem(item, status, lane = null) {
     if (status === item.status) return;
+    const guardError = laneGuardError(item, lane);
+    if (guardError) {
+      toast(guardError, "error");
+      return;
+    }
     const trigger = laneTrigger(lane);
     const launchHandled = await maybeRunLaneTrigger(item, lane, trigger);
     if (launchHandled) return;
@@ -153,7 +158,8 @@ export function WorkBoard() {
   function dragOverLane(event, lane) {
     if (!dragItemId || !lane.statuses?.length) return;
     event.preventDefault();
-    event.dataTransfer.dropEffect = "move";
+    const item = items.find((candidate) => candidate.id === dragItemId);
+    event.dataTransfer.dropEffect = item && laneGuardError(item, lane) ? "none" : "move";
     if (dropLaneId !== lane.id) setDropLaneId(lane.id);
   }
 
@@ -176,6 +182,19 @@ export function WorkBoard() {
     const trigger = lane?.trigger || null;
     if (!trigger || !trigger.mode || trigger.mode === "none") return null;
     return trigger;
+  }
+
+  function laneGuardError(item, lane) {
+    const guard = lane?.guard || null;
+    if (!guard || !item) return "";
+    if (Array.isArray(guard.denyFromStatuses) && guard.denyFromStatuses.includes(item.status)) {
+      return guard.message || `Cannot move ${item.status} work into ${lane.label || "that lane"}`;
+    }
+    if (Array.isArray(guard.allowFromStatuses) && guard.allowFromStatuses.length && !guard.allowFromStatuses.includes(item.status)) {
+      const allowed = guard.allowFromStatuses.join(", ");
+      return guard.message || `Move through ${allowed} before entering ${lane.label || "that lane"}`;
+    }
+    return "";
   }
 
   function triggerWorkflow(trigger) {
@@ -394,6 +413,11 @@ export function WorkBoard() {
                 {lane.trigger?.mode && lane.trigger.mode !== "none" ? (
                   <p className={`board-col-trigger mode-${lane.trigger.mode}`} title={lane.trigger.description || ""}>
                     {lane.trigger.label || lane.trigger.mode}
+                  </p>
+                ) : null}
+                {lane.guard ? (
+                  <p className="board-col-guard" title={lane.guard.message || ""}>
+                    Guarded move
                   </p>
                 ) : null}
                 <div className="board-col-cards">

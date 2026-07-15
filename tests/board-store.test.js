@@ -76,6 +76,26 @@ describe("board records", () => {
       label: "Launch smoke",
       input: { expectRunner: true }
     });
+    const badGuard = validateBoardBody({
+      slug: "ok", title: "x",
+      lanes: [{ id: "done", label: "Done", statuses: ["shipped"], guard: { allowFromStatuses: ["bogus"] } }]
+    });
+    assert.equal(badGuard.ok, false);
+    assert.match(badGuard.error, /guard invalid/);
+    const guard = validateBoardBody({
+      slug: "ok", title: "x",
+      lanes: [{
+        id: "done",
+        label: "Done",
+        statuses: ["shipped"],
+        guard: { allowFromStatuses: ["review"], message: "Review first" }
+      }]
+    });
+    assert.equal(guard.ok, true);
+    assert.deepEqual(guard.value.lanes[0].guard, {
+      allowFromStatuses: ["review"],
+      message: "Review first"
+    });
   });
 
   it("accepts partial update bodies without slug/title", () => {
@@ -120,6 +140,7 @@ describe("board store", () => {
     assert.equal(seeded.lanes.length, DEFAULT_BOARD_LANES.length);
     assert.deepEqual(seeded.defaultWorkflows, ["runyard-smoke-check", "implement-change-gated", "docs-update"]);
     assert.equal(seeded.lanes.find((lane) => lane.id === "running").trigger.mode, "confirm");
+    assert.deepEqual(seeded.lanes.find((lane) => lane.id === "shipped").guard.allowFromStatuses, ["review"]);
     assert.equal(boards.ensureDefaultBoard({ instanceName: "RunYard" }), null);
     assert.equal(boards.listBoards().length, 1);
   });

@@ -73,7 +73,11 @@ export const DEFAULT_BOARD_LANES = [
     label: "Done",
     hint: "Shipped or accepted work that can be archived later.",
     empty: "No completed work on this board.",
-    statuses: ["shipped", "accepted"]
+    statuses: ["shipped", "accepted"],
+    guard: {
+      allowFromStatuses: ["review"],
+      message: "Move work through Review / approve before marking it done."
+    }
   }
 ];
 
@@ -198,13 +202,16 @@ export function validateBoardBody(body = {}, { partial = false } = {}) {
       }
       const trigger = normalizeLaneTrigger(lane.trigger);
       if (!trigger.ok) return { ok: false, error: `lane ${id} trigger invalid: ${trigger.error}` };
+      const guard = normalizeLaneGuard(lane.guard);
+      if (!guard.ok) return { ok: false, error: `lane ${id} guard invalid: ${guard.error}` };
       lanes.push({
         id,
         label,
         hint: String(lane.hint || "").slice(0, 200),
         empty: String(lane.empty || "").slice(0, 200),
         statuses,
-        ...(trigger.value ? { trigger: trigger.value } : {})
+        ...(trigger.value ? { trigger: trigger.value } : {}),
+        ...(guard.value ? { guard: guard.value } : {})
       });
     }
     value.lanes = lanes;
@@ -240,4 +247,37 @@ function triggerModeLabel(mode) {
   if (mode === "auto") return "Auto launch";
   if (mode === "confirm") return "Confirm launch";
   return "Suggest workflow";
+}
+
+function normalizeLaneGuard(raw) {
+  if (raw === undefined || raw === null || raw === false) return { ok: true, value: null };
+  if (typeof raw !== "object" || Array.isArray(raw)) return { ok: false, error: "guard must be an object" };
+  const allowFromStatuses = normalizeGuardStatuses(raw.allowFromStatuses, "allowFromStatuses");
+  if (!allowFromStatuses.ok) return allowFromStatuses;
+  const denyFromStatuses = normalizeGuardStatuses(raw.denyFromStatuses, "denyFromStatuses");
+  if (!denyFromStatuses.ok) return denyFromStatuses;
+  const message = String(raw.message || "").trim().slice(0, 180);
+  if (!allowFromStatuses.value.length && !denyFromStatuses.value.length && !message) {
+    return { ok: true, value: null };
+  }
+  return {
+    ok: true,
+    value: {
+      ...(allowFromStatuses.value.length ? { allowFromStatuses: allowFromStatuses.value } : {}),
+      ...(denyFromStatuses.value.length ? { denyFromStatuses: denyFromStatuses.value } : {}),
+      ...(message ? { message } : {})
+    }
+  };
+}
+
+function normalizeGuardStatuses(raw, field) {
+  if (raw === undefined || raw === null) return { ok: true, value: [] };
+  if (!Array.isArray(raw)) return { ok: false, error: `${field} must be an array` };
+  const values = [];
+  for (const status of raw) {
+    const value = String(status || "").trim();
+    if (!WORK_ITEM_STATUSES.includes(value)) return { ok: false, error: `${field} references unknown status: ${value}` };
+    if (!values.includes(value)) values.push(value);
+  }
+  return { ok: true, value: values };
 }
