@@ -5,6 +5,7 @@
     "workflows",
     "runs",
     "work-items",
+    "boards",
     "approvals",
     "runners",
     "schedules",

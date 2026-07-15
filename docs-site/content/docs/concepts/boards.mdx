@@ -1,0 +1,57 @@
+---
+title: Boards
+description: Durable configured views over work items — the software-factory surfaces that workflows keep up to date.
+---
+
+A **board** is a durable, configured view over [work items](./work-items.mdx): lane definitions in operator language, an optional project scope, and the workflows it suggests launching from tickets. Boards make the Work surface (`/app#work`) a **software factory**: tickets are the durable asks, workflows execute them, and linked runs move tickets across the board as they progress.
+
+Every deployment seeds one default board on first boot — *"&lt;instance name&gt; Factory"* (slug `runyard` by default) — so the Work view is a configured product surface from day one, never an empty shell. More boards can be created for product, infra, docs, or release trains.
+
+## Shape
+
+```json
+{
+  "slug": "runyard",
+  "title": "RunYard Factory",
+  "description": "This deployment's own software-factory board…",
+  "project": "",
+  "lanes": [
+    { "id": "intake", "label": "Needs triage", "hint": "…", "statuses": ["intake"] },
+    { "id": "attention", "label": "Needs decision", "statuses": ["waiting", "blocked"] }
+  ],
+  "defaultWorkflows": [],
+  "isDefault": true
+}
+```
+
+- **`lanes`** group the ten lifecycle statuses into columns; the default is the standard seven-column factory layout (Needs triage · Plan next · Ready to start · In motion · Needs decision · Review / approve · Done). Every lane needs an `id`, `label`, and at least one valid status.
+- **`project`** scopes membership: `""` means all work items; a project name shows only that project's tickets.
+- **`defaultWorkflows`** lists workflow slugs the board suggests for launching from its tickets.
+- **`isDefault`** marks the board the web app opens at `/app#work`.
+
+## Runs move tickets
+
+Linked runs keep the board honest without an operator shepherding every card. The mapping is deliberately conservative:
+
+| Linked run becomes | Ticket moves to | Notes |
+| --- | --- | --- |
+| `queued` / `assigned` / `running` | `running` | Including a `blocked` ticket — relaunching is the unblock signal (the stale `blockedReason` is cleared). |
+| `waiting_approval` / `paused` / `budget_exceeded` | `waiting` | The "Needs decision" lane. |
+| `succeeded` | `review` | Never straight to `shipped` — a human accepts outcomes. |
+| `failed` | `blocked` | With an explicit `blockedReason`; there is still no failed ticket state. |
+| `cancelled` | — | Cancelling is already an operator act. |
+
+Tickets in `shipped`, `accepted`, or `archived` are never touched, and terminal outcomes (`succeeded`/`failed`) wait until no sibling linked run is still live. Every automated move lands in ticket history as a `work_item.status_changed` event attributed to the run (`actor: "run:run_…"`), with the reason.
+
+## API & MCP
+
+| Endpoint | MCP tool | Notes |
+| --- | --- | --- |
+| `GET /api/boards` | `list_boards` | All boards, default first. |
+| `GET /api/boards/{slug}` | `get_board` | Board + lanes with per-lane ticket counts + the decorated work items in scope. |
+| `POST /api/boards` | `create_board` | `api`/`mcp` scope. Body: `slug`, `title` (+ optional fields above). |
+| `PATCH /api/boards/{slug}` | `update_board` | Any subset; `slug` is immutable. |
+
+CLI: `runyard board list`, `runyard board show <slug>` (lanes with counts and tickets), `runyard board create --slug … --title …`, `runyard board update <slug> …`.
+
+Grouped `/api/v1` aliases live under `/api/v1/work/boards…`.

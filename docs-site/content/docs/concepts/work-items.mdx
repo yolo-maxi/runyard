@@ -8,7 +8,7 @@ A **work item** (ticket) is the durable unit of company work: *"Make pause/resum
 - a [workflow](./workflows.mdx) is a reusable **recipe**;
 - a [run](./runs.mdx) is **one execution attempt** of a workflow.
 
-A work item can use one workflow, many workflows, or none yet. Many runs can attach to one work item; a run belongs to at most one work item, and old runs can stay unlinked. Crucially, **a failed run never fails a ticket** — run failures are execution facts, while a ticket's state is a human decision: park it in `blocked`, `waiting`, or `review` with a reason, then retry.
+A work item can use one workflow, many workflows, or none yet. Many runs can attach to one work item; a run belongs to at most one work item, and old runs can stay unlinked. Crucially, **there is no failed ticket state** — run failures are execution facts, not ticket verdicts. A failed linked run parks its ticket in `blocked` with an explicit reason (see [Boards → Runs move tickets](./boards.mdx)); humans and agents can always re-park or retry.
 
 ## Lifecycle
 
@@ -27,13 +27,13 @@ Work items move through a human-legible lifecycle, shown as lanes on the Work bo
 | `accepted` | Confirmed to satisfy the original ask. |
 | `archived` | Closed historical item (hidden from lists by default). |
 
-Status moves are explicit `PATCH`es (by a human or an agent) and are recorded in the ticket history as `work_item.status_changed` events, alongside run link/unlink events and field edits.
+Status moves happen two ways, both recorded in ticket history as `work_item.status_changed` events (alongside run link/unlink events and field edits): explicit `PATCH`es by a human or agent, and automatic moves by linked runs where the mapping is reliable — a run going live puts the ticket in `running`, a held run parks it in `waiting`, a succeeded run sends it to `review`, a failed run parks it in `blocked` with a reason. Automated moves are attributed to the run (`actor: "run:run_…"`); see [Boards](./boards.mdx) for the full mapping.
 
 Each item also carries `type` (`feature`, `bug`, `research`, `release`, `maintenance`, `idea`), `priority` (`urgent`, `high`, `normal`, `low`), `project`, `owner`/`requester`, `acceptanceCriteria`, `nextAction`, `blockedReason`, and an optional `dueAt`.
 
 ## Linked runs and attention
 
-List and detail payloads carry a linked-run rollup — `runs: { total, byStatus, lastRunAt, attention }` — where `attention` counts linked runs whose next step is a human action (`paused`, `waiting_approval`, or `budget_exceeded`), the same signal as [`GET /api/runs/attention`](./runs.mdx). The board surfaces it as a badge; the ticket still only moves lanes when someone moves it.
+List and detail payloads carry a linked-run rollup — `runs: { total, byStatus, lastRunAt, attention }` — where `attention` counts linked runs whose next step is a human action (`paused`, `waiting_approval`, or `budget_exceeded`), the same signal as [`GET /api/runs/attention`](./runs.mdx). The board surfaces it as a badge, and linked runs also move the ticket across lanes as they progress (see [Boards](./boards.mdx)).
 
 Attach runs three ways:
 
