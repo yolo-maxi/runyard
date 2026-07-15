@@ -14,18 +14,21 @@ import { WorkItemEditor } from "../components/WorkItemEditor.jsx";
 import { WorkflowGraph } from "../components/WorkflowGraph.jsx";
 import { WORK_ITEM_STATUSES } from "../lib/workItems.js";
 
-// Work item (ticket) detail: what are we trying to do, what runs/approvals/
-// artifacts are attached, what happened, and what is next — plus the
-// execution flow of the active/latest linked run.
+// Work item (ticket) workbench: what are we trying to do, what runs/approvals/
+// artifacts are attached, what happened, and what is next — plus the execution
+// flow of the active/latest linked run. Layout is a main column (goal, runs,
+// flow) with a properties + activity rail, like a proper inspector.
 
 function LinkedRunRow({ run, onUnlink }) {
   return (
     <li className="work-run-row" data-linked-run={run.id}>
       <StatusBadge value={run.status} />
-      <a href={run.deepLink || deepLinks.run(run.id)} className="work-run-title">
-        {run.title || run.capabilityName || run.capabilitySlug || run.id}
-      </a>
-      <span className="muted">{run.capabilitySlug} · {relativeTime(run.createdAt)}</span>
+      <span className="work-run-main">
+        <a href={run.deepLink || deepLinks.run(run.id)} className="work-run-title">
+          {run.title || run.capabilityName || run.capabilitySlug || run.id}
+        </a>
+        <span className="work-run-sub">{run.capabilitySlug} · {relativeTime(run.createdAt)}</span>
+      </span>
       <button className="btn-sm" data-unlink-run={run.id} onClick={() => onUnlink(run.id)}>Unlink</button>
     </li>
   );
@@ -78,7 +81,7 @@ function RunAttach({ workItem, onChanged }) {
             <option key={wf.slug} value={wf.slug}>{wf.name} ({wf.slug})</option>
           ))}
         </select>
-        <button className="primary" id="work-launch-run" disabled={busy || !slug} onClick={launch}>▶ Run</button>
+        <button className="primary" id="work-launch-run" disabled={busy || !slug} onClick={launch}>Run</button>
       </div>
       <div className="work-run-link">
         <input
@@ -121,8 +124,8 @@ function FlowSection({ runs, focus }) {
 
   return (
     <section className="panel work-flow-panel" id="flow" ref={sectionRef}>
-      <h3>
-        Execution flow
+      <header className="work-panel-head">
+        <h3>Execution flow</h3>
         {runs.length > 1 ? (
           <select
             id="work-flow-run-picker"
@@ -135,8 +138,10 @@ function FlowSection({ runs, focus }) {
             ))}
           </select>
         ) : null}
-      </h3>
-      {!runId ? <p className="muted">No linked runs yet — launch or link one to see its flow here.</p> : null}
+      </header>
+      {!runId ? (
+        <p className="work-quiet-empty">No linked runs yet — launch or link one to see its flow here.</p>
+      ) : null}
       {error ? <p className="muted">{error.message}</p> : null}
       {graph ? (
         <div className="graph-canvas work-flow-graph">
@@ -145,6 +150,15 @@ function FlowSection({ runs, focus }) {
       ) : null}
       {flow ? <WorkFlowStepper flow={flow} /> : null}
     </section>
+  );
+}
+
+function PropRow({ label, children }) {
+  return (
+    <div className="work-prop">
+      <dt>{label}</dt>
+      <dd>{children}</dd>
+    </div>
   );
 }
 
@@ -228,6 +242,7 @@ export function WorkItemDetail({ id, focus = "", me = null }) {
       <Toolbar title={item.title} shareHash={deepLinks.workItem(item.id)}>
         <select
           id="work-item-status"
+          className="work-status-select"
           value={item.status}
           onChange={(e) => moveTo(e.target.value)}
           aria-label="Move this work item"
@@ -241,92 +256,121 @@ export function WorkItemDetail({ id, focus = "", me = null }) {
           ]}
         />
       </Toolbar>
-      <p className="work-detail-chips">
-        <StatusBadge value={item.status} label={item.status} />
-        <span className={`chip work-type-${item.type}`}>{item.type}</span>
-        <span className={`chip work-priority-${item.priority}`}>{item.priority}</span>
-        {item.project ? <span className="chip">{item.project}</span> : null}
-        {item.owner ? <span className="chip" title="Owner">@{item.owner}</span> : null}
-        {item.requester && item.requester !== item.owner ? (
-          <span className="chip muted" title="Requester">asked by {item.requester}</span>
-        ) : null}
-        {item.dueAt ? <span className="chip" title={formatTimestamp(item.dueAt)}>due {relativeTime(item.dueAt)}</span> : null}
-        <span className="muted">updated {relativeTime(item.updatedAt)}</span>
-      </p>
 
-      <section className="split">
-        <div className="panel work-goal">
-          <h3>Goal</h3>
-          {item.description ? <p className="work-description">{item.description}</p> : <p className="muted">No description yet.</p>}
-          {item.acceptanceCriteria ? (
-            <>
-              <h4>Acceptance criteria</h4>
-              <p className="work-acceptance">{item.acceptanceCriteria}</p>
-            </>
-          ) : null}
-          {item.nextAction ? (
-            <p className="work-next-action">→ <strong>Next:</strong> {item.nextAction}</p>
-          ) : null}
-          {item.blockedReason ? (
-            <p className="work-blocked-reason">⛔ <strong>Blocked:</strong> {item.blockedReason}</p>
-          ) : null}
+      <div className="work-detail">
+        <div className="work-detail-main">
+          <section className="panel work-goal">
+            <header className="work-panel-head">
+              <h3>Goal</h3>
+              <span className="work-detail-chips">
+                <span className={`chip work-type-${item.type}`}>{item.type}</span>
+                <span className={`chip work-priority-${item.priority}`}>{item.priority}</span>
+              </span>
+            </header>
+            {item.description ? <p className="work-description">{item.description}</p> : <p className="muted">No description yet.</p>}
+            {item.nextAction ? (
+              <p className="work-next-action"><strong>Next</strong> {item.nextAction}</p>
+            ) : null}
+            {item.blockedReason ? (
+              <p className="work-blocked-reason"><strong>Blocked</strong> {item.blockedReason}</p>
+            ) : null}
+            {item.acceptanceCriteria ? (
+              <>
+                <h4>Acceptance criteria</h4>
+                <p className="work-acceptance">{item.acceptanceCriteria}</p>
+              </>
+            ) : null}
+          </section>
+
+          <section className="panel work-runs-panel">
+            <header className="work-panel-head">
+              <h3>Linked runs</h3>
+              {runs.length ? <span className="badge">{runs.length}</span> : null}
+            </header>
+            {runs.length ? (
+              <ul className="work-run-list">
+                {runs.map((run) => <LinkedRunRow key={run.id} run={run} onUnlink={unlink} />)}
+              </ul>
+            ) : (
+              <p className="work-quiet-empty">No runs attached to this ticket yet — launch one below.</p>
+            )}
+            <div className="work-linked-block">
+              <h4>{runs.length ? "Continue with a workflow" : "Start with a workflow"}</h4>
+              <p className="work-attach-hint">
+                Launched runs are linked to this ticket and move it across the board as they progress.
+              </p>
+              <RunAttach workItem={item} onChanged={invalidate} />
+            </div>
+            {approvals.length ? (
+              <div className="work-linked-block">
+                <h4>Approvals</h4>
+                <ul className="work-approval-list">
+                  {approvals.map((approval) => (
+                    <li key={approval.id}>
+                      <a href={deepLinks.approval(approval.id)}>{approval.title}</a>
+                      <StatusBadge value={approval.resolution || approval.status} />
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {artifacts.length ? (
+              <div className="work-linked-block">
+                <h4>Artifacts</h4>
+                <ul className="work-artifact-list">
+                  {artifacts.map((artifact) => (
+                    <li key={artifact.id}>
+                      <a href={deepLinks.artifact(artifact)}>{artifact.name}</a>
+                      <span className="muted">{artifact.kind} · {relativeTime(artifact.createdAt)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </section>
+
+          <FlowSection runs={runs} focus={focus} />
         </div>
-        <aside className="panel work-activity">
-          <h3>Activity</h3>
-          {events.length ? (
-            <ul className="work-activity-list">
-              {events.map((event) => (
-                <li key={event.id}>
-                  <span className="work-activity-type">{event.type.replace(/^work_item\./, "")}</span>{" "}
-                  {event.message} <span className="muted">{relativeTime(event.createdAt)}</span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="muted">No activity yet.</p>
-          )}
+
+        <aside className="work-detail-rail">
+          <section className="panel work-props">
+            <h3>Properties</h3>
+            <dl className="work-props-list">
+              <PropRow label="Status"><StatusBadge value={item.status} label={item.status} /></PropRow>
+              <PropRow label="Type"><span className={`chip work-type-${item.type}`}>{item.type}</span></PropRow>
+              <PropRow label="Priority"><span className={`chip work-priority-${item.priority}`}>{item.priority}</span></PropRow>
+              {item.project ? <PropRow label="Project">{item.project}</PropRow> : null}
+              {item.owner ? <PropRow label="Owner">@{item.owner}</PropRow> : null}
+              {item.requester ? <PropRow label="Requester">{item.requester}</PropRow> : null}
+              {item.dueAt ? (
+                <PropRow label="Due"><span title={formatTimestamp(item.dueAt)}>{relativeTime(item.dueAt)}</span></PropRow>
+              ) : null}
+              <PropRow label="Updated"><span title={formatTimestamp(item.updatedAt)}>{relativeTime(item.updatedAt)}</span></PropRow>
+              <PropRow label="Created"><span title={formatTimestamp(item.createdAt)}>{relativeTime(item.createdAt)}</span></PropRow>
+              <PropRow label="Id"><code className="work-prop-id">{item.id}</code></PropRow>
+            </dl>
+          </section>
+          <section className="panel work-activity">
+            <h3>Activity</h3>
+            {events.length ? (
+              <ul className="work-activity-list">
+                {events.map((event) => (
+                  <li key={event.id}>
+                    <span className="work-activity-dot" aria-hidden="true" />
+                    <span className="work-activity-body">
+                      <span className="work-activity-type">{event.type.replace(/^work_item\./, "").replace(/_/g, " ")}</span>{" "}
+                      {event.message}
+                      <span className="work-activity-time">{relativeTime(event.createdAt)}</span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="work-quiet-empty">No activity yet.</p>
+            )}
+          </section>
         </aside>
-      </section>
-
-      <section className="panel work-runs-panel">
-        <h3>Linked runs {runs.length ? <span className="muted">({runs.length})</span> : null}</h3>
-        {runs.length ? (
-          <ul className="work-run-list">
-            {runs.map((run) => <LinkedRunRow key={run.id} run={run} onUnlink={unlink} />)}
-          </ul>
-        ) : (
-          <p className="muted">No runs attached to this ticket yet.</p>
-        )}
-        <RunAttach workItem={item} onChanged={invalidate} />
-        {approvals.length ? (
-          <>
-            <h4>Approvals</h4>
-            <ul className="work-approval-list">
-              {approvals.map((approval) => (
-                <li key={approval.id}>
-                  <a href={deepLinks.approval(approval.id)}>{approval.title}</a>{" "}
-                  <StatusBadge value={approval.resolution || approval.status} />
-                </li>
-              ))}
-            </ul>
-          </>
-        ) : null}
-        {artifacts.length ? (
-          <>
-            <h4>Artifacts</h4>
-            <ul className="work-artifact-list">
-              {artifacts.map((artifact) => (
-                <li key={artifact.id}>
-                  <a href={deepLinks.artifact(artifact)}>{artifact.name}</a>{" "}
-                  <span className="muted">{artifact.kind} · {relativeTime(artifact.createdAt)}</span>
-                </li>
-              ))}
-            </ul>
-          </>
-        ) : null}
-      </section>
-
-      <FlowSection runs={runs} focus={focus} />
+      </div>
 
       {editing ? <WorkItemEditor id={item.id} onClose={() => setEditing(false)} /> : null}
     </>

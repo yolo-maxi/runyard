@@ -83,6 +83,21 @@ describe("Work: board view", () => {
   });
 });
 
+describe("Work: board instances", () => {
+  it("fetches boards and drives lanes/title/scope from the picked board", () => {
+    assert.match(boardJsx, /api\("\/api\/boards"\)/);
+    assert.match(boardJsx, /board\?\.lanes\?\.length \? board\.lanes : BOARD_LANES/);
+    assert.match(boardJsx, /board\?\.title \|\| "Work"/);
+    assert.match(boardJsx, /board\?\.project && item\.project !== board\.project/);
+    assert.match(boardJsx, /id="work-board-picker"/);
+  });
+
+  it("the detail view offers an explicit continue-with-a-workflow affordance", () => {
+    assert.match(detailJsx, /Continue with a workflow/);
+    assert.match(detailJsx, /move it across the board as they progress/);
+  });
+});
+
 describe("Work: editor form", () => {
   it("covers the full work-item field set", () => {
     for (const id of ["wi-title", "wi-description", "wi-project", "wi-type", "wi-status", "wi-priority", "wi-owner", "wi-requester", "wi-acceptance", "wi-next-action", "wi-blocked-reason", "wi-due"]) {
@@ -151,7 +166,7 @@ describe("Work: styles", () => {
 describe("Work: API client discipline", () => {
   it("only calls registered endpoints", () => {
     const sources = [boardJsx, detailJsx, editorJsx, cardJsx, stepperJsx];
-    const allowed = ["/api/work-items", "/api/runs/", "/api/workflows/"];
+    const allowed = ["/api/work-items", "/api/runs/", "/api/workflows/", "/api/boards"];
     for (const source of sources) {
       for (const match of source.matchAll(/api\(\s*[`"](\/[^`"]*)/g)) {
         const url = match[1];

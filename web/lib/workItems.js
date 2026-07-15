@@ -94,6 +94,16 @@ export function runRollupLabel(runs) {
   return parts.join(" · ");
 }
 
+// Health tone for a card's linked-run rollup dot: the worst live signal wins.
+export function runHealthTone(runs) {
+  if (!runs || !runs.total) return null;
+  const by = runs.byStatus || {};
+  if ((by.failed || 0) + (by.budget_exceeded || 0) > 0) return "danger";
+  if ((runs.attention || 0) > 0 || (by.waiting_approval || 0) + (by.paused || 0) > 0) return "warn";
+  if ((by.running || 0) + (by.queued || 0) + (by.assigned || 0) > 0) return "info";
+  return "ok";
+}
+
 export function workItemAction(item) {
   const attention = Number(item?.runs?.attention || 0);
   if (item?.status === "blocked") {

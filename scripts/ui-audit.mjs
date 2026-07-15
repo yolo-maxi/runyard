@@ -74,9 +74,14 @@ async function main() {
   const wfs = (await getJSON("/api/capabilities"))?.capabilities || (await getJSON("/api/workflows")) || [];
   const wfSlug = Array.isArray(wfs) ? wfs[0]?.slug || wfs[0]?.name : undefined;
 
+  const workItems = (await getJSON("/api/work-items"))?.workItems || [];
+  const workItemId = workItems[0]?.id;
+
   const ROUTES = [
     ["runs", "#runs"],
     ["run-detail", runId ? `#runs/${encodeURIComponent(runId)}` : null],
+    ["work", "#work"],
+    ["work-detail", workItemId ? `#work/${encodeURIComponent(workItemId)}` : null],
     ["workflows", "#workflows"],
     ["workflow-detail", wfSlug ? `#workflows/${encodeURIComponent(wfSlug)}` : null],
     ["approvals", "#approvals"],

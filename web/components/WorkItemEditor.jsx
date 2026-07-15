@@ -4,9 +4,11 @@ import { api } from "../lib/api.js";
 import { toast } from "../lib/toast.js";
 import { WORK_ITEM_PRIORITIES, WORK_ITEM_STATUSES, WORK_ITEM_TYPES } from "../lib/workItems.js";
 
-// Inline work-item editor (ScheduleEditor is the pattern): a `.panel` form,
-// create mode (id="") and edit mode (id set). Only fields the operator
-// touched are PATCHed on edit; create sends the full draft.
+// Work-item editor modal: create mode (id="") and edit mode (id set). A tight
+// two-column dialog instead of a form dumped under the board — closes on
+// Escape, backdrop click, or Cancel. Only fields the operator touched matter
+// on edit (the PATCH sends the full draft; the server treats it as the new
+// truth for these fields).
 
 function toLocalDatetimeValue(iso) {
   if (!iso) return "";
@@ -48,13 +50,13 @@ export function WorkItemEditor({ id = "", onClose }) {
     });
   }, [editing, existingData, draft]);
 
-  if (!draft) {
-    return (
-      <section id="editor" className="panel">
-        <p className="muted">Loading…</p>
-      </section>
-    );
-  }
+  useEffect(() => {
+    const onKey = (event) => {
+      if (event.key === "Escape") onClose?.();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
 
   const set = (patch) => setDraft((d) => ({ ...d, ...patch }));
 
@@ -89,53 +91,78 @@ export function WorkItemEditor({ id = "", onClose }) {
   }
 
   return (
-    <section id="editor" className="panel">
-      <h2>{editing ? "Edit" : "New"} work item</h2>
-      <form id="work-item-form" className="form-grid" onSubmit={submit}>
-        <label>Title <span className="req">*</span>
-          <input id="wi-title" value={draft.title} onChange={(e) => set({ title: e.target.value })} required />
-        </label>
-        <label>Goal / description
-          <textarea id="wi-description" placeholder="What are we trying to do, and why?" value={draft.description} onChange={(e) => set({ description: e.target.value })} />
-        </label>
-        <label>Project
-          <input id="wi-project" value={draft.project} onChange={(e) => set({ project: e.target.value })} />
-        </label>
-        <label>Type
-          <select id="wi-type" value={draft.type} onChange={(e) => set({ type: e.target.value })}>
-            {WORK_ITEM_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-          </select>
-        </label>
-        <label>Status
-          <select id="wi-status" value={draft.status} onChange={(e) => set({ status: e.target.value })}>
-            {WORK_ITEM_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
-        </label>
-        <label>Priority
-          <select id="wi-priority" value={draft.priority} onChange={(e) => set({ priority: e.target.value })}>
-            {WORK_ITEM_PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}
-          </select>
-        </label>
-        <label>Owner
-          <input id="wi-owner" placeholder="who owns the next action" value={draft.owner} onChange={(e) => set({ owner: e.target.value })} />
-        </label>
-        <label>Requester
-          <input id="wi-requester" value={draft.requester} onChange={(e) => set({ requester: e.target.value })} />
-        </label>
-        <label>Acceptance criteria
-          <textarea id="wi-acceptance" placeholder="How will we know the ask is satisfied?" value={draft.acceptanceCriteria} onChange={(e) => set({ acceptanceCriteria: e.target.value })} />
-        </label>
-        <label>Next action
-          <input id="wi-next-action" placeholder="the single next concrete action" value={draft.nextAction} onChange={(e) => set({ nextAction: e.target.value })} />
-        </label>
-        <label>Blocked reason
-          <input id="wi-blocked-reason" placeholder="set when status is blocked" value={draft.blockedReason} onChange={(e) => set({ blockedReason: e.target.value })} />
-        </label>
-        <label>Due / target
-          <input id="wi-due" type="datetime-local" value={draft.dueAt} onChange={(e) => set({ dueAt: e.target.value })} />
-        </label>
-        <button className="primary" type="submit">{editing ? "Save work item" : "Create work item"}</button>
-      </form>
-    </section>
+    <div
+      className="work-modal-backdrop"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose?.();
+      }}
+    >
+      <section
+        id="editor"
+        className="panel work-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label={editing ? "Edit work item" : "New work item"}
+      >
+        <header className="work-modal-head">
+          <h2>{editing ? "Edit work item" : "New work item"}</h2>
+          <button type="button" className="btn-sm btn-icon work-modal-close" aria-label="Close" onClick={() => onClose?.()}>
+            ×
+          </button>
+        </header>
+        {!draft ? (
+          <p className="muted">Loading…</p>
+        ) : (
+          <form id="work-item-form" className="form-grid work-editor-grid" onSubmit={submit}>
+            <label className="span-2"><span>Title <span className="req">*</span></span>
+              <input id="wi-title" value={draft.title} onChange={(e) => set({ title: e.target.value })} required autoFocus />
+            </label>
+            <label className="span-2">Goal / description
+              <textarea id="wi-description" rows={3} placeholder="What are we trying to do, and why?" value={draft.description} onChange={(e) => set({ description: e.target.value })} />
+            </label>
+            <label>Type
+              <select id="wi-type" value={draft.type} onChange={(e) => set({ type: e.target.value })}>
+                {WORK_ITEM_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </label>
+            <label>Priority
+              <select id="wi-priority" value={draft.priority} onChange={(e) => set({ priority: e.target.value })}>
+                {WORK_ITEM_PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </label>
+            <label>Status
+              <select id="wi-status" value={draft.status} onChange={(e) => set({ status: e.target.value })}>
+                {WORK_ITEM_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </label>
+            <label>Project
+              <input id="wi-project" value={draft.project} onChange={(e) => set({ project: e.target.value })} />
+            </label>
+            <label>Owner
+              <input id="wi-owner" placeholder="who owns the next action" value={draft.owner} onChange={(e) => set({ owner: e.target.value })} />
+            </label>
+            <label>Requester
+              <input id="wi-requester" value={draft.requester} onChange={(e) => set({ requester: e.target.value })} />
+            </label>
+            <label className="span-2">Next action
+              <input id="wi-next-action" placeholder="the single next concrete action" value={draft.nextAction} onChange={(e) => set({ nextAction: e.target.value })} />
+            </label>
+            <label className="span-2">Acceptance criteria
+              <textarea id="wi-acceptance" rows={2} placeholder="How will we know the ask is satisfied?" value={draft.acceptanceCriteria} onChange={(e) => set({ acceptanceCriteria: e.target.value })} />
+            </label>
+            <label>Blocked reason
+              <input id="wi-blocked-reason" placeholder="set when status is blocked" value={draft.blockedReason} onChange={(e) => set({ blockedReason: e.target.value })} />
+            </label>
+            <label>Due / target
+              <input id="wi-due" type="datetime-local" value={draft.dueAt} onChange={(e) => set({ dueAt: e.target.value })} />
+            </label>
+            <footer className="work-modal-actions span-2">
+              <button type="button" onClick={() => onClose?.()}>Cancel</button>
+              <button className="primary" type="submit">{editing ? "Save work item" : "Create work item"}</button>
+            </footer>
+          </form>
+        )}
+      </section>
+    </div>
   );
 }

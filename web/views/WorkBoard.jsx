@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api.js";
 import { deepLinks } from "../lib/router.js";
+import { relativeTime } from "../lib/format.js";
 import { toast } from "../lib/toast.js";
 import { Badge, Toolbar } from "../components/ui.jsx";
 import { WorkCard } from "../components/WorkCard.jsx";
@@ -17,6 +18,7 @@ export function WorkBoard() {
   const [showArchived, setShowArchived] = useState(false);
   const [filter, setFilter] = useState("");
   const [project, setProject] = useState("");
+  const [boardSlug, setBoardSlug] = useState("");
   const queryClient = useQueryClient();
 
   const { data, error } = useQuery({
@@ -25,16 +27,27 @@ export function WorkBoard() {
     refetchInterval: 15_000
   });
 
+  // Board instances: durable configured views (lanes, project scope, title).
+  // The default board is this deployment's own factory surface; more can be
+  // created via API/CLI/MCP and picked here.
+  const { data: boardsData } = useQuery({
+    queryKey: ["boards"],
+    queryFn: () => api("/api/boards")
+  });
+  const boards = boardsData?.boards || [];
+  const board = boards.find((b) => b.slug === boardSlug) || boards.find((b) => b.isDefault) || boards[0] || null;
+
   const items = useMemo(() => {
     const all = data?.workItems || [];
     const q = filter.trim().toLowerCase();
     return all.filter((item) => {
+      if (board?.project && item.project !== board.project) return false;
       if (project && item.project !== project) return false;
       if (!q) return true;
       return [item.title, item.description, item.project, item.owner, item.id]
         .some((field) => String(field || "").toLowerCase().includes(q));
     });
-  }, [data, filter, project]);
+  }, [data, filter, project, board]);
 
   const projects = useMemo(
     () => {
@@ -91,20 +104,39 @@ export function WorkBoard() {
     );
   }
 
-  const lanes = showArchived ? [...BOARD_LANES, ARCHIVED_LANE] : BOARD_LANES;
+  const baseLanes = board?.lanes?.length ? board.lanes : BOARD_LANES;
+  const lanes = showArchived ? [...baseLanes, ARCHIVED_LANE] : baseLanes;
 
   return (
     <>
-      <Toolbar title="Work" shareHash={deepLinks.work()}>
+      <Toolbar title={board?.title || "Work"} shareHash={deepLinks.work()}>
+        {boards.length > 1 ? (
+          <select
+            id="work-board-picker"
+            className="work-project-filter"
+            value={board?.slug || ""}
+            onChange={(e) => setBoardSlug(e.target.value)}
+            aria-label="Board"
+          >
+            {boards.map((b) => <option key={b.slug} value={b.slug}>{b.title}</option>)}
+          </select>
+        ) : null}
         <input
           id="work-filter"
           className="work-filter"
-          placeholder="Filter…"
+          type="search"
+          placeholder="Filter work…"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
         />
         {projects.length ? (
-          <select id="work-project-filter" value={project} onChange={(e) => setProject(e.target.value)} aria-label="Filter by project">
+          <select
+            id="work-project-filter"
+            className="work-project-filter"
+            value={project}
+            onChange={(e) => setProject(e.target.value)}
+            aria-label="Filter by project"
+          >
             <option value="">All projects</option>
             {projects.map((p) => <option key={p} value={p}>{p}</option>)}
           </select>
@@ -115,68 +147,92 @@ export function WorkBoard() {
         <button id="new-work-item" className="primary" onClick={() => setEditing("")}>New work item</button>
       </Toolbar>
       <section className="work-command" aria-label="Operator queue">
-        <div className="work-command-copy">
-          <p className="eyebrow">Start here</p>
-          <h2>What needs action</h2>
-          <p>
-            Work items are outcomes. Runs are attempts. This queue stays focused on the next human move.
-          </p>
-        </div>
-        <div className="work-command-stats" aria-label="Board summary">
-          <span><strong>{boardTotals.needsDecision}</strong> need decision</span>
-          <span><strong>{boardTotals.review}</strong> in review</span>
-          <span><strong>{boardTotals.running}</strong> running</span>
-          <span><strong>{boardTotals.active}</strong> active</span>
-        </div>
+        <header className="work-command-head">
+          <div className="work-command-copy">
+            <h2>What needs action</h2>
+            <p>{board?.description || "Work items are outcomes; runs are attempts. This queue is the next human move."}</p>
+          </div>
+          <dl className="work-command-stats" aria-label="Board summary">
+            <div className={boardTotals.needsDecision ? "is-signal" : ""}>
+              <dd>{boardTotals.needsDecision}</dd>
+              <dt>need decision</dt>
+            </div>
+            <div>
+              <dd>{boardTotals.review}</dd>
+              <dt>in review</dt>
+            </div>
+            <div>
+              <dd>{boardTotals.running}</dd>
+              <dt>running</dt>
+            </div>
+            <div>
+              <dd>{boardTotals.active}</dd>
+              <dt>active</dt>
+            </div>
+          </dl>
+        </header>
         <div className="work-operator-list">
           {operatorItems.length ? operatorItems.map((item) => {
             const action = workItemAction(item);
             return (
               <a key={item.id} className={`work-operator-item tone-${action.tone}`} href={deepLinks.workItem(item.id)}>
                 <span className="work-operator-label">{action.label}</span>
-                <strong>{item.title}</strong>
-                <span>{action.detail}</span>
+                <span className="work-operator-body">
+                  <strong>{item.title}</strong>
+                  <span className="work-operator-detail">{action.detail}</span>
+                </span>
+                <span className="work-operator-meta">
+                  {item.project ? <span className="work-operator-project">{item.project}</span> : null}
+                  <span title={item.updatedAt}>{relativeTime(item.updatedAt)}</span>
+                </span>
+                <span className="work-operator-go" aria-hidden="true">→</span>
               </a>
             );
           }) : (
             <div className="work-operator-empty">
-              <strong>No immediate operator actions.</strong>
-              <span>Ready items and new requests will appear here when they need a decision.</span>
+              <span className="work-operator-clear" aria-hidden="true">✓</span>
+              <span>
+                <strong>All clear — nothing needs a decision right now.</strong>{" "}
+                <span className="work-operator-detail">Ready items and new requests surface here the moment they need you.</span>
+              </span>
             </div>
           )}
         </div>
       </section>
       {!items.length ? (
         <section className="work-empty-state panel">
-          <p className="eyebrow">No active work</p>
-          <h2>Capture the next outcome</h2>
-          <p className="muted">
-            Create a work item when there is something the company needs shipped, reviewed, or unblocked.
-          </p>
+          <div>
+            <p className="eyebrow">No active work</p>
+            <h2>Capture the next outcome</h2>
+            <p className="muted">
+              Create a work item when there is something the company needs shipped, reviewed, or unblocked.
+            </p>
+          </div>
           <button className="primary" onClick={() => setEditing("")}>Create work item</button>
         </section>
       ) : null}
-      <div className="board" role="list" aria-label="Work board lanes">
-        {lanes.map((lane) => {
-          const laneItems = items.filter((item) => lane.statuses.includes(item.status));
-          return (
-            <section key={lane.id} className="board-col" data-lane={lane.id} role="listitem">
-              <header className="board-col-header">
-                <div>
-                  <span>{lane.label}</span>
-                  <p>{lane.hint}</p>
+      <div className="board-scroller">
+        <div className="board" role="list" aria-label="Work board lanes">
+          {lanes.map((lane) => {
+            const laneItems = items.filter((item) => lane.statuses.includes(item.status));
+            return (
+              <section key={lane.id} className="board-col" data-lane={lane.id} role="listitem">
+                <header className="board-col-header">
+                  <span className="board-col-dot" aria-hidden="true" />
+                  <span className="board-col-label">{lane.label}</span>
+                  <Badge>{laneItems.length}</Badge>
+                </header>
+                <p className="board-col-hint" title={lane.hint}>{lane.hint}</p>
+                <div className="board-col-cards">
+                  {laneItems.map((item) => (
+                    <WorkCard key={item.id} item={item} onMove={moveItem} />
+                  ))}
+                  {!laneItems.length ? <p className="board-col-empty muted">{lane.empty}</p> : null}
                 </div>
-                <Badge>{laneItems.length}</Badge>
-              </header>
-              <div className="board-col-cards">
-                {laneItems.map((item) => (
-                  <WorkCard key={item.id} item={item} onMove={moveItem} />
-                ))}
-                {!laneItems.length ? <p className="board-col-empty muted">{lane.empty}</p> : null}
-              </div>
-            </section>
-          );
-        })}
+              </section>
+            );
+          })}
+        </div>
       </div>
       {editing !== null ? <WorkItemEditor id={editing} onClose={() => setEditing(null)} /> : null}
     </>
