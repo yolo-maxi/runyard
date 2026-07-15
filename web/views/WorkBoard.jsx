@@ -6,7 +6,7 @@ import { toast } from "../lib/toast.js";
 import { Badge, Toolbar } from "../components/ui.jsx";
 import { WorkCard } from "../components/WorkCard.jsx";
 import { WorkItemEditor } from "../components/WorkItemEditor.jsx";
-import { ARCHIVED_LANE, BOARD_LANES } from "../lib/workItems.js";
+import { ARCHIVED_LANE, BOARD_LANES, isOperatorAttention, workItemAction } from "../lib/workItems.js";
 
 // The Work board: work items (tickets) as kanban lanes. This is the
 // company-level "what is being shipped" surface — workflows are recipes,
@@ -40,6 +40,29 @@ export function WorkBoard() {
     () => [...new Set((data?.workItems || []).map((item) => item.project).filter(Boolean))].sort(),
     [data]
   );
+
+  const operatorItems = useMemo(() => {
+    const order = { urgent: 0, blocked: 1, waiting: 2, review: 3, intake: 4 };
+    return items
+      .filter((item) => item.status !== "archived" && isOperatorAttention(item))
+      .sort((a, b) => {
+        const aScore = a.priority === "urgent" ? order.urgent : (order[a.status] ?? 8);
+        const bScore = b.priority === "urgent" ? order.urgent : (order[b.status] ?? 8);
+        if (aScore !== bScore) return aScore - bScore;
+        return String(b.updatedAt || "").localeCompare(String(a.updatedAt || ""));
+      })
+      .slice(0, 6);
+  }, [items]);
+
+  const boardTotals = useMemo(() => {
+    const active = items.filter((item) => item.status !== "archived");
+    return {
+      active: active.length,
+      needsDecision: active.filter((item) => ["waiting", "blocked"].includes(item.status) || Number(item.runs?.attention || 0) > 0).length,
+      review: active.filter((item) => item.status === "review").length,
+      running: active.filter((item) => item.status === "running").length
+    };
+  }, [items]);
 
   async function moveItem(item, status) {
     if (status === item.status) return;
@@ -84,23 +107,65 @@ export function WorkBoard() {
         </label>
         <button id="new-work-item" className="primary" onClick={() => setEditing("")}>New work item</button>
       </Toolbar>
-      <p className="muted">
-        Work items are the durable unit of company work. Workflows are the recipes; runs are single attempts.
-        A failed run never fails a ticket — move it to blocked, review, or waiting with a reason instead.
-      </p>
+      <section className="work-command" aria-label="Operator queue">
+        <div className="work-command-copy">
+          <p className="eyebrow">Start here</p>
+          <h2>What needs action</h2>
+          <p>
+            Work items are outcomes. Runs are attempts. This queue stays focused on the next human move.
+          </p>
+        </div>
+        <div className="work-command-stats" aria-label="Board summary">
+          <span><strong>{boardTotals.needsDecision}</strong> need decision</span>
+          <span><strong>{boardTotals.review}</strong> in review</span>
+          <span><strong>{boardTotals.running}</strong> running</span>
+          <span><strong>{boardTotals.active}</strong> active</span>
+        </div>
+        <div className="work-operator-list">
+          {operatorItems.length ? operatorItems.map((item) => {
+            const action = workItemAction(item);
+            return (
+              <a key={item.id} className={`work-operator-item tone-${action.tone}`} href={deepLinks.workItem(item.id)}>
+                <span className="work-operator-label">{action.label}</span>
+                <strong>{item.title}</strong>
+                <span>{action.detail}</span>
+              </a>
+            );
+          }) : (
+            <div className="work-operator-empty">
+              <strong>No immediate operator actions.</strong>
+              <span>Ready items and new requests will appear here when they need a decision.</span>
+            </div>
+          )}
+        </div>
+      </section>
+      {!items.length ? (
+        <section className="work-empty-state panel">
+          <p className="eyebrow">No active work</p>
+          <h2>Capture the next outcome</h2>
+          <p className="muted">
+            Create a work item when there is something the company needs shipped, reviewed, or unblocked.
+          </p>
+          <button className="primary" onClick={() => setEditing("")}>Create work item</button>
+        </section>
+      ) : null}
       <div className="board" role="list" aria-label="Work board lanes">
         {lanes.map((lane) => {
           const laneItems = items.filter((item) => lane.statuses.includes(item.status));
           return (
             <section key={lane.id} className="board-col" data-lane={lane.id} role="listitem">
               <header className="board-col-header">
-                <span>{lane.label}</span> <Badge>{laneItems.length}</Badge>
+                <div>
+                  <span>{lane.label}</span>
+                  <p>{lane.hint}</p>
+                </div>
+                <Badge>{laneItems.length}</Badge>
               </header>
               <div className="board-col-cards">
                 {laneItems.map((item) => (
                   <WorkCard key={item.id} item={item} onMove={moveItem} />
                 ))}
-                {!laneItems.length ? <p className="board-col-empty muted">—</p> : null}
+                {!laneItems.length ? <p className="board-col-empty muted">{lane.empty}</p> : null}
               </div>
             </section>
           );

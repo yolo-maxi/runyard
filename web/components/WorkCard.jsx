@@ -1,6 +1,6 @@
 import { deepLinks } from "../lib/router.js";
 import { relativeTime } from "../lib/format.js";
-import { WORK_ITEM_STATUSES, runRollupLabel } from "../lib/workItems.js";
+import { WORK_ITEM_STATUSES, runRollupLabel, workItemAction } from "../lib/workItems.js";
 
 // One kanban card. Pure presentational (all data via props) so the SSR render
 // smoke test can exercise it without queries; the board wires onMove to a
@@ -9,8 +9,13 @@ import { WORK_ITEM_STATUSES, runRollupLabel } from "../lib/workItems.js";
 export function WorkCard({ item, onMove, now = Date.now() }) {
   const runs = item.runs || null;
   const rollup = runRollupLabel(runs);
+  const action = workItemAction(item);
   return (
     <article className="work-card" data-work-item={item.id} data-status={item.status}>
+      <div className={`work-card-action tone-${action.tone}`}>
+        <span>{action.label}</span>
+        <strong>{action.detail}</strong>
+      </div>
       <h4 className="work-card-title">
         <a href={deepLinks.workItem(item.id)}>{item.title}</a>
       </h4>
@@ -23,10 +28,10 @@ export function WorkCard({ item, onMove, now = Date.now() }) {
         {item.owner ? <span className="chip">@{item.owner}</span> : null}
       </p>
       {item.nextAction ? (
-        <p className="work-card-next" title={item.nextAction}>→ {item.nextAction}</p>
+        <p className="work-card-next" title={item.nextAction}>Next: {item.nextAction}</p>
       ) : null}
       {item.status === "blocked" && item.blockedReason ? (
-        <p className="work-card-blocked" title={item.blockedReason}>⛔ {item.blockedReason}</p>
+        <p className="work-card-blocked" title={item.blockedReason}>Blocked: {item.blockedReason}</p>
       ) : null}
       <p className="work-card-meta">
         {rollup ? <span className="work-card-runs">{rollup}</span> : <span className="muted">no runs</span>}
