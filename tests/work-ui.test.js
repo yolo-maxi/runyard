@@ -62,11 +62,20 @@ describe("Work: board view", () => {
     assert.match(boardJsx, /api\(`\/api\/work-items\$\{showArchived \? "\?includeArchived=true" : ""\}`\)/);
     assert.match(boardJsx, /className="board"/);
     assert.match(boardJsx, /className="board-col"/);
+    assert.match(boardJsx, /className="work-command"/);
+    assert.match(boardJsx, /What needs action/);
     assert.match(boardJsx, /<WorkCard/);
     assert.match(cardJsx, /data-move-work-item=/);
+    assert.match(cardJsx, /work-card-action/);
+    assert.match(cardJsx, /workItemAction\(item\)/);
     assert.match(cardJsx, /work-attention/);
     assert.match(boardJsx, /id="new-work-item"/);
     assert.match(boardJsx, /id="work-filter"/);
+  });
+
+  it("deduplicates project filters case-insensitively", () => {
+    assert.match(boardJsx, /const seen = new Map\(\)/);
+    assert.match(boardJsx, /toLowerCase\(\)/);
   });
 
   it("PATCHes status when a card is moved", () => {
@@ -133,7 +142,7 @@ describe("Work: execution flow", () => {
 
 describe("Work: styles", () => {
   it("ships the board, card, and stepper styles", () => {
-    for (const cls of [".board", ".board-col", ".board-col-header", ".work-card", ".work-attention", ".work-flow-step", ".work-flow-step.state-active", ".work-flow-step.state-failed", ".work-blocked-reason", ".work-priority-urgent"]) {
+    for (const cls of [".work-command", ".work-operator-item", ".board", ".board-col", ".board-col-header", ".work-card", ".work-card-action", ".work-attention", ".work-flow-step", ".work-flow-step.state-active", ".work-flow-step.state-failed", ".work-blocked-reason", ".work-priority-urgent"]) {
       assert.ok(css.includes(cls), `styles.css is missing ${cls}`);
     }
   });

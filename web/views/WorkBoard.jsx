@@ -37,7 +37,14 @@ export function WorkBoard() {
   }, [data, filter, project]);
 
   const projects = useMemo(
-    () => [...new Set((data?.workItems || []).map((item) => item.project).filter(Boolean))].sort(),
+    () => {
+      const seen = new Map();
+      for (const raw of (data?.workItems || []).map((item) => item.project).filter(Boolean)) {
+        const key = String(raw).trim().toLowerCase();
+        if (!seen.has(key)) seen.set(key, String(raw).trim());
+      }
+      return [...seen.values()].sort((a, b) => a.localeCompare(b));
+    },
     [data]
   );
 
