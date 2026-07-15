@@ -9,6 +9,7 @@ import { toast } from "../lib/toast.js";
 import { Badge, Toolbar } from "../components/ui.jsx";
 import { WorkCard } from "../components/WorkCard.jsx";
 import { WorkItemEditor } from "../components/WorkItemEditor.jsx";
+import { WorkflowGraph } from "../components/WorkflowGraph.jsx";
 import { ARCHIVED_LANE, BOARD_LANES, isOperatorAttention, workItemAction } from "../lib/workItems.js";
 
 // The Work board: work items (tickets) as kanban lanes. This is the
@@ -21,6 +22,7 @@ export function WorkBoard() {
   const [filter, setFilter] = useState("");
   const [project, setProject] = useState("");
   const [boardSlug, setBoardSlug] = useState("");
+  const [workView, setWorkView] = useState("board");
   const [dragItemId, setDragItemId] = useState("");
   const [dropLaneId, setDropLaneId] = useState("");
   const [optimisticStatuses, setOptimisticStatuses] = useState({});
@@ -110,6 +112,13 @@ export function WorkBoard() {
       running: active.filter((item) => item.status === "running").length
     };
   }, [items]);
+
+  const baseLanes = board?.lanes?.length ? board.lanes : BOARD_LANES;
+  const lanes = showArchived ? [...baseLanes, ARCHIVED_LANE] : baseLanes;
+  const boardGraph = useMemo(
+    () => buildBoardGraph({ lanes, items, workflows, defaultWorkflows: board?.defaultWorkflows || [] }),
+    [lanes, items, workflows, board]
+  );
 
   async function moveItem(item, status, lane = null) {
     if (status === item.status) return;
@@ -283,9 +292,6 @@ export function WorkBoard() {
     );
   }
 
-  const baseLanes = board?.lanes?.length ? board.lanes : BOARD_LANES;
-  const lanes = showArchived ? [...baseLanes, ARCHIVED_LANE] : baseLanes;
-
   return (
     <>
       <Toolbar title={board?.title || "Work"} shareHash={deepLinks.work()}>
@@ -390,54 +396,134 @@ export function WorkBoard() {
           <button className="primary" onClick={() => setEditing("")}>Create work item</button>
         </section>
       ) : null}
-      <div className="board-scroller">
-        <div className="board" role="list" aria-label="Work board lanes">
-          {lanes.map((lane) => {
-            const laneItems = items.filter((item) => lane.statuses.includes(item.status));
-            return (
-              <section
-                key={lane.id}
-                className={`board-col${dropLaneId === lane.id ? " is-drop-target" : ""}`}
-                data-lane={lane.id}
-                role="listitem"
-                onDragOver={(e) => dragOverLane(e, lane)}
-                onDragLeave={(e) => leaveLane(e, lane)}
-                onDrop={(e) => dropOnLane(e, lane)}
-              >
-                <header className="board-col-header">
-                  <span className="board-col-dot" aria-hidden="true" />
-                  <span className="board-col-label">{lane.label}</span>
-                  <Badge>{laneItems.length}</Badge>
-                </header>
-                <p className="board-col-hint" title={lane.hint}>{lane.hint}</p>
-                {lane.trigger?.mode && lane.trigger.mode !== "none" ? (
-                  <p className={`board-col-trigger mode-${lane.trigger.mode}`} title={lane.trigger.description || ""}>
-                    {lane.trigger.label || lane.trigger.mode}
-                  </p>
-                ) : null}
-                {lane.guard ? (
-                  <p className="board-col-guard" title={lane.guard.message || ""}>
-                    Guarded move
-                  </p>
-                ) : null}
-                <div className="board-col-cards">
-                  {laneItems.map((item) => (
-                    <WorkCard
-                      key={item.id}
-                      item={item}
-                      dragging={dragItemId === item.id}
-                      onDragStart={beginDrag}
-                      onDragEnd={endDrag}
-                    />
-                  ))}
-                  {!laneItems.length ? <p className="board-col-empty muted">{lane.empty}</p> : null}
-                </div>
-              </section>
-            );
-          })}
-        </div>
+      <div className="work-view-tabs tabs" role="tablist" aria-label="Work view">
+        <button className={`tab${workView === "board" ? " active" : ""}`} role="tab" aria-selected={workView === "board"} onClick={() => setWorkView("board")}>Board</button>
+        <button className={`tab${workView === "flow" ? " active" : ""}`} role="tab" aria-selected={workView === "flow"} onClick={() => setWorkView("flow")}>Flow</button>
       </div>
+      {workView === "flow" ? (
+        <section className="work-flow-view panel" aria-label="Board flow graph">
+          <header className="work-flow-view-head">
+            <div>
+              <h2>Board operating graph</h2>
+              <p className="muted">Read-only view of lane order, guarded moves, workflow triggers, and automatic run-sync movement.</p>
+            </div>
+            <Badge>Read only</Badge>
+          </header>
+          <WorkflowGraph graph={boardGraph} />
+          <div className="work-flow-legend" aria-label="Flow legend">
+            <span><i className="legend-line normal" /> operator move</span>
+            <span><i className="legend-line automatic" /> workflow sync</span>
+            <span><i className="legend-line blocked" /> blocked shortcut</span>
+          </div>
+        </section>
+      ) : (
+        <div className="board-scroller">
+          <div className="board" role="list" aria-label="Work board lanes">
+            {lanes.map((lane) => {
+              const laneItems = items.filter((item) => lane.statuses.includes(item.status));
+              return (
+                <section
+                  key={lane.id}
+                  className={`board-col${dropLaneId === lane.id ? " is-drop-target" : ""}`}
+                  data-lane={lane.id}
+                  role="listitem"
+                  onDragOver={(e) => dragOverLane(e, lane)}
+                  onDragLeave={(e) => leaveLane(e, lane)}
+                  onDrop={(e) => dropOnLane(e, lane)}
+                >
+                  <header className="board-col-header">
+                    <span className="board-col-dot" aria-hidden="true" />
+                    <span className="board-col-label">{lane.label}</span>
+                    <Badge>{laneItems.length}</Badge>
+                  </header>
+                  <p className="board-col-hint" title={lane.hint}>{lane.hint}</p>
+                  {lane.trigger?.mode && lane.trigger.mode !== "none" ? (
+                    <p className={`board-col-trigger mode-${lane.trigger.mode}`} title={lane.trigger.description || ""}>
+                      {lane.trigger.label || lane.trigger.mode}
+                    </p>
+                  ) : null}
+                  {lane.guard ? (
+                    <p className="board-col-guard" title={lane.guard.message || ""}>
+                      Guarded move
+                    </p>
+                  ) : null}
+                  <div className="board-col-cards">
+                    {laneItems.map((item) => (
+                      <WorkCard
+                        key={item.id}
+                        item={item}
+                        dragging={dragItemId === item.id}
+                        onDragStart={beginDrag}
+                        onDragEnd={endDrag}
+                      />
+                    ))}
+                    {!laneItems.length ? <p className="board-col-empty muted">{lane.empty}</p> : null}
+                  </div>
+                </section>
+              );
+            })}
+          </div>
+        </div>
+      )}
       {editing !== null ? <WorkItemEditor id={editing} onClose={() => setEditing(null)} /> : null}
     </>
   );
+}
+
+function buildBoardGraph({ lanes = [], items = [], workflows = [], defaultWorkflows = [] }) {
+  const workflowNames = new Map(workflows.map((workflow) => [workflow.slug, workflow.name || workflow.slug]));
+  const nodes = lanes.map((lane) => {
+    const count = items.filter((item) => lane.statuses?.includes(item.status)).length;
+    const details = [`${count} ${count === 1 ? "ticket" : "tickets"}`, (lane.statuses || []).join(" / ")].filter(Boolean);
+    const trigger = lane.trigger?.mode && lane.trigger.mode !== "none" ? lane.trigger : null;
+    if (trigger) {
+      const workflow = trigger.workflow || defaultWorkflows[0] || "";
+      details.push(`${trigger.mode}: ${workflowNames.get(workflow) || workflow || trigger.label}`);
+    }
+    if (lane.guard?.allowFromStatuses?.length) details.push(`requires: ${lane.guard.allowFromStatuses.join(" / ")}`);
+    if (lane.guard?.denyFromStatuses?.length) details.push(`blocks: ${lane.guard.denyFromStatuses.join(" / ")}`);
+    return {
+      id: lane.id,
+      kind: lane.guard ? "approval" : lane.trigger ? "deploy" : "tag",
+      label: lane.label,
+      sublabel: details.join("\n")
+    };
+  });
+  const edges = [];
+  for (let i = 0; i < lanes.length - 1; i += 1) {
+    const target = lanes[i + 1];
+    const guard = target.guard;
+    edges.push({
+      id: `${lanes[i].id}-${target.id}`,
+      source: lanes[i].id,
+      target: target.id,
+      label: guard?.allowFromStatuses?.length ? `requires ${guard.allowFromStatuses.join("/")}` : undefined
+    });
+  }
+  const guardedTargets = lanes.filter((lane) => lane.guard?.allowFromStatuses?.length);
+  for (const target of guardedTargets) {
+    const source = lanes.find((lane) => lane.id === "running") || lanes.find((lane) => lane.id !== target.id);
+    if (source && source.id !== target.id) {
+      edges.push({
+        id: `${source.id}-${target.id}-blocked`,
+        source: source.id,
+        target: target.id,
+        kind: "blocked",
+        label: "locked"
+      });
+    }
+  }
+  const runNodes = [
+    { id: "run-active", label: "Run active", sublabel: "queued / running", target: "running" },
+    { id: "run-waiting", label: "Run waits", sublabel: "approval / pause", target: "attention" },
+    { id: "run-succeeded", label: "Run succeeded", sublabel: "ready to inspect", target: "review" },
+    { id: "run-failed", label: "Run failed", sublabel: "blocked reason", target: "attention" }
+  ];
+  const laneIds = new Set(lanes.map((lane) => lane.id));
+  for (const run of runNodes) {
+    if (!laneIds.has(run.target)) continue;
+    nodes.push({ id: run.id, kind: "entry", label: run.label, sublabel: run.sublabel });
+    edges.push({ id: `${run.id}-${run.target}`, source: run.id, target: run.target, kind: "automatic", label: "auto" });
+  }
+  return { nodes, edges };
 }

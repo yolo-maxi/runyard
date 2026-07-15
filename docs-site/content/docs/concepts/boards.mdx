@@ -7,6 +7,11 @@ A **board** is a durable, configured view over [work items](./work-items.mdx): l
 
 Every deployment seeds one default board on first boot — *"&lt;instance name&gt; Factory"* (slug `runyard` by default) — so the Work view is a configured product surface from day one, never an empty shell. More boards can be created for product, infra, docs, or release trains.
 
+The Work surface has two views over the same board configuration:
+
+- **Board** is the operator queue: draggable tickets, lane counts, and the next human action.
+- **Flow** is read-only: a state-machine graph of lanes, permitted moves, guarded shortcuts, lane triggers, and automatic run-status movement. It is for inspection/debugging only; board configuration changes should happen through API/CLI/MCP or agent workflows so they leave an auditable run trail.
+
 ## Shape
 
 ```json

@@ -7152,6 +7152,70 @@ button.cron-preset:hover {
 .work-empty-state h2 { margin: var(--space-1) 0; font-size: var(--fs-lg); line-height: var(--lh-lg); }
 .work-empty-state p { margin: 0; max-width: 60ch; }
 
+.work-view-tabs {
+  margin: 0 0 var(--space-3);
+}
+
+.work-flow-view {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+.work-flow-view-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.work-flow-view-head h2 {
+  margin: 0 0 var(--space-1);
+  font-size: var(--fs-lg);
+  line-height: var(--lh-lg);
+}
+
+.work-flow-view-head p {
+  margin: 0;
+  max-width: 72ch;
+}
+
+.work-flow-view .workflow-graph-canvas {
+  min-height: 520px;
+}
+
+.work-flow-legend {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  line-height: var(--lh-xs);
+}
+
+.work-flow-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.legend-line {
+  width: 24px;
+  height: 0;
+  border-top: 2px solid var(--text-muted);
+}
+
+.legend-line.automatic {
+  border-color: #0f766e;
+  border-style: dashed;
+}
+
+.legend-line.blocked {
+  border-color: var(--danger-fg);
+  border-style: dashed;
+}
+
 /* ---- Kanban lanes ---------------------------------------------------------- *
  * One horizontal row that scrolls inside its own container (the page never
  * scrolls sideways). Lanes are quiet tinted columns identified by a status

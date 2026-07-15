@@ -93,6 +93,16 @@ describe("Work: board view", () => {
     assert.match(boardJsx, /board-col-trigger/);
     assert.match(boardJsx, /board-col-guard/);
   });
+
+  it("ships a read-only flow graph view for board state-machine inspection", () => {
+    assert.match(boardJsx, /workView === "flow"/);
+    assert.match(boardJsx, /Board operating graph/);
+    assert.match(boardJsx, /<WorkflowGraph graph=\{boardGraph\}/);
+    assert.match(boardJsx, /buildBoardGraph/);
+    assert.match(boardJsx, /kind: "blocked"/);
+    assert.match(boardJsx, /kind: "automatic"/);
+    assert.doesNotMatch(boardJsx, /onConnect/);
+  });
 });
 
 describe("Work: board instances", () => {
@@ -165,12 +175,15 @@ describe("Work: execution flow", () => {
     const graphJsx = readFileSync(path.join(root, "web", "components", "WorkflowGraph.jsx"), "utf8");
     assert.match(graphJsx, /function stateColor\(state\)/);
     assert.match(graphJsx, /node\.state && stateColor\(node\.state\)\) \|\| nodeColor\(node\.kind\)/);
+    assert.match(graphJsx, /nodesDraggable=\{false\}/);
+    assert.match(graphJsx, /nodesConnectable=\{false\}/);
+    assert.match(graphJsx, /elementsSelectable=\{false\}/);
   });
 });
 
 describe("Work: styles", () => {
   it("ships the board, card, and stepper styles", () => {
-    for (const cls of [".work-command", ".work-operator-item", ".board", ".board-col", ".board-col.is-drop-target", ".board-col-header", ".board-col-trigger", ".board-col-trigger.mode-confirm", ".board-col-guard", ".work-card", ".work-card.is-dragging", ".work-card-action", ".work-attention", ".work-flow-step", ".work-flow-step.state-active", ".work-flow-step.state-failed", ".work-blocked-reason", ".work-priority-urgent"]) {
+    for (const cls of [".work-command", ".work-operator-item", ".work-view-tabs", ".work-flow-view", ".work-flow-legend", ".board", ".board-col", ".board-col.is-drop-target", ".board-col-header", ".board-col-trigger", ".board-col-trigger.mode-confirm", ".board-col-guard", ".work-card", ".work-card.is-dragging", ".work-card-action", ".work-attention", ".work-flow-step", ".work-flow-step.state-active", ".work-flow-step.state-failed", ".work-blocked-reason", ".work-priority-urgent"]) {
       assert.ok(css.includes(cls), `styles.css is missing ${cls}`);
     }
   });

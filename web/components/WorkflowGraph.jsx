@@ -120,9 +120,22 @@ function toReactEdges(graph) {
     id: edge.id,
     source: edge.source,
     target: edge.target,
-    animated: edge.kind === "parallel",
-    label: edge.kind === "parallel" ? "parallel" : undefined,
-    style: { stroke: edge.kind === "parallel" ? "#0ea5e9" : "#637083" }
+    animated: edge.kind === "parallel" || edge.kind === "automatic",
+    label: edge.label || (edge.kind === "parallel" ? "parallel" : undefined),
+    style: {
+      stroke: edge.style?.stroke || (
+        edge.kind === "parallel" ? "#0ea5e9" :
+        edge.kind === "automatic" ? "#0f766e" :
+        edge.kind === "blocked" ? "#dc2626" :
+        "#637083"
+      ),
+      strokeDasharray: edge.style?.strokeDasharray || (
+        edge.kind === "automatic" ? "6 4" :
+        edge.kind === "blocked" ? "3 4" :
+        undefined
+      )
+    },
+    labelStyle: edge.labelStyle || (edge.kind === "blocked" ? { fill: "#b91c1c", fontWeight: 700 } : undefined)
   }));
 }
 
@@ -166,6 +179,9 @@ export function WorkflowGraph({ graph, fitSignal = 0 }) {
           onInit={onInit}
           minZoom={0.2}
           maxZoom={2}
+          nodesDraggable={false}
+          nodesConnectable={false}
+          elementsSelectable={false}
           proOptions={{ hideAttribution: true }}
         >
           <Background gap={18} color="#d9e0ea" />
