@@ -58,14 +58,15 @@ describe("Work: lifecycle vocabulary + lanes", () => {
 });
 
 describe("Work: board view", () => {
-  it("fetches work items and renders lanes of cards with a move control", () => {
+  it("fetches work items and renders draggable lanes of cards", () => {
     assert.match(boardJsx, /api\(`\/api\/work-items\$\{showArchived \? "\?includeArchived=true" : ""\}`\)/);
     assert.match(boardJsx, /className="board"/);
-    assert.match(boardJsx, /className="board-col"/);
+    assert.match(boardJsx, /className=\{`board-col/);
     assert.match(boardJsx, /className="work-command"/);
     assert.match(boardJsx, /What needs action/);
     assert.match(boardJsx, /<WorkCard/);
-    assert.match(cardJsx, /data-move-work-item=/);
+    assert.match(cardJsx, /data-drag-work-item=/);
+    assert.match(cardJsx, /draggable=\{Boolean\(onDragStart\)\}/);
     assert.match(cardJsx, /work-card-action/);
     assert.match(cardJsx, /workItemAction\(item\)/);
     assert.match(cardJsx, /work-attention/);
@@ -80,6 +81,9 @@ describe("Work: board view", () => {
 
   it("PATCHes status when a card is moved", () => {
     assert.match(boardJsx, /api\(`\/api\/work-items\/\$\{item\.id\}`, \{ method: "PATCH", body: \{ status \} \}\)/);
+    assert.match(boardJsx, /setOptimisticStatus\(item\.id, status\)/);
+    assert.match(boardJsx, /onDrop=\{\(e\) => dropOnLane\(e, lane\)\}/);
+    assert.match(boardJsx, /startViewTransition/);
   });
 });
 
@@ -157,7 +161,7 @@ describe("Work: execution flow", () => {
 
 describe("Work: styles", () => {
   it("ships the board, card, and stepper styles", () => {
-    for (const cls of [".work-command", ".work-operator-item", ".board", ".board-col", ".board-col-header", ".work-card", ".work-card-action", ".work-attention", ".work-flow-step", ".work-flow-step.state-active", ".work-flow-step.state-failed", ".work-blocked-reason", ".work-priority-urgent"]) {
+    for (const cls of [".work-command", ".work-operator-item", ".board", ".board-col", ".board-col.is-drop-target", ".board-col-header", ".work-card", ".work-card.is-dragging", ".work-card-action", ".work-attention", ".work-flow-step", ".work-flow-step.state-active", ".work-flow-step.state-failed", ".work-blocked-reason", ".work-priority-urgent"]) {
       assert.ok(css.includes(cls), `styles.css is missing ${cls}`);
     }
   });

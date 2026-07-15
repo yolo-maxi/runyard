@@ -1,19 +1,30 @@
 import { deepLinks } from "../lib/router.js";
 import { relativeTime } from "../lib/format.js";
-import { WORK_ITEM_STATUSES, runHealthTone, runRollupLabel, workItemAction } from "../lib/workItems.js";
+import { runHealthTone, runRollupLabel, workItemAction } from "../lib/workItems.js";
 
 // One kanban card. Pure presentational (all data via props) so the SSR render
-// smoke test can exercise it without queries; the board wires onMove to a
+// smoke test can exercise it without queries; the board wires drag/drop to a
 // PATCH. Reading order is deliberate: action pill + age, title, the one next
-// move, identity chips, linked-run health, then the quiet move control.
-export function WorkCard({ item, onMove, now = Date.now() }) {
+// move, identity chips, then linked-run health.
+export function WorkCard({ item, dragging = false, onDragEnd, onDragStart, now = Date.now() }) {
   const runs = item.runs || null;
   const rollup = runRollupLabel(runs);
   const health = runHealthTone(runs);
   const action = workItemAction(item);
   const overdue = item.dueAt && Date.parse(item.dueAt) < now && !["shipped", "accepted", "archived"].includes(item.status);
   return (
-    <article className="work-card" data-work-item={item.id} data-status={item.status} data-priority={item.priority}>
+    <article
+      className={`work-card${dragging ? " is-dragging" : ""}`}
+      data-work-item={item.id}
+      data-drag-work-item={item.id}
+      data-status={item.status}
+      data-priority={item.priority}
+      draggable={Boolean(onDragStart)}
+      aria-grabbed={dragging ? "true" : "false"}
+      onDragStart={(e) => onDragStart?.(e, item)}
+      onDragEnd={onDragEnd}
+      title="Drag this card to another lane"
+    >
       <p className="work-card-top">
         <span className={`work-card-action tone-${action.tone}`}><span>{action.label}</span></span>
         {item.priority === "urgent" || item.priority === "high" ? (
@@ -46,24 +57,6 @@ export function WorkCard({ item, onMove, now = Date.now() }) {
               {runs.attention} need attention
             </span>
           ) : null}
-        </p>
-      ) : null}
-      {onMove ? (
-        <p className="work-card-footer">
-          <label className="work-move-wrap">
-            <span className="work-move-label">Move</span>
-            <select
-              className="work-move"
-              aria-label={`Move ${item.title}`}
-              value={item.status}
-              data-move-work-item={item.id}
-              onChange={(e) => onMove(item, e.target.value)}
-            >
-              {WORK_ITEM_STATUSES.map((status) => (
-                <option key={status} value={status}>{status}</option>
-              ))}
-            </select>
-          </label>
         </p>
       ) : null}
     </article>

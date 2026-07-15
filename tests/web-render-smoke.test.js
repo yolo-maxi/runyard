@@ -109,7 +109,7 @@ async function loadRenderSmoke() {
               }
             }} />),
             pauseNoticeHidden: renderToStaticMarkup(<div>{RunPauseNotice({ run: { id: "r", status: "running" } })}</div>),
-            workCard: renderToStaticMarkup(<WorkCard now={Date.parse("2026-07-15T12:00:00.000Z")} onMove={() => {}} item={{
+            workCard: renderToStaticMarkup(<WorkCard now={Date.parse("2026-07-15T12:00:00.000Z")} onDragStart={() => {}} item={{
               id: "wi_smoke",
               title: "Make pause/resume fully supported",
               status: "blocked",
@@ -191,14 +191,15 @@ describe("React render smoke", () => {
     assert.match(html.budgetNotice, /budget exceeded: 120 tokens/);
     assert.equal(html.budgetNoticeHidden, "<div></div>");
 
-    // Work board card: chips, run rollup, attention badge, move select.
+    // Work board card: chips, run rollup, attention badge, draggable card.
     assert.match(html.workCard, /data-work-item="wi_smoke"/);
     assert.match(html.workCard, /Make pause\/resume fully supported/);
     assert.match(html.workCard, /work-priority-high/);
     assert.match(html.workCard, /3 runs/);
     assert.match(html.workCard, /1 need attention/);
     assert.match(html.workCard, /Waiting on provider credits/);
-    assert.match(html.workCard, /data-move-work-item="wi_smoke"/);
+    assert.match(html.workCard, /data-drag-work-item="wi_smoke"/);
+    assert.match(html.workCard, /draggable="true"/);
     // Execution-flow stepper: per-step states + pending approval link.
     assert.match(html.workFlow, /data-flow-run="run_flow"/);
     assert.match(html.workFlow, /state-done/);

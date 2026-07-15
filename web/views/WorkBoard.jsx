@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api.js";
 import { deepLinks } from "../lib/router.js";
@@ -19,6 +19,9 @@ export function WorkBoard() {
   const [filter, setFilter] = useState("");
   const [project, setProject] = useState("");
   const [boardSlug, setBoardSlug] = useState("");
+  const [dragItemId, setDragItemId] = useState("");
+  const [dropLaneId, setDropLaneId] = useState("");
+  const [optimisticStatuses, setOptimisticStatuses] = useState({});
   const queryClient = useQueryClient();
 
   const { data, error } = useQuery({
@@ -36,9 +39,30 @@ export function WorkBoard() {
   });
   const boards = boardsData?.boards || [];
   const board = boards.find((b) => b.slug === boardSlug) || boards.find((b) => b.isDefault) || boards[0] || null;
+  const rawItems = useMemo(() => data?.workItems || [], [data]);
+
+  useEffect(() => {
+    setOptimisticStatuses((current) => {
+      let changed = false;
+      const next = {};
+      for (const [id, status] of Object.entries(current)) {
+        const item = rawItems.find((candidate) => candidate.id === id);
+        if (!item || item.status === status) {
+          changed = true;
+        } else {
+          next[id] = status;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [rawItems]);
 
   const items = useMemo(() => {
-    const all = data?.workItems || [];
+    const all = rawItems.map((item) => (
+      optimisticStatuses[item.id] && optimisticStatuses[item.id] !== item.status
+        ? { ...item, status: optimisticStatuses[item.id] }
+        : item
+    ));
     const q = filter.trim().toLowerCase();
     return all.filter((item) => {
       if (board?.project && item.project !== board.project) return false;
@@ -47,7 +71,7 @@ export function WorkBoard() {
       return [item.title, item.description, item.project, item.owner, item.id]
         .some((field) => String(field || "").toLowerCase().includes(q));
     });
-  }, [data, filter, project, board]);
+  }, [rawItems, optimisticStatuses, filter, project, board]);
 
   const projects = useMemo(
     () => {
@@ -86,13 +110,60 @@ export function WorkBoard() {
 
   async function moveItem(item, status) {
     if (status === item.status) return;
+    setOptimisticStatus(item.id, status);
     try {
       await api(`/api/work-items/${item.id}`, { method: "PATCH", body: { status } });
       toast(`Moved to ${status}`, "ok");
       await queryClient.invalidateQueries({ queryKey: ["work-items"] });
     } catch (err) {
+      setOptimisticStatus(item.id, item.status);
       toast(err.message, "error");
     }
+  }
+
+  function setOptimisticStatus(id, status) {
+    const apply = () => {
+      setOptimisticStatuses((current) => ({ ...current, [id]: status }));
+    };
+    if (typeof document !== "undefined" && typeof document.startViewTransition === "function") {
+      document.startViewTransition(apply);
+    } else {
+      apply();
+    }
+  }
+
+  function beginDrag(event, item) {
+    setDragItemId(item.id);
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("application/x-runyard-work-item", item.id);
+    event.dataTransfer.setData("text/plain", item.id);
+  }
+
+  function endDrag() {
+    setDragItemId("");
+    setDropLaneId("");
+  }
+
+  function dragOverLane(event, lane) {
+    if (!dragItemId || !lane.statuses?.length) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    if (dropLaneId !== lane.id) setDropLaneId(lane.id);
+  }
+
+  function leaveLane(event, lane) {
+    if (event.currentTarget.contains(event.relatedTarget)) return;
+    if (dropLaneId === lane.id) setDropLaneId("");
+  }
+
+  function dropOnLane(event, lane) {
+    event.preventDefault();
+    const id = event.dataTransfer.getData("application/x-runyard-work-item") || dragItemId;
+    const item = items.find((candidate) => candidate.id === id);
+    setDropLaneId("");
+    setDragItemId("");
+    if (!item || !lane.statuses?.length) return;
+    moveItem(item, lane.statuses[0]);
   }
 
   if (error) {
@@ -216,7 +287,15 @@ export function WorkBoard() {
           {lanes.map((lane) => {
             const laneItems = items.filter((item) => lane.statuses.includes(item.status));
             return (
-              <section key={lane.id} className="board-col" data-lane={lane.id} role="listitem">
+              <section
+                key={lane.id}
+                className={`board-col${dropLaneId === lane.id ? " is-drop-target" : ""}`}
+                data-lane={lane.id}
+                role="listitem"
+                onDragOver={(e) => dragOverLane(e, lane)}
+                onDragLeave={(e) => leaveLane(e, lane)}
+                onDrop={(e) => dropOnLane(e, lane)}
+              >
                 <header className="board-col-header">
                   <span className="board-col-dot" aria-hidden="true" />
                   <span className="board-col-label">{lane.label}</span>
@@ -225,7 +304,13 @@ export function WorkBoard() {
                 <p className="board-col-hint" title={lane.hint}>{lane.hint}</p>
                 <div className="board-col-cards">
                   {laneItems.map((item) => (
-                    <WorkCard key={item.id} item={item} onMove={moveItem} />
+                    <WorkCard
+                      key={item.id}
+                      item={item}
+                      dragging={dragItemId === item.id}
+                      onDragStart={beginDrag}
+                      onDragEnd={endDrag}
+                    />
                   ))}
                   {!laneItems.length ? <p className="board-col-empty muted">{lane.empty}</p> : null}
                 </div>
