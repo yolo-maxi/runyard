@@ -34,6 +34,7 @@ function harness() {
   let schedCounter = 0;
   const store = {
     createSchedule: (input) => {
+      assert.equal(Boolean(input.capabilitySlug), true, "schedule imports must pass capabilitySlug to the store");
       const id = `sched_${++schedCounter}`;
       schedules.set(id, { id, ...input });
       return schedules.get(id);
@@ -152,7 +153,7 @@ describe("board definition handlers", () => {
     assert.equal(schedules.size, 1);
     const schedule = [...schedules.values()][0];
     assert.equal(schedule.name, "board:runyard-development-factory:runyard-nightly-smoke");
-    assert.equal(schedule.workflowSlug, "runyard-smoke-check");
+    assert.equal(schedule.capabilitySlug, "runyard-smoke-check");
   });
 
   it("re-import is idempotent: updates board and reconciles schedule slug in place", () => {

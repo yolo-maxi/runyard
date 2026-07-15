@@ -44,7 +44,7 @@ export function createBoardDefinitionHandlers({
       const priorId = existing.get(scheduleName)?.id;
       const body = {
         name: scheduleName,
-        workflowSlug: record.workflow,
+        capabilitySlug: record.workflow,
         timezone: record.timezone,
         cron: record.cron || "",
         runAt: record.runAt || null,
