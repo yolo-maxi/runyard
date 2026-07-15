@@ -93,6 +93,7 @@ runyard artifacts <runId>        # list a run's artifacts (omit runId to search 
 runyard cancel <runId> -r "no longer needed"
 runyard pause <runId> -r credits_exhausted   # park a run; keeps its checkpoint
 runyard resume <runId>                       # re-queue a paused run from its checkpoint
+runyard resume <runId> --from-scratch        # discard the checkpoint + runner pin; any runner takes it
 ```
 
 `tail` emits `{ts, kind, source, payload}` lines built from status transitions,

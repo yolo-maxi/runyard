@@ -164,6 +164,7 @@ export const PAUSE_REASON_LABELS = {
   quota_exhausted: "Provider quota exhausted",
   provider_limited: "Provider limited",
   manual: "Paused by an operator",
+  resume_failed: "Resume failed — checkpoint unavailable",
   unknown: "Paused"
 };
 

@@ -11,6 +11,11 @@ export const PAUSE_REASONS = Object.freeze({
   QUOTA_EXHAUSTED: "quota_exhausted",
   PROVIDER_LIMITED: "provider_limited",
   MANUAL: "manual",
+  // A resume was attempted but the recorded engine checkpoint could not be
+  // used (missing/cleaned local .smithers state). The run re-parks under this
+  // reason with the stale checkpoint dropped, so the next resume honestly
+  // re-runs from scratch instead of hanging on a pointer that goes nowhere.
+  RESUME_FAILED: "resume_failed",
   UNKNOWN: "unknown"
 });
 
@@ -63,6 +68,8 @@ export function requiredActionForPauseReason(reason) {
       return { type: "operator_resume", label: "Wait for the provider limit to clear, then resume" };
     case PAUSE_REASONS.MANUAL:
       return { type: "operator_resume", label: "Resume when ready" };
+    case PAUSE_REASONS.RESUME_FAILED:
+      return { type: "operator_resume", label: "Resume again to re-run from scratch, or cancel" };
     default:
       return { type: "unknown", label: "Resolve the interruption, then resume" };
   }

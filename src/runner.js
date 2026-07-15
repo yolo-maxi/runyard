@@ -15,7 +15,7 @@ import { HubClient } from "./apiClient.js";
 import { normalizeRunnerTags } from "./runExecution.js";
 import { collectAuthHealth } from "./runnerAuthHealth.js";
 import { classifyFailureStatus, RUN_FAILURE_CLASSES } from "./runFailureClass.js";
-import { classifyPauseReason } from "./runPause.js";
+import { classifyPauseReason, PAUSE_REASONS } from "./runPause.js";
 import { DEFAULT_MAX_INLINE_INPUT_BYTES } from "./runnerPolicy.js";
 import { smithersEventMessage, smithersTokenUsage } from "./runnerSmithersEvents.js";
 import { materializeGatewayPin } from "./runnerGateway.js";
@@ -30,6 +30,8 @@ import {
   createSmithersRunRegistry,
   isHubTerminalStatus,
   launchSmithers,
+  resumeCheckpointMissingMessage,
+  resumeCheckpointStatus,
   smithersCommand
 } from "./runnerSmithersRuntime.js";
 import {
@@ -469,8 +471,32 @@ async function executeAssignment(assignment) {
     }
     await event(run.id, "runner.started", `Executing Smithers workflow ${entry} on ${name}`, { runnerId, entry, location });
 
-    // A resume request carries the prior Smithers run id in __resume.
+    // A resume request carries the prior Smithers run id in __resume. Verify
+    // the checkpoint actually exists in local .smithers state before launching:
+    // a detached `smithers up --resume` reports RUN_NOT_FOUND only inside its
+    // background child, so a missing checkpoint would otherwise hang the poll
+    // loop until the deadline fails the run hours later with a bogus timeout.
+    // Instead the run re-parks explicitly as a resume failure, checkpoint
+    // dropped, so the operator's next resume honestly re-runs from scratch.
     const resume = run.input && typeof run.input === "object" ? run.input.__resume : null;
+    if (resume?.smithersRunId) {
+      const checkpoint = await resumeCheckpointStatus({ inspectRun: getState, smithersRunId: resume.smithersRunId });
+      if (!checkpoint.ok) {
+        const message = resumeCheckpointMissingMessage(resume.smithersRunId, checkpoint.error);
+        await event(run.id, "runner.resume_checkpoint_missing", message, {
+          smithersRunId: resume.smithersRunId,
+          attempt: resume.attempt || null,
+          reason: PAUSE_REASONS.RESUME_FAILED
+        });
+        if (await pauseRunOnHub(run.id, { reason: PAUSE_REASONS.RESUME_FAILED, message })) {
+          console.log(`Run ${run.id} re-paused: resume checkpoint ${resume.smithersRunId} missing`);
+        } else {
+          await failRun(run.id, message, RUN_FAILURE_CLASSES.INFRA_UNAVAILABLE);
+          console.log(`Run ${run.id} failed: resume checkpoint ${resume.smithersRunId} missing and pause was refused`);
+        }
+        return;
+      }
+    }
     const runtimeEnv = materializeAgentRuntimePack(run, assignment.agentRuntimePack);
     // Per-run harness/endpoint selection (validated by preflight above) rides
     // the runEnv channel so it outranks the runner's ambient RUNYARD_* env.

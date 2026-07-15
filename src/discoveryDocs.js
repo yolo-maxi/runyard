@@ -254,6 +254,13 @@ export function renderLlmsTxt(baseUrl) {
   lines.push("  checkpoint when one exists — otherwise it re-runs from scratch and");
   lines.push("  says so. Cancel still works from paused. budget_exceeded remains a");
   lines.push("  distinct terminal hard stop and is never converted to a pause.");
+  lines.push("- A checkpointed resume runs on the runner holding the checkpoint;");
+  lines.push("  the resume response warns when that runner is offline. Resume with");
+  lines.push('  body {"strategy":"rerun_from_scratch"} to discard the checkpoint');
+  lines.push("  and runner pin so any live runner takes the run. If a recorded");
+  lines.push("  checkpoint turns out to be missing on the runner, the run re-parks");
+  lines.push("  as paused (reason resume_failed) with the stale checkpoint dropped");
+  lines.push("  — never a silent hang or a bogus timeout failure.");
   lines.push("- GET /api/runs/attention (list_attention_runs) is the triage queue:");
   lines.push("  every run whose next step is a human action — paused, waiting for");
   lines.push("  approval, or stopped at its budget in the last 7 days — with counts");
@@ -310,7 +317,7 @@ export function openApiDocument({ baseUrl, version }) {
         "Runs meter their model-call usage: per-call records stream as run.usage events and aggregate onto the run object as usage { totalTokens, promptTokens, completionTokens, costMicros, calls, byModel, byProvider } (see GET /runs/{id}/usage for records + budget). " +
         "Run creation accepts an optional budget { maxTokens?, maxCostMicros? } (top-level field or input.budget); when metered usage reaches the ceiling the Hub emits run.budget.exceeded and terminates the run with the distinct terminal status budget_exceeded. " +
         "Runs that need a human checkpoint enter waiting_approval and are resolved via /approvals/{id}/approve|reject|request-changes. " +
-        "Runs interrupted by a recoverable external condition (e.g. provider credits exhausted) park as the non-terminal status paused with pause metadata on run.pause; POST /runs/{id}/resume re-queues them and continues from the recorded engine checkpoint when one exists. " +
+        "Runs interrupted by a recoverable external condition (e.g. provider credits exhausted) park as the non-terminal status paused with pause metadata on run.pause; POST /runs/{id}/resume re-queues them and continues from the recorded engine checkpoint when one exists (body strategy 'rerun_from_scratch' discards the checkpoint and runner pin; a checkpoint the runner cannot find re-parks the run as paused with reason resume_failed). " +
         "Liveness endpoints (/healthz, /readyz, /api/version) and discovery copy (/llms.txt, this document) are unauthenticated and served from the repo root, not under /api."
     },
     servers: [{ url: `${baseUrl}/api` }],

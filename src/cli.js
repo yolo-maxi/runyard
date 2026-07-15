@@ -530,11 +530,23 @@ program.command("cancel <runId>").description("Cancel a run").option("-r, --reas
 });
 
 program.command("pause <runId>").description("Pause an active run (recoverable interruption; keeps its checkpoint for resume)").option("-r, --reason <reason>", "pause reason, e.g. credits_exhausted, manual").option("-m, --message <message>", "").action(async (runId, opts) => {
-  print(await client(program.opts()).post(`/api/runs/${runId}/pause`, { reason: opts.reason || "manual", message: opts.message || "", pausedBy: "operator" }), program.opts().json);
+  const data = await client(program.opts()).post(`/api/runs/${runId}/pause`, { reason: opts.reason || "manual", message: opts.message || "", pausedBy: "operator" });
+  if (program.opts().json) return print(data, true);
+  const pause = data.pause || {};
+  console.log(`Run ${runId} paused (${pause.reason || "manual"}).`);
+  if (pause.resume?.smithersRunId) console.log(`Engine checkpoint ${pause.resume.smithersRunId} recorded — resume continues from it.`);
+  else console.log("No engine checkpoint recorded yet; the runner attaches one when it observes the pause.");
+  console.log(`Resume with: runyard resume ${runId}`);
 });
 
-program.command("resume <runId>").description("Resume a paused run from its recorded checkpoint").action(async (runId) => {
-  print(await client(program.opts()).post(`/api/runs/${runId}/resume`, {}), program.opts().json);
+program.command("resume <runId>").description("Resume a paused run: continues from its recorded engine checkpoint when one exists, otherwise re-runs from scratch").option("--from-scratch", "discard the recorded checkpoint and runner pin; re-run from scratch on any runner").action(async (runId, opts) => {
+  const data = await client(program.opts()).post(`/api/runs/${runId}/resume`, opts.fromScratch ? { strategy: "rerun_from_scratch" } : {});
+  if (program.opts().json) return print(data, true);
+  const resume = data.resume || {};
+  console.log(resume.strategy === "smithers_resume"
+    ? `Run ${runId} resumed from checkpoint ${resume.smithersRunId} (attempt ${resume.attempt}).`
+    : `Run ${runId} re-queued from scratch (attempt ${resume.attempt}) — no engine checkpoint applies.`);
+  if (data.warning) console.log(`⚠ ${data.warning}`);
 });
 
 program.command("agents").description("List agents").action(async () => print((await client(program.opts()).get("/api/agents")).agents, program.opts().json));

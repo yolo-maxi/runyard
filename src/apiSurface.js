@@ -863,7 +863,7 @@ export const API_SURFACE = [
   {
     method: "post", path: "/api/runs/:id/pause", handler: "runLifecycleHandlers.pauseRun",
     group: "runs", v1Path: "/api/v1/runs/:id/pause",
-    auth: true, scopes: ["api", "mcp", "runner"],
+    auth: true, scopes: ["api", "mcp", "runner"], ui: true,
     summary: "Pause an active run for a recoverable external interruption (credits/quota exhausted, provider limit, manual): records pause metadata plus the Smithers checkpoint for resume, and frees the runner slot",
     mcp: ["pause_run"]
   },
@@ -871,7 +871,7 @@ export const API_SURFACE = [
     method: "post", path: "/api/runs/:id/resume", handler: "runLifecycleHandlers.resumeRun",
     group: "runs", v1Path: "/api/v1/runs/:id/resume",
     auth: true, scopes: ["api", "mcp"], ui: true,
-    summary: "Resume a paused run: re-queues the same run and continues from the recorded Smithers checkpoint when one exists (otherwise it re-runs from scratch, flagged in the response)",
+    summary: "Resume a paused run: re-queues the same run and continues from the recorded Smithers checkpoint when one exists (otherwise it re-runs from scratch, flagged in the response). Body accepts strategy 'rerun_from_scratch' to discard the checkpoint and runner pin, or 'smithers_resume' to insist on the checkpoint (409 when none is recorded); the response warns when the checkpoint's runner is offline",
     mcp: ["resume_run"]
   },
   {

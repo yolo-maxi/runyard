@@ -94,6 +94,18 @@ async function loadRenderSmoke() {
                 requiredAction: { type: "add_credits", label: "Add credits, then resume" }
               }
             }} />),
+            pauseNoticeResumeFailed: renderToStaticMarkup(<RunPauseNotice run={{
+              id: "run_resume_failed",
+              status: "paused",
+              pause: {
+                reason: "resume_failed",
+                message: "Recorded engine checkpoint run-1234 was not found in this runner's local .smithers state",
+                pausedAt: "2026-07-15T12:00:00.000Z",
+                pausedBy: "runner",
+                resumable: true,
+                requiredAction: { type: "operator_resume", label: "Resume again to re-run from scratch, or cancel" }
+              }
+            }} />),
             pauseNoticeHidden: renderToStaticMarkup(<div>{RunPauseNotice({ run: { id: "r", status: "running" } })}</div>)
           };
         }
@@ -157,6 +169,16 @@ describe("React render smoke", () => {
     assert.match(html.pauseNotice, /Add credits, then resume/);
     assert.match(html.pauseNotice, /run-1234/);
     assert.match(html.pauseNotice, /Resume run/);
+    // A recorded checkpoint also offers the explicit from-scratch fallback
+    // (for a stale checkpoint or a retired pinned runner).
+    assert.match(html.pauseNotice, /Restart from scratch/);
+    // A resume_failed pause says what happened and what to do next — and,
+    // having no checkpoint, offers only the plain (from-scratch) resume.
+    assert.match(html.pauseNoticeResumeFailed, /Resume failed — checkpoint unavailable/);
+    assert.match(html.pauseNoticeResumeFailed, /re-run from scratch, or cancel/);
+    assert.match(html.pauseNoticeResumeFailed, /no engine checkpoint was recorded/);
+    assert.match(html.pauseNoticeResumeFailed, /Resume run/);
+    assert.ok(!html.pauseNoticeResumeFailed.includes("Restart from scratch"));
     assert.equal(html.pauseNoticeHidden, "<div></div>");
   });
 });

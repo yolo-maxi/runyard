@@ -5,7 +5,13 @@ import { buildRunPause, mergeRunPause } from "./runPause.js";
 // run must not occupy capacity while a human replenishes credits) and resume
 // re-queues the SAME run, carrying the recorded Smithers checkpoint back to
 // the runner through the existing input.__resume launch path.
-export function createRunPauseStore({ getRun, transitionRun, updateRun, addRunEvent, now }) {
+// Strategies a resume caller may force. Omitting the strategy resolves
+// automatically: checkpointed when a Smithers checkpoint is recorded,
+// from-scratch otherwise. Forcing rerun_from_scratch is the operator escape
+// hatch for a stale checkpoint or a retired/offline pinned runner.
+const REQUESTABLE_RESUME_STRATEGIES = new Set(["smithers_resume", "rerun_from_scratch"]);
+
+export function createRunPauseStore({ getRun, getRunner = () => null, transitionRun, updateRun, addRunEvent, now }) {
   function pauseRun(runId, spec = {}) {
     const current = getRun(runId);
     if (!current) return { ok: false, code: 404, error: "run not found" };
@@ -38,7 +44,7 @@ export function createRunPauseStore({ getRun, transitionRun, updateRun, addRunEv
     return result;
   }
 
-  function resumeRun(runId, { resumedBy = "operator" } = {}) {
+  function resumeRun(runId, { resumedBy = "operator", strategy = "" } = {}) {
     const current = getRun(runId);
     if (!current) return { ok: false, code: 404, error: "run not found" };
     if (current.status !== "paused") {
@@ -48,30 +54,58 @@ export function createRunPauseStore({ getRun, transitionRun, updateRun, addRunEv
       return { ok: false, code: 409, error: "run was paused as not resumable; cancel it or re-run instead" };
     }
 
+    const requested = String(strategy || "").trim();
+    if (requested && !REQUESTABLE_RESUME_STRATEGIES.has(requested)) {
+      return { ok: false, code: 400, error: `unknown resume strategy '${requested}'; use 'smithers_resume', 'rerun_from_scratch', or omit it for automatic selection` };
+    }
     const smithersRunId = String(current.pause?.resume?.smithersRunId || "").trim();
-    const strategy = smithersRunId ? "smithers_resume" : "rerun_from_scratch";
+    if (requested === "smithers_resume" && !smithersRunId) {
+      return { ok: false, code: 409, error: "no engine checkpoint is recorded on this run; resume without a strategy (or with 'rerun_from_scratch') to re-run from scratch" };
+    }
+    const useCheckpoint = Boolean(smithersRunId) && requested !== "rerun_from_scratch";
     const attempt = (Number(current.pause?.resume?.attempt) || Number(current.input?.__resume?.attempt) || 0) + 1;
     const input = { ...(current.input || {}) };
-    if (smithersRunId) input.__resume = { smithersRunId, attempt };
+    if (useCheckpoint) input.__resume = { smithersRunId, attempt };
     else delete input.__resume;
 
-    // runner_id is intentionally KEPT: the Smithers checkpoint lives on that
-    // runner's local .smithers state, and the claim query pins runs with a
-    // runner_id to the same runner (src/runRecords.js runClaimAssignmentQuery).
+    // runner_id: a checkpointed resume KEEPS the pin — the Smithers checkpoint
+    // lives on that runner's local .smithers state, and the claim query pins
+    // runs with a runner_id to the same runner (src/runRecords.js
+    // runClaimAssignmentQuery). A from-scratch resume CLEARS it so any live
+    // runner can claim; discarding the checkpoint is exactly the escape hatch
+    // for a retired or offline pinned runner.
     const result = transitionRun(runId, "queued", {
       current_step: "queued",
       input,
-      pause: { ...(current.pause || {}), resumedAt: now(), resumedBy }
+      pause: { ...(current.pause || {}), resumedAt: now(), resumedBy },
+      ...(useCheckpoint ? {} : { runner_id: null })
     });
     if (!result.ok) return result;
-    const resume = { strategy, ...(smithersRunId ? { smithersRunId } : {}), attempt };
-    addRunEvent(runId, "run.resumed", smithersRunId
-      ? `Run resumed from Smithers checkpoint ${smithersRunId} (attempt ${attempt})`
-      : "Run resumed with no engine checkpoint; it will re-run from scratch", {
+
+    const resume = { strategy: useCheckpoint ? "smithers_resume" : "rerun_from_scratch", ...(useCheckpoint ? { smithersRunId } : {}), attempt };
+    // A checkpointed resume only executes once the pinned runner claims it.
+    // Say so up front when that runner is offline, instead of leaving the run
+    // silently queued behind a heartbeat that may never come back.
+    let warning = "";
+    if (useCheckpoint && current.runnerId) {
+      const runner = getRunner(current.runnerId);
+      if (!runner || !runner.online) {
+        resume.runnerOnline = false;
+        resume.runnerId = current.runnerId;
+        warning = `runner ${current.runnerId} holding the checkpoint is offline; the run stays queued until that runner reconnects — resume again with strategy 'rerun_from_scratch' to run on any runner (discards the checkpoint)`;
+      }
+    }
+    const message = useCheckpoint
+      ? `Run resumed from Smithers checkpoint ${smithersRunId} (attempt ${attempt})${warning ? `; ${warning}` : ""}`
+      : smithersRunId
+        ? `Run resumed from scratch by request (attempt ${attempt}); the recorded checkpoint ${smithersRunId} was discarded and the runner pin cleared`
+        : "Run resumed with no engine checkpoint; it will re-run from scratch";
+    addRunEvent(runId, "run.resumed", message, {
       ...resume,
-      resumedBy
+      resumedBy,
+      ...(warning ? { warning } : {})
     });
-    return { ...result, resume };
+    return { ...result, resume, ...(warning ? { warning } : {}) };
   }
 
   return { pauseRun, resumeRun };

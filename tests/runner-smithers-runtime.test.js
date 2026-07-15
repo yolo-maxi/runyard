@@ -5,6 +5,8 @@ import {
   isHubTerminalStatus,
   launchSmithers,
   parseSmithersRunId,
+  resumeCheckpointMissingMessage,
+  resumeCheckpointStatus,
   smithersCommand,
   smithersLaunchRequest,
   runyardChildEnv
@@ -175,6 +177,43 @@ describe("runner Smithers runtime helpers", () => {
     assert.equal(env.SMITHERS_REPO_CATALOG, '[{"value":"skillmarket","label":"SkillMarket"}]');
     assert.equal(env.SMITHERS_HUB_TOKEN, undefined);
     assert.equal(env.TELEGRAM_BOT_TOKEN, undefined);
+  });
+
+  // A detached `smithers up --resume` only validates RUN_NOT_FOUND inside its
+  // background child, so the runner must prove the checkpoint exists via
+  // inspect BEFORE launching — otherwise a missing checkpoint hangs the poll
+  // loop until the deadline fails the run hours later as a bogus timeout.
+  it("resumeCheckpointStatus reports whether the local checkpoint is inspectable", async () => {
+    const seen = [];
+    const found = await resumeCheckpointStatus({
+      inspectRun: async (sid) => {
+        seen.push(sid);
+        return { runState: { state: "cancelled" } };
+      },
+      smithersRunId: "run-777"
+    });
+    assert.deepEqual(found, { ok: true });
+    assert.deepEqual(seen, ["run-777"]);
+
+    const missing = await resumeCheckpointStatus({
+      inspectRun: async () => {
+        throw new Error("Run not found: run-777");
+      },
+      smithersRunId: "run-777"
+    });
+    assert.equal(missing.ok, false);
+    assert.match(missing.error, /Run not found/);
+  });
+
+  it("resumeCheckpointMissingMessage names the checkpoint and the honest fallback", () => {
+    const message = resumeCheckpointMissingMessage("run-777", "Run not found: run-777\n  at inspect");
+    assert.match(message, /run-777/);
+    assert.match(message, /\.smithers state/);
+    assert.match(message, /re-run from scratch/);
+    assert.match(message, /Run not found/);
+    assert.ok(!message.includes("\n"), "detail is flattened for event/pause records");
+    // Without detail the message still stands alone.
+    assert.match(resumeCheckpointMissingMessage("run-8"), /re-paused/);
   });
 
   it("parses run ids from json or text output", () => {

@@ -148,10 +148,18 @@ export function createRunLifecycleHandlers({
 
     resumeRun(req, res) {
       const result = runPause.resumeRun(req.params.id, {
-        resumedBy: String(req.body?.resumedBy || "operator")
+        resumedBy: String(req.body?.resumedBy || "operator"),
+        // Optional forced strategy: 'smithers_resume' (409s without a recorded
+        // checkpoint) or 'rerun_from_scratch' (discards the checkpoint and
+        // clears the runner pin). Omitted = automatic.
+        strategy: String(req.body?.strategy || "")
       });
       if (sendTransitionError(res, result)) return;
-      res.json({ run: result.run, resume: result.resume || null });
+      res.json({
+        run: result.run,
+        resume: result.resume || null,
+        ...(result.warning ? { warning: result.warning } : {})
+      });
     },
 
     cancelRun(req, res) {

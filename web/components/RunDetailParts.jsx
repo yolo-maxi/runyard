@@ -5,7 +5,7 @@ import {
   artifactDisplayName, formatBytes, truncate, runStatusLabel, runUsage, formatTokens, formatCostMicros,
   pauseReasonLabel
 } from "../lib/runHelpers.js";
-import { rerunRun, editRerunRun, cancelRun, resumeRun } from "../lib/runActions.js";
+import { rerunRun, editRerunRun, cancelRun, pauseRun, resumeRun } from "../lib/runActions.js";
 import { promoteRun, runPromotionCandidate } from "../lib/runPromotion.js";
 import { StatusBadge, ShareButton, Icon, JsonBlock, CodeChurn } from "./ui.jsx";
 
@@ -24,6 +24,9 @@ export function RunBanner({ run, diagnostics, title, slug, onChanged }) {
   const workflowHref = slug ? deepLinks.workflow(slug) : deepLinks.workflows();
   const workflowLabel = run.capabilityName || slug || "Workflow";
   const canCancel = isActiveRun(run);
+  // Pause is an edge from assigned/running only (a queued run has nothing to
+  // checkpoint; the transition would 409).
+  const canPause = statusKey === "assigned" || statusKey === "running";
   const canResume = statusKey === "paused" && run.pause?.resumable !== false;
   const promotion = runPromotionCandidate(run);
 
@@ -72,6 +75,9 @@ export function RunBanner({ run, diagnostics, title, slug, onChanged }) {
             <button type="button" role="menuitem" title="Open the input editor, then queue a re-run" onClick={() => editRerunRun(run)}>Edit input &amp; re-run…</button>
             <button type="button" role="menuitem" title="Copy this run's id" onClick={() => copyText(run.id, "Run id copied")}>Copy run id</button>
             <a className="button" role="menuitem" href={workflowHref} title="Open this run's workflow definition">Open workflow</a>
+            {canPause ? (
+              <button type="button" role="menuitem" title="Park this run as paused — it keeps its engine checkpoint, frees its runner slot, and resumes later" onClick={async () => { await pauseRun(run.id, "manual", "Paused from Web Hub"); onChanged?.(); }}>Pause run</button>
+            ) : null}
             {canCancel ? (
               <button type="button" className="danger" role="menuitem" title="Stop this run now" onClick={async () => { await cancelRun(run.id, "Cancelled from Web Hub"); onChanged?.(); }}>Cancel run</button>
             ) : null}
@@ -166,10 +172,23 @@ export function RunPauseNotice({ run, onChanged }) {
       <span>{truncate(String(pause.message || "This run was interrupted by a recoverable condition and is parked, not failed."), 240)}</span>{" "}
       <span className="muted">
         {actionLabel}
-        {checkpoint ? ` · resumes from checkpoint ${checkpoint}` : " · no engine checkpoint was recorded, so resuming restarts from scratch"}
+        {checkpoint ? ` · resumes from checkpoint ${checkpoint} on the runner that holds it` : " · no engine checkpoint was recorded, so resuming restarts from scratch"}
       </span>
       {resumable ? (
-        <button type="button" className="primary" onClick={async () => { await resumeRun(run.id); onChanged?.(); }}>▶ Resume run</button>
+        <button
+          type="button"
+          className="primary"
+          title={checkpoint ? `Continue from checkpoint ${checkpoint}` : "Re-queue this run; it restarts from scratch"}
+          onClick={async () => { await resumeRun(run.id); onChanged?.(); }}
+        >▶ Resume run</button>
+      ) : null}
+      {resumable && checkpoint ? (
+        <button
+          type="button"
+          className="button"
+          title="Discard the recorded checkpoint and runner pin; re-run from scratch on any live runner (use when the checkpoint's runner is gone or the checkpoint is stale)"
+          onClick={async () => { await resumeRun(run.id, { fromScratch: true }); onChanged?.(); }}
+        >Restart from scratch</button>
       ) : null}
     </div>
   );

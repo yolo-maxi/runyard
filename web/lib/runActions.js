@@ -64,13 +64,29 @@ export async function editRerunById(id) {
   editRerunRun(data.run);
 }
 
+// Park an assigned/running run as paused (recoverable interruption). The
+// owning runner observes the pause, halts the engine, and attaches the
+// Smithers checkpoint so a later resume continues where it stopped.
+export async function pauseRun(id, reason = "manual", message = "") {
+  const result = await api(`/api/runs/${id}/pause`, {
+    method: "POST",
+    body: { reason, message, pausedBy: "operator" }
+  });
+  toast("Run paused — it keeps its checkpoint and frees its runner slot", "ok");
+  await refreshCollection("runs");
+  return result.run;
+}
+
 // Resume a paused run: it re-queues and continues from its recorded engine
 // checkpoint when one exists (the server response says which strategy ran).
-export async function resumeRun(id) {
-  const result = await api(`/api/runs/${id}/resume`, { method: "POST", body: {} });
+// fromScratch forces rerun_from_scratch: the checkpoint is discarded and the
+// runner pin cleared, so any live runner can take the run.
+export async function resumeRun(id, { fromScratch = false } = {}) {
+  const result = await api(`/api/runs/${id}/resume`, { method: "POST", body: fromScratch ? { strategy: "rerun_from_scratch" } : {} });
   toast(result.resume?.strategy === "rerun_from_scratch"
-    ? "Run re-queued — no checkpoint was recorded, so it restarts from scratch"
+    ? (fromScratch ? "Run re-queued from scratch — the checkpoint was discarded, any runner can take it" : "Run re-queued — no checkpoint was recorded, so it restarts from scratch")
     : "Run resumed from its checkpoint", "ok");
+  if (result.warning) toast(result.warning, "info");
   await refreshCollection("runs");
   return result.run;
 }

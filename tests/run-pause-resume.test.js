@@ -32,6 +32,7 @@ const {
   transitionRun,
   updateRun
 } = await import("../src/db.js");
+const { PAUSE_REASONS } = await import("../src/runPause.js");
 const { env } = await import("../src/env.js");
 const { now } = await import("../src/ids.js");
 const { canTransitionRun, shouldReleaseRunnerSlotOnTransition } = await import("../src/runLifecyclePolicy.js");
@@ -47,7 +48,12 @@ const { gatewayRunToken } = await import("../src/meteringGateway.js");
 const { cleanRerunInput, logicalRerunInput } = await import("../src/runRerun.js");
 const { smithersLaunchRequest } = await import("../src/runnerSmithersRuntime.js");
 
-const pauseStore = createRunPauseStore({ getRun, transitionRun, updateRun, addRunEvent, now });
+const pauseStore = createRunPauseStore({ getRun, getRunner, transitionRun, updateRun, addRunEvent, now });
+
+function markRunnerOffline(runnerId) {
+  db.prepare("UPDATE runners SET last_heartbeat_at = ? WHERE id = ?")
+    .run(new Date(Date.now() - 86_400_000).toISOString(), runnerId);
+}
 
 function runningRun({ input = { topic: "pause" }, tags = ["smithers", "vps"] } = {}) {
   const capability = getCapability("hello");
@@ -208,6 +214,8 @@ describe("pause store (real db)", () => {
     const result = pauseStore.resumeRun(runId, { resumedBy: "operator" });
     assert.equal(result.ok, true);
     assert.deepEqual(result.resume, { strategy: "smithers_resume", smithersRunId: "run-3003", attempt: 1 });
+    // Pinned runner is online (fresh registration heartbeat): no warning.
+    assert.equal(result.warning, undefined);
 
     const run = getRun(runId);
     assert.equal(run.status, "queued");
@@ -234,7 +242,7 @@ describe("pause store (real db)", () => {
     assert.ok(!launch.args.join(" ").includes("__resume"), "checkpoint pointer never reaches the workflow input");
   });
 
-  it("resume without a checkpoint re-runs from scratch and says so", () => {
+  it("resume without a checkpoint re-runs from scratch, says so, and unpins the runner", () => {
     const { runId } = runningRun();
     pauseStore.pauseRun(runId, { reason: "manual", pausedBy: "operator" });
     const result = pauseStore.resumeRun(runId);
@@ -243,6 +251,104 @@ describe("pause store (real db)", () => {
     const run = getRun(runId);
     assert.equal(run.status, "queued");
     assert.equal(run.input.__resume, undefined);
+    // No checkpoint means no state locality: any live runner may claim it.
+    assert.equal(run.runnerId, null);
+    const stranger = registerRunner({ name: `scratch-claimer-${runId}`, hostname: "test", tags: ["smithers", "vps"] });
+    assert.equal(claimNextRun(stranger.id)?.run?.id, runId);
+  });
+
+  it("forced rerun_from_scratch discards the checkpoint and clears the runner pin", () => {
+    const { runId, runnerId } = runningRun();
+    pauseStore.pauseRun(runId, { reason: "credits_exhausted", pausedBy: "runner", resume: { smithersRunId: "run-4004" } });
+
+    const result = pauseStore.resumeRun(runId, { resumedBy: "operator", strategy: "rerun_from_scratch" });
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.resume, { strategy: "rerun_from_scratch", attempt: 1 });
+    assert.equal(result.warning, undefined);
+
+    const run = getRun(runId);
+    assert.equal(run.status, "queued");
+    assert.equal(run.input.__resume, undefined, "checkpoint pointer discarded");
+    assert.equal(run.runnerId, null, "runner pin cleared");
+    // A different runner (not the checkpoint holder) can claim it.
+    const stranger = registerRunner({ name: `fresh-claimer-${runId}`, hostname: "test", tags: ["smithers", "vps"] });
+    const assignment = claimNextRun(stranger.id);
+    assert.equal(assignment.run.id, runId);
+    assert.notEqual(stranger.id, runnerId);
+    const resumed = listRunEvents(runId).find((event) => event.type === "run.resumed");
+    assert.match(resumed.message, /from scratch by request/);
+    assert.match(resumed.message, /run-4004/);
+  });
+
+  it("forced smithers_resume without a recorded checkpoint is refused explicitly", () => {
+    const { runId } = runningRun();
+    pauseStore.pauseRun(runId, { reason: "manual", pausedBy: "operator" });
+    const result = pauseStore.resumeRun(runId, { strategy: "smithers_resume" });
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 409);
+    assert.match(result.error, /no engine checkpoint/);
+    assert.equal(getRun(runId).status, "paused", "refused resume leaves the run parked");
+  });
+
+  it("an unknown strategy is a 400, not a silent default", () => {
+    const { runId } = runningRun();
+    pauseStore.pauseRun(runId, { reason: "manual", pausedBy: "operator" });
+    const result = pauseStore.resumeRun(runId, { strategy: "teleport" });
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 400);
+    assert.match(result.error, /unknown resume strategy/);
+  });
+
+  it("checkpointed resume onto an offline runner warns instead of waiting silently", () => {
+    const { runId, runnerId } = runningRun();
+    pauseStore.pauseRun(runId, { reason: "credits_exhausted", pausedBy: "runner", resume: { smithersRunId: "run-5005" } });
+    markRunnerOffline(runnerId);
+
+    const result = pauseStore.resumeRun(runId);
+    assert.equal(result.ok, true);
+    assert.equal(result.resume.strategy, "smithers_resume");
+    assert.equal(result.resume.runnerOnline, false);
+    assert.equal(result.resume.runnerId, runnerId);
+    assert.match(result.warning, /offline/);
+    assert.match(result.warning, /rerun_from_scratch/);
+    // The run still resumes pinned — the checkpoint is worth waiting for — and
+    // the timeline records the caveat for anyone reading the run later.
+    assert.equal(getRun(runId).runnerId, runnerId);
+    const resumed = listRunEvents(runId).find((event) => event.type === "run.resumed");
+    assert.match(resumed.message, /offline/);
+  });
+
+  it("a runner-reported resume failure re-parks the run with the stale checkpoint dropped", () => {
+    const { runId, runnerId } = runningRun();
+    pauseStore.pauseRun(runId, { reason: "credits_exhausted", pausedBy: "gateway", resume: { smithersRunId: "run-6006" } });
+    assert.equal(pauseStore.resumeRun(runId).resume.strategy, "smithers_resume");
+
+    // The pinned runner claims the resumed run, starts it, then discovers the
+    // checkpoint is gone from local .smithers state and reports resume_failed
+    // — exactly what src/runner.js does via resumeCheckpointStatus().
+    assert.equal(claimNextRun(runnerId).run.id, runId);
+    transitionRun(runId, "running", { current_step: "running", started_at: now() });
+    const repause = pauseStore.pauseRun(runId, {
+      reason: PAUSE_REASONS.RESUME_FAILED,
+      message: "Recorded engine checkpoint run-6006 was not found in this runner's local .smithers state",
+      pausedBy: "runner"
+    });
+    assert.equal(repause.ok, true);
+
+    const run = getRun(runId);
+    assert.equal(run.status, "paused");
+    assert.equal(run.pause.reason, "resume_failed");
+    assert.equal(run.pause.resume, undefined, "stale checkpoint is NOT carried into the new pause record");
+    assert.match(run.pause.requiredAction.label, /re-run from scratch/);
+
+    // The next resume is honest: rerun_from_scratch, pointer gone, pin cleared.
+    const second = pauseStore.resumeRun(runId);
+    assert.equal(second.ok, true);
+    assert.equal(second.resume.strategy, "rerun_from_scratch");
+    assert.equal(second.resume.attempt, 2, "attempt count survives the failed resume");
+    const requeued = getRun(runId);
+    assert.equal(requeued.input.__resume, undefined);
+    assert.equal(requeued.runnerId, null);
   });
 
   it("resume refuses non-paused runs and pauses marked not resumable", () => {

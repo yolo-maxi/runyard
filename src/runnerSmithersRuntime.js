@@ -64,6 +64,28 @@ export function smithersLaunchRequest({ entry, input, workspace, resume = null, 
   };
 }
 
+// A detached `smithers up --resume <sid>` only validates the checkpoint
+// (RUN_NOT_FOUND) inside the spawned background child — the parent returns the
+// run id immediately. Without a pre-check, a missing checkpoint would leave
+// the runner polling a run that never exists until the execution deadline
+// kills it hours later as a bogus timeout. So the runner verifies the
+// checkpoint in local .smithers state BEFORE launching (inspect is a
+// control-plane read; it executes no untrusted code) and reports an explicit
+// resume failure instead.
+export async function resumeCheckpointStatus({ inspectRun, smithersRunId }) {
+  try {
+    await inspectRun(smithersRunId);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error).slice(0, 500) };
+  }
+}
+
+export function resumeCheckpointMissingMessage(smithersRunId, detail = "") {
+  const suffix = detail ? ` (inspect said: ${String(detail).replace(/\s+/g, " ").trim().slice(0, 200)})` : "";
+  return `Recorded engine checkpoint ${smithersRunId} was not found in this runner's local .smithers state${suffix}; it may have been cleaned or the workspace replaced. The run is re-paused with the stale checkpoint dropped — resume again to re-run from scratch, or cancel.`;
+}
+
 export function parseSmithersRunId(stdout = "") {
   try {
     const parsed = JSON.parse(stdout);

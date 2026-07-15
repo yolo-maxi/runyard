@@ -88,6 +88,7 @@ export function createServerComposition({
     recordScheduleFireResult,
     getDecryptedSecretEnv,
     getRun,
+    getRunner,
     getRunDraft,
     getRunUsage,
     recordRunUsage,
@@ -281,6 +282,7 @@ export function createServerComposition({
   // metering gateway's provider credit-exhaustion hook.
   const runPause = createRunPauseStore({
     getRun,
+    getRunner,
     transitionRun,
     updateRun,
     addRunEvent,
