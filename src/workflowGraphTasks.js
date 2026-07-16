@@ -49,6 +49,8 @@ export function taskNode(task) {
     retries: task.retries,
     timeout: task.timeout,
     line: task.line,
+    containerKind: task.container?.kind || "",
+    containerId: task.container?.id || "",
     sublabel: taskSublabel(task)
   };
 }

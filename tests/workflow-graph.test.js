@@ -32,8 +32,18 @@ describe("workflow graph helpers", () => {
     assert.equal(graph.metadata.parallelGroups, 1);
     assert.equal(graph.nodes.find((node) => node.id === "test").kind, "test");
     assert.equal(graph.nodes.find((node) => node.id === "deploy").kind, "deploy");
-    assert.equal(graph.nodes.find((node) => node.id === "approval").kind, "approval");
+    const approval = graph.nodes.find((node) => node.id === "approval");
+    assert.equal(approval.kind, "decision");
+    assert.equal(approval.originalKind, "approval");
+    assert.equal(approval.owner, "Human decision");
+    assert.ok(approval.position);
+    assert.ok(graph.nodes.find((node) => node.id === "approval-no"));
+    assert.ok(graph.nodes.find((node) => node.id === "approval-unknown"));
+    assert.ok(graph.edges.find((edge) => edge.source === "approval" && edge.label === "no"));
+    assert.ok(graph.edges.find((edge) => edge.source === "approval" && edge.label === "?? clarify"));
     assert.ok(graph.edges.find((edge) => edge.source === "test" && edge.target === "audit-N" && edge.kind === "parallel"));
+    assert.ok(graph.edges.find((edge) => edge.label === "then"));
+    assert.equal(graph.layout, "operating-map");
     assert.deepEqual(graph.sideNodes.map((node) => node.id), ["agent:builder", "skill:shell", "tag:local"]);
   });
 
@@ -47,7 +57,9 @@ describe("workflow graph helpers", () => {
     });
     assert.equal(graph.name, "Hello");
     assert.deepEqual(graph.nodes.map((node) => node.id), ["workflow", "execute"]);
-    assert.deepEqual(graph.edges, [{ id: "e-workflow-execute", source: "workflow", target: "execute", kind: "sequence" }]);
+    assert.deepEqual(graph.edges, [{ id: "e-workflow-execute", source: "workflow", target: "execute", kind: "sequence", label: "then" }]);
+    assert.equal(graph.layout, "operating-map");
+    assert.ok(graph.nodes.every((node) => node.position));
     assert.equal(graph.sideNodes[0].id, "agent:runner");
   });
 });
