@@ -1,5 +1,4 @@
 import {
-  DEFAULT_BOARD_LANES,
   boardCountQuery,
   boardCreateRecord,
   boardInsertQuery,
@@ -9,6 +8,7 @@ import {
   boardUpdateValues,
   normalizeBoard
 } from "./boardRecords.js";
+import { developmentFactoryDefinition } from "./boardDefinition.js";
 
 // Board instances: durable configured views over work items. The store is a
 // thin CRUD layer (records own SQL/validation shapes); ensureDefaultBoard
@@ -18,10 +18,10 @@ import {
 export const DEFAULT_BOARD_SEED = {
   slug: "runyard",
   title: "RunYard Factory",
-  description: "This deployment's own software-factory board: product, infra, docs, and release work, executed and updated by workflows.",
+  description: "This deployment's own software-factory board: product, infra, docs, roadmap shaping, and release work, executed and updated by workflows.",
   project: "",
-  lanes: DEFAULT_BOARD_LANES,
-  defaultWorkflows: ["runyard-smoke-check", "implement-change-gated", "docs-update"],
+  lanes: developmentFactoryDefinition().lanes,
+  defaultWorkflows: ["product-workflow", "runyard-smoke-check", "implement-change-gated", "docs-update"],
   isDefault: true,
   createdBy: "system"
 };

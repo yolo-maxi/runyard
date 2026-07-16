@@ -1,6 +1,6 @@
 {
   "name": "runyard",
-  "version": "0.11.10",
+  "version": "0.11.11",
   "description": "Runyard: self-hosted control plane, runner, CLI, and MCP server for agent runs.",
   "private": false,
   "license": "MIT",

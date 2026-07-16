@@ -165,7 +165,9 @@ describe("board store", () => {
     assert.equal(seeded.title, "RunYard Factory");
     assert.equal(seeded.isDefault, true);
     assert.equal(seeded.lanes.length, DEFAULT_BOARD_LANES.length);
-    assert.deepEqual(seeded.defaultWorkflows, ["runyard-smoke-check", "implement-change-gated", "docs-update"]);
+    assert.deepEqual(seeded.defaultWorkflows, ["product-workflow", "runyard-smoke-check", "implement-change-gated", "docs-update"]);
+    assert.equal(seeded.lanes.find((lane) => lane.id === "triaged").label, "Roadmap shaping");
+    assert.equal(seeded.lanes.find((lane) => lane.id === "triaged").trigger.workflow, "product-workflow");
     assert.equal(seeded.lanes.find((lane) => lane.id === "running").trigger.mode, "confirm");
     assert.deepEqual(seeded.lanes.find((lane) => lane.id === "shipped").guard.allowFromStatuses, ["review"]);
     assert.equal(boards.ensureDefaultBoard({ instanceName: "RunYard" }), null);
