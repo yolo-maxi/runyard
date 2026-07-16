@@ -39,10 +39,22 @@ The Work surface has two views over the same board configuration:
 
 The seeded RunYard Factory board uses conservative triggers:
 
+- **Roadmap shaping** suggests `product-workflow` in plan-only mode for product proposals that need discussion before implementation.
 - **Ready to start** suggests `runyard-smoke-check`.
 - **In motion** asks before launching `runyard-smoke-check` and linking the new run to the ticket.
 - **Done** is guarded: cards can enter it only from **Review / approve**, so work cannot be finalized straight from planning or execution.
 - Review stays human-controlled.
+
+## RunYard dogfooding loop
+
+The built-in `runyard-development-factory` definition is also RunYard's own roadmap factory:
+
+1. Manual proposals from Telegram, chat, or an operator become work items in **Needs triage**.
+2. A disabled-by-default schedule, `runyard-daily-roadmap-shaping`, is pinned to `0 9 * * *` in `America/New_York` and runs `product-workflow` with `execute: false`.
+3. The plan-only report proposes compact RunYard features with rationale, acceptance checks, and implementation prompts. It does not send Telegram messages itself; operators discuss or paste the report in Telegram from the RunYard run/report view.
+4. A human selects the next item and moves it through the board into the gated implementation cycle, typically via `implement-change-gated`.
+
+Enable the schedule only on a Hub where daily proposal runs are desired. Importing the definition in tests or dev keeps it disabled so it cannot create unsolicited runs.
 
 ## Runs move tickets
 
@@ -118,6 +130,15 @@ A board **definition** is a portable JSON document describing a whole kanban —
   "title": "RunYard Development Factory",
   "lanes": [ /* … lane definitions with trigger/guard/transitions … */ ],
   "schedules": [
+    {
+      "slug": "runyard-daily-roadmap-shaping",
+      "workflow": "product-workflow",
+      "cron": "0 9 * * *",
+      "timezone": "America/New_York",
+      "enabled": false,
+      "laneId": "triaged",
+      "input": { "execute": false, "maxFeatures": 4 }
+    },
     {
       "slug": "runyard-nightly-smoke",
       "workflow": "runyard-smoke-check",

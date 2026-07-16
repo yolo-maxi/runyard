@@ -300,5 +300,93 @@ export const seedProductCapabilities = [
       "engine": "smithers",
       "entry": ".smithers/workflows/improve.tsx"
     }
+  },
+  {
+    "slug": "product-workflow",
+    "name": "Product Workflow (sequential)",
+    "description": "Researches RunYard's competitive/product gaps, prioritizes compact feature proposals, and reports the gated implementation runs it would create. With execute=false it is plan-only; with execute=true it queues implementation runs sequentially.",
+    "category": "Product",
+    "keywords": [
+      "product",
+      "roadmap",
+      "planning",
+      "research",
+      "features",
+      "workflow",
+      "smithers"
+    ],
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "context": {
+          "type": "string",
+          "description": "Product context, positioning, target users, known proposals, or constraints to focus the roadmap shaping run."
+        },
+        "competitors": {
+          "type": "string",
+          "description": "Optional comma- or newline-separated list of competitors/products to map first."
+        },
+        "maxCompetitors": {
+          "type": "number",
+          "description": "Maximum competitors to map (1-12, default 5)."
+        },
+        "maxFeatures": {
+          "type": "number",
+          "description": "Maximum prioritized feature proposals to report or implement (1-8, default 3)."
+        },
+        "execute": {
+          "type": "boolean",
+          "description": "false plans and reports only; true queues gated implementation runs sequentially."
+        },
+        "targetBranch": {
+          "type": "string",
+          "description": "Branch each implementation run targets if execute=true. Defaults to main."
+        },
+        "repoDir": {
+          "type": "string",
+          "description": "Absolute runner-local git repo path to inspect/build. Must be inside configured allowed improve repo roots."
+        },
+        "repo": {
+          "type": "string",
+          "description": "Friendly repo key resolved on the runner from repo policy config. Defaults to smithers-hub for RunYard."
+        },
+        "project": {
+          "type": "string",
+          "description": "Optional friendly project key resolved from runner repo policy config."
+        }
+      }
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "baseline": { "type": "object" },
+        "research": { "type": "object" },
+        "featureMap": { "type": "object" },
+        "prioritize": { "type": "object" },
+        "dispatch": {
+          "type": "object",
+          "description": "{executed,targetRepo,targetBranch,dispatched,artifactName,report,notes}"
+        }
+      }
+    },
+    "requiredRunnerTags": [
+      "smithers"
+    ],
+    "requiredSkills": [
+      "research-method",
+      "product-review",
+      "spec-writing"
+    ],
+    "requiredAgents": [
+      "researcher",
+      "product-manager"
+    ],
+    "approvalPolicy": {
+      "required": false
+    },
+    "workflow": {
+      "engine": "smithers",
+      "entry": ".smithers/workflows/product-workflow.tsx"
+    }
   }
 ];

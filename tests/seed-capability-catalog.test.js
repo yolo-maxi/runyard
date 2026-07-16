@@ -27,6 +27,7 @@ describe("seed capability catalog", () => {
       "implement-change-gated",
       "idea-to-product",
       "improve",
+      "product-workflow",
       "reauth-cli"
     ]);
   });

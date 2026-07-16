@@ -241,12 +241,46 @@ export function developmentFactoryDefinition({
     version: BOARD_DEFINITION_VERSION,
     slug,
     title,
-    description: "The RunYard software factory: triage → plan → ready → run → review → ship, with agent/schedule hookups for the routine transitions and a human-only gate on shipping.",
+    description: "The RunYard software factory: triage → roadmap-shape → ready → run → review → ship, with a disabled-by-default daily product-planning cadence and a human-only gate on shipping.",
     project,
-    defaultWorkflows: ["runyard-smoke-check", "implement-change-gated", "docs-update"],
+    defaultWorkflows: ["product-workflow", "runyard-smoke-check", "implement-change-gated", "docs-update"],
     isDefault: false,
-    lanes: withPolicy,
+    lanes: withPolicy.map((lane) => {
+      if (lane.id !== "triaged") return lane;
+      return {
+        ...lane,
+        label: "Roadmap shaping",
+        hint: "Feature proposals and strategy asks that need product discussion before implementation.",
+        empty: "No roadmap proposals waiting for discussion.",
+        trigger: {
+          mode: "suggest",
+          label: "Shape roadmap",
+          workflow: "product-workflow",
+          description: "Run product-workflow in execute=false mode to propose compact RunYard features for human discussion."
+        }
+      };
+    }),
     schedules: [
+      {
+        slug: "runyard-daily-roadmap-shaping",
+        name: "RunYard daily roadmap shaping",
+        workflow: "product-workflow",
+        cron: "0 9 * * *",
+        timezone: "America/New_York",
+        description: "Daily plan-only roadmap shaping for RunYard dogfooding. Produces compact feature proposals for Telegram discussion; an operator picks follow-up work before any implementation run is launched.",
+        input: {
+          context:
+            "Daily RunYard roadmap shaping. Propose a compact set of high-leverage RunYard features for human discussion, not immediate implementation. For each proposal include rationale, acceptance checks, and a self-contained implementation prompt. Keep the report suitable to paste or summarize into Telegram; the operator will select what enters the gated implementation cycle.",
+          competitors: "",
+          maxCompetitors: 5,
+          maxFeatures: 4,
+          execute: false,
+          repo: "smithers-hub",
+          targetBranch: "main"
+        },
+        enabled: false,
+        laneId: "triaged"
+      },
       {
         slug: "runyard-nightly-smoke",
         name: "RunYard nightly smoke",

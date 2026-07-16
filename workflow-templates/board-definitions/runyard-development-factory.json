@@ -3,9 +3,10 @@
   "version": 1,
   "slug": "runyard-development-factory",
   "title": "RunYard Development Factory",
-  "description": "Software factory for a product team: triage → plan → ready → run → review → ship. Agents/workflows drive routine transitions; a human gate protects shipping. Wire GitHub/CI/deploy secrets through the existing secrets and hook profiles; the release-notes/social hook point is documented in docs/concepts/boards.mdx but not wired in this template.",
+  "description": "Software factory for a product team: triage → roadmap-shape → ready → run → review → ship. Agents/workflows drive routine transitions; a disabled-by-default daily roadmap cadence proposes product work before implementation; a human gate protects shipping. Wire GitHub/CI/deploy secrets through the existing secrets and hook profiles; the release-notes/social hook point is documented in docs/concepts/boards.mdx but not wired in this template.",
   "project": "",
   "defaultWorkflows": [
+    "product-workflow",
     "runyard-smoke-check",
     "implement-change-gated",
     "docs-update"
@@ -21,10 +22,16 @@
     },
     {
       "id": "triaged",
-      "label": "Plan next",
-      "hint": "Known work that still needs the next concrete action.",
-      "empty": "Nothing waiting for planning.",
-      "statuses": ["triaged"]
+      "label": "Roadmap shaping",
+      "hint": "Feature proposals and strategy asks that need product discussion before implementation.",
+      "empty": "No roadmap proposals waiting for discussion.",
+      "statuses": ["triaged"],
+      "trigger": {
+        "mode": "suggest",
+        "label": "Shape roadmap",
+        "workflow": "product-workflow",
+        "description": "Run product-workflow in execute=false mode to propose compact RunYard features for human discussion."
+      }
     },
     {
       "id": "ready",
@@ -112,6 +119,25 @@
     }
   ],
   "schedules": [
+    {
+      "slug": "runyard-daily-roadmap-shaping",
+      "name": "RunYard daily roadmap shaping",
+      "workflow": "product-workflow",
+      "cron": "0 9 * * *",
+      "timezone": "America/New_York",
+      "description": "Daily plan-only roadmap shaping for RunYard dogfooding. Produces compact feature proposals for Telegram discussion; an operator picks follow-up work before any implementation run is launched.",
+      "input": {
+        "context": "Daily RunYard roadmap shaping. Propose a compact set of high-leverage RunYard features for human discussion, not immediate implementation. For each proposal include rationale, acceptance checks, and a self-contained implementation prompt. Keep the report suitable to paste or summarize into Telegram; the operator will select what enters the gated implementation cycle.",
+        "competitors": "",
+        "maxCompetitors": 5,
+        "maxFeatures": 4,
+        "execute": false,
+        "repo": "smithers-hub",
+        "targetBranch": "main"
+      },
+      "enabled": false,
+      "laneId": "triaged"
+    },
     {
       "slug": "runyard-nightly-smoke",
       "name": "RunYard nightly smoke",

@@ -76,7 +76,18 @@ describe("board definition validator", () => {
     const review = validated.value.lanes.find((lane) => lane.id === "review");
     assert.equal(review.transitions[0].to, "shipped");
     assert.deepEqual(review.transitions[0].allow.actorRoles, ["human"]);
-    assert.equal(validated.value.schedules[0].workflow, "runyard-smoke-check");
+    assert.deepEqual(validated.value.defaultWorkflows.slice(0, 2), ["product-workflow", "runyard-smoke-check"]);
+    const roadmapLane = validated.value.lanes.find((lane) => lane.id === "triaged");
+    assert.equal(roadmapLane.label, "Roadmap shaping");
+    assert.equal(roadmapLane.trigger.workflow, "product-workflow");
+    const roadmapSchedule = validated.value.schedules.find((schedule) => schedule.slug === "runyard-daily-roadmap-shaping");
+    assert.equal(roadmapSchedule.workflow, "product-workflow");
+    assert.equal(roadmapSchedule.cron, "0 9 * * *");
+    assert.equal(roadmapSchedule.timezone, "America/New_York");
+    assert.equal(roadmapSchedule.enabled, false);
+    assert.equal(roadmapSchedule.input.execute, false);
+    assert.match(roadmapSchedule.input.context, /summarize into Telegram/);
+    assert.equal(validated.value.schedules.find((schedule) => schedule.slug === "runyard-nightly-smoke").workflow, "runyard-smoke-check");
   });
 
   it("rejects an unknown kind or version", () => {
@@ -150,10 +161,16 @@ describe("board definition handlers", () => {
     assert.equal(res.body.action, "created");
     assert.equal(res.body.board.slug, "runyard-development-factory");
     assert.equal(boards.getBoard("runyard-development-factory") != null, true);
-    assert.equal(schedules.size, 1);
-    const schedule = [...schedules.values()][0];
-    assert.equal(schedule.name, "board:runyard-development-factory:runyard-nightly-smoke");
-    assert.equal(schedule.capabilitySlug, "runyard-smoke-check");
+    assert.equal(schedules.size, 2);
+    const scheduleValues = [...schedules.values()];
+    const roadmapSchedule = scheduleValues.find((schedule) => schedule.name === "board:runyard-development-factory:runyard-daily-roadmap-shaping");
+    assert.equal(roadmapSchedule.capabilitySlug, "product-workflow");
+    assert.equal(roadmapSchedule.cron, "0 9 * * *");
+    assert.equal(roadmapSchedule.timezone, "America/New_York");
+    assert.equal(roadmapSchedule.enabled, false);
+    assert.equal(roadmapSchedule.input.execute, false);
+    const smokeSchedule = scheduleValues.find((schedule) => schedule.name === "board:runyard-development-factory:runyard-nightly-smoke");
+    assert.equal(smokeSchedule.capabilitySlug, "runyard-smoke-check");
   });
 
   it("re-import is idempotent: updates board and reconciles schedule slug in place", () => {
@@ -164,7 +181,7 @@ describe("board definition handlers", () => {
     handlers.importBoardDefinition({ body: { definition: factoryDoc }, token: {} }, second);
     assert.equal(second.statusCode, 200);
     assert.equal(second.body.action, "updated");
-    assert.equal(schedules.size, 1); // no duplicate
+    assert.equal(schedules.size, 2); // no duplicate
   });
 
   it("import respects the slug override to provision multiple boards from one template", () => {
