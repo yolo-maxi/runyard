@@ -1,5 +1,5 @@
-import { useCallback, useRef } from "react";
-import { ReactFlow, ReactFlowProvider, Background, Controls, MiniMap } from "@xyflow/react";
+import { useCallback, useMemo, useRef } from "react";
+import { ReactFlow, ReactFlowProvider, Background, Controls, Handle, MiniMap, Position } from "@xyflow/react";
 
 // Visual graph tab renderer. The graph data comes from
 // GET /api/workflows/:id/source → `.graph` (nodes/edges/sideNodes). We
@@ -12,6 +12,9 @@ import { ReactFlow, ReactFlowProvider, Background, Controls, MiniMap } from "@xy
 function layoutGraph(graph) {
   const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
   const edges = Array.isArray(graph?.edges) ? graph.edges : [];
+  if (nodes.some((node) => node.position)) {
+    return new Map(nodes.map((node) => [node.id, node.position || { x: 0, y: 0 }]));
+  }
   const adjacency = new Map();
   for (const node of nodes) adjacency.set(node.id, []);
   for (const edge of edges) if (adjacency.has(edge.source)) adjacency.get(edge.source).push(edge.target);
@@ -49,6 +52,16 @@ function layoutGraph(graph) {
   return positions;
 }
 
+function flowPosition(value, fallback) {
+  switch (value) {
+    case "top": return Position.Top;
+    case "right": return Position.Right;
+    case "bottom": return Position.Bottom;
+    case "left": return Position.Left;
+    default: return fallback;
+  }
+}
+
 // Node fill/text/border by node kind. Ported 1:1 from the legacy nodeColor().
 function nodeColor(kind) {
   switch (kind) {
@@ -84,15 +97,49 @@ function stateColor(state) {
 
 function nodeLabel(node) {
   const lines = [node.label || node.id];
+  if (node.owner) lines.push(node.owner);
   if (node.sublabel) lines.push(node.sublabel);
   if (node.state && node.state !== "pending" && node.kind !== "entry") lines.push(node.state);
   return lines.join("\n");
 }
 
+function DecisionNode({ data }) {
+  return (
+    <div className="workflow-decision-node">
+      <Handle id="target-left" type="target" position={Position.Left} />
+      <Handle id="target-top" type="target" position={Position.Top} />
+      <div className="workflow-decision-inner">
+        <strong>{data.title}</strong>
+        {data.owner ? <span>{data.owner}</span> : null}
+        {data.detail ? <small>{data.detail}</small> : null}
+      </div>
+      <Handle id="source-right" type="source" position={Position.Right} />
+      <Handle id="source-bottom" type="source" position={Position.Bottom} />
+      <Handle id="source-top" type="source" position={Position.Top} />
+    </div>
+  );
+}
+
+const nodeTypes = { decision: DecisionNode };
+
 // Build the ReactFlow node array. Mirrors mountReactFlowGraph()'s node styling.
 function toReactNodes(graph, positions) {
   return (graph.nodes || []).map((node) => {
     const palette = (node.kind !== "entry" && node.state && stateColor(node.state)) || nodeColor(node.kind);
+    if (node.kind === "decision") {
+      return {
+        id: node.id,
+        data: {
+          title: node.label || node.id,
+          owner: node.owner || "",
+          detail: node.sublabel || ""
+        },
+        position: positions.get(node.id) || { x: 0, y: 0 },
+        type: "decision",
+        sourcePosition: flowPosition(node.sourcePosition, Position.Right),
+        targetPosition: flowPosition(node.targetPosition, Position.Left)
+      };
+    }
     return {
       id: node.id,
       data: { label: nodeLabel(node) },
@@ -108,6 +155,9 @@ function toReactNodes(graph, positions) {
         boxShadow: "0 4px 12px rgba(15, 25, 35, 0.08)",
         ...(node.state === "pending" ? { opacity: 0.55 } : {})
       },
+      className: `workflow-node workflow-node-${node.kind || "default"}`,
+      sourcePosition: flowPosition(node.sourcePosition, Position.Right),
+      targetPosition: flowPosition(node.targetPosition, Position.Left),
       type: node.kind === "entry" ? "input" : "default"
     };
   });
@@ -120,18 +170,25 @@ function toReactEdges(graph) {
     id: edge.id,
     source: edge.source,
     target: edge.target,
+    sourceHandle: edge.sourceHandle,
+    targetHandle: edge.targetHandle,
     animated: edge.kind === "parallel" || edge.kind === "automatic",
     label: edge.label || (edge.kind === "parallel" ? "parallel" : undefined),
+    type: edge.type || "smoothstep",
     style: {
       stroke: edge.style?.stroke || (
         edge.kind === "parallel" ? "#0ea5e9" :
         edge.kind === "automatic" ? "#0f766e" :
         edge.kind === "blocked" ? "#dc2626" :
+        edge.kind === "policy" ? "#7c3aed" :
+        edge.kind === "human" ? "#2563eb" :
+        edge.kind === "agent" ? "#9333ea" :
         "#637083"
       ),
       strokeDasharray: edge.style?.strokeDasharray || (
         edge.kind === "automatic" ? "6 4" :
         edge.kind === "blocked" ? "3 4" :
+        edge.kind === "policy" ? "8 5" :
         undefined
       )
     },
@@ -145,6 +202,8 @@ export function WorkflowGraph({ graph, fitSignal = 0 }) {
   const nodes = toReactNodes(graph || {}, positions);
   const edges = toReactEdges(graph || {});
   const sideNodes = graph?.sideNodes || [];
+  const graphHeight = graph?.height || 480;
+  const memoNodeTypes = useMemo(() => nodeTypes, []);
 
   const onInit = useCallback((instance) => {
     instanceRef.current = instance;
@@ -169,11 +228,12 @@ export function WorkflowGraph({ graph, fitSignal = 0 }) {
     window.matchMedia("(min-width: 901px)").matches;
 
   return (
-    <div className="workflow-graph-canvas" style={{ height: 480 }}>
+    <div className="workflow-graph-canvas" style={{ height: graphHeight }}>
       <ReactFlowProvider>
         <ReactFlow
           nodes={nodes}
           edges={edges}
+          nodeTypes={memoNodeTypes}
           fitView
           fitViewOptions={{ padding: 0.2 }}
           onInit={onInit}

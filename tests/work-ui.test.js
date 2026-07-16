@@ -99,6 +99,10 @@ describe("Work: board view", () => {
     assert.match(boardJsx, /Board operating graph/);
     assert.match(boardJsx, /<WorkflowGraph graph=\{boardGraph\}/);
     assert.match(boardJsx, /buildBoardGraph/);
+    assert.match(boardJsx, /kind: "decision"/);
+    assert.match(boardJsx, /Human gate/);
+    assert.match(boardJsx, /\?\? clarify/);
+    assert.match(boardJsx, /agent\/workflow/);
     assert.match(boardJsx, /kind: "blocked"/);
     assert.match(boardJsx, /kind: "automatic"/);
     assert.doesNotMatch(boardJsx, /onConnect/);
@@ -175,6 +179,8 @@ describe("Work: execution flow", () => {
     const graphJsx = readFileSync(path.join(root, "web", "components", "WorkflowGraph.jsx"), "utf8");
     assert.match(graphJsx, /function stateColor\(state\)/);
     assert.match(graphJsx, /node\.state && stateColor\(node\.state\)\) \|\| nodeColor\(node\.kind\)/);
+    assert.match(graphJsx, /function DecisionNode/);
+    assert.match(graphJsx, /nodeTypes = \{ decision: DecisionNode \}/);
     assert.match(graphJsx, /nodesDraggable=\{false\}/);
     assert.match(graphJsx, /nodesConnectable=\{false\}/);
     assert.match(graphJsx, /elementsSelectable=\{false\}/);
@@ -183,7 +189,7 @@ describe("Work: execution flow", () => {
 
 describe("Work: styles", () => {
   it("ships the board, card, and stepper styles", () => {
-    for (const cls of [".work-command", ".work-operator-item", ".work-view-tabs", ".work-flow-view", ".work-flow-legend", ".board", ".board-col", ".board-col.is-drop-target", ".board-col-header", ".board-col-trigger", ".board-col-trigger.mode-confirm", ".board-col-guard", ".work-card", ".work-card.is-dragging", ".work-card-action", ".work-attention", ".work-flow-step", ".work-flow-step.state-active", ".work-flow-step.state-failed", ".work-blocked-reason", ".work-priority-urgent"]) {
+    for (const cls of [".work-command", ".work-operator-item", ".work-view-tabs", ".work-flow-view", ".work-flow-legend", ".workflow-decision-node", ".workflow-decision-inner", ".legend-line.agent", ".legend-line.policy", ".board", ".board-col", ".board-col.is-drop-target", ".board-col-header", ".board-col-trigger", ".board-col-trigger.mode-confirm", ".board-col-guard", ".work-card", ".work-card.is-dragging", ".work-card-action", ".work-attention", ".work-flow-step", ".work-flow-step.state-active", ".work-flow-step.state-failed", ".work-blocked-reason", ".work-priority-urgent"]) {
       assert.ok(css.includes(cls), `styles.css is missing ${cls}`);
     }
   });

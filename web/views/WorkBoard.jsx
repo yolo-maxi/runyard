@@ -411,9 +411,11 @@ export function WorkBoard() {
           </header>
           <WorkflowGraph graph={boardGraph} />
           <div className="work-flow-legend" aria-label="Flow legend">
-            <span><i className="legend-line normal" /> operator move</span>
+            <span><i className="legend-line human" /> human/operator</span>
+            <span><i className="legend-line agent" /> agent/workflow</span>
+            <span><i className="legend-line policy" /> policy decision</span>
             <span><i className="legend-line automatic" /> workflow sync</span>
-            <span><i className="legend-line blocked" /> blocked shortcut</span>
+            <span><i className="legend-line blocked" /> no / blocked</span>
           </div>
         </section>
       ) : (
@@ -472,6 +474,9 @@ export function WorkBoard() {
 
 function buildBoardGraph({ lanes = [], items = [], workflows = [], defaultWorkflows = [] }) {
   const workflowNames = new Map(workflows.map((workflow) => [workflow.slug, workflow.name || workflow.slug]));
+  const laneIds = new Set(lanes.map((lane) => lane.id));
+  const laneIndex = new Map(lanes.map((lane, index) => [lane.id, index]));
+  const xForLane = (lane) => 40 + (laneIndex.get(lane.id) || 0) * 390;
   const nodes = lanes.map((lane) => {
     const count = items.filter((item) => lane.statuses?.includes(item.status)).length;
     const details = [`${count} ${count === 1 ? "ticket" : "tickets"}`, (lane.statuses || []).join(" / ")].filter(Boolean);
@@ -487,53 +492,70 @@ function buildBoardGraph({ lanes = [], items = [], workflows = [], defaultWorkfl
     }
     return {
       id: lane.id,
-      kind: lane.guard ? "approval" : lane.trigger ? "deploy" : "tag",
+      kind: lane.trigger ? "deploy" : "tag",
       label: lane.label,
-      sublabel: details.join("\n")
+      owner: laneOwner(lane),
+      sublabel: details.join("\n"),
+      position: { x: xForLane(lane), y: 90 },
+      sourcePosition: "right",
+      targetPosition: "left"
     };
   });
-  // Extra edges for lane.transitions[] — the read-only graph now surfaces
-  // each explicitly declared cross-lane hop and its allow-clause.
-  const transitionEdges = [];
-  for (const lane of lanes) {
-    for (const transition of lane.transitions || []) {
-      const allow = transition.allow || {};
-      const bits = [];
-      if (allow.manual) bits.push("manual");
-      if (allow.workflows?.length) bits.push(`wf: ${allow.workflows.join(", ")}`);
-      if (allow.runOrigins?.length) bits.push(`origins: ${allow.runOrigins.join(", ")}`);
-      if (allow.actorRoles?.length) bits.push(`roles: ${allow.actorRoles.join(", ")}`);
-      transitionEdges.push({
-        id: `${lane.id}-${transition.to}-policy`,
-        source: lane.id,
-        target: transition.to,
-        kind: "policy",
-        label: bits.length ? `allow: ${bits.join(" · ")}` : "policy"
+  const edges = [];
+  const handledTransitions = new Set();
+  for (let i = 0; i < lanes.length - 1; i += 1) {
+    const source = lanes[i];
+    const target = lanes[i + 1];
+    const transition = (source.transitions || []).find((candidate) => candidate.to === target.id);
+    if (transition) handledTransitions.add(`${source.id}->${target.id}`);
+    if (target.guard || transition) {
+      addDecisionGate({
+        nodes,
+        edges,
+        source,
+        target,
+        sourceX: xForLane(source),
+        targetX: xForLane(target),
+        decisionId: `${source.id}-${target.id}-gate`,
+        label: target.guard ? `Enter ${target.label}?` : "Who may move?",
+        owner: target.guard ? "Human gate" : "Policy gate",
+        detail: target.guard ? guardText(target.guard) : allowText(transition?.allow),
+        yesKind: transitionKind(transition),
+        noDetail: target.guard?.message || transition?.message || "Denied by board policy",
+        y: 78
+      });
+    } else {
+      edges.push({
+        id: `${source.id}-${target.id}`,
+        source: source.id,
+        target: target.id,
+        kind: "human",
+        label: "operator move"
       });
     }
   }
-  const edges = [];
-  for (let i = 0; i < lanes.length - 1; i += 1) {
-    const target = lanes[i + 1];
-    const guard = target.guard;
-    edges.push({
-      id: `${lanes[i].id}-${target.id}`,
-      source: lanes[i].id,
-      target: target.id,
-      label: guard?.allowFromStatuses?.length ? `requires ${guard.allowFromStatuses.join("/")}` : undefined
-    });
-  }
-  const guardedTargets = lanes.filter((lane) => lane.guard?.allowFromStatuses?.length);
-  for (const target of guardedTargets) {
-    const source = lanes.find((lane) => lane.id === "running") || lanes.find((lane) => lane.id !== target.id);
-    if (source && source.id !== target.id) {
-      edges.push({
-        id: `${source.id}-${target.id}-blocked`,
-        source: source.id,
-        target: target.id,
-        kind: "blocked",
-        label: "locked"
+  let policyRow = 0;
+  for (const source of lanes) {
+    for (const transition of source.transitions || []) {
+      if (!laneIds.has(transition.to) || handledTransitions.has(`${source.id}->${transition.to}`)) continue;
+      const target = lanes.find((lane) => lane.id === transition.to);
+      if (!target) continue;
+      addDecisionGate({
+        nodes,
+        edges,
+        source,
+        target,
+        sourceX: xForLane(source),
+        targetX: xForLane(target),
+        decisionId: `${source.id}-${target.id}-policy-gate`,
+        label: "Who may move?",
+        owner: "Policy gate",
+        detail: allowText(transition.allow),
+        yesKind: transitionKind(transition),
+        noDetail: transition.message || "Denied by board policy",
+        y: 305 + (policyRow % 2) * 115
       });
+      policyRow += 1;
     }
   }
   const runNodes = [
@@ -542,17 +564,127 @@ function buildBoardGraph({ lanes = [], items = [], workflows = [], defaultWorkfl
     { id: "run-succeeded", label: "Run succeeded", sublabel: "ready to inspect", target: "review" },
     { id: "run-failed", label: "Run failed", sublabel: "blocked reason", target: "attention" }
   ];
-  const laneIds = new Set(lanes.map((lane) => lane.id));
   for (const run of runNodes) {
     if (!laneIds.has(run.target)) continue;
-    nodes.push({ id: run.id, kind: "entry", label: run.label, sublabel: run.sublabel });
-    edges.push({ id: `${run.id}-${run.target}`, source: run.id, target: run.target, kind: "automatic", label: "auto" });
+    const target = lanes.find((lane) => lane.id === run.target);
+    nodes.push({
+      id: run.id,
+      kind: "entry",
+      label: run.label,
+      owner: "Automatic sync",
+      sublabel: run.sublabel,
+      position: { x: xForLane(target), y: 545 },
+      sourcePosition: "top",
+      targetPosition: "top"
+    });
+    edges.push({
+      id: `${run.id}-${run.target}`,
+      source: run.id,
+      target: run.target,
+      kind: "automatic",
+      label: "auto sync",
+      sourcePosition: "top",
+      targetPosition: "bottom"
+    });
   }
-  // Append transition-policy edges last so the linear lane→lane skeleton
-  // renders first, then declared policy edges overlay it with allow-clause
-  // labels (agents/workflows/roles).
-  for (const edge of transitionEdges) {
-    if (laneIds.has(edge.source) && laneIds.has(edge.target)) edges.push(edge);
-  }
-  return { nodes, edges };
+  return { nodes, edges, height: 660 };
+}
+
+function laneOwner(lane) {
+  if (lane.guard) return "Human approval";
+  if (lane.trigger?.mode === "auto" || lane.trigger?.mode === "confirm") return "Agent/workflow";
+  if (lane.trigger?.mode === "suggest") return "Human starts";
+  return "Human/operator";
+}
+
+function allowText(allow = {}) {
+  const bits = [];
+  if (allow.manual) bits.push("manual allowed");
+  if (allow.workflows?.length) bits.push(`workflow: ${allow.workflows.join(", ")}`);
+  if (allow.runOrigins?.length) bits.push(`origin: ${allow.runOrigins.join(", ")}`);
+  if (allow.actorRoles?.length) bits.push(`role: ${allow.actorRoles.join(", ")}`);
+  if (allow.actorIds?.length) bits.push(`agent: ${allow.actorIds.join(", ")}`);
+  return bits.length ? bits.join("\n") : "manual only";
+}
+
+function guardText(guard = {}) {
+  if (guard.message) return guard.message;
+  if (guard.allowFromStatuses?.length) return `yes only from ${guard.allowFromStatuses.join(" / ")}`;
+  if (guard.denyFromStatuses?.length) return `no from ${guard.denyFromStatuses.join(" / ")}`;
+  return "guarded transition";
+}
+
+function transitionKind(transition = {}) {
+  const allow = transition.allow || {};
+  if (allow.workflows?.length || allow.runOrigins?.length) return "agent";
+  if (allow.actorRoles?.includes("human") || allow.manual) return "human";
+  return "policy";
+}
+
+function addDecisionGate({ nodes, edges, source, target, sourceX = 0, targetX = sourceX + 390, decisionId, label, owner, detail, yesKind, noDetail, y }) {
+  const gateX = sourceX + Math.max(185, Math.round((targetX - sourceX) / 2) - 35);
+  nodes.push({
+    id: decisionId,
+    kind: "decision",
+    label,
+    owner,
+    sublabel: detail,
+    position: { x: gateX, y },
+    sourcePosition: "right",
+    targetPosition: "left"
+  });
+  const noId = `${decisionId}-no`;
+  nodes.push({
+    id: noId,
+    kind: "approval",
+    label: "No / blocked",
+    owner: "Requires action",
+    sublabel: noDetail,
+    position: { x: gateX - 18, y: y + 195 },
+    sourcePosition: "top",
+    targetPosition: "top"
+  });
+  const unknownId = `${decisionId}-unknown`;
+  nodes.push({
+    id: unknownId,
+    kind: "test",
+    label: "?? Clarify",
+    owner: "Needs context",
+    sublabel: "Ask an agent or human before moving",
+    position: { x: gateX - 18, y: y - 150 },
+    sourcePosition: "bottom",
+    targetPosition: "bottom"
+  });
+  edges.push({
+    id: `${source.id}-${decisionId}`,
+    source: source.id,
+    target: decisionId,
+    targetHandle: "target-left",
+    kind: "human",
+    label: "request"
+  });
+  edges.push({
+    id: `${decisionId}-${target.id}-yes`,
+    source: decisionId,
+    sourceHandle: "source-right",
+    target: target.id,
+    kind: yesKind,
+    label: "yes"
+  });
+  edges.push({
+    id: `${decisionId}-${noId}`,
+    source: decisionId,
+    sourceHandle: "source-bottom",
+    target: noId,
+    kind: "blocked",
+    label: "no"
+  });
+  edges.push({
+    id: `${decisionId}-${unknownId}`,
+    source: decisionId,
+    sourceHandle: "source-top",
+    target: unknownId,
+    kind: "policy",
+    label: "?? clarify"
+  });
 }

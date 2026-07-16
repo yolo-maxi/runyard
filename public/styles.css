@@ -1595,6 +1595,82 @@ details.advanced[open] summary {
   display: none;
 }
 
+.workflow-node {
+  white-space: pre-line;
+}
+
+.workflow-node-agent,
+.workflow-node-deploy {
+  box-shadow: 0 8px 18px rgba(147, 51, 234, 0.12) !important;
+}
+
+.workflow-decision-node {
+  width: 128px;
+  height: 128px;
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
+.workflow-decision-node::before {
+  content: "";
+  position: absolute;
+  inset: 12px;
+  border: 1.5px solid #a16207;
+  border-radius: 10px;
+  background: #fffbeb;
+  box-shadow: 0 10px 24px rgba(161, 98, 7, 0.14);
+  transform: rotate(45deg);
+}
+
+.workflow-decision-inner {
+  position: relative;
+  z-index: 1;
+  width: 94px;
+  min-height: 74px;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 3px;
+  text-align: center;
+  color: #92400e;
+  font-size: 11px;
+  line-height: 1.12;
+  pointer-events: none;
+}
+
+.workflow-decision-inner strong {
+  font-size: 12px;
+  line-height: 1.1;
+  color: #78350f;
+}
+
+.workflow-decision-inner span {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #a16207;
+}
+
+.workflow-decision-inner small {
+  max-width: 90px;
+  max-height: 34px;
+  overflow: hidden;
+  color: #92400e;
+}
+
+.workflow-graph-canvas .react-flow__edge-path {
+  stroke-width: 2.2;
+}
+
+.workflow-graph-canvas .react-flow__edge-text {
+  font-size: 11px;
+  font-weight: 700;
+  paint-order: stroke;
+  stroke: #ffffff;
+  stroke-width: 4px;
+}
+
 /* ---- Tabs (Agents sub-nav, workflow tabs) ---- */
 .tabs {
   display: flex;
@@ -7181,7 +7257,7 @@ button.cron-preset:hover {
 }
 
 .work-flow-view .workflow-graph-canvas {
-  min-height: 520px;
+  min-height: 620px;
 }
 
 .work-flow-legend {
@@ -7204,6 +7280,19 @@ button.cron-preset:hover {
   width: 24px;
   height: 0;
   border-top: 2px solid var(--text-muted);
+}
+
+.legend-line.human {
+  border-color: #2563eb;
+}
+
+.legend-line.agent {
+  border-color: #9333ea;
+}
+
+.legend-line.policy {
+  border-color: #7c3aed;
+  border-style: dashed;
 }
 
 .legend-line.automatic {
