@@ -62,4 +62,34 @@ describe("workflow graph helpers", () => {
     assert.ok(graph.nodes.every((node) => node.position));
     assert.equal(graph.sideNodes[0].id, "agent:runner");
   });
+
+  it("renders capability-level start approvals as workflow decision gates", () => {
+    const code = `<Workflow name="Needs Approval">
+  <Sequence>
+    <Task id="implement" agent={builder} />
+    <Task id="test">pnpm test</Task>
+  </Sequence>
+</Workflow>`;
+
+    const graph = deriveWorkflowGraph(code, {
+      slug: "implement",
+      workflow: { engine: "smithers" },
+      approvalPolicy: {
+        required: true,
+        reason: "Runs a coding agent that can modify files and run commands on the runner."
+      }
+    });
+
+    const approval = graph.nodes.find((node) => node.id === "start-approval");
+    assert.equal(approval.kind, "decision");
+    assert.equal(approval.originalKind, "approval");
+    assert.equal(approval.owner, "Human decision");
+    assert.match(approval.sublabel, /modify files/);
+    assert.ok(graph.nodes.find((node) => node.id === "start-approval-no"));
+    assert.ok(graph.nodes.find((node) => node.id === "start-approval-unknown"));
+    assert.ok(graph.edges.find((edge) => edge.source === "workflow" && edge.target === "start-approval" && edge.label === "then"));
+    assert.ok(graph.edges.find((edge) => edge.source === "start-approval" && edge.target === "implement" && edge.label === "yes"));
+    assert.ok(graph.edges.find((edge) => edge.source === "start-approval" && edge.label === "no"));
+    assert.ok(graph.edges.find((edge) => edge.source === "start-approval" && edge.label === "?? clarify"));
+  });
 });

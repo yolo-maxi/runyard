@@ -50,6 +50,11 @@ function graphFromTasks(tasks, capability, containers, workflowName) {
   ];
   const edges = [];
   let frontier = ["workflow"];
+  if (capabilityRequiresStartApproval(capability)) {
+    nodes.push(capabilityStartApprovalNode(capability));
+    edges.push(edgeBetween("workflow", "start-approval", { kind: "sequence", id: "capability-policy" }));
+    frontier = ["start-approval"];
+  }
   let openParallel = null;
   let parallelFanIn = [];
 
@@ -157,6 +162,21 @@ function decorateWorkflowGraph(graph) {
     edges,
     layout: "operating-map",
     height: graph.metadata?.parallelGroups ? 620 : 540
+  };
+}
+
+function capabilityRequiresStartApproval(capability = {}) {
+  return capability?.approvalPolicy?.required === true;
+}
+
+function capabilityStartApprovalNode(capability = {}) {
+  return {
+    id: "start-approval",
+    type: "approval",
+    label: "Start approval",
+    kind: "approval",
+    sublabel: capability?.approvalPolicy?.reason || "Human approval required before this workflow runs",
+    containerKind: "policy"
   };
 }
 
