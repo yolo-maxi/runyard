@@ -13,7 +13,16 @@ export function hasClaimCapacity(activeRuns, concurrency) {
   return activeRunnerLoad(activeRuns).work < concurrency;
 }
 
-export function authOkFor(capability, health = {}) {
+export function authOkFor(capability, health = {}, selection = {}) {
+  const selectedHarness = selection?.agentHarness || (selection?.piProvider || selection?.piModel ? "pi" : "");
+  if (selectedHarness === "codex") {
+    return health?.codex?.ok === false ? [`codex: ${health.codex.error || "not authenticated"}`] : [];
+  }
+  if (selectedHarness === "claude") {
+    return health?.claude?.ok === false ? [`claude: ${health.claude.error || "not authenticated"}`] : [];
+  }
+  if (selectedHarness === "pi") return [];
+
   const agents = Array.isArray(capability?.requiredAgents) ? capability.requiredAgents : [];
   const text = `${capability?.slug || ""} ${agents.join(" ")} ${JSON.stringify(capability?.workflow || {})}`.toLowerCase();
   const needsClaude = /claude|implementation-agent|researcher|product-manager|taste-agent|design-director|run-knowledge-analyst/.test(text);
@@ -45,11 +54,12 @@ export function preflightAssignment(run, capability, entry, { workspace, health,
   const failures = [];
   if (!existsSync(workflowPath)) failures.push(`workflow file not found: ${workflowPath}`);
   failures.push(...preflightImproveRepo(run, capability, { workspace, env, gitBin, gitEnv }));
-  failures.push(...authOkFor(capability, health));
   // Malformed harness selection (bad harness name, key VALUE pasted where a
   // key NAME belongs, ...) is a config error — fail closed before launch. The
   // issue strings never contain the rejected value.
-  failures.push(...resolveHarnessSelection({ capability, input: run?.input || {} }).issues);
+  const harness = resolveHarnessSelection({ capability, input: run?.input || {} });
+  failures.push(...harness.issues);
+  if (!harness.issues.length) failures.push(...authOkFor(capability, health, harness.selection));
   return failures;
 }
 

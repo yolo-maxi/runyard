@@ -34,6 +34,72 @@ describe("runner runtime helpers", () => {
     ), ["codex: not authenticated"]);
   });
 
+  it("makes runner auth preflight harness-aware for explicit run selections", () => {
+    const temp = mkdtempSync(path.join(os.tmpdir(), "runner-runtime-"));
+    const entry = path.join(temp, "idea.tsx");
+    writeFileSync(entry, "// wf");
+    const capability = {
+      slug: "idea-to-product",
+      requiredAgents: ["spec-writer", "implementation-agent"],
+      workflow: { entry: "idea.tsx" }
+    };
+    const health = {
+      claude: { ok: false, error: "claude session expired" },
+      codex: { ok: true }
+    };
+
+    assert.deepEqual(
+      preflightAssignment({ input: { agentHarness: "codex" } }, capability, entry, { workspace: temp, health }),
+      []
+    );
+    assert.deepEqual(
+      preflightAssignment({ input: { agentHarness: "claude" } }, capability, entry, { workspace: temp, health }),
+      ["claude: claude session expired"]
+    );
+    assert.deepEqual(
+      preflightAssignment({ input: {} }, capability, entry, { workspace: temp, health }),
+      ["claude: claude session expired"]
+    );
+  });
+
+  it("honors capability harness defaults without weakening malformed-selection checks", () => {
+    const temp = mkdtempSync(path.join(os.tmpdir(), "runner-runtime-"));
+    const entry = path.join(temp, "idea.tsx");
+    writeFileSync(entry, "// wf");
+    const health = {
+      claude: { ok: false, error: "claude session expired" },
+      codex: { ok: true }
+    };
+
+    assert.deepEqual(
+      preflightAssignment(
+        { input: {} },
+        { slug: "idea-to-product", requiredAgents: ["implementation-agent"], workflow: { entry: "idea.tsx", agentHarness: "codex" } },
+        entry,
+        { workspace: temp, health }
+      ),
+      []
+    );
+    assert.deepEqual(
+      preflightAssignment(
+        { input: { agentHarness: "pi", piProvider: "venice", piModel: "llama-3.3-70b" } },
+        { slug: "idea-to-product", requiredAgents: ["implementation-agent"], workflow: { entry: "idea.tsx" } },
+        entry,
+        { workspace: temp, health }
+      ),
+      []
+    );
+
+    const invalid = preflightAssignment(
+      { input: { agentHarness: "gemini" } },
+      { slug: "idea-to-product", requiredAgents: ["implementation-agent"], workflow: { entry: "idea.tsx" } },
+      entry,
+      { workspace: temp, health }
+    );
+    assert.equal(invalid.length, 1);
+    assert.match(invalid[0], /"agentHarness"/);
+  });
+
   it("preflights workflow entry, auth, and improve repo resolution", () => {
     const temp = mkdtempSync(path.join(os.tmpdir(), "runner-runtime-"));
     assert.deepEqual(preflightAssignment({}, { slug: "hello" }, "", { workspace: temp, health: {} }), [

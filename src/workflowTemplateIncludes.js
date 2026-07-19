@@ -3,6 +3,7 @@ export const WORKFLOW_TEMPLATE_INCLUDE_PATHS = [
   "workflow-templates/workflows/docs-update.tsx",
   "workflow-templates/workflows/docs-update-lib.js",
   "workflow-templates/workflows/hello.tsx",
+  "workflow-templates/workflows/idea-to-product-schemas.js",
   "workflow-templates/workflows/idea-to-product.tsx",
   "workflow-templates/workflows/implement.tsx",
   "workflow-templates/workflows/implement-change-gated.tsx",
