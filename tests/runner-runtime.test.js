@@ -136,6 +136,42 @@ describe("runner runtime helpers", () => {
     assert.deepEqual(clean, []);
   });
 
+  it("blocks Codex before launch when the materialized workflow has loose output schemas", () => {
+    const temp = mkdtempSync(path.join(os.tmpdir(), "runner-runtime-"));
+    const entry = path.join(temp, "bad-product.tsx");
+    writeFileSync(
+      entry,
+      `
+        const inputSchema = z.object({ prompt: z.string() });
+        const researchOut = z.looseObject({ summary: z.string() });
+        const { outputs } = createSmithers({
+          input: inputSchema,
+          research: researchOut
+        });
+      `
+    );
+    const capability = { slug: "product-workflow", workflow: { entry: "bad-product.tsx" } };
+
+    const failures = preflightAssignment(
+      { input: { prompt: "x", agentHarness: "codex" } },
+      capability,
+      entry,
+      { workspace: temp, health: { codex: { ok: true }, claude: { ok: false } } }
+    );
+    assert.equal(failures.length, 1);
+    assert.match(failures[0], /additionalProperties:false/);
+
+    assert.deepEqual(
+      preflightAssignment(
+        { input: { prompt: "x", agentHarness: "claude" } },
+        capability,
+        entry,
+        { workspace: temp, health: { claude: { ok: true } } }
+      ),
+      []
+    );
+  });
+
   it("materializes runtime packs to a private file and compact env summary", () => {
     const temp = mkdtempSync(path.join(os.tmpdir(), "runner-runtime-pack-"));
     const env = materializeAgentRuntimePack(

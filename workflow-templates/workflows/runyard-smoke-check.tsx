@@ -10,7 +10,7 @@ const inputSchema = z.object({
   expectRunner: z.boolean().default(true)
 });
 
-const smokeOut = z.looseObject({
+const smokeOut = z.object({
   ok: z.boolean(),
   label: z.string(),
   checkedAt: z.string(),

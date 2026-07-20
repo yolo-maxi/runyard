@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-const { shouldFallbackAgent, withAgentFallback, createAgentFallbackPair } = await import(
+const { shouldFallbackAgent, isDeterministicAgentFailure, withAgentFallback, createAgentFallbackPair } = await import(
   "../workflow-templates/workflows/agent-fallback.js"
 );
 
@@ -38,8 +38,32 @@ describe("workflow agent fallback", () => {
     }
   });
 
+  it("does not fallback for deterministic native structured-output schema errors", () => {
+    for (const message of [
+      "api_error_status 400: Invalid schema for response_format: additionalProperties must be false",
+      "structured output schema validation failed: object requires additionalProperties:false",
+      "JSON schema is invalid for native structured output",
+      JSON.stringify({
+        type: "error",
+        error: {
+          type: "invalid_request_error",
+          code: "invalid_json_schema",
+          message:
+            "Invalid schema for response_format 'codex_output_schema': In context=(), 'additionalProperties' is required to be supplied and to be false.",
+          param: "text.format.schema"
+        },
+        status: 400
+      })
+    ]) {
+      assert.equal(shouldFallbackAgent(new Error(message)), false, message);
+      assert.equal(isDeterministicAgentFailure(new Error(message)), true, message);
+    }
+  });
+
   it("does not fallback for ordinary implementation errors", () => {
     assert.equal(shouldFallbackAgent(new Error("TypeError: cannot read property of undefined")), false);
+    assert.equal(isDeterministicAgentFailure(new Error("documentation authoring failed")), false);
+    assert.equal(isDeterministicAgentFailure(new Error("request expired before execution")), false);
   });
 
   it("tries the fallback agent once and clears CLI-specific resume state", async () => {
@@ -84,6 +108,101 @@ describe("workflow agent fallback", () => {
       }
     );
     await assert.rejects(() => agent.generate(), /syntax error/);
+  });
+
+  it("surfaces native schema errors without touching an expired fallback provider", async () => {
+    const calls = [];
+    const agent = withAgentFallback(
+      {
+        cliEngine: "codex",
+        async generate() {
+          calls.push("codex");
+          throw new Error("api_error_status 400: Invalid schema: additionalProperties must be false");
+        }
+      },
+      {
+        cliEngine: "claude-code",
+        async generate() {
+          calls.push("claude");
+          throw new Error("Claude authentication expired");
+        }
+      },
+      { label: "product-workflow-researcher" }
+    );
+    await assert.rejects(() => agent.generate(), /additionalProperties/);
+    assert.deepEqual(calls, ["codex"]);
+  });
+
+  it("does not invoke providers again when Smithers retries a deterministic schema failure", async () => {
+    const calls = [];
+    const agent = withAgentFallback(
+      {
+        cliEngine: "codex",
+        async generate() {
+          calls.push("codex");
+          throw new Error("api_error_status 400: Invalid schema: additionalProperties must be false");
+        }
+      },
+      {
+        cliEngine: "claude-code",
+        async generate() {
+          calls.push("claude");
+          throw new Error("should not run");
+        }
+      },
+      { label: "product-workflow-researcher" }
+    );
+    await assert.rejects(() => agent.generate(), /additionalProperties/);
+    await assert.rejects(() => agent.generate(), /additionalProperties/);
+    assert.deepEqual(calls, ["codex"]);
+  });
+
+  it("does not invoke providers again when Smithers retries a deterministic auth/schema pair", async () => {
+    const calls = [];
+    const agent = withAgentFallback(
+      {
+        cliEngine: "claude-code",
+        async generate() {
+          calls.push("claude");
+          throw new Error("Claude authentication expired");
+        }
+      },
+      {
+        cliEngine: "codex",
+        async generate() {
+          calls.push("codex");
+          throw new Error("api_error_status 400: Invalid schema for response_format: additionalProperties must be false");
+        }
+      },
+      { label: "product-workflow-strategist" }
+    );
+    await assert.rejects(() => agent.generate(), /deterministic provider\/config failures/);
+    await assert.rejects(() => agent.generate(), /deterministic provider\/config failures/);
+    assert.deepEqual(calls, ["claude", "codex"]);
+  });
+
+  it("leaves transient provider failures retryable by Smithers", async () => {
+    const calls = [];
+    const agent = withAgentFallback(
+      {
+        cliEngine: "codex",
+        async generate() {
+          calls.push("codex");
+          throw new Error("429 rate_limit");
+        }
+      },
+      {
+        cliEngine: "claude-code",
+        async generate() {
+          calls.push("claude");
+          throw new Error("503 upstream overloaded");
+        }
+      },
+      { label: "transient-test" }
+    );
+    await assert.rejects(() => agent.generate(), /503 upstream overloaded/);
+    await assert.rejects(() => agent.generate(), /503 upstream overloaded/);
+    assert.deepEqual(calls, ["codex", "claude", "codex", "claude"]);
   });
 
   it("classifies a missing CLI binary (ENOENT spawn failure) as fallbackable", () => {

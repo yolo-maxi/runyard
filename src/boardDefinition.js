@@ -274,6 +274,7 @@ export function developmentFactoryDefinition({
           competitors: "",
           maxCompetitors: 5,
           maxFeatures: 4,
+          agentHarness: "codex",
           execute: false,
           repo: "smithers-hub",
           targetBranch: "main"

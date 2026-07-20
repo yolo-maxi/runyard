@@ -36,6 +36,7 @@ import {
   workflowBundleReference,
   workflowBundleSizeError
 } from "./workflowSource.js";
+import { lintSmithersWorkflowSource } from "./smithersHardening.js";
 
 export const RUN_PREFLIGHT_READY = "ready";
 export const RUN_PREFLIGHT_NEEDS_INPUT = "needs_input";
@@ -313,6 +314,15 @@ export function evaluateRunPreflight({ capability, input, options = {}, context 
       if (sizeError) {
         blocker("workflow_bundle_too_large", sizeError);
       } else if (source) {
+        if (harness.selection.agentHarness === "codex") {
+          const looseOutputFindings = lintSmithersWorkflowSource(source.code).filter((finding) => finding.kind === "loose-output-schema");
+          if (looseOutputFindings.length) {
+            blocker(
+              "workflow_schema_invalid",
+              `workflow ${capability.slug} uses z.looseObject for Smithers output schemas at line(s) ${looseOutputFindings.map((finding) => finding.line).join(", ")}; Codex native structured output requires strict object schemas with additionalProperties:false`
+            );
+          }
+        }
         check("workflow_source", "pass", `workflow source resolved (${source.relativePath})`);
       } else {
         blocker("workflow_source_missing", `workflow.entry "${entry}" was not found under the Hub root; provide workflow source bytes or workflow.bundleId so the runner can execute DB-backed source`);

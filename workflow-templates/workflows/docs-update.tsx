@@ -36,37 +36,63 @@ const GIT = process.env.DOCS_UPDATE_GIT_BIN || "git";
 const MAX_DIFF_CHARS = 150_000;
 const MAX_TREE_CHARS = 12_000;
 
-const updateEntry = z.looseObject({
+const updateEntry = z.object({
   docPath: z.string(),
   kind: z.string().default("proposed"),
   reason: z.string().default(""),
   proposal: z.string().default("")
 });
 
+const changedPathSchema = z.object({
+  status: z.string(),
+  path: z.string()
+});
+
+const repoLeaseOut = z.object({
+  schemaVersion: z.number().default(1),
+  mode: z.enum(["sequential", "parallel"]).default("parallel"),
+  leaseId: z.string().default(""),
+  runId: z.string().default(""),
+  pid: z.number().default(0),
+  workflow: z.string().default(""),
+  repoDir: z.string().default(""),
+  sourceRepoDir: z.string().default(""),
+  targetBranch: z.string().default("main"),
+  startBranch: z.string().default(""),
+  sourceBranch: z.string().default(""),
+  startHead: z.string().default(""),
+  key: z.string().default(""),
+  lockDir: z.string().default(""),
+  workRepoDir: z.string().default(""),
+  workBranch: z.string().default(""),
+  pushBranch: z.string().default(""),
+  acquiredAt: z.string().default("")
+});
+
 // Named "baseline" (not "plan") so apply-mode runs carry the lease where the
 // Hub's promotion candidate check expects it (src/runPromotion.js reads
 // output.outputs.baseline.lease).
-const baselineOut = z.looseObject({
+const baselineOut = z.object({
   status: z.enum(["ready", "no_docs_changes"]),
   repoDir: z.string(),
   workDir: z.string(),
   fromRef: z.string(),
   toRef: z.string(),
   releaseTag: z.string().default(""),
-  docRelevant: z.array(z.looseObject({ status: z.string(), path: z.string() })).default([]),
-  docsChanged: z.array(z.looseObject({ status: z.string(), path: z.string() })).default([]),
+  docRelevant: z.array(changedPathSchema).default([]),
+  docsChanged: z.array(changedPathSchema).default([]),
   ignoredCount: z.number().default(0),
   brief: z.string().default(""),
-  lease: z.looseObject({}).nullable().default(null)
+  lease: repoLeaseOut.nullable().default(null)
 });
 
-const updateOut = z.looseObject({
+const updateOut = z.object({
   summary: z.string(),
   updates: z.array(updateEntry).default([]),
   gaps: z.array(z.string()).default([])
 });
 
-const commitOut = z.looseObject({
+const commitOut = z.object({
   committed: z.boolean(),
   branch: z.string().default(""),
   commit: z.string().default(""),

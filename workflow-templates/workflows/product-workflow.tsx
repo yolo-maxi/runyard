@@ -38,23 +38,23 @@ const GIT = resolveTool("GATED_GIT_BIN", "git", ["/usr/bin/git", "/usr/local/bin
 const TOOL_PATH = [process.env.PATH || "", "/usr/local/bin", "/usr/bin", "/bin"].filter(Boolean).join(":");
 const TOOL_ENV = { ...process.env, PATH: TOOL_PATH };
 
-const baselineOut = z.looseObject({ startHead: z.string(), repoDir: z.string().default("") });
+const baselineOut = z.object({ startHead: z.string(), repoDir: z.string().default("") });
 
-const competitorSchema = z.looseObject({
+const competitorSchema = z.object({
   name: z.string(),
   url: z.string().default(""),
   positioning: z.string().default(""),
   features: z.array(z.string()).default([]),
   notes: z.string().default("")
 });
-const researchOut = z.looseObject({
+const researchOut = z.object({
   summary: z.string().default(""),
   competitors: z.array(competitorSchema).default([]),
   sources: z.array(z.string()).default([]),
   openQuestions: z.array(z.string()).default([])
 });
 
-const mappedFeatureSchema = z.looseObject({
+const mappedFeatureSchema = z.object({
   name: z.string(),
   description: z.string().default(""),
   competitorsWithIt: z.array(z.string()).default([]),
@@ -62,13 +62,13 @@ const mappedFeatureSchema = z.looseObject({
   gap: z.string().default(""),
   valueRationale: z.string().default("")
 });
-const featureMapOut = z.looseObject({
+const featureMapOut = z.object({
   summary: z.string().default(""),
   features: z.array(mappedFeatureSchema).default([]),
   tableMarkdown: z.string().default("")
 });
 
-const prioritizedFeatureSchema = z.looseObject({
+const prioritizedFeatureSchema = z.object({
   rank: z.number().int().default(0),
   title: z.string(),
   priority: z.string().default(""),
@@ -77,13 +77,21 @@ const prioritizedFeatureSchema = z.looseObject({
   workPrompt: z.string().default(""),
   commitMessage: z.string().default("")
 });
-const prioritizeOut = z.looseObject({
+const prioritizeOut = z.object({
   summary: z.string().default(""),
   prioritizedFeatures: z.array(prioritizedFeatureSchema).default([]),
   deferred: z.array(z.string()).default([])
 });
 
-const dispatchedRunSchema = z.looseObject({
+const childPayloadSchema = z.object({
+  workPrompt: z.string().default(""),
+  targetBranch: z.string().default("main"),
+  commitMessage: z.string().default(""),
+  repoDir: z.string().default(""),
+  project: z.string().default(""),
+  repo: z.string().default("")
+});
+const dispatchedRunSchema = z.object({
   rank: z.number().int().default(0),
   title: z.string().default(""),
   runId: z.string().default(""),
@@ -91,9 +99,9 @@ const dispatchedRunSchema = z.looseObject({
   commit: z.string().default(""),
   pushed: z.boolean().default(false),
   error: z.string().default(""),
-  payload: z.looseObject({}).default({})
+  payload: childPayloadSchema.default({})
 });
-const dispatchOut = z.looseObject({
+const dispatchOut = z.object({
   executed: z.boolean().default(false),
   targetRepo: z.string().default(""),
   targetBranch: z.string().default("main"),

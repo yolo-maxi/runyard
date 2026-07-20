@@ -94,6 +94,40 @@ describe("run preflight", () => {
     assert.match(blocker.message, /provide workflow source bytes or workflow\.bundleId/);
   });
 
+  it("blocks Codex runs whose workflow bundle has loose Smithers output schemas", () => {
+    const badBundle = {
+      id: "wfb_research",
+      version: 1,
+      language: "tsx",
+      sizeBytes: 240,
+      sha256: "test-sha",
+      code: `
+        const inputSchema = z.object({ prompt: z.string() });
+        const researchOut = z.looseObject({ summary: z.string() });
+        const { outputs } = createSmithers({
+          input: inputSchema,
+          research: researchOut
+        });
+      `
+    };
+
+    const result = evaluateRunPreflight({
+      capability: capabilityFixture(),
+      input: { prompt: "x", title: "T", agentHarness: "codex" },
+      context: contextFixture({ getWorkflowBundle: () => badBundle })
+    });
+    assert.equal(result.status, RUN_PREFLIGHT_BLOCKED);
+    const blocker = result.blockers.find((entry) => entry.code === "workflow_schema_invalid");
+    assert.match(blocker.message, /additionalProperties:false/);
+
+    const claude = evaluateRunPreflight({
+      capability: capabilityFixture(),
+      input: { prompt: "x", title: "T", agentHarness: "claude" },
+      context: contextFixture({ getWorkflowBundle: () => badBundle, runners: [{ id: "runner_1", tags: ["smithers"], online: true }] })
+    });
+    assert.equal(claude.blockers.some((entry) => entry.code === "workflow_schema_invalid"), false);
+  });
+
   it("returns needs_input with per-field questions for missing and mistyped input", () => {
     const result = evaluateRunPreflight({
       capability: capabilityFixture(),

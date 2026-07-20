@@ -96,14 +96,14 @@ const baselineOut = z.object({
   targetBranch: z.string(),
   lease: repoLeaseOut
 });
-const implementOut = z.looseObject({ summary: z.string().default(""), notes: z.string().default("") });
-const testOut = z.looseObject({ passed: z.boolean(), tail: z.string().default("") });
-const commitOut = z.looseObject({ commit: z.string(), message: z.string(), stat: z.string().default(""), files: z.array(z.string()).default([]) });
-const pushOut = z.looseObject({ pushed: z.boolean(), branch: z.string(), detail: z.string().default("") });
+const implementOut = z.object({ summary: z.string().default(""), notes: z.string().default("") });
+const testOut = z.object({ passed: z.boolean(), tail: z.string().default("") });
+const commitOut = z.object({ commit: z.string(), message: z.string(), stat: z.string().default(""), files: z.array(z.string()).default([]) });
+const pushOut = z.object({ pushed: z.boolean(), branch: z.string(), detail: z.string().default("") });
 // Post-run hook reporting node: status uses the shared hook vocabulary
 // (skipped / hook_config_required / ...). Hook problems are reported, never
 // thrown — they must not fail a gated run whose build/tests/push succeeded.
-const hooksOut = z.looseObject({ status: z.string().default("skipped"), detail: z.string().default(""), verify: z.string().default("") });
+const hooksOut = z.object({ status: z.string().default("skipped"), detail: z.string().default(""), verify: z.string().default("") });
 
 const inputSchema = z.object({
   workPrompt: z.string().describe("The change request / implementation prompt."),

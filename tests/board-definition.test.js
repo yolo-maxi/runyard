@@ -85,6 +85,7 @@ describe("board definition validator", () => {
     assert.equal(roadmapSchedule.cron, "0 9 * * *");
     assert.equal(roadmapSchedule.timezone, "America/New_York");
     assert.equal(roadmapSchedule.enabled, false);
+    assert.equal(roadmapSchedule.input.agentHarness, "codex");
     assert.equal(roadmapSchedule.input.execute, false);
     assert.match(roadmapSchedule.input.context, /summarize into Telegram/);
     assert.equal(validated.value.schedules.find((schedule) => schedule.slug === "runyard-nightly-smoke").workflow, "runyard-smoke-check");
@@ -168,6 +169,7 @@ describe("board definition handlers", () => {
     assert.equal(roadmapSchedule.cron, "0 9 * * *");
     assert.equal(roadmapSchedule.timezone, "America/New_York");
     assert.equal(roadmapSchedule.enabled, false);
+    assert.equal(roadmapSchedule.input.agentHarness, "codex");
     assert.equal(roadmapSchedule.input.execute, false);
     const smokeSchedule = scheduleValues.find((schedule) => schedule.name === "board:runyard-development-factory:runyard-nightly-smoke");
     assert.equal(smokeSchedule.capabilitySlug, "runyard-smoke-check");

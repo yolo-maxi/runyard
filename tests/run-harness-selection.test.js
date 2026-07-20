@@ -133,6 +133,21 @@ describe("harness selection run env", () => {
       assert.equal(resolveAgentCli(childEnv, { workflow: "IMPLEMENT", fallback: "codex" }), harness);
     }
   });
+
+  it('uses explicit agentHarness:"codex" as the PRODUCT workflow primary CLI', () => {
+    const runnerEnv = {
+      RUNYARD_PRODUCT_AGENT_CLI: "claude",
+      RUNYARD_AGENT_CLI: "claude",
+      RUNYARD_PI_PROVIDER: "venice",
+      RUNYARD_PI_MODEL: "llama-3.3-70b"
+    };
+    const { selection, issues } = resolveHarnessSelection({ input: { agentHarness: "codex" } });
+    assert.deepEqual(issues, []);
+    const childEnv = runyardChildEnv({ baseEnv: runnerEnv, runEnv: harnessSelectionRunEnv(selection) });
+
+    assert.equal(childEnv.RUNYARD_RUN_AGENT_CLI, "codex");
+    assert.equal(resolveAgentCli(childEnv, { workflow: "PRODUCT", fallback: "claude" }), "codex");
+  });
 });
 
 describe("harness selection secret delivery", () => {

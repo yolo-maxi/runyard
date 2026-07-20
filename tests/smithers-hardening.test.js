@@ -112,6 +112,25 @@ describe("Smithers samples hardening guardrails", () => {
     assert.equal(findings[0].kind, "native-structured-output");
   });
 
+  it("flags loose object schemas registered as Smithers outputs", () => {
+    const findings = lintSmithersWorkflowSource(`
+      const inputSchema = z.looseObject({ metadata: z.any() });
+      const openOut = z.looseObject({ summary: z.string() });
+      const strictOut = z.object({ ok: z.boolean() });
+      const { outputs } = createSmithers({
+        input: inputSchema,
+        report: openOut,
+        strict: strictOut,
+        direct: z.looseObject({ notes: z.string().default("") })
+      });
+    `);
+    assert.deepEqual(findings.map((finding) => finding.kind), [
+      "loose-output-schema",
+      "loose-output-schema"
+    ]);
+    assert.match(findings[0].message, /additionalProperties:false/);
+  });
+
   it("flags scorer usage when scorer storage is not explicitly surfaced", () => {
     const findings = lintSmithersWorkflowSource(`
       <Task id="solve" scorers={{ judge: { scorer: solveJudge } }}>

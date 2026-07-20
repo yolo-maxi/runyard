@@ -1,8 +1,9 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { workflowBundleSha256 } from "./workflowBundleRecords.js";
 import { workflowBundleReference } from "./workflowSource.js";
 import { resolveHarnessSelection } from "./runHarnessSelection.js";
+import { lintSmithersWorkflowSource } from "./smithersHardening.js";
 import { resolveImproveRepo } from "../workflow-templates/workflows/improve-repo.js";
 
 export function activeRunnerLoad(activeRuns = new Set()) {
@@ -59,7 +60,18 @@ export function preflightAssignment(run, capability, entry, { workspace, health,
   // issue strings never contain the rejected value.
   const harness = resolveHarnessSelection({ capability, input: run?.input || {} });
   failures.push(...harness.issues);
-  if (!harness.issues.length) failures.push(...authOkFor(capability, health, harness.selection));
+  if (!harness.issues.length) {
+    if (harness.selection.agentHarness === "codex" && existsSync(workflowPath)) {
+      const source = readFileSync(workflowPath, "utf8");
+      const looseOutputFindings = lintSmithersWorkflowSource(source).filter((finding) => finding.kind === "loose-output-schema");
+      if (looseOutputFindings.length) {
+        failures.push(
+          `workflow ${capability?.slug || "unknown"} uses z.looseObject for Smithers output schemas at line(s) ${looseOutputFindings.map((finding) => finding.line).join(", ")}; Codex native structured output requires strict object schemas with additionalProperties:false`
+        );
+      }
+    }
+    failures.push(...authOkFor(capability, health, harness.selection));
+  }
   return failures;
 }
 

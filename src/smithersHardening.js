@@ -59,9 +59,18 @@ function pushFinding(findings, kind, message, index, source) {
   });
 }
 
+function looseObjectSchemaBindings(text) {
+  const bindings = new Map();
+  for (const match of text.matchAll(/\bconst\s+([A-Za-z_$][\w$]*)\s*=\s*z\.looseObject\s*\(/g)) {
+    bindings.set(match[1], match.index || 0);
+  }
+  return bindings;
+}
+
 export function lintSmithersWorkflowSource(source) {
   const findings = [];
   const text = String(source || "");
+  const looseSchemas = looseObjectSchemaBindings(text);
 
   for (const field of RESERVED_SMITHERS_OUTPUT_FIELDS) {
     const re = new RegExp(`\\b${field}\\s*:\\s*z\\.`, "g");
@@ -115,6 +124,28 @@ export function lintSmithersWorkflowSource(source) {
         match.index || 0,
         text
       );
+    }
+  }
+
+  const smithersConfigBlocks = text.matchAll(/createSmithers\s*\(\s*\{([\s\S]*?)\}\s*\)/g);
+  for (const match of smithersConfigBlocks) {
+    const body = match[1] || "";
+    const blockStart = match.index || 0;
+    for (const mapping of body.matchAll(/\b([A-Za-z_$][\w$]*)\s*:\s*([^,\n}]+)/g)) {
+      const outputName = mapping[1];
+      if (outputName === "input") continue;
+      const schemaRef = String(mapping[2] || "").trim();
+      if (!schemaRef) continue;
+      if (schemaRef.startsWith("z.looseObject") || looseSchemas.has(schemaRef)) {
+        const schemaLine = looseSchemas.get(schemaRef);
+        pushFinding(
+          findings,
+          "loose-output-schema",
+          `Smithers output "${outputName}" uses z.looseObject; Codex native structured output requires strict object schemas with additionalProperties:false.`,
+          typeof schemaLine === "number" ? schemaLine : blockStart + (mapping.index || 0),
+          text
+        );
+      }
     }
   }
 
