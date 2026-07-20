@@ -110,6 +110,7 @@ const inputSchema = z.object({
   deploy: z.boolean().optional().describe("Deprecated; production deploys moved to admin-configured post-run hook profiles. deploy=true no longer deploys — it is reported as hook_config_required."),
   targetBranch: z.string().default("main"),
   commitMessage: z.string().default(""),
+  agentHarness: z.enum(["claude", "codex", "pi"]).default("codex").describe("Agent harness selected for the implementation agent."),
   changeRequestId: z.string().default("").describe("Optional change-request id/slug stamped into the auto-commit subject."),
   allowLockfileUpdate: z.boolean().default(false).describe("If true, the install gate runs `pnpm install` (no --frozen-lockfile) so an added dependency can regenerate pnpm-lock.yaml."),
   repoDir: z.string().default("").describe("Absolute runner-local git repo path to edit. Must be inside allowed improve repo roots."),

@@ -76,6 +76,7 @@ describe("product-workflow factory regression coverage", () => {
       productWorkflowSource.indexOf("function renderReport")
     );
     assert.match(productWorkflowSource, /mutationMode:\s*"parallel"/);
+    assert.match(productWorkflowSource, /agentHarness:\s*input\.agentHarness \|\| "codex"/);
     assert.match(productWorkflowSource, /hubJson\(`\/api\/capabilities\/implement-change-gated\/run`/);
     assert.match(productWorkflowSource, /body:\s*\{\s*input:\s*payload,/);
     assert.match(productWorkflowSource, /const childOutputs = out\?\.outputs \|\| out/);
@@ -84,6 +85,12 @@ describe("product-workflow factory regression coverage", () => {
     assert.doesNotMatch(productWorkflowSource, /pushedToMain:\s*anyPushed/);
     assert.doesNotMatch(childPayloadSource, /\bdeploy\s*:/);
     assert.doesNotMatch(childPayloadSource, /\bpromot(?:e|ion)\s*:/);
+  });
+
+  it("treats Hub preflight and budget failures as terminal child outcomes", () => {
+    for (const status of ["blocked_by_preflight", "blocked_by_gate", "provider_limited", "budget_exceeded"]) {
+      assert.match(productWorkflowSource, new RegExp(`"${status}"`));
+    }
   });
 
   it("bounds deterministic structured-schema/auth failures without suppressing transient retries", async () => {

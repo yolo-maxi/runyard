@@ -58,6 +58,7 @@ describe("product-workflow Codex structured output schemas", () => {
       assert.match(source, new RegExp(`${field}: z\\.string\\(\\)`));
     }
     assert.match(source, /mutationMode: z\.enum\(\["parallel"\]\)\.default\("parallel"\)/);
+    assert.match(source, /agentHarness: z\.enum\(\["claude", "codex", "pi"\]\)\.default\("codex"\)/);
     assert.match(source, /mutationMode:\s*"parallel"/);
   });
 

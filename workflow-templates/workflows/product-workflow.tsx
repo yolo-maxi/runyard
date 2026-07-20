@@ -88,6 +88,7 @@ const childPayloadSchema = z.object({
   targetBranch: z.string().default("main"),
   commitMessage: z.string().default(""),
   mutationMode: z.enum(["parallel"]).default("parallel"),
+  agentHarness: z.enum(["claude", "codex", "pi"]).default("codex"),
   repoDir: z.string().default(""),
   project: z.string().default(""),
   repo: z.string().default("")
@@ -129,6 +130,7 @@ const inputSchema = z.object({
     .boolean()
     .default(false)
     .describe("If true, queue real gated implementation runs sequentially. If false (default), plan and report the runs that would be created."),
+  agentHarness: z.enum(["claude", "codex", "pi"]).default("codex").describe("Agent harness used by this run and forwarded to implementation children."),
   deploy: z.boolean().optional().describe("Deprecated and no longer forwarded; production deploys moved to admin-configured post-run hook profiles."),
   targetBranch: z.string().default("main").describe("Promotion target branch for child implementation review branches. Defaults to main."),
   repoDir: z
@@ -233,7 +235,21 @@ async function hubJson(pathname, options = {}) {
   return text ? JSON.parse(text) : null;
 }
 
-const TERMINAL_STATUSES = new Set(["succeeded", "failed", "cancelled", "rejected", "error"]);
+const TERMINAL_STATUSES = new Set([
+  "succeeded",
+  "failed",
+  "cancelled",
+  "rejected",
+  "error",
+  "blocked_by_gate",
+  "blocked_by_preflight",
+  "provider_limited",
+  "timed_out",
+  "invalid_output",
+  "infra_unavailable",
+  "needs_human",
+  "budget_exceeded"
+]);
 
 async function pollRunToTerminal(runId) {
   const deadline = Date.now() + POLL_DEADLINE_MS;
@@ -255,7 +271,8 @@ function buildChildPayload(feature, input) {
     workPrompt: feature.workPrompt || `Implement: ${feature.title}\n\nAcceptance: ${feature.acceptanceCheck || "(none provided)"}`,
     targetBranch: input.targetBranch || "main",
     commitMessage: feature.commitMessage || `feat: ${String(feature.title || "feature").slice(0, 60)}`,
-    mutationMode: "parallel"
+    mutationMode: "parallel",
+    agentHarness: input.agentHarness || "codex"
   };
   if (String(input.repoDir || "").trim()) payload.repoDir = input.repoDir.trim();
   else if (String(input.project || "").trim()) payload.project = input.project.trim();

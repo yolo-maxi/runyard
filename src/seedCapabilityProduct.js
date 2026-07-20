@@ -31,6 +31,11 @@ export const seedProductCapabilities = [
           "type": "string",
           "description": "Optional commit message."
         },
+        "agentHarness": {
+          "type": "string",
+          "enum": ["claude", "codex", "pi"],
+          "description": "Agent harness selected for the implementation run."
+        },
         "repoDir": {
           "type": "string",
           "description": "Absolute runner-local git repo path to edit. Must be inside configured allowed improve repo roots."
@@ -337,6 +342,11 @@ export const seedProductCapabilities = [
         "execute": {
           "type": "boolean",
           "description": "false plans and reports only; true queues gated implementation runs sequentially."
+        },
+        "agentHarness": {
+          "type": "string",
+          "enum": ["claude", "codex", "pi"],
+          "description": "Agent harness used by the product run and forwarded to implementation children."
         },
         "targetBranch": {
           "type": "string",
