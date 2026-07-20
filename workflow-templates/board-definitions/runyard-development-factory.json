@@ -30,7 +30,7 @@
         "mode": "suggest",
         "label": "Shape roadmap",
         "workflow": "product-workflow",
-        "description": "Run product-workflow in execute=false mode to propose compact RunYard features for human discussion."
+        "description": "Run product-workflow to propose compact RunYard features and, when enabled, queue isolated review-branch implementations."
       }
     },
     {
@@ -125,14 +125,14 @@
       "workflow": "product-workflow",
       "cron": "0 9 * * *",
       "timezone": "America/New_York",
-      "description": "Daily plan-only roadmap shaping for RunYard dogfooding. Produces compact feature proposals for Telegram discussion; an operator picks follow-up work before any implementation run is launched.",
+      "description": "Daily roadmap shaping for RunYard dogfooding. When an operator enables this schedule, product-workflow queues gated implementation runs sequentially in isolated review branches; main changes only through explicit promotion.",
       "input": {
-        "context": "Daily RunYard roadmap shaping. Propose a compact set of high-leverage RunYard features for human discussion, not immediate implementation. For each proposal include rationale, acceptance checks, and a self-contained implementation prompt. Keep the report suitable to paste or summarize into Telegram; the operator will select what enters the gated implementation cycle.",
+        "context": "Daily RunYard roadmap shaping. Propose and execute a compact set of high-leverage RunYard features through gated implement-change-gated child runs. Each child must use an isolated worktree/review branch and leave main untouched until explicit promotion. For each proposal include rationale, acceptance checks, and a self-contained implementation prompt. Keep the report suitable to paste or summarize into Telegram.",
         "competitors": "",
         "maxCompetitors": 5,
-        "maxFeatures": 4,
+        "maxFeatures": 1,
         "agentHarness": "codex",
-        "execute": false,
+        "execute": true,
         "repo": "smithers-hub",
         "targetBranch": "main"
       },

@@ -58,7 +58,9 @@ describe("product-workflow factory regression coverage", () => {
     assert.equal(result.ok, true);
     assert.equal(dispatched[0].capability.slug, "product-workflow");
     assert.equal(dispatched[0].input.agentHarness, "codex");
-    assert.equal(dispatched[0].input.execute, false);
+    assert.equal(dispatched[0].input.execute, true);
+    assert.equal(dispatched[0].input.targetBranch, "main");
+    assert.equal(dispatched[0].input.maxFeatures, 1);
     assert.deepEqual(dispatched[0].options.origin, {
       type: "schedule",
       label: "schedule: board:runyard-development-factory:runyard-daily-roadmap-shaping",
@@ -66,6 +68,22 @@ describe("product-workflow factory regression coverage", () => {
       scheduleName: "board:runyard-development-factory:runyard-daily-roadmap-shaping",
       trigger: "ticker"
     });
+  });
+
+  it("forces product-workflow child implementation runs onto isolated review branches", () => {
+    const childPayloadSource = productWorkflowSource.slice(
+      productWorkflowSource.indexOf("function buildChildPayload"),
+      productWorkflowSource.indexOf("function renderReport")
+    );
+    assert.match(productWorkflowSource, /mutationMode:\s*"parallel"/);
+    assert.match(productWorkflowSource, /hubJson\(`\/api\/capabilities\/implement-change-gated\/run`/);
+    assert.match(productWorkflowSource, /body:\s*\{\s*input:\s*payload,/);
+    assert.match(productWorkflowSource, /const childOutputs = out\?\.outputs \|\| out/);
+    assert.match(productWorkflowSource, /pushedToMain:\s*false/);
+    assert.match(productWorkflowSource, /review branches targeting/);
+    assert.doesNotMatch(productWorkflowSource, /pushedToMain:\s*anyPushed/);
+    assert.doesNotMatch(childPayloadSource, /\bdeploy\s*:/);
+    assert.doesNotMatch(childPayloadSource, /\bpromot(?:e|ion)\s*:/);
   });
 
   it("bounds deterministic structured-schema/auth failures without suppressing transient retries", async () => {

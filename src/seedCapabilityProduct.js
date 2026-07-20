@@ -304,7 +304,7 @@ export const seedProductCapabilities = [
   {
     "slug": "product-workflow",
     "name": "Product Workflow (sequential)",
-    "description": "Researches RunYard's competitive/product gaps, prioritizes compact feature proposals, and reports the gated implementation runs it would create. With execute=false it is plan-only; with execute=true it queues implementation runs sequentially.",
+    "description": "Researches RunYard's competitive/product gaps, prioritizes compact feature proposals, and reports the gated implementation runs it would create. With execute=false it is plan-only; with execute=true it queues isolated review-branch implementation runs sequentially.",
     "category": "Product",
     "keywords": [
       "product",
@@ -340,7 +340,7 @@ export const seedProductCapabilities = [
         },
         "targetBranch": {
           "type": "string",
-          "description": "Branch each implementation run targets if execute=true. Defaults to main."
+          "description": "Promotion target branch for each isolated implementation review branch if execute=true. Defaults to main."
         },
         "repoDir": {
           "type": "string",

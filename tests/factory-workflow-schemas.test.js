@@ -43,15 +43,18 @@ function publishSeedBundle(slug) {
 }
 
 describe("factory default workflow schemas", () => {
-  it('pins daily RunYard roadmap shaping to Codex while keeping execute:false', () => {
+  it('pins daily RunYard roadmap shaping to Codex isolated execution while disabled by default', () => {
     const schedule = developmentFactoryDefinition().schedules.find(
       (entry) => entry.slug === "runyard-daily-roadmap-shaping"
     );
     assert.ok(schedule, "factory must seed the daily roadmap shaping schedule");
     assert.equal(schedule.workflow, "product-workflow");
     assert.equal(schedule.input.agentHarness, "codex");
-    assert.equal(schedule.input.execute, false);
+    assert.equal(schedule.input.execute, true);
+    assert.equal(schedule.input.targetBranch, "main");
+    assert.equal(schedule.input.maxFeatures, 1);
     assert.equal(schedule.enabled, false);
+    assert.match(schedule.description, /isolated review branches/);
   });
 
   it("do not use loose output objects in workflows launched from the factory board", () => {

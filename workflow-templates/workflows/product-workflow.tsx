@@ -1,6 +1,6 @@
 // smithers-source: authored
 // smithers-display-name: Product Workflow (sequential)
-// smithers-description: Sequential product-development pipeline for the Runyard app. Researches competitors and maps their features, synthesizes a feature map against Runyard, prioritizes the gaps, then dispatches one gated implementation per feature — strictly one at a time so no two builders ever touch the repo at once. Each implementation reuses the implement-change-gated contract (pnpm test, staged diff, sane commit, push to main). execute=false plans and reports the runs it would create; execute=true queues them and waits for each to finish before starting the next.
+// smithers-description: Sequential product-development pipeline for the Runyard app. Researches competitors and maps their features, synthesizes a feature map against Runyard, prioritizes the gaps, then dispatches one gated implementation per feature — strictly one at a time. Each implementation reuses the implement-change-gated contract in parallel mutation mode (isolated worktree/review branch, pnpm test, staged diff, sane commit, push review branch). execute=false plans and reports the runs it would create; execute=true queues them and waits for each to finish before starting the next.
 /** @jsxImportSource smithers-orchestrator */
 import { createSmithers, Sequence, ClaudeCodeAgent, CodexAgent, PiAgent } from "smithers-orchestrator";
 import { existsSync } from "node:fs";
@@ -87,6 +87,7 @@ const childPayloadSchema = z.object({
   workPrompt: z.string().default(""),
   targetBranch: z.string().default("main"),
   commitMessage: z.string().default(""),
+  mutationMode: z.enum(["parallel"]).default("parallel"),
   repoDir: z.string().default(""),
   project: z.string().default(""),
   repo: z.string().default("")
@@ -97,6 +98,7 @@ const dispatchedRunSchema = z.object({
   runId: z.string().default(""),
   status: z.string().default(""),
   commit: z.string().default(""),
+  reviewBranch: z.string().default(""),
   pushed: z.boolean().default(false),
   error: z.string().default(""),
   payload: childPayloadSchema.default({})
@@ -128,7 +130,7 @@ const inputSchema = z.object({
     .default(false)
     .describe("If true, queue real gated implementation runs sequentially. If false (default), plan and report the runs that would be created."),
   deploy: z.boolean().optional().describe("Deprecated and no longer forwarded; production deploys moved to admin-configured post-run hook profiles."),
-  targetBranch: z.string().default("main").describe("Branch each implementation pushes to. Defaults to main per the product request."),
+  targetBranch: z.string().default("main").describe("Promotion target branch for child implementation review branches. Defaults to main."),
   repoDir: z
     .string()
     .default("")
@@ -247,12 +249,13 @@ async function pollRunToTerminal(runId) {
 
 // Build the implement-change-gated input for one prioritized feature. We forward
 // the same repo selector the product workflow resolved, so every child run edits
-// the same Runyard repo and pushes to the same branch.
+// the same Runyard repo, but parallel mutation mode pushes a per-run review branch.
 function buildChildPayload(feature, input) {
   const payload = {
     workPrompt: feature.workPrompt || `Implement: ${feature.title}\n\nAcceptance: ${feature.acceptanceCheck || "(none provided)"}`,
     targetBranch: input.targetBranch || "main",
-    commitMessage: feature.commitMessage || `feat: ${String(feature.title || "feature").slice(0, 60)}`
+    commitMessage: feature.commitMessage || `feat: ${String(feature.title || "feature").slice(0, 60)}`,
+    mutationMode: "parallel"
   };
   if (String(input.repoDir || "").trim()) payload.repoDir = input.repoDir.trim();
   else if (String(input.project || "").trim()) payload.project = input.project.trim();
@@ -271,7 +274,9 @@ function renderReport(ctx, research, featureMap, prioritized, dispatched, execut
   const lines = [];
   lines.push(`# Product Workflow — Runyard\n`);
   lines.push(`Mode: ${executed ? "EXECUTED (gated implementation runs queued sequentially)" : "PLAN ONLY (no runs created)"}`);
-  lines.push(`Target repo selector: ${ctx.input.repoDir || ctx.input.project || ctx.input.repo || "smithers-hub"} → branch ${ctx.input.targetBranch || "main"}\n`);
+  lines.push(
+    `Target repo selector: ${ctx.input.repoDir || ctx.input.project || ctx.input.repo || "smithers-hub"} → review branches targeting ${ctx.input.targetBranch || "main"}\n`
+  );
 
   lines.push(`## Competitors mapped (${competitors.length})`);
   for (const c of competitors) {
@@ -304,6 +309,7 @@ function renderReport(ctx, research, featureMap, prioritized, dispatched, execut
       lines.push(
         `${d.rank || "?"}. **${d.title}** → ${idPart}` +
           (d.status ? ` — status ${d.status}` : "") +
+          (d.reviewBranch ? ` — review branch ${d.reviewBranch}` : "") +
           (d.commit ? ` — commit ${d.commit}` : "") +
           (d.error ? ` — error: ${d.error}` : "")
       );
@@ -312,7 +318,7 @@ function renderReport(ctx, research, featureMap, prioritized, dispatched, execut
   lines.push(
     `\nSequential dispatch guarantees no two implementation builders edit ${
       ctx.input.repoDir || ctx.input.repo || "the Runyard repo"
-    } at the same time, so prioritized features land on ${ctx.input.targetBranch || "main"} without merge conflicts.`
+    } at the same time. Each child uses an isolated worktree and pushes a review branch; ${ctx.input.targetBranch || "main"} changes only through explicit promotion.`
   );
   return lines.join("\n");
 }
@@ -623,9 +629,9 @@ export default smithers((ctx) => {
           <Task id="prioritize" output={outputs.prioritize} agent={strategist} timeoutMs={20 * 60 * 1000}>
             {`Prioritize the feature map into at most ${ctx.input.maxFeatures} features to implement for Runyard, ranked by user impact then effort.\n\n` +
               `=== FEATURE MAP ===\n${JSON.stringify(featureMapReady, null, 2).slice(0, 60000)}\n=== END ===\n\n` +
-              `Each prioritized feature must be buildable as ONE focused, gated change against the repo at ${repoDir} that can pass pnpm test and push to ${
+              `Each prioritized feature must be buildable as ONE focused, gated change against the repo at ${repoDir} that can pass pnpm test and push an isolated review branch targeting ${
                 ctx.input.targetBranch || "main"
-              }. ` +
+              }. Main changes only through explicit promotion. ` +
               `For each, write a self-contained \`workPrompt\` (the exact change request a coding agent will receive — name concrete files/areas), a verifiable acceptanceCheck, a one-line rationale, a priority (must-have | should-have | nice-to-have), and a short conventional commitMessage. ` +
               `List anything you intentionally defer.\n\n` +
               `Return JSON {"summary","prioritizedFeatures":[{"rank","title","priority","rationale","acceptanceCheck","workPrompt","commitMessage"}],"deferred":[...]}.`}
@@ -688,6 +694,7 @@ export default smithers((ctx) => {
                   runId: "",
                   status: "planned",
                   commit: "",
+                  reviewBranch: "",
                   pushed: false,
                   error: "",
                   payload: buildChildPayload(f, ctx.input)
@@ -708,12 +715,12 @@ export default smithers((ctx) => {
               // sequential — wait for each to reach a terminal state before the next
               // so two builders never edit the repo at the same time.
               const dispatched = [];
-              let anyPushed = false;
               for (const f of features) {
                 const payload = buildChildPayload(f, ctx.input);
                 let runId = "";
                 let status = "error";
                 let commit = "";
+                let reviewBranch = "";
                 let pushed = false;
                 let error = "";
                 try {
@@ -732,35 +739,38 @@ export default smithers((ctx) => {
                   const finished = runId ? await pollRunToTerminal(runId) : null;
                   status = finished?.status || (runId ? "timeout" : "not_created");
                   const out = finished?.output || {};
-                  commit = String(out?.commit?.commit || out?.commit || "");
-                  pushed = Boolean(out?.push?.pushed);
-                  if (pushed) anyPushed = true;
+                  // Hub run output wraps Smithers node results under `outputs`.
+                  // Keep the flat fallback for older runner payloads.
+                  const childOutputs = out?.outputs || out;
+                  commit = String(childOutputs?.commit?.commit || childOutputs?.commit || "");
+                  reviewBranch = String(childOutputs?.push?.branch || childOutputs?.baseline?.lease?.pushBranch || "");
+                  pushed = Boolean(childOutputs?.push?.pushed);
                   if (status !== "succeeded") {
                     error = String(finished?.error || `child run ended as ${status}`).slice(0, 300);
                     // Stop the line on failure: do not start the next feature on a
                     // repo that may be mid-change.
-                    dispatched.push({ rank: f.rank, title: f.title, runId, status, commit, pushed, error, payload });
+                    dispatched.push({ rank: f.rank, title: f.title, runId, status, commit, reviewBranch, pushed, error, payload });
                     break;
                   }
                 } catch (e) {
                   error = String(e?.message || e).slice(0, 300);
-                  dispatched.push({ rank: f.rank, title: f.title, runId, status: "error", commit, pushed, error, payload });
+                  dispatched.push({ rank: f.rank, title: f.title, runId, status: "error", commit, reviewBranch, pushed, error, payload });
                   break;
                 }
-                dispatched.push({ rank: f.rank, title: f.title, runId, status, commit, pushed, error, payload });
+                dispatched.push({ rank: f.rank, title: f.title, runId, status, commit, reviewBranch, pushed, error, payload });
               }
 
               return {
                 executed: true,
                 targetRepo,
                 targetBranch,
-                pushedToMain: anyPushed && targetBranch === "main",
+                pushedToMain: false,
                 dispatched,
                 artifactName: "product-workflow-report.md",
                 report: renderReport(ctx, recoveredResearch, recoveredFeatureMap, features, dispatched, true),
-                notes: `Queued ${dispatched.length} implementation run(s) sequentially; ${
+                notes: `Queued ${dispatched.length} isolated implementation run(s) sequentially; ${
                   dispatched.filter((d) => d.status === "succeeded").length
-                } succeeded.`
+                } succeeded. Review branches require explicit promotion into ${targetBranch}.`
               };
             }}
           </Task>

@@ -86,8 +86,10 @@ describe("board definition validator", () => {
     assert.equal(roadmapSchedule.timezone, "America/New_York");
     assert.equal(roadmapSchedule.enabled, false);
     assert.equal(roadmapSchedule.input.agentHarness, "codex");
-    assert.equal(roadmapSchedule.input.execute, false);
-    assert.match(roadmapSchedule.input.context, /summarize into Telegram/);
+    assert.equal(roadmapSchedule.input.execute, true);
+    assert.equal(roadmapSchedule.input.targetBranch, "main");
+    assert.equal(roadmapSchedule.input.maxFeatures, 1);
+    assert.match(roadmapSchedule.input.context, /isolated worktree\/review branch/);
     assert.equal(validated.value.schedules.find((schedule) => schedule.slug === "runyard-nightly-smoke").workflow, "runyard-smoke-check");
   });
 
@@ -170,7 +172,9 @@ describe("board definition handlers", () => {
     assert.equal(roadmapSchedule.timezone, "America/New_York");
     assert.equal(roadmapSchedule.enabled, false);
     assert.equal(roadmapSchedule.input.agentHarness, "codex");
-    assert.equal(roadmapSchedule.input.execute, false);
+    assert.equal(roadmapSchedule.input.execute, true);
+    assert.equal(roadmapSchedule.input.targetBranch, "main");
+    assert.equal(roadmapSchedule.input.maxFeatures, 1);
     const smokeSchedule = scheduleValues.find((schedule) => schedule.name === "board:runyard-development-factory:runyard-nightly-smoke");
     assert.equal(smokeSchedule.capabilitySlug, "runyard-smoke-check");
   });

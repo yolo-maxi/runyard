@@ -9,13 +9,15 @@ A sequential product-development pipeline for the Runyard app. It researches
 competitors and maps their features, synthesizes a feature map against what
 Runyard already has, prioritizes the gaps, then dispatches one gated
 implementation per feature — **strictly one at a time** so two builders never
-edit the repo concurrently. Prioritized features land on `main` through the
-existing safety gates, so there are no merge conflicts.
+edit the repo concurrently. Prioritized features land on isolated review
+branches through the existing safety gates; `main` changes only through explicit
+promotion, so the daily factory can execute without direct-main writes.
 
 This is the local realization of the request: *"research competitors and map
 their features, prioritize features and spin out implement workflows to build
-those features, make it all sequential to avoid merge conflicts and push
-straight to main, for the main Runyard app."*
+those features, make it all sequential to avoid merge conflicts, for the main
+Runyard app."* The current safety contract keeps the implementation runs
+isolated until review/promotion.
 
 ## Shape
 
@@ -46,8 +48,10 @@ committed and pushed before the next begins.
 
 Each child run carries the same repo selector the product workflow resolved
 (`repo` default `smithers-hub`, or `repoDir` / `project`) and `targetBranch`
-(default `main`), so every implementation runs `pnpm test`, produces a sane
-commit, and pushes straight to `main` through the gates already used by Runyard.
+(default `main`) plus `mutationMode: "parallel"`, so every implementation runs
+`pnpm test`, produces a sane commit, and pushes a unique review branch through
+the gates already used by Runyard. Promotion is the only path from the review
+branch into `main`.
 If a feature's run fails, the line stops so a half-applied change is never
 followed by another builder.
 
@@ -73,8 +77,8 @@ which implementation runs were **created or would be created**.
 | `maxCompetitors` | number | 5 | 1–12 |
 | `maxFeatures` | number | 3 | 1–8; how many features to (plan to) build |
 | `execute` | boolean | false | false = plan, true = queue gated runs sequentially |
-| `deploy` | boolean | false | forwarded to each implementation run |
-| `targetBranch` | string | "main" | branch each implementation pushes to |
+| `deploy` | boolean | false | deprecated compatibility input; never forwarded to implementation runs |
+| `targetBranch` | string | "main" | promotion target for each isolated child review branch |
 | `repoDir` / `repo` / `project` | string | `repo="smithers-hub"` | runner-local repo resolution, same as `improve` |
 
 ## Safety & recovery
@@ -82,11 +86,12 @@ which implementation runs were **created or would be created**.
 - **Execution**: product workflow runs directly. Runner death, pauses, and
   workflow failures surface through normal run status, events, approvals, and
   operator recovery rather than a wrapper workflow.
-- **Approval**: `approvalPolicy.required: true` — it runs agents and can queue
-  gated runs that commit, push to `main`, and may deploy.
+- **Approval**: implementation children keep their existing approval policy and
+  push isolated review branches. Merge to `main` is explicit promotion.
 - **Gates preserved**: implementation work flows through `implement-change-gated`
-  (`pnpm test` → staged diff → sane commit → push → optional deploy). Build/test
-  work happens on the runner (Hetzner); `repo.box` stays publish/serve-only.
+  (`pnpm test` → staged diff → sane commit → push review branch). No deploy or
+  promotion field is forwarded. Build/test work happens on the runner (Hetzner);
+  `repo.box` stays publish/serve-only.
 - **Scope**: research and PM agents are read-only; only the gated child runs edit
   the repo, one at a time.
 

@@ -57,6 +57,8 @@ describe("product-workflow Codex structured output schemas", () => {
     for (const field of ["workPrompt", "targetBranch", "commitMessage", "repoDir", "project", "repo"]) {
       assert.match(source, new RegExp(`${field}: z\\.string\\(\\)`));
     }
+    assert.match(source, /mutationMode: z\.enum\(\["parallel"\]\)\.default\("parallel"\)/);
+    assert.match(source, /mutationMode:\s*"parallel"/);
   });
 
   it("does not blanket-disable useful retries on agent stages", () => {
