@@ -3194,11 +3194,12 @@ button.run-id-mono:focus-visible,
     padding-bottom: 2px;
   }
 
-  /* Shrink-to-fit equal columns so the primary tabs stay readable without
+  /* Equal columns that never shrink below their label: with six primary
+     tabs the row scrolls within itself (overflow-x above) instead of
      clipping labels or forcing a horizontal page scrollbar. */
   .mobile-primary-nav a {
-    flex: 1 1 0;
-    min-width: 0;
+    flex: 1 0 auto;
+    min-width: max-content;
     padding: 8px 6px;
     font-size: var(--fs-sm);
     justify-content: center;
