@@ -86,6 +86,35 @@ note; runs.mdx structured quota-pause wording; the three companion documents.
 - No gateway daemon observed from any runner-used command (and
   `SMITHERS_NO_DAEMON=1` is pinned anyway); no orphaned processes after the
   probe suite.
+- **Full Hub-card approval round-trip (canary gate 4), isolated rig,
+  2026-07-23:** scratch Hub (`PORT=43911`, own data dir/db/bootstrap token,
+  `SMITHERS_HUB_ROOT` pointed at the repo for seed sources only) + the real
+  `src/runner.js` against an isolated workspace resolving the isolated 0.30
+  engine. A compute-only `<Approval>` workflow was published via
+  `POST /api/capabilities` (`workflow.source`, DB bundle
+  `wfb_c9758588a6e8c3bc036d` — so the proof also rides the real bundle
+  materialization path), then `POST /api/capabilities/gate4-probe/run`.
+  Observed sequence for `run_ba868e95c48689ee6f42` / engine
+  `run-1784773496725`:
+  1. runner claimed and launched; startup log showed
+     `[engine] effective smithers 0.30.0 (pinned 0.30.0)`;
+  2. `engine.approval.waiting` + Hub card `appr_f4fac40aa07ee4a9cf32`
+     within ~6 s, carrying the **authored** request copy
+     ("Gate 4 canary: proceed?" / "Approve to let the probe finish.") —
+     the event-sourced enrichment, since 0.30 inspect exposes no request;
+  3. `POST /api/approvals/appr_…/approve` → `engine.approval.applied`
+     (`smithers approve`) → gate cleared (`engine.approval.resumed`) →
+     the engine parked (owner exited; bridge's resume trigger requires the
+     observed `waiting-event` state) → `engine.approval.resumed` with
+     `resumeLaunch: true` — the checkpoint relaunch, visible engine-side as
+     a second `RunStarted` (seq 7) after `ApprovalGranted` (seq 6);
+  4. terminal: Hub run `succeeded` with
+     `outputs: {confirm: {approved: true}, done: {done: true, …}}`;
+     engine `finished/succeeded` with persisted
+     `startedBy: {harness: "runyard-runner", sessionId: "run_ba868e…"}`
+     (attribution flags proven in the real flow).
+  Teardown verified: scratch hub/runner killed, port closed, no orphaned
+  engine processes or daemons; the live Hub on :43117 untouched throughout.
 - Runner image built on this host with `SMITHERS_VERSION=0.30.0`: container
   smoke shows `smithers --version` = 0.30.0 via `SMITHERS_BIN`, PATH, and
   `resolveSmithersBin()`, and a real workflow ran to `finished` inside the
@@ -135,9 +164,10 @@ note; runs.mdx structured quota-pause wording; the three companion documents.
 
 ## Residual risks (honest list)
 
-1. **Approval resume relaunch is unit-tested + engine-probed, not yet proven
-   through a full Hub round-trip** — the runbook's canary gate 4 is the
-   final proof (gated workflow, approve from Hub card, terminal).
+1. ~~Approval resume relaunch not proven through a full Hub round-trip~~ —
+   **resolved**: proven end-to-end on an isolated Hub+runner rig (see the
+   canary gate 4 evidence above). The runbook's gate 4 remains in the live
+   cutover as a production re-confirmation, not an open question.
 2. **`--raw` event volume**: same data 0.22 returned, but long agent runs
    re-read full history each poll (pre-existing O(n²) behavior; backlog idea
    #1 fixes it properly). 32 MB maxBuffer bound unchanged.
