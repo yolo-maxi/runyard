@@ -19,6 +19,8 @@ function buildHandlers(h, overrides = {}) {
     syncChecksSoon: () => {},
     findScmWebhookDelivery: h.scm.findScmWebhookDelivery,
     recordScmWebhookDelivery: h.scm.recordScmWebhookDelivery,
+    updateScmWebhookDelivery: h.scm.updateScmWebhookDelivery,
+    deleteScmWebhookDelivery: h.scm.deleteScmWebhookDelivery,
     upsertScmInstallation: h.scm.upsertScmInstallation,
     upsertScmRepo: h.scm.upsertScmRepo,
     getScmRepo: h.scm.getScmRepo,
@@ -240,5 +242,30 @@ describe("github webhook ingress", () => {
     const raw = Buffer.from('{"a":1}');
     assert.equal(payloadHash(raw), payloadHash(Buffer.from('{"a":1}')));
     assert.notEqual(payloadHash(raw), payloadHash(Buffer.from('{"a":2}')));
+  });
+});
+
+describe("review regressions (webhook)", () => {
+  it("two concurrent identical deliveries create exactly one pipeline (reservation beats TOCTOU)", async () => {
+    const h = createCiHarness({ githubFiles: { [CONFIG_KEY]: SAMPLE_CI_YML } });
+    h.connectRepo({ trustPolicy: { level: "trusted" } });
+    const slowTriggers = {
+      ...h.ciTriggers,
+      async createPipelineForTrigger(trigger) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        return h.ciTriggers.createPipelineForTrigger(trigger);
+      }
+    };
+    const handlers = buildHandlers(h, { ciTriggers: slowTriggers });
+    const res1 = mockResponse();
+    const res2 = mockResponse();
+    await Promise.all([
+      handlers.githubWebhook(signedRequest(pushPayload()), res1),
+      handlers.githubWebhook(signedRequest(pushPayload()), res2)
+    ]);
+    const statuses = [res1.body.status, res2.body.status].sort();
+    assert.deepEqual(statuses, ["accepted", "duplicate"]);
+    const pipelines = h.listRuns({ includeInternal: true, limit: 100 }).filter((r) => r.capabilitySlug === "ci-pipeline");
+    assert.equal(pipelines.length, 1, "exactly one pipeline despite the concurrent replay");
   });
 });

@@ -36,6 +36,8 @@ export function createGithubWebhookHandlers({
   syncChecksSoon = () => {},
   findScmWebhookDelivery,
   recordScmWebhookDelivery,
+  updateScmWebhookDelivery,
+  deleteScmWebhookDelivery,
   upsertScmInstallation,
   upsertScmRepo,
   getScmRepo,
@@ -167,8 +169,7 @@ export function createGithubWebhookHandlers({
       if (!deliveryId) return res.status(400).json({ error: "missing x-github-delivery" });
 
       const hash = payloadHash(rawBody);
-      const existing = findScmWebhookDelivery(deliveryId);
-      if (existing) {
+      const duplicateResponse = (existing) => {
         if (existing.payloadHash === hash) {
           // Replay-safe acknowledgement: same delivery, same bytes.
           counters.duplicates += 1;
@@ -177,12 +178,27 @@ export function createGithubWebhookHandlers({
         counters.conflicts += 1;
         recordAudit("github-webhook", "ci.webhook.delivery_conflict", deliveryId, { event });
         return res.status(409).json({ error: "delivery id replayed with different payload" });
+      };
+      const existing = findScmWebhookDelivery(deliveryId);
+      if (existing) return duplicateResponse(existing);
+
+      // Reserve the delivery id BEFORE routing (TOCTOU guard): a concurrent
+      // identical delivery loses the UNIQUE insert race and dedupes here
+      // instead of both creating pipelines. A handler error releases the
+      // reservation so GitHub redelivery reprocesses.
+      try {
+        recordScmWebhookDelivery({ deliveryId, event, payloadHash: hash, status: "processing" });
+      } catch {
+        const raced = findScmWebhookDelivery(deliveryId);
+        if (raced) return duplicateResponse(raced);
+        return res.status(500).json({ error: "delivery ledger unavailable" });
       }
 
       let payload;
       try {
         payload = JSON.parse(rawBody.toString("utf8"));
       } catch {
+        deleteScmWebhookDelivery(deliveryId);
         return res.status(400).json({ error: "invalid JSON payload" });
       }
 
@@ -199,21 +215,19 @@ export function createGithubWebhookHandlers({
       const ledgerStatus = ["accepted", "ignored", "invalid"].includes(outcome.status) ? outcome.status : "error";
       counters[ledgerStatus === "error" ? "errors" : ledgerStatus] += 1;
       if (ledgerStatus === "error") {
-        // Deliberately NOT written to the dedupe ledger: GitHub's redelivery
-        // of a failed handling must reprocess, not be swallowed as duplicate.
+        // Release the reservation: GitHub's redelivery of a failed handling
+        // must reprocess, not be swallowed as duplicate.
+        deleteScmWebhookDelivery(deliveryId);
         recordAudit("github-webhook", "ci.webhook.error", deliveryId, {
           event,
           reason: String(outcome.reason || "").slice(0, 500)
         });
       } else {
         try {
-          recordScmWebhookDelivery({
-            deliveryId,
-            event,
-            action,
-            payloadHash: hash,
-            repoFullName,
+          updateScmWebhookDelivery(deliveryId, {
             status: ledgerStatus,
+            action,
+            repoFullName,
             detail: {
               ...(outcome.reason ? { reason: String(outcome.reason).slice(0, 500) } : {}),
               ...(outcome.outcome ? { outcome: outcome.outcome } : {})
@@ -221,9 +235,7 @@ export function createGithubWebhookHandlers({
             pipelineId: outcome.pipelineId || null
           });
         } catch (error) {
-          // A ledger race (concurrent identical delivery) must not fail the
-          // request after side effects happened.
-          logError("webhook ledger write failed:", error.message);
+          logError("webhook ledger update failed:", error.message);
         }
       }
 

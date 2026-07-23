@@ -1080,14 +1080,14 @@ export const API_SURFACE = [
     mcpExempt: "Covered by list_ci_repositories + get_ci_pipeline for agent use."
   },
   {
-    method: "post", path: "/api/ci/repos/:id/enable", handler: "ciHandlers.setRepoEnabled",
+    method: "post", path: "/api/ci/repos/:id/enable", handler: "ciHandlers.enableRepo",
     group: "ci", v1Path: "/api/v1/ci/repos/:id/enable",
     auth: true, scopes: ["admin"], ui: true,
     summary: "Enable CI for a connected repository (admin). Repositories are connected disabled by default; nothing runs until an operator opts in.",
     mcpExempt: "Admin trust decision; deliberately human-only."
   },
   {
-    method: "post", path: "/api/ci/repos/:id/disable", handler: "ciHandlers.setRepoEnabled",
+    method: "post", path: "/api/ci/repos/:id/disable", handler: "ciHandlers.disableRepo",
     group: "ci", v1Path: "/api/v1/ci/repos/:id/disable",
     auth: true, scopes: ["admin"], ui: true,
     summary: "Disable CI for a connected repository (admin). In-flight pipelines finish; new events are ignored.",
@@ -1103,8 +1103,8 @@ export const API_SURFACE = [
   {
     method: "get", path: "/api/ci/repos/:id/config", handler: "ciHandlers.inspectRepoConfig", wrap: "async",
     group: "ci", v1Path: "/api/v1/ci/repos/:id/config",
-    auth: true, ui: true,
-    summary: "Inspect the validated .runyard/ci.yml at the trusted default branch (or ?ref=): parsed config on success, operator-legible validation errors otherwise.",
+    auth: true, scopes: ["api", "mcp", "admin"], ui: true,
+    summary: "Inspect the validated .runyard/ci.yml at the trusted default branch (or ?ref=). Unlike other CI reads this pulls file content from the (possibly private) repository with the App credential, so it requires a write-capable scope — read-only tokens see hub state only.",
     mcpExempt: "Diagnostic read; pipeline provenance already pins the exact config sha."
   },
   {

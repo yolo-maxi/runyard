@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import {
+  allowedGitCredentialHosts,
   createRunnerCi,
   expandArtifactGlobs,
   containedPath,
@@ -173,6 +174,31 @@ describe("runner ci config + guards", () => {
     );
     assert.match(validateCiCheckoutInput(ciRun().input.__ci), /unsafe/, "file:// rejected without the test seam");
     assert.equal(validateCiCheckoutInput(ciRun().input.__ci, { allowFileCloneUrls: true }), "");
+  });
+
+  it("git credentials may only be sent to allowlisted hosts (github.com + operator additions)", () => {
+    assert.deepEqual([...allowedGitCredentialHosts({})], ["github.com"]);
+    assert.deepEqual(
+      [...allowedGitCredentialHosts({ RUNYARD_RUNNER_CI_GIT_HOSTS: "ghe.example.com, Other.Host " })],
+      ["github.com", "ghe.example.com", "other.host"]
+    );
+  });
+
+  it("fails closed when a credential would go to an unallowlisted host", async () => {
+    const h = createHarness({
+      config: { allowFileCloneUrls: false },
+      clientOverrides: {
+        async post(pathname) {
+          if (pathname.endsWith("/git-credential")) return { token: "ghs_supersecret" };
+          return {};
+        }
+      }
+    });
+    const run = ciRun();
+    run.input.__ci.repo.cloneUrl = "https://evil.example.com/o/r.git";
+    await h.runnerCi.handleCiRun({ capability: CI_CAPABILITY, run, secretEnv: {} });
+    assert.equal(h.failures.length, 1);
+    assert.match(h.failures[0].error, /unallowlisted host 'evil.example.com'/);
   });
 
   it("path containment rejects escapes", () => {

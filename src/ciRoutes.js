@@ -39,6 +39,13 @@ export function createCiHandlers({
   withRunLinks,
   nowIso = () => new Date().toISOString()
 } = {}) {
+  function setRepoEnabled(req, res, enable) {
+    const repo = setScmRepoEnabled(String(req.query.repo || req.params.id), enable);
+    if (!repo) return res.status(404).json({ error: "repository not connected" });
+    recordAudit(actorName(req.token), enable ? "ci.repo.enabled" : "ci.repo.disabled", repo.id, { repo: repo.fullName });
+    res.json({ repo });
+  }
+
   function presentJob(job) {
     const run = job.runId ? getRun(job.runId) : null;
     return {
@@ -102,13 +109,15 @@ export function createCiHandlers({
       });
     },
 
-    // POST /api/ci/repos/:id/enable  |  /disable (admin)
-    setRepoEnabled(req, res) {
-      const enable = !req.path.endsWith("/disable");
-      const repo = setScmRepoEnabled(String(req.query.repo || req.params.id), enable);
-      if (!repo) return res.status(404).json({ error: "repository not connected" });
-      recordAudit(actorName(req.token), enable ? "ci.repo.enabled" : "ci.repo.disabled", repo.id, { repo: repo.fullName });
-      res.json({ repo });
+    // POST /api/ci/repos/:id/enable | /disable (admin). Two handlers so the
+    // intent is bound to the ROUTE, never re-derived from the request path
+    // (a trailing slash must not invert an admin action).
+    enableRepo(req, res) {
+      setRepoEnabled(req, res, true);
+    },
+
+    disableRepo(req, res) {
+      setRepoEnabled(req, res, false);
     },
 
     // PATCH /api/ci/repos/:id/trust (admin)

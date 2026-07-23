@@ -147,3 +147,41 @@ describe("reporter sync", () => {
     assert.equal(h.checkCalls.length, 0);
   });
 });
+
+describe("review regressions (reporter)", () => {
+  it("resets the retry budget when the desired check state changes", async () => {
+    const { h, outcome } = await pipelineHarness();
+    h.orchestrator.advancePipeline(outcome.pipelineId);
+    const lint = h.ci.listCiJobs(outcome.pipelineId).find((j) => j.jobName === "lint");
+
+    // Exhaust the budget while the desired state is 'queued'.
+    const realCreate = h.githubApp.createCheckRun;
+    h.githubApp.createCheckRun = async () => {
+      throw new Error("GitHub down");
+    };
+    for (let i = 0; i < MAX_CHECK_SYNC_ATTEMPTS + 2; i++) await h.reporter.sync();
+    assert.equal(h.ci.getCiJob(lint.id).checkAttempts, MAX_CHECK_SYNC_ATTEMPTS);
+
+    // GitHub recovers AND the job concludes: the terminal state must report
+    // WITHOUT any operator resync — the budget was spent on 'queued'.
+    h.githubApp.createCheckRun = realCreate;
+    h.finishJobRun(lint.runId, "succeeded");
+    await h.reporter.sync();
+    assert.equal(h.ci.getCiJob(lint.id).checkState, "completed:success");
+  });
+
+  it("still syncs pipelines older than the recency window while their run is active", async () => {
+    const { h, outcome } = await pipelineHarness();
+    h.orchestrator.advancePipeline(outcome.pipelineId);
+    // 25h pass with the pipeline still running (long jobs / runner offline).
+    h.clock.advance(25 * 60 * 60_000);
+    const result = await h.reporter.sync();
+    assert.ok(result.synced >= 1, "active-but-old pipeline still reaches the Checks API");
+
+    // And its conclusion later re-touches the row, so the FINAL state syncs too.
+    const lint = h.ci.listCiJobs(outcome.pipelineId).find((j) => j.jobName === "lint");
+    h.finishJobRun(lint.runId, "failed", { error: "late failure" });
+    await h.reporter.sync();
+    assert.equal(h.ci.getCiJob(lint.id).checkState, "completed:failure");
+  });
+});

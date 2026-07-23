@@ -19,8 +19,10 @@ import {
   scmWebhookDeliveryCreateRecord,
   scmWebhookDeliveryInsertQuery,
   scmWebhookDeliveryListQuery,
+  scmWebhookDeliveryDeleteQuery,
   scmWebhookDeliveryLookupQuery,
-  scmWebhookDeliveryPruneQuery
+  scmWebhookDeliveryPruneQuery,
+  scmWebhookDeliveryUpdateQuery
 } from "./scmRecords.js";
 
 // SCM connection store: installations, CI repositories, and the webhook
@@ -120,6 +122,17 @@ export function createScmStore({ all, one, run, id, now }) {
     return findScmWebhookDelivery(input.deliveryId, { provider: input.provider || "github" });
   }
 
+  function updateScmWebhookDelivery(deliveryId, { status, action, repoFullName, detail, pipelineId } = {}, { provider = "github" } = {}) {
+    const query = scmWebhookDeliveryUpdateQuery({ provider, deliveryId, status, action, repoFullName, detail, pipelineId });
+    run(query.sql, query.params);
+    return findScmWebhookDelivery(deliveryId, { provider });
+  }
+
+  function deleteScmWebhookDelivery(deliveryId, { provider = "github" } = {}) {
+    const query = scmWebhookDeliveryDeleteQuery(provider, deliveryId);
+    return run(query.sql, query.params).changes;
+  }
+
   function listScmWebhookDeliveries(options = {}) {
     const query = scmWebhookDeliveryListQuery(options);
     return all(query.sql, query.params).map(normalizeScmWebhookDelivery);
@@ -137,6 +150,7 @@ export function createScmStore({ all, one, run, id, now }) {
 
   return {
     countScmWebhookDeliveries,
+    deleteScmWebhookDelivery,
     findScmWebhookDelivery,
     getScmInstallation,
     getScmRepo,
@@ -147,6 +161,7 @@ export function createScmStore({ all, one, run, id, now }) {
     recordScmWebhookDelivery,
     setScmRepoEnabled,
     setScmRepoTrustPolicy,
+    updateScmWebhookDelivery,
     upsertScmInstallation,
     upsertScmRepo
   };

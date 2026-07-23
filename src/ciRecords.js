@@ -29,6 +29,7 @@ export function normalizeCiPipeline(row) {
     checkRunId: row.check_run_id || "",
     checkState: row.check_state || "",
     checkAttempts: row.check_attempts || 0,
+    checkAttemptsFor: row.check_attempts_for || "",
     lastCheckError: row.last_check_error || "",
     checkUpdatedAt: row.check_updated_at || null,
     createdAt: row.created_at,
@@ -51,6 +52,7 @@ export function ciPipelineCreateRecord({ id, input, timestamp }) {
     check_run_id: "",
     check_state: "",
     check_attempts: 0,
+    check_attempts_for: "",
     last_check_error: "",
     check_updated_at: null,
     created_at: timestamp,
@@ -61,16 +63,16 @@ export function ciPipelineCreateRecord({ id, input, timestamp }) {
 export function ciPipelineInsertQuery() {
   return {
     sql: `INSERT INTO ci_pipelines
-     (id, repo_id, run_id, name, trigger, config_source, tested, commit_sha, concurrency_key, superseded_by, check_run_id, check_state, check_attempts, last_check_error, check_updated_at, created_at, updated_at)
-     VALUES ($id, $repo_id, $run_id, $name, $trigger, $config_source, $tested, $commit_sha, $concurrency_key, $superseded_by, $check_run_id, $check_state, $check_attempts, $last_check_error, $check_updated_at, $created_at, $updated_at)`
+     (id, repo_id, run_id, name, trigger, config_source, tested, commit_sha, concurrency_key, superseded_by, check_run_id, check_state, check_attempts, check_attempts_for, last_check_error, check_updated_at, created_at, updated_at)
+     VALUES ($id, $repo_id, $run_id, $name, $trigger, $config_source, $tested, $commit_sha, $concurrency_key, $superseded_by, $check_run_id, $check_state, $check_attempts, $check_attempts_for, $last_check_error, $check_updated_at, $created_at, $updated_at)`
   };
 }
 
-export function ciPipelineUpdateCheckQuery({ pipelineId, checkRunId, checkState, checkAttempts, lastCheckError, timestamp }) {
+export function ciPipelineUpdateCheckQuery({ pipelineId, checkRunId, checkState, checkAttempts, checkAttemptsFor, lastCheckError, timestamp }) {
   return {
     sql: `UPDATE ci_pipelines SET check_run_id = ?, check_state = ?, check_attempts = ?,
-      last_check_error = ?, check_updated_at = ?, updated_at = ? WHERE id = ?`,
-    params: [checkRunId || "", checkState || "", checkAttempts || 0, lastCheckError || "", timestamp, timestamp, pipelineId]
+      check_attempts_for = ?, last_check_error = ?, check_updated_at = ?, updated_at = ? WHERE id = ?`,
+    params: [checkRunId || "", checkState || "", checkAttempts || 0, checkAttemptsFor || "", lastCheckError || "", timestamp, timestamp, pipelineId]
   };
 }
 
@@ -140,17 +142,29 @@ export function ciPipelineSetRunQuery({ pipelineId, runId, timestamp }) {
   };
 }
 
+// Pipelines orphaned by a crash between pipeline creation and parent-run
+// creation (run_id never set). Age-gated so the normal in-flight window of a
+// live request is never mistaken for an orphan.
+export function ciOrphanPipelineListQuery({ olderThanIso }) {
+  return {
+    sql: "SELECT * FROM ci_pipelines WHERE run_id IS NULL AND created_at < ? ORDER BY created_at ASC",
+    params: [olderThanIso]
+  };
+}
+
+// Recency bump: reconciliation touches keep a concluding pipeline inside the
+// reporter's scan window regardless of its age.
+export function ciPipelineTouchQuery({ pipelineId, timestamp }) {
+  return {
+    sql: "UPDATE ci_pipelines SET updated_at = ? WHERE id = ?",
+    params: [timestamp, pipelineId]
+  };
+}
+
 export function ciPipelineSetSupersededQuery({ pipelineId, supersededBy, timestamp }) {
   return {
     sql: "UPDATE ci_pipelines SET superseded_by = ?, updated_at = ? WHERE id = ?",
     params: [supersededBy, timestamp, pipelineId]
-  };
-}
-
-export function ciPipelineSetTestedQuery({ pipelineId, tested, timestamp }) {
-  return {
-    sql: "UPDATE ci_pipelines SET tested = ?, updated_at = ? WHERE id = ?",
-    params: [JSON.stringify(tested || {}), timestamp, pipelineId]
   };
 }
 
@@ -172,6 +186,7 @@ export function normalizeCiJob(row) {
     checkRunId: row.check_run_id || "",
     checkState: row.check_state || "",
     checkAttempts: row.check_attempts || 0,
+    checkAttemptsFor: row.check_attempts_for || "",
     lastCheckError: row.last_check_error || "",
     checkUpdatedAt: row.check_updated_at || null,
     createdAt: row.created_at,
@@ -194,6 +209,7 @@ export function ciJobCreateRecord({ id, pipelineId, input, timestamp }) {
     check_run_id: "",
     check_state: "",
     check_attempts: 0,
+    check_attempts_for: "",
     last_check_error: "",
     check_updated_at: null,
     created_at: timestamp,
@@ -204,8 +220,8 @@ export function ciJobCreateRecord({ id, pipelineId, input, timestamp }) {
 export function ciJobInsertQuery() {
   return {
     sql: `INSERT INTO ci_jobs
-     (id, pipeline_id, job_name, needs, executor, spec, required, phase, phase_reason, run_id, check_run_id, check_state, check_attempts, last_check_error, check_updated_at, created_at, updated_at)
-     VALUES ($id, $pipeline_id, $job_name, $needs, $executor, $spec, $required, $phase, $phase_reason, $run_id, $check_run_id, $check_state, $check_attempts, $last_check_error, $check_updated_at, $created_at, $updated_at)`
+     (id, pipeline_id, job_name, needs, executor, spec, required, phase, phase_reason, run_id, check_run_id, check_state, check_attempts, check_attempts_for, last_check_error, check_updated_at, created_at, updated_at)
+     VALUES ($id, $pipeline_id, $job_name, $needs, $executor, $spec, $required, $phase, $phase_reason, $run_id, $check_run_id, $check_state, $check_attempts, $check_attempts_for, $last_check_error, $check_updated_at, $created_at, $updated_at)`
   };
 }
 
@@ -243,10 +259,10 @@ export function ciJobSetPhaseQuery({ jobId, phase, reason, timestamp }) {
   };
 }
 
-export function ciJobUpdateCheckQuery({ jobId, checkRunId, checkState, checkAttempts, lastCheckError, timestamp }) {
+export function ciJobUpdateCheckQuery({ jobId, checkRunId, checkState, checkAttempts, checkAttemptsFor, lastCheckError, timestamp }) {
   return {
     sql: `UPDATE ci_jobs SET check_run_id = ?, check_state = ?, check_attempts = ?,
-      last_check_error = ?, check_updated_at = ?, updated_at = ? WHERE id = ?`,
-    params: [checkRunId || "", checkState || "", checkAttempts || 0, lastCheckError || "", timestamp, timestamp, jobId]
+      check_attempts_for = ?, last_check_error = ?, check_updated_at = ?, updated_at = ? WHERE id = ?`,
+    params: [checkRunId || "", checkState || "", checkAttempts || 0, checkAttemptsFor || "", lastCheckError || "", timestamp, timestamp, jobId]
   };
 }

@@ -274,3 +274,101 @@ describe("standings + conclusions", () => {
     );
   });
 });
+
+describe("review regressions", () => {
+  const OUT_OF_ORDER_FILES = {
+    [`yolo-maxi/runyard@${"a".repeat(40)}`]: SAMPLE_CI_YML,
+    [`yolo-maxi/runyard@${"e".repeat(40)}`]: SAMPLE_CI_YML
+  };
+
+  it("an out-of-order older delivery never cancels the newer pipeline (self-supersede)", async () => {
+    const h = createCiHarness({ githubFiles: OUT_OF_ORDER_FILES });
+    h.connectRepo({ trustPolicy: { level: "trusted" } });
+    // Newer commit's webhook was PROCESSED first...
+    const newer = await h.ciTriggers.createPipelineForTrigger(
+      pushTrigger({ deliveryId: "del-new", headSha: "e".repeat(40), receivedAt: "2025-06-15T00:10:00.000Z" })
+    );
+    // ...then the older commit's delivery arrives late.
+    const older = await h.ciTriggers.createPipelineForTrigger(
+      pushTrigger({ deliveryId: "del-old", headSha: "a".repeat(40), receivedAt: "2025-06-15T00:05:00.000Z" })
+    );
+    assert.equal(h.getRun(newer.runId).status, "running", "newer pipeline keeps running");
+    assert.equal(h.getRun(older.runId).status, "cancelled", "late-arriving older pipeline supersedes itself");
+    assert.equal(h.ci.getCiPipeline(older.pipelineId).supersededBy, newer.pipelineId);
+  });
+
+  it("a skipped REQUIRED job can never conclude the pipeline green", async () => {
+    const yml = `
+version: 1
+on: {push: {branches: [main]}}
+jobs:
+  optional-setup:
+    executor: native
+    commands: ["true"]
+    required: false
+  gate:
+    executor: native
+    needs: [optional-setup]
+    commands: ["true"]
+`;
+    const h = createCiHarness({ githubFiles: { [`yolo-maxi/runyard@${"a".repeat(40)}`]: yml } });
+    h.connectRepo({ trustPolicy: { level: "trusted" } });
+    const outcome = await h.ciTriggers.createPipelineForTrigger(pushTrigger());
+    h.orchestrator.advancePipeline(outcome.pipelineId);
+    const setup = h.ci.listCiJobs(outcome.pipelineId).find((j) => j.jobName === "optional-setup");
+    h.finishJobRun(setup.runId, "failed", { error: "optional flake" });
+    const parent = h.getRun(outcome.runId);
+    assert.equal(parent.status, "failed", "required job skipped via failed optional dependency must fail the pipeline");
+    assert.match(parent.error, /gate \(skipped/);
+  });
+
+  it("fork pipelines whose required jobs are all policy-skipped conclude blocked, not green", async () => {
+    const h = createCiHarness({ githubFiles: { [`yolo-maxi/runyard@${"b".repeat(40)}`]: SAMPLE_CI_YML } });
+    h.connectRepo({ trustPolicy: { level: "trusted" } });
+    const outcome = await h.ciTriggers.createPipelineForTrigger(prTrigger({ headRepoFullName: "attacker/runyard" }));
+    h.orchestrator.advancePipeline(outcome.pipelineId);
+    const parent = h.getRun(outcome.runId);
+    assert.equal(parent.status, "blocked_by_gate");
+    assert.match(parent.error, /denied by policy/);
+  });
+
+  it("recovers a pipeline orphaned before its parent run existed", async () => {
+    const h = harnessWithConfig();
+    const repo = h.connectRepo({ trustPolicy: { level: "trusted" } });
+    // Simulate the crash window: pipeline + jobs exist, no parent run.
+    const orphan = h.ci.createCiPipeline({
+      repoId: repo.id,
+      runId: null,
+      name: "ci",
+      trigger: { provider: "github", event: "push", headSha: "a".repeat(40), receivedAt: "2025-06-15T00:00:00.000Z" },
+      configSource: { ref: "main", sha: "a".repeat(40), path: ".runyard/ci.yml" },
+      tested: { strategy: "head", headSha: "a".repeat(40) },
+      commitSha: "a".repeat(40),
+      concurrencyKey: "orphan-key",
+      jobs: [{ jobName: "lint", needs: [], executor: "native", spec: { commands: ["true"] } }]
+    });
+    h.clock.advance(3 * 60_000);
+    h.orchestrator.sweep();
+    const recovered = h.ci.getCiPipeline(orphan.id);
+    assert.ok(recovered.runId, "orphan adopted a parent run");
+    assert.equal(h.getRun(recovered.runId).status, "running");
+    assert.equal(h.ci.listCiJobs(orphan.id)[0].phase, "dispatched", "recovered pipeline dispatches normally");
+  });
+
+  it("recovers a parent stuck queued (crash before the running transition) and can still conclude", async () => {
+    const h = harnessWithConfig();
+    h.connectRepo({ trustPolicy: { level: "trusted" } });
+    const outcome = await h.ciTriggers.createPipelineForTrigger(pushTrigger());
+    // Simulate the crash window by rewinding the parent to queued.
+    h.run("UPDATE runs SET status = 'queued' WHERE id = ?", [outcome.runId]);
+    h.orchestrator.advancePipeline(outcome.pipelineId);
+    assert.equal(h.getRun(outcome.runId).status, "running", "queued parent recovered to running");
+    // Drain the DAG: finishing a wave dispatches the next via the observer.
+    for (let round = 0; round < 5 && h.getRun(outcome.runId).status === "running"; round++) {
+      for (const job of h.ci.listCiJobs(outcome.pipelineId)) {
+        if (job.runId && h.getRun(job.runId).status === "queued") h.finishJobRun(job.runId, "succeeded");
+      }
+    }
+    assert.equal(h.getRun(outcome.runId).status, "succeeded", "recovered pipeline concludes normally");
+  });
+});

@@ -1233,6 +1233,14 @@ export function recordScmWebhookDelivery(input) {
   return scmStore.recordScmWebhookDelivery(input);
 }
 
+export function updateScmWebhookDelivery(deliveryId, updates = {}, options = {}) {
+  return scmStore.updateScmWebhookDelivery(deliveryId, updates, options);
+}
+
+export function deleteScmWebhookDelivery(deliveryId, options = {}) {
+  return scmStore.deleteScmWebhookDelivery(deliveryId, options);
+}
+
 export function listScmWebhookDeliveries(options = {}) {
   return scmStore.listScmWebhookDeliveries(options);
 }
@@ -1273,8 +1281,12 @@ export function markCiPipelineSuperseded(pipelineId, supersededBy) {
   return ciStore.markCiPipelineSuperseded(pipelineId, supersededBy);
 }
 
-export function setCiPipelineTested(pipelineId, tested) {
-  return ciStore.setCiPipelineTested(pipelineId, tested);
+export function listOrphanCiPipelines(options = {}) {
+  return ciStore.listOrphanCiPipelines(options);
+}
+
+export function touchCiPipeline(pipelineId) {
+  return ciStore.touchCiPipeline(pipelineId);
 }
 
 export function listRecentCiPipelines(options = {}) {

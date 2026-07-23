@@ -24,6 +24,10 @@ const execFileAsync = promisify(execFile);
 
 const GIT_TIMEOUT_MS = 120_000;
 const CANCEL_POLL_MS = 5_000;
+// Keep-alive cadence for QUIET jobs: the hub's stall reaper fails runs with
+// no events inside its window (default 15m); a long silent compile must not
+// read as a stalled run. Well inside the window, bounded event volume.
+const JOB_KEEPALIVE_MS = 5 * 60_000;
 const LOG_FLUSH_BYTES = 8 * 1024;
 const LOG_FLUSH_MS = 2_000;
 const MAX_LOG_BYTES = 2 * 1024 * 1024;
@@ -154,11 +158,34 @@ export function sweepCiWorkspaces(baseDir, retainMs, nowMs = Date.now()) {
   return removed;
 }
 
+// Hosts a minted git credential may be sent to. The credential is a GitHub
+// installation token — attaching it to any other host would hand it to that
+// host. GHE deployments extend this via RUNYARD_RUNNER_CI_GIT_HOSTS.
+export function allowedGitCredentialHosts(env = process.env) {
+  const extra = String(env.RUNYARD_RUNNER_CI_GIT_HOSTS || "")
+    .split(",")
+    .map((host) => host.trim().toLowerCase())
+    .filter(Boolean);
+  return new Set(["github.com", ...extra]);
+}
+
 // Git credential via environment config only. `basic` auth with the GitHub
 // installation token as password; the header never appears in argv or logs.
-function gitEnv(baseEnv, token) {
+// The token is attached ONLY for allowlisted hosts (fail closed: a token we
+// hold but may not send is an error, never an anonymous-fetch downgrade that
+// would mask a misconfiguration).
+function gitEnv(baseEnv, token, { cloneUrl = "", allowedHosts = allowedGitCredentialHosts() } = {}) {
   const env = { ...baseEnv, GIT_TERMINAL_PROMPT: "0" };
   if (token) {
+    let host = "";
+    try {
+      host = new URL(cloneUrl).hostname.toLowerCase();
+    } catch {
+      host = "";
+    }
+    if (!allowedHosts.has(host)) {
+      throw new Error(`refusing to send the git credential to unallowlisted host '${host || cloneUrl}' (RUNYARD_RUNNER_CI_GIT_HOSTS)`);
+    }
     const header = `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`;
     env.GIT_CONFIG_COUNT = "1";
     env.GIT_CONFIG_KEY_0 = "http.extraheader";
@@ -223,7 +250,12 @@ export function createRunnerCi({
 
   async function checkout({ run, ci, workDir, token }) {
     const cleanEnv = allowlistedBaseEnv(baseEnv);
-    const env = gitEnv(cleanEnv, token);
+    const env = gitEnv(cleanEnv, token, {
+      cloneUrl: ci.repo.cloneUrl,
+      // Test seam only (paired with allowFileCloneUrls): offline fixtures
+      // fetch local file:// repos where no credential ever leaves the box.
+      ...(config.allowFileCloneUrls ? { allowedHosts: new Set([""]) } : {})
+    });
     const { checkout: co, repo } = ci;
     await git(["init", "--quiet"], { cwd: workDir, env });
     await git(["remote", "add", "origin", repo.cloneUrl], { cwd: workDir, env });
@@ -350,6 +382,16 @@ export function createRunnerCi({
       }, CANCEL_POLL_MS);
       cancelPoll.unref?.();
 
+      // Liveness for output-silent processes: the process being alive IS the
+      // event. Without this, the stall reaper would fail a healthy job whose
+      // build stays quiet longer than the hub's stall window.
+      const keepAlive = setInterval(() => {
+        event(runId, "ci.job.progress", `Job ${jobName} still running (quiet process)`, {
+          "cicd.pipeline.task.name": jobName
+        }).catch(() => {});
+      }, JOB_KEEPALIVE_MS);
+      keepAlive.unref?.();
+
       child.stdout.on("data", logs.push);
       child.stderr.on("data", logs.push);
       child.on("error", (error) => {
@@ -357,6 +399,7 @@ export function createRunnerCi({
         settled = true;
         clearTimeout(timeout);
         clearInterval(cancelPoll);
+        clearInterval(keepAlive);
         reject(error);
       });
       child.on("close", async (code, signal) => {
@@ -364,6 +407,7 @@ export function createRunnerCi({
         settled = true;
         clearTimeout(timeout);
         clearInterval(cancelPoll);
+        clearInterval(keepAlive);
         const { full, truncated } = await logs.finish();
         resolve({ exitCode: code, signal, cancelled, timedOut, log: full, truncated });
       });

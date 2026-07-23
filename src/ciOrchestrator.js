@@ -1,5 +1,5 @@
 import { RUN_TERMINAL } from "./runLifecyclePolicy.js";
-import { CI_JOB_CAPABILITY_SLUG, isCiJobRun, isCiPipelineRun } from "./ciCapabilities.js";
+import { CI_JOB_CAPABILITY_SLUG, CI_PIPELINE_CAPABILITY_SLUG, isCiJobRun, isCiPipelineRun } from "./ciCapabilities.js";
 import { deepLinks } from "./deepLinks.js";
 
 // CI orchestrator: advances pipeline DAGs on canonical runs. Deterministic
@@ -25,10 +25,19 @@ export function ciJobStanding(job, run) {
 }
 
 // Parent-run conclusion once every job is settled. Distinguishes code/test
-// failure from CI infrastructure failure.
+// failure from CI infrastructure failure. A REQUIRED job that never ran
+// (skipped — whether by a failed dependency or by policy) can never yield a
+// green pipeline: GitHub treats a skipped required check as passing, so the
+// dishonesty would propagate straight into branch protection.
 export function ciPipelineConclusion(standings) {
-  const failed = standings.filter((s) => s.required && s.terminal && !s.ok && s.state !== "skipped");
+  const failed = standings.filter((s) => s.required && s.terminal && !s.ok);
   if (!failed.length) return { status: "succeeded", summary: "all required jobs succeeded" };
+  if (failed.every((s) => s.state === "skipped" && (s.phaseReason || "").startsWith("policy:"))) {
+    return {
+      status: "blocked_by_gate",
+      summary: `required jobs denied by policy: ${failed.map((s) => `${s.jobName} (${s.phaseReason})`).join(", ")}`
+    };
+  }
   if (failed.every((s) => s.state === "cancelled")) return { status: "cancelled", summary: "required jobs were cancelled" };
   if (failed.every((s) => ["infra_unavailable", "blocked_by_preflight"].includes(s.state))) {
     return {
@@ -39,14 +48,16 @@ export function ciPipelineConclusion(standings) {
   if (failed.every((s) => s.state === "timed_out")) {
     return { status: "timed_out", summary: `required jobs timed out: ${failed.map((s) => s.jobName).join(", ")}` };
   }
-  return { status: "failed", summary: `required jobs failed: ${failed.map((s) => `${s.jobName} (${s.state})`).join(", ")}` };
+  return { status: "failed", summary: `required jobs failed: ${failed.map((s) => `${s.jobName} (${s.state}${s.state === "skipped" && s.phaseReason ? `: ${s.phaseReason}` : ""})`).join(", ")}` };
 }
 
 export function createCiOrchestrator({
   env,
   getCiPipeline,
+  getCiJob,
   listCiJobs,
   listActiveCiPipelines,
+  listOrphanCiPipelines = () => [],
   markCiJobDispatched,
   markCiJobPhase,
   findCiJobRunCandidate,
@@ -55,6 +66,8 @@ export function createCiOrchestrator({
   getScmRepo,
   getCapability,
   createRun,
+  setCiPipelineRun = () => null,
+  touchCiPipeline = () => null,
   transitionRun,
   addRunEvent,
   getRun,
@@ -105,10 +118,13 @@ export function createCiOrchestrator({
     }
     const marked = markCiJobDispatched(job.id, childRun.id);
     if (!marked) {
-      // Lost a race with another dispatcher: if OUR fresh run is the orphan,
-      // cancel it so exactly one child run survives per job.
-      const current = findCiJobRunCandidate(parentRun.id, job.id);
-      if (current && current.id !== childRun.id) transitionRun(childRun.id, "cancelled", { completed_at: nowIso() });
+      // Lost a race with another dispatcher: the job row's recorded run_id is
+      // the winner; if OUR fresh run is not it, cancel ours so exactly one
+      // child run survives per job.
+      const current = getCiJob(job.id);
+      if (current?.runId && current.runId !== childRun.id) {
+        transitionRun(childRun.id, "cancelled", { completed_at: nowIso() });
+      }
       return null;
     }
     addRunEvent(parentRun.id, "ci.job.dispatched", `Dispatched job ${job.jobName} as run ${childRun.id}`, {
@@ -149,6 +165,13 @@ export function createCiOrchestrator({
     const repo = getScmRepo(pipeline.repoId);
     const jobs = listCiJobs(pipeline.id);
 
+    // Restart recovery: a crash between run creation and the running
+    // transition leaves the parent queued — and queued has no legal edge to
+    // succeeded, so the pipeline could otherwise never conclude.
+    if (parentRun.status === "queued") {
+      transitionRun(parentRun.id, "running", { current_step: "orchestrating", started_at: nowIso() });
+    }
+
     if (RUN_TERMINAL.has(parentRun.status)) {
       // Parent ended (operator cancel, supersede, config failure): make sure
       // no child keeps running and nothing new dispatches.
@@ -159,6 +182,7 @@ export function createCiOrchestrator({
     const standings = jobs.map((job) => ({
       jobName: job.jobName,
       required: job.required,
+      phaseReason: job.phaseReason || "",
       ...ciJobStanding(job, job.runId ? getRun(job.runId) : null)
     }));
     const byName = new Map(jobs.map((job, index) => [job.jobName, { job, standing: standings[index] }]));
@@ -195,7 +219,7 @@ export function createCiOrchestrator({
     const settledStandings = listCiJobs(pipeline.id).map((job) => ({
       jobName: job.jobName,
       required: job.required,
-      state: undefined,
+      phaseReason: job.phaseReason || "",
       ...ciJobStanding(job, job.runId ? getRun(job.runId) : null)
     }));
     const allSettled = settledStandings.length > 0 && settledStandings.every((s) => s.terminal);
@@ -215,6 +239,9 @@ export function createCiOrchestrator({
           "cicd.pipeline.result": conclusion.status,
           jobs: settledStandings.map((s) => ({ job: s.jobName, state: s.state, required: s.required }))
         });
+        // Bump the pipeline row's recency so the reporter's scan window
+        // always covers the FINAL check sync, however old the pipeline is.
+        touchCiPipeline(pipeline.id);
       }
       return { settled: true, status: conclusion.status };
     }
@@ -250,10 +277,54 @@ export function createCiOrchestrator({
     }
   }
 
+  // Restart recovery for the pipeline-creation window: a crash between
+  // createCiPipeline and createRun leaves a pipeline with run_id NULL that no
+  // join-based query ever revisits — while the reporter would still show its
+  // checks as eternally queued. Adopt it: mint the parent run the original
+  // path would have created; the normal advance then dispatches (or, for a
+  // config-invalid orphan, records the blocked conclusion).
+  function recoverOrphanPipelines() {
+    const recovered = [];
+    for (const pipeline of listOrphanCiPipelines({ olderThanIso: new Date(nowMs() - 2 * 60_000).toISOString() })) {
+      try {
+        const capability = getCapability(CI_PIPELINE_CAPABILITY_SLUG);
+        if (!capability) continue;
+        const parentRun = createRun(capability, {
+          __ci: {
+            role: "pipeline",
+            pipelineId: pipeline.id,
+            repoFullName: getScmRepo(pipeline.repoId)?.fullName || "",
+            event: pipeline.trigger?.event || "",
+            headSha: pipeline.commitSha || "",
+            recovered: true
+          }
+        }, { requestedBy: "system:ci-orchestrator", origin: { type: "ci", pipelineId: pipeline.id, recovered: true } });
+        setCiPipelineRun(pipeline.id, parentRun.id);
+        transitionRun(parentRun.id, "running", { current_step: "orchestrating", started_at: nowIso() });
+        const configErrors = pipeline.configSource?.errors || [];
+        if (!listCiJobs(pipeline.id).length && configErrors.length) {
+          transitionRun(parentRun.id, "blocked_by_preflight", {
+            current_step: "config invalid",
+            error: `CI config invalid: ${configErrors.join("; ")}`.slice(0, 2000),
+            completed_at: nowIso()
+          });
+        }
+        addRunEvent(parentRun.id, "ci.pipeline.recovered", "Adopted a pipeline orphaned by a hub restart", {
+          pipelineId: pipeline.id
+        });
+        recovered.push(pipeline.id);
+      } catch (error) {
+        logError(`CI orphan recovery failed for ${pipeline.id}:`, error.message);
+      }
+    }
+    return recovered;
+  }
+
   // Periodic sweep: advance every active pipeline (restart recovery + the
   // event-driven fast path's backstop) and apply delivery-ledger retention.
   function sweep() {
     const advanced = [];
+    recoverOrphanPipelines();
     for (const pipeline of listActiveCiPipelines()) {
       try {
         advancePipeline(pipeline.id);
@@ -271,5 +342,5 @@ export function createCiOrchestrator({
     return advanced;
   }
 
-  return { advancePipeline, handleRunStatusChange, sweep };
+  return { advancePipeline, handleRunStatusChange, recoverOrphanPipelines, sweep };
 }

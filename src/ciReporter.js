@@ -140,6 +140,7 @@ export function createCiReporter({
   env,
   githubApp,
   listRecentCiPipelines,
+  listActiveCiPipelines = () => [],
   listCiJobs,
   getScmRepo,
   getRun,
@@ -150,7 +151,11 @@ export function createCiReporter({
 } = {}) {
   async function syncOne({ repo, pipeline, desired, ledger, updateLedger }) {
     if (ledger.checkState === desired.fingerprint) return { synced: false };
-    if (ledger.checkAttempts >= MAX_CHECK_SYNC_ATTEMPTS) return { synced: false, exhausted: true };
+    // The retry budget is PER desired state, not lifetime: a transient
+    // outage that exhausts retries while the job is queued must not block
+    // reporting the later terminal conclusion.
+    const attemptsSpent = ledger.checkAttemptsFor === desired.fingerprint ? ledger.checkAttempts || 0 : 0;
+    if (attemptsSpent >= MAX_CHECK_SYNC_ATTEMPTS) return { synced: false, exhausted: true };
     try {
       const common = { installationId: repo.installationId, owner: repo.owner, repo: repo.name };
       let checkRunId = ledger.checkRunId;
@@ -160,11 +165,12 @@ export function createCiReporter({
         const created = await githubApp.createCheckRun({ ...common, payload: desired.payload });
         checkRunId = String(created?.id || "");
       }
-      updateLedger({ checkRunId, checkState: desired.fingerprint, checkAttempts: 0, lastCheckError: "" });
+      updateLedger({ checkRunId, checkState: desired.fingerprint, checkAttempts: 0, checkAttemptsFor: "", lastCheckError: "" });
       return { synced: true };
     } catch (error) {
       updateLedger({
-        checkAttempts: (ledger.checkAttempts || 0) + 1,
+        checkAttempts: attemptsSpent + 1,
+        checkAttemptsFor: desired.fingerprint,
         lastCheckError: String(error.message || "check sync failed").slice(0, 500)
       });
       logError(`check sync failed for pipeline ${pipeline.id}:`, error.message);
@@ -173,12 +179,19 @@ export function createCiReporter({
   }
 
   // One reconciliation pass. Cheap when nothing changed (fingerprint match).
+  // Scan set: recently-touched pipelines UNION currently-active ones — a
+  // pipeline whose jobs run longer than the recency window must still get
+  // live and final check updates (its conclusion also re-touches the row).
   async function sync() {
     if (!githubApp.configured()) return { synced: 0, failed: 0, skipped: "unconfigured" };
     const sinceIso = new Date(nowMs() - SCAN_WINDOW_MS).toISOString();
     let synced = 0;
     let failed = 0;
-    for (const pipeline of listRecentCiPipelines({ sinceIso })) {
+    const scanSet = new Map();
+    for (const pipeline of [...listRecentCiPipelines({ sinceIso }), ...listActiveCiPipelines()]) {
+      scanSet.set(pipeline.id, pipeline);
+    }
+    for (const pipeline of scanSet.values()) {
       if (!pipeline.commitSha) continue;
       const repo = getScmRepo(pipeline.repoId);
       if (!repo?.installationId || repo.provider !== "github") continue;
@@ -216,9 +229,9 @@ export function createCiReporter({
   // and sync again (POST /api/ci/pipelines/:id/sync-checks).
   async function resyncPipeline(pipelineId) {
     for (const job of listCiJobs(pipelineId)) {
-      if (job.checkAttempts > 0) updateCiJobCheck(job.id, { checkAttempts: 0 });
+      if (job.checkAttempts > 0) updateCiJobCheck(job.id, { checkAttempts: 0, checkAttemptsFor: "" });
     }
-    updateCiPipelineCheck(pipelineId, { checkAttempts: 0 });
+    updateCiPipelineCheck(pipelineId, { checkAttempts: 0, checkAttemptsFor: "" });
     return sync();
   }
 

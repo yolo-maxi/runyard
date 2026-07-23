@@ -161,3 +161,16 @@ describe("concurrency keys", () => {
     assert.equal(ciConcurrencyKey({ repoFullName: "o/r", config: grouped, trigger: { event: "push", ref: "x" } }), "o/r:deploy");
   });
 });
+
+describe("review regressions (matching)", () => {
+  it("path filters fail OPEN when the changed-file list is incomplete", () => {
+    const { config } = parseCiConfig(VALID);
+    const base = { event: "push", ref: "refs/heads/main", changedPaths: ["README.quirk"] };
+    assert.equal(ciConfigMatches(config, base).matched, false, "complete list + no match -> skip");
+    assert.equal(
+      ciConfigMatches(config, { ...base, changedPathsTruncated: true }).matched,
+      true,
+      "truncated/forced list -> run CI rather than silently skip"
+    );
+  });
+});

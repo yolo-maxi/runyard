@@ -19,9 +19,10 @@ import {
   ciPipelineInsertQuery,
   ciPipelineListQuery,
   ciPipelineLookupQuery,
+  ciOrphanPipelineListQuery,
   ciPipelineSetRunQuery,
   ciPipelineSetSupersededQuery,
-  ciPipelineSetTestedQuery,
+  ciPipelineTouchQuery,
   normalizeCiJob,
   normalizeCiPipeline
 } from "./ciRecords.js";
@@ -77,7 +78,7 @@ export function createCiStore({ all, one, run, id, now }) {
     return one(query.sql, query.params)?.last_event_at || null;
   }
 
-  function updateCiPipelineCheck(pipelineId, { checkRunId, checkState, checkAttempts, lastCheckError } = {}) {
+  function updateCiPipelineCheck(pipelineId, { checkRunId, checkState, checkAttempts, checkAttemptsFor, lastCheckError } = {}) {
     const existing = getCiPipeline(pipelineId);
     if (!existing) return null;
     const query = ciPipelineUpdateCheckQuery({
@@ -85,6 +86,7 @@ export function createCiStore({ all, one, run, id, now }) {
       checkRunId: checkRunId != null ? checkRunId : existing.checkRunId,
       checkState: checkState != null ? checkState : existing.checkState,
       checkAttempts: checkAttempts != null ? checkAttempts : existing.checkAttempts,
+      checkAttemptsFor: checkAttemptsFor != null ? checkAttemptsFor : existing.checkAttemptsFor,
       lastCheckError: lastCheckError != null ? lastCheckError : existing.lastCheckError,
       timestamp: now()
     });
@@ -104,8 +106,13 @@ export function createCiStore({ all, one, run, id, now }) {
     return getCiPipeline(pipelineId);
   }
 
-  function setCiPipelineTested(pipelineId, tested) {
-    const query = ciPipelineSetTestedQuery({ pipelineId, tested, timestamp: now() });
+  function listOrphanCiPipelines({ olderThanIso }) {
+    const query = ciOrphanPipelineListQuery({ olderThanIso });
+    return all(query.sql, query.params).map(normalizeCiPipeline);
+  }
+
+  function touchCiPipeline(pipelineId) {
+    const query = ciPipelineTouchQuery({ pipelineId, timestamp: now() });
     run(query.sql, query.params);
     return getCiPipeline(pipelineId);
   }
@@ -139,7 +146,7 @@ export function createCiStore({ all, one, run, id, now }) {
     return result.changes ? getCiJob(jobId) : null;
   }
 
-  function updateCiJobCheck(jobId, { checkRunId, checkState, checkAttempts, lastCheckError } = {}) {
+  function updateCiJobCheck(jobId, { checkRunId, checkState, checkAttempts, checkAttemptsFor, lastCheckError } = {}) {
     const existing = getCiJob(jobId);
     if (!existing) return null;
     const query = ciJobUpdateCheckQuery({
@@ -147,6 +154,7 @@ export function createCiStore({ all, one, run, id, now }) {
       checkRunId: checkRunId != null ? checkRunId : existing.checkRunId,
       checkState: checkState != null ? checkState : existing.checkState,
       checkAttempts: checkAttempts != null ? checkAttempts : existing.checkAttempts,
+      checkAttemptsFor: checkAttemptsFor != null ? checkAttemptsFor : existing.checkAttemptsFor,
       lastCheckError: lastCheckError != null ? lastCheckError : existing.lastCheckError,
       timestamp: now()
     });
@@ -168,9 +176,10 @@ export function createCiStore({ all, one, run, id, now }) {
     listRecentCiPipelines,
     markCiJobDispatched,
     markCiJobPhase,
+    listOrphanCiPipelines,
     markCiPipelineSuperseded,
     setCiPipelineRun,
-    setCiPipelineTested,
+    touchCiPipeline,
     updateCiJobCheck,
     updateCiPipelineCheck
   };

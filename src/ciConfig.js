@@ -381,8 +381,11 @@ export function ciConfigMatches(config, trigger) {
       }
     }
     // Path filters gate BRANCH pushes only: a tag names a commit, it does not
-    // carry a meaningful changed-file diff.
-    if (kind === "branch" && filters.paths?.length) {
+    // carry a meaningful changed-file diff. When the provider's changed-file
+    // list is incomplete (force push, truncated commits[]) the filter fails
+    // OPEN — running CI unnecessarily is recoverable; silently skipping a
+    // relevant change is not.
+    if (kind === "branch" && filters.paths?.length && !trigger.changedPathsTruncated) {
       const changed = trigger.changedPaths || [];
       if (!changed.some((file) => matchesAnyGlob(file, filters.paths))) {
         return { matched: false, reason: "no changed path matches the path filters" };

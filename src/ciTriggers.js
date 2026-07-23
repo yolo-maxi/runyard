@@ -20,7 +20,8 @@ const MAX_CHANGED_PATHS = 300;
 
 export function extractPushTrigger(payload, { deliveryId = "", receivedAt = "" } = {}) {
   const changed = new Set();
-  for (const commit of payload.commits || []) {
+  const commits = payload.commits || [];
+  for (const commit of commits) {
     for (const key of ["added", "modified", "removed"]) {
       for (const file of commit[key] || []) {
         if (changed.size >= MAX_CHANGED_PATHS) break;
@@ -28,7 +29,13 @@ export function extractPushTrigger(payload, { deliveryId = "", receivedAt = "" }
       }
     }
   }
+  // GitHub truncates commits[] (~20 entries) and omits it on force pushes —
+  // in those cases the changed-file list is INCOMPLETE and path filters must
+  // fail open (run CI) rather than silently skip a change that mattered.
+  const changedPathsTruncated =
+    Boolean(payload.forced) || !commits.length || commits.length >= 20 || changed.size >= MAX_CHANGED_PATHS;
   return {
+    changedPathsTruncated,
     provider: "github",
     event: "push",
     action: "",
@@ -220,23 +227,34 @@ export function createCiTriggers({
     return { pipeline: getCiPipeline(pipeline.id), parentRun: getRun(parentRun.id) };
   }
 
+  // Ordering guard: webhook handlers interleave across awaited config
+  // fetches and GitHub does not guarantee delivery order, so "the pipeline I
+  // just created" is NOT necessarily the newest work on this key. Compare
+  // trigger receipt times: only strictly-older active pipelines are
+  // superseded; if a NEWER active pipeline already exists, the new pipeline
+  // supersedes ITSELF instead of cancelling fresher work.
   function cancelSupersededPipelines(newPipeline, concurrencyKey) {
+    const newReceivedAt = Date.parse(newPipeline.trigger?.receivedAt || newPipeline.createdAt) || 0;
     const superseded = [];
     for (const active of listActiveCiPipelines({ concurrencyKey })) {
       if (active.id === newPipeline.id) continue;
-      markCiPipelineSuperseded(active.id, newPipeline.id);
-      const result = transitionRun(active.runId, "cancelled", {
+      const activeReceivedAt = Date.parse(active.trigger?.receivedAt || active.createdAt) || 0;
+      const older = active.id === newPipeline.id ? null : activeReceivedAt <= newReceivedAt ? active : newPipeline;
+      const newer = older === active ? newPipeline : active;
+      markCiPipelineSuperseded(older.id, newer.id);
+      const result = transitionRun(older.runId, "cancelled", {
         current_step: "superseded",
         completed_at: nowIso()
       });
       if (result.ok && !result.idempotent) {
-        addRunEvent(active.runId, "ci.pipeline.superseded", `Superseded by newer pipeline ${newPipeline.id} on the same concurrency key`, {
-          pipelineId: active.id,
-          supersededBy: newPipeline.id,
+        addRunEvent(older.runId, "ci.pipeline.superseded", `Superseded by newer pipeline ${newer.id} on the same concurrency key`, {
+          pipelineId: older.id,
+          supersededBy: newer.id,
           concurrencyKey
         });
       }
-      superseded.push(active.id);
+      superseded.push(older.id);
+      if (older === newPipeline) break;
     }
     return superseded;
   }

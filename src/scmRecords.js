@@ -12,13 +12,15 @@ export const SCM_PROVIDERS = ["github"];
 export const SCM_INSTALLATION_STATUSES = ["active", "suspended", "removed"];
 
 // Delivery ledger statuses: what happened to one provider delivery id.
+// processing -> reserved before routing (dedupe TOCTOU guard); deleted on
+//               handler error so redelivery reprocesses
 // accepted   -> a pipeline (or sync action) was created from it
 // ignored    -> valid signature, but an event/action we don't act on
 // duplicate  -> same delivery id + same payload hash seen again (replay-safe ack)
 // conflict   -> same delivery id but DIFFERENT payload bytes (rejected)
 // invalid    -> signature ok, payload failed validation (e.g. unknown repo)
 // error      -> handler failed; safe to redeliver
-export const SCM_DELIVERY_STATUSES = ["accepted", "ignored", "duplicate", "conflict", "invalid", "error"];
+export const SCM_DELIVERY_STATUSES = ["processing", "accepted", "ignored", "duplicate", "conflict", "invalid", "error"];
 
 export const CI_TRUST_LEVELS = ["untrusted", "trusted"];
 
@@ -305,6 +307,31 @@ export function scmWebhookDeliveryCountQuery({ status = "", sinceIso = "" } = {}
   return {
     sql: `SELECT COUNT(*) AS count FROM scm_webhook_deliveries ${where.length ? `WHERE ${where.join(" AND ")}` : ""}`,
     params
+  };
+}
+
+export function scmWebhookDeliveryUpdateQuery({ provider, deliveryId, status, action = "", repoFullName = "", detail, pipelineId }) {
+  return {
+    sql: `UPDATE scm_webhook_deliveries SET status = ?, action = ?, repo_full_name = ?, detail = ?, pipeline_id = ?
+      WHERE provider = ? AND delivery_id = ?`,
+    params: [
+      SCM_DELIVERY_STATUSES.includes(status) ? status : "error",
+      action || "",
+      repoFullName || "",
+      JSON.stringify(detail === undefined ? {} : detail),
+      pipelineId || null,
+      provider,
+      String(deliveryId)
+    ]
+  };
+}
+
+// A handler error releases the reservation entirely so the provider's
+// redelivery of the same id reprocesses instead of deduping.
+export function scmWebhookDeliveryDeleteQuery(provider, deliveryId) {
+  return {
+    sql: "DELETE FROM scm_webhook_deliveries WHERE provider = ? AND delivery_id = ?",
+    params: [provider, String(deliveryId)]
   };
 }
 
