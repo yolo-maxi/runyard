@@ -44,3 +44,11 @@ export function subscribeRunEvents(runId, listener) {
 export function subscriberCount(runId) {
   return subscribers.get(runId)?.size || 0;
 }
+
+// Total open tails across all runs — the SSE route's global subscriber-cap
+// input (mirrors the Smithers gateway's global connection cap).
+export function totalSubscriberCount() {
+  let total = 0;
+  for (const set of subscribers.values()) total += set.size;
+  return total;
+}
