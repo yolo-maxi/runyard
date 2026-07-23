@@ -1,8 +1,18 @@
-import { cpSync, existsSync, mkdirSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WORKFLOW_TEMPLATE_INCLUDE_PATHS } from "./workflowTemplateIncludes.js";
+
+// Smithers ≥0.27 `init` REWRITES `.smithers/agents.ts` on every invocation
+// (verified on 0.30 by checksum; every adjacent pack file — agents/*.ts,
+// smithers.config.ts, preload.ts, gateway.ts, bunfig.toml, package.json —
+// survives re-init with customizations intact, so agents.ts is the whole
+// preserve-set). Setup snapshots it to this sibling path before init and
+// restores it byte-for-byte afterwards, init success or failure. The on-disk
+// backup only exists between snapshot and restore; a leftover copy means a
+// previous setup died mid-flight, and the next setup restores it first.
+export const AGENTS_TS_BACKUP_SUFFIX = ".runyard-setup-backup";
 
 export const RUNNER_SETUP_COMMANDS = ["node", "bun", "smithers", "claude", "codex", "pi"];
 
@@ -22,6 +32,9 @@ export function setupRunnerWorkspace(
     spawnSyncFn = spawnSync,
     existsSyncFn = existsSync,
     cpSyncFn = cpSync,
+    readFileSyncFn = readFileSync,
+    writeFileSyncFn = writeFileSync,
+    rmSyncFn = rmSync,
     templateRoot = fileURLToPath(new URL("../workflow-templates", import.meta.url)),
     log = console.log,
     warn = console.warn,
@@ -47,13 +60,40 @@ export function setupRunnerWorkspace(
 
   mkdirSyncFn(ws, { recursive: true });
   log(`\nScaffolding Smithers workspace in ${ws} ...`);
-  // ≥0.27 init is interactive by default and REWRITES .smithers/agents.ts on
-  // every invocation (verified on 0.30) — warn before touching an existing
-  // workspace so a customized agents.ts is not silently clobbered.
-  if (existsSyncFn(path.join(ws, ".smithers", "agents.ts"))) {
-    warn("Existing .smithers/agents.ts found — `smithers init` regenerates it. Back it up first if you customized providers.");
+
+  // Transactional preservation of the operator's agent configuration across
+  // `smithers init` (see AGENTS_TS_BACKUP_SUFFIX). Sequence: recover any
+  // backup a crashed previous setup left behind, snapshot the current file
+  // (disk backup + in-memory bytes), run init, restore byte-for-byte whatever
+  // init did — including when init FAILS — then drop the backup.
+  const agentsPath = path.join(ws, ".smithers", "agents.ts");
+  const agentsBackupPath = `${agentsPath}${AGENTS_TS_BACKUP_SUFFIX}`;
+  if (existsSyncFn(agentsBackupPath)) {
+    warn("Found a leftover agents.ts setup backup (a previous setup was interrupted); restoring it before init.");
+    writeFileSyncFn(agentsPath, readFileSyncFn(agentsBackupPath));
+    rmSyncFn(agentsBackupPath);
   }
+  const preservedAgents = existsSyncFn(agentsPath) ? readFileSyncFn(agentsPath) : null;
+  if (preservedAgents !== null) {
+    writeFileSyncFn(agentsBackupPath, preservedAgents);
+    log("Preserving existing .smithers/agents.ts across init (Smithers ≥0.27 init regenerates it).");
+  }
+
   const init = spawnSyncFn("smithers", ["init", "--yes", "--non-interactive"], { cwd: ws, stdio: "inherit" });
+
+  if (preservedAgents !== null) {
+    const initCopy = existsSyncFn(agentsPath) ? readFileSyncFn(agentsPath) : null;
+    const initChangedIt = initCopy === null || !preservedAgents.equals(initCopy);
+    if (initChangedIt) {
+      writeFileSyncFn(agentsPath, preservedAgents);
+      log(
+        "Restored your customized .smithers/agents.ts (init's regenerated copy was discarded). " +
+          "To adopt a freshly generated agents.ts instead, move yours aside and re-run setup."
+      );
+    }
+    rmSyncFn(agentsBackupPath);
+  }
+
   if (init.status !== 0) {
     error("`smithers init` failed.");
     exit(1);

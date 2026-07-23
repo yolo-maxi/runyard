@@ -65,9 +65,14 @@ binary rollback works — but the `.backup` file above is the guaranteed path.
 
 ## 3. Upgrade the workspace pack (the effective engine)
 
-**Do NOT run `smithers init` on the live workspace** — it rewrites
-`.smithers/agents.ts` (verified by checksum) and would discard the customized
-providers. Edit the pack in place:
+**Do NOT run bare `smithers init` on the live workspace** — it rewrites any
+`.smithers/agents.ts` that carries the `// smithers-source: generated`
+header (the live customized file still does; verified by checksum) and would
+discard the customized providers. (`runyard runner setup` is safe: it
+preserves an existing `agents.ts` byte-for-byte across init, even when init
+fails — but the in-place pack edit below is still the right move here
+because nothing else about the workspace needs re-scaffolding.) Edit the
+pack in place:
 
 ```bash
 cd /home/xiko/smithers-workspace/.smithers

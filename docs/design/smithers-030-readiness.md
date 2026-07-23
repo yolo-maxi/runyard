@@ -48,9 +48,20 @@ runner-facing `pinnedSmithersVersion` export equals the canonical pin.
   round, retries on failure, never fires for non-approval waits.
 
 **Setup (`src/cliRunnerSetup.js`):** `smithers init --yes --non-interactive`
-(0.27+ init is interactive), warns before init clobbers an existing
-customized `agents.ts` (verified it does), reports the effective engine
-version after setup.
+(0.27+ init is interactive) with **transactional preservation of
+`.smithers/agents.ts`**: setup snapshots the operator's file (disk backup +
+in-memory bytes) before init and restores it byte-for-byte afterwards —
+init success, init failure, or init deleting the file — then removes the
+backup; a leftover backup from a crashed setup is recovered on the next
+run. Empirics behind the design: 0.30 re-init rewrites ONLY agents.ts among
+pack files (agents/*.ts, smithers.config.ts, preload.ts, gateway.ts,
+bunfig.toml, package.json all survive customized), and the rewrite is
+conditional on the file's `// smithers-source: generated` header — which
+the live workspace's customized agents.ts still carries, so it WOULD be
+clobbered. Regression tests prove byte-for-byte preservation (including
+non-UTF8 bytes), failure-path restore, no stale backup, and crash
+recovery; a real-0.30-init run through setup confirms the flow. Setup also
+reports the effective engine version.
 
 **Docs:** DEPLOY.md delegation/effective-version note + 0.29 log-relocation
 note; runs.mdx structured quota-pause wording; the three companion documents.
