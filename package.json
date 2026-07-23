@@ -34,8 +34,8 @@
   },
   "dependencies": {
     "commander": "^14.0.2",
-    "express": "^4.19.2",
-    "smithers-orchestrator": "0.22.0",
+    "express": "^4.22.2",
+    "smithers-orchestrator": "0.30.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

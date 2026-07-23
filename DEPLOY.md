@@ -42,9 +42,21 @@ docker build -f Dockerfile.hub    -t runyard-hub:local .
 docker build -f Dockerfile.runner -t runyard-runner:local .
 ```
 
-Pinned build ARGs (override if needed): `SMITHERS_VERSION=0.22.0`,
+Pinned build ARGs (override if needed): `SMITHERS_VERSION=0.30.0`,
 `BUN_VERSION=1.3.14`, `DOCKER_CLI_VERSION=29.6.0`, `NODE_VERSION=22`,
 `PNPM_VERSION=10.33.0`.
+
+> **Which engine actually runs?** Since Smithers 0.27 the `smithers` binary
+> delegates to the nearest project-local install walking up from its cwd — a
+> workspace pack (`.smithers/node_modules`, created by `smithers init`)
+> outranks the image's global binary. The runner measures the EFFECTIVE
+> version at startup (`[engine] effective smithers …` in its log, and the
+> `· smithers <version>` suffix in the Hub runners table) and warns loudly on
+> drift. Upgrading an existing bare-host workspace therefore means upgrading
+> its `.smithers` pack, not just the global binary — see
+> `docs/smithers-030-migration-runbook.md`. Detached engine logs live in
+> `<workspace>/.smithers/logs/` with automatic retention
+> (`SMITHERS_LOG_RETENTION_DAYS`, `SMITHERS_LOG_MAX_TOTAL_BYTES`).
 
 ---
 
