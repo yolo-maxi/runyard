@@ -28,6 +28,8 @@ describe("seed capability catalog", () => {
       "idea-to-product",
       "improve",
       "product-workflow",
+      "ci-pipeline",
+      "ci-job",
       "reauth-cli"
     ]);
   });

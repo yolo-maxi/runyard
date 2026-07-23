@@ -50,6 +50,8 @@ describe("server composition", () => {
       "boardHandlers",
       "capabilityHandlers",
       "catalogHandlers",
+      "ciHandlers",
+      "ciWebhookHandlers",
       "gatewayHandlers",
       "hookProfileHandlers",
       "operatorReadHandlers",

@@ -446,6 +446,119 @@ export const DB_SCHEMA_SQL = `
     created_at TEXT NOT NULL
   );
 
+  -- SCM (GitHub App) installation identity for the CI platform. Identity and
+  -- sync bookkeeping only — installation access tokens are minted just in
+  -- time and NEVER persisted anywhere. Additive: older code never reads this
+  -- table, so rollbacks boot cleanly against a migrated DB.
+  CREATE TABLE IF NOT EXISTS scm_installations (
+    id TEXT PRIMARY KEY,
+    provider TEXT NOT NULL DEFAULT 'github',
+    installation_id TEXT NOT NULL,
+    account_login TEXT NOT NULL DEFAULT '',
+    account_type TEXT NOT NULL DEFAULT '',
+    app_id TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (provider, installation_id)
+  );
+
+  -- CI-connected repositories. GitHub stays the canonical repo host; this row
+  -- is RunYard's provider-neutral identity + policy record. enabled defaults
+  -- OFF: connecting an installation never silently starts running CI.
+  -- trust_policy JSON: { level: 'trusted'|'untrusted', allowNative: bool,
+  -- runnerTags: [..] } — see specs/ci-platform.md. Additive: older code never
+  -- reads this table, so rollbacks boot cleanly against a migrated DB.
+  CREATE TABLE IF NOT EXISTS scm_repos (
+    id TEXT PRIMARY KEY,
+    provider TEXT NOT NULL DEFAULT 'github',
+    external_id TEXT NOT NULL DEFAULT '',
+    owner TEXT NOT NULL,
+    name TEXT NOT NULL,
+    full_name TEXT NOT NULL,
+    clone_url TEXT NOT NULL DEFAULT '',
+    default_branch TEXT NOT NULL DEFAULT 'main',
+    installation_id TEXT NOT NULL DEFAULT '',
+    private INTEGER NOT NULL DEFAULT 0,
+    enabled INTEGER NOT NULL DEFAULT 0,
+    trust_policy TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (provider, full_name)
+  );
+
+  -- Webhook receipt/idempotency ledger. One row per provider delivery id;
+  -- payload_hash detects a replayed id carrying different bytes (conflict).
+  -- detail is a bounded audit summary — never the full payload, never
+  -- secrets. Rows are pruned by the CI sweep after the configured retention
+  -- window (bounded by design). Additive: older code never reads this table.
+  CREATE TABLE IF NOT EXISTS scm_webhook_deliveries (
+    id TEXT PRIMARY KEY,
+    provider TEXT NOT NULL DEFAULT 'github',
+    delivery_id TEXT NOT NULL,
+    event TEXT NOT NULL DEFAULT '',
+    action TEXT NOT NULL DEFAULT '',
+    payload_hash TEXT NOT NULL DEFAULT '',
+    repo_full_name TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'accepted',
+    detail TEXT NOT NULL DEFAULT '{}',
+    pipeline_id TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE (provider, delivery_id)
+  );
+
+  -- CI pipelines: one row per accepted trigger. The pipeline's LIVE status is
+  -- the linked parent run (runs.id = run_id) — never duplicated here; this
+  -- row owns the immutable provenance (trigger, config source SHA, tested
+  -- checkout semantics, check target SHA) and the concurrency/supersede
+  -- bookkeeping. Additive: older code never reads this table.
+  CREATE TABLE IF NOT EXISTS ci_pipelines (
+    id TEXT PRIMARY KEY,
+    repo_id TEXT NOT NULL REFERENCES scm_repos(id) ON DELETE CASCADE,
+    run_id TEXT REFERENCES runs(id) ON DELETE SET NULL,
+    name TEXT NOT NULL DEFAULT 'ci',
+    trigger TEXT NOT NULL DEFAULT '{}',
+    config_source TEXT NOT NULL DEFAULT '{}',
+    tested TEXT NOT NULL DEFAULT '{}',
+    commit_sha TEXT NOT NULL DEFAULT '',
+    concurrency_key TEXT NOT NULL DEFAULT '',
+    superseded_by TEXT,
+    check_run_id TEXT NOT NULL DEFAULT '',
+    check_state TEXT NOT NULL DEFAULT '',
+    check_attempts INTEGER NOT NULL DEFAULT 0,
+    last_check_error TEXT NOT NULL DEFAULT '',
+    check_updated_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  -- CI jobs: one row per configured job of a pipeline. phase covers only the
+  -- pre/non-dispatch lifecycle (pending|dispatched|skipped|cancelled); once
+  -- dispatched the linked canonical run's status is the single source of
+  -- truth. check_* columns are the GitHub Checks reporter ledger (modeled on
+  -- run_response_endpoints delivery bookkeeping). Additive: older code never
+  -- reads this table.
+  CREATE TABLE IF NOT EXISTS ci_jobs (
+    id TEXT PRIMARY KEY,
+    pipeline_id TEXT NOT NULL REFERENCES ci_pipelines(id) ON DELETE CASCADE,
+    job_name TEXT NOT NULL,
+    needs TEXT NOT NULL DEFAULT '[]',
+    executor TEXT NOT NULL DEFAULT 'native',
+    spec TEXT NOT NULL DEFAULT '{}',
+    required INTEGER NOT NULL DEFAULT 1,
+    phase TEXT NOT NULL DEFAULT 'pending',
+    phase_reason TEXT NOT NULL DEFAULT '',
+    run_id TEXT REFERENCES runs(id) ON DELETE SET NULL,
+    check_run_id TEXT NOT NULL DEFAULT '',
+    check_state TEXT NOT NULL DEFAULT '',
+    check_attempts INTEGER NOT NULL DEFAULT 0,
+    last_check_error TEXT NOT NULL DEFAULT '',
+    check_updated_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (pipeline_id, job_name)
+  );
+
   CREATE INDEX IF NOT EXISTS idx_alerts_kind_created ON _smithers_alerts(kind, created_at);
   CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
   CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
@@ -465,6 +578,15 @@ export const DB_SCHEMA_SQL = `
   CREATE INDEX IF NOT EXISTS idx_runs_status_updated ON runs(status, updated_at);
   CREATE INDEX IF NOT EXISTS idx_work_items_status ON work_items(status, updated_at);
   CREATE INDEX IF NOT EXISTS idx_work_item_events_item ON work_item_events(work_item_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_scm_repos_enabled ON scm_repos(enabled, updated_at);
+  CREATE INDEX IF NOT EXISTS idx_scm_webhook_deliveries_created ON scm_webhook_deliveries(created_at);
+  CREATE INDEX IF NOT EXISTS idx_scm_webhook_deliveries_status ON scm_webhook_deliveries(status, created_at);
+  CREATE INDEX IF NOT EXISTS idx_ci_pipelines_repo ON ci_pipelines(repo_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_ci_pipelines_run ON ci_pipelines(run_id);
+  CREATE INDEX IF NOT EXISTS idx_ci_pipelines_concurrency ON ci_pipelines(concurrency_key, created_at);
+  CREATE INDEX IF NOT EXISTS idx_ci_jobs_pipeline ON ci_jobs(pipeline_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_ci_jobs_run ON ci_jobs(run_id);
+  CREATE INDEX IF NOT EXISTS idx_ci_jobs_check ON ci_jobs(check_state, updated_at);
 `;
 
 // The runs(work_item_id) index lives in src/db.js (migrateRunsWorkItemColumn)

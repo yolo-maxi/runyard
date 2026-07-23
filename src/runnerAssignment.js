@@ -19,6 +19,10 @@ export function runnerMatchesAssignment(capability, runner, run) {
   if (!runner) return false;
   const tags = new Set(runner.tags || []);
   if (!(capability?.requiredRunnerTags || []).every((tag) => tags.has(tag))) return false;
+  // Per-run runner allowlist: a CI job compiled from a repository whose trust
+  // policy names runner tags may only be claimed by a runner carrying them.
+  const ciTags = run?.input?.__ci?.requiredRunnerTags;
+  if (Array.isArray(ciTags) && !ciTags.every((tag) => tags.has(tag))) return false;
   return executionIntentMatchesRunnerTags(executionIntentFromInput(run?.input || {}), runner.tags || []);
 }
 

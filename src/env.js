@@ -129,6 +129,24 @@ export const env = {
   updateCheckIntervalMs: Number(process.env.UPDATE_CHECK_INTERVAL_MS || 60 * 60_000),
   // owner/repo to check releases for. Defaults to the canonical RunYard repo.
   githubRepo: process.env.GITHUB_REPO || "yolo-maxi/runyard",
+  // --- CI platform: GitHub App bridge (specs/ci-platform.md) ----------------
+  // The App id + private key mint short-lived installation tokens JUST IN
+  // TIME; neither the key nor any minted token is ever written to the DB,
+  // logs, events, or artifacts. Key material is supplied by path (preferred)
+  // or inline PEM; the webhook secret verifies x-hub-signature-256 over the
+  // raw request body. All empty = CI GitHub bridge unconfigured (the hub
+  // boots and runs fine without it).
+  githubAppId: process.env.RUNYARD_GITHUB_APP_ID || "",
+  githubAppPrivateKeyPath: process.env.RUNYARD_GITHUB_APP_PRIVATE_KEY_PATH || "",
+  githubAppPrivateKey: process.env.RUNYARD_GITHUB_APP_PRIVATE_KEY || "",
+  githubWebhookSecret: process.env.RUNYARD_GITHUB_WEBHOOK_SECRET || "",
+  // Override for GitHub Enterprise / tests. Must be https (or explicit
+  // http://127.0.0.1 for the test fake) — validated in src/githubApp.js.
+  githubApiBase: process.env.RUNYARD_GITHUB_API_BASE || "https://api.github.com",
+  // Public app slug for the install link shown in the UI/docs (optional).
+  githubAppSlug: process.env.RUNYARD_GITHUB_APP_SLUG || "",
+  // Bounded retention for the webhook delivery ledger (default 14 days).
+  ciDeliveryRetentionMs: Number(process.env.RUNYARD_CI_DELIVERY_RETENTION_MS || 14 * 24 * 60 * 60_000),
   // Optional operator-owned webhook (their Slack/Discord/etc.) that receives the
   // update OUTCOME. Generic outbound POST only — never a maintainer endpoint.
   updateNotifyWebhook: process.env.UPDATE_NOTIFY_WEBHOOK || "",

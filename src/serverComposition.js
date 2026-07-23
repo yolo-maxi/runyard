@@ -55,6 +55,12 @@ import { createOperatorReadHandlers } from "./operatorReadRoutes.js";
 import { createTelegramApprovalNotifier } from "./telegramApprovalNotifier.js";
 import { createAuthMiddleware } from "./authMiddleware.js";
 import { createServerPresentation } from "./serverPresentation.js";
+import { createGitHubApp } from "./githubApp.js";
+import { createCiTriggers } from "./ciTriggers.js";
+import { createCiOrchestrator } from "./ciOrchestrator.js";
+import { createCiReporter } from "./ciReporter.js";
+import { createGithubWebhookHandlers } from "./githubWebhooks.js";
+import { createCiHandlers } from "./ciRoutes.js";
 
 export function createServerComposition({
   db,
@@ -170,7 +176,39 @@ export function createServerComposition({
     listBoards,
     getBoard,
     createBoard,
-    updateBoard
+    updateBoard,
+    // CI platform (specs/ci-platform.md)
+    getScmInstallation,
+    listScmInstallations,
+    upsertScmInstallation,
+    getScmRepo,
+    listScmRepos,
+    upsertScmRepo,
+    setScmRepoEnabled,
+    setScmRepoTrustPolicy,
+    findScmWebhookDelivery,
+    recordScmWebhookDelivery,
+    listScmWebhookDeliveries,
+    countScmWebhookDeliveries,
+    pruneScmWebhookDeliveries,
+    createCiPipeline,
+    getCiPipeline,
+    getCiPipelineByRunId,
+    listCiPipelines,
+    listActiveCiPipelines,
+    listRecentCiPipelines,
+    markCiPipelineSuperseded,
+    setCiPipelineRun,
+    getCiJob,
+    getCiJobByRunId,
+    listCiJobs,
+    markCiJobDispatched,
+    markCiJobPhase,
+    findCiJobRunCandidate,
+    lastCiRunEventAt,
+    updateCiJobCheck,
+    updateCiPipelineCheck,
+    setCiRunStatusObserver
   } = db;
 
   // Static workflow graph for a run's capability, for the flow view. Falls
@@ -628,6 +666,127 @@ export function createServerComposition({
     withCapabilityLinks
   });
 
+  // --- CI platform (GitHub bridge + pipelines; specs/ci-platform.md) -------
+  const githubApp = createGitHubApp({ env });
+
+  const ciTriggers = createCiTriggers({
+    env,
+    githubApp,
+    getScmRepo,
+    getCapability,
+    createRun,
+    transitionRun,
+    addRunEvent,
+    recordAudit,
+    createCiPipeline,
+    setCiPipelineRun,
+    listCiJobs,
+    markCiJobPhase,
+    getCiJob,
+    getCiPipeline,
+    listActiveCiPipelines,
+    markCiPipelineSuperseded,
+    getRun
+  });
+
+  const ciOrchestrator = createCiOrchestrator({
+    env,
+    getCiPipeline,
+    listCiJobs,
+    listActiveCiPipelines,
+    markCiJobDispatched,
+    markCiJobPhase,
+    findCiJobRunCandidate,
+    lastCiRunEventAt,
+    getCiJobByRunId,
+    getScmRepo,
+    getCapability,
+    createRun,
+    transitionRun,
+    addRunEvent,
+    getRun,
+    pruneScmWebhookDeliveries
+  });
+
+  const ciReporter = createCiReporter({
+    env,
+    githubApp,
+    listRecentCiPipelines,
+    listCiJobs,
+    getScmRepo,
+    getRun,
+    updateCiJobCheck,
+    updateCiPipelineCheck
+  });
+
+  // CI fast path: job/pipeline run status changes advance the DAG at once;
+  // the 60s maintenance sweep remains the restart/recovery backstop.
+  if (typeof setCiRunStatusObserver === "function") {
+    setCiRunStatusObserver((updatedRun) => ciOrchestrator.handleRunStatusChange(updatedRun));
+  }
+
+  // Debounced check sync so a burst of webhook/job activity coalesces into
+  // one Checks API reconciliation pass shortly after.
+  let checkSyncTimer = null;
+  function syncChecksSoon() {
+    if (checkSyncTimer) return;
+    checkSyncTimer = setTimeout(() => {
+      checkSyncTimer = null;
+      ciReporter.sync().catch((error) => console.error("CI check sync failed:", error.message));
+    }, 2_000);
+    checkSyncTimer.unref?.();
+  }
+
+  const ciWebhookHandlers = createGithubWebhookHandlers({
+    env,
+    githubApp,
+    ciTriggers,
+    advancePipeline: (pipelineId) => ciOrchestrator.advancePipeline(pipelineId),
+    syncChecksSoon,
+    findScmWebhookDelivery,
+    recordScmWebhookDelivery,
+    upsertScmInstallation,
+    upsertScmRepo,
+    getScmRepo,
+    setScmRepoEnabled,
+    recordAudit
+  });
+
+  const ciHandlers = createCiHandlers({
+    env,
+    githubApp,
+    ciTriggers,
+    ciOrchestrator,
+    ciReporter,
+    webhookCounters: ciWebhookHandlers.counters,
+    getScmRepo,
+    listScmRepos,
+    listScmInstallations,
+    upsertScmInstallation,
+    upsertScmRepo,
+    setScmRepoEnabled,
+    setScmRepoTrustPolicy,
+    listScmWebhookDeliveries,
+    countScmWebhookDeliveries,
+    listCiPipelines,
+    getCiPipeline,
+    getCiPipelineByRunId,
+    listCiJobs,
+    getCiJobByRunId,
+    getRun,
+    transitionRun,
+    addRunEvent,
+    recordAudit,
+    withRunLinks
+  });
+
+  // One maintenance tick for the CI platform: advance active pipelines, then
+  // reconcile GitHub checks. Called from startRunMaintenance every 60s.
+  function ciMaintenanceTick() {
+    ciOrchestrator.sweep();
+    ciReporter.sync().catch((error) => console.error("CI check sync failed:", error.message));
+  }
+
   const operatorReadHandlers = createOperatorReadHandlers({
     dashboardStats,
     env: processEnv,
@@ -639,6 +798,7 @@ export function createServerComposition({
   });
 
   return {
+    ciMaintenanceTick,
     fireDueSchedules: (nowIso) => scheduleHandlers.fireDueSchedules(nowIso),
     notifyTelegram,
     pruneDeadRunners,
@@ -651,6 +811,8 @@ export function createServerComposition({
       approvalHandlers,
       artifactHandlers,
       authHandlers,
+      ciHandlers,
+      ciWebhookHandlers,
       capabilityHandlers,
       catalogHandlers,
       gatewayHandlers,

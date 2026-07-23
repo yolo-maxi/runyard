@@ -174,6 +174,15 @@ async function callTool(name, args = {}) {
   if (name === "delete_work_item") return result(await client.delete(`/api/work-items/${encodeURIComponent(args.workItemId || args.id)}`));
   if (name === "link_work_item_run") return result(await client.post(`/api/work-items/${encodeURIComponent(args.workItemId || args.id)}/link-run`, { runId: args.runId }));
   if (name === "unlink_work_item_run") return result(await client.post(`/api/work-items/${encodeURIComponent(args.workItemId || args.id)}/unlink-run`, { runId: args.runId }));
+  if (name === "list_ci_repositories") {
+    return result(await client.get(`/api/ci/repos${args.enabled === true ? "?enabled=1" : ""}`));
+  }
+  if (name === "get_ci_pipeline") {
+    return result(await client.get(`/api/ci/pipelines/${encodeURIComponent(args.id || args.pipelineId)}`));
+  }
+  if (name === "dispatch_ci_run") {
+    return result(await client.post("/api/ci/dispatch", { repo: args.repo, ...(args.ref ? { ref: args.ref } : {}) }));
+  }
   if (name === "list_boards") return result(await client.get("/api/boards"));
   if (name === "get_board") {
     const suffix = args.includeArchived === true ? "?includeArchived=true" : "";

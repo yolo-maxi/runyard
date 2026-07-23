@@ -302,6 +302,25 @@ function routeDeps() {
       "runWorkflow",
       "preflightWorkflow"
     ]),
+    ciHandlers: handlers([
+      "githubAppHealth",
+      "listRepos",
+      "syncRepos",
+      "getRepo",
+      "setRepoEnabled",
+      "setRepoTrustPolicy",
+      "inspectRepoConfig",
+      "dispatch",
+      "listPipelines",
+      "getPipeline",
+      "cancelPipeline",
+      "rerunPipeline",
+      "syncPipelineChecks",
+      "listDeliveries",
+      "diagnostics",
+      "mintGitCredential"
+    ]),
+    ciWebhookHandlers: handlers(["githubWebhook"]),
     catalogHandlers: {
       agents: handlers(["list", "create", "update"], "agents"),
       skills: handlers(["list", "create", "update"], "skills"),

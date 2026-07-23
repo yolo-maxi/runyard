@@ -51,6 +51,7 @@ import {
   preflightAssignment
 } from "./runnerRuntime.js";
 import { handleRunnerSpecialRun } from "./runnerSpecialRuns.js";
+import { createRunnerCi, runnerCiConfigFromEnv } from "./runnerCi.js";
 import { harnessSelectionRunEnv, resolveHarnessSelection } from "./runHarnessSelection.js";
 import { loadRunnerConfigEnv } from "./runnerConfig.js";
 
@@ -90,11 +91,17 @@ if (isBubblewrapWrapper(execWrapper)) {
 
 const location = process.env.SMITHERS_RUNNER_LOCATION || "vps"; // "vps" | "local"
 const name = process.env.SMITHERS_RUNNER_NAME || `${os.hostname()} (${location})`;
+// CI executor opt-in (specs/ci-platform.md): a CI-enabled runner advertises
+// the `ci` tag the ci-job capability requires. Never advertised implicitly.
+const runnerCiConfig = runnerCiConfigFromEnv(process.env);
 const tags = normalizeRunnerTags(
-  (process.env.SMITHERS_RUNNER_TAGS || `smithers,${location}`)
-    .split(",")
-    .map((t) => t.trim())
-    .filter(Boolean),
+  [
+    ...(process.env.SMITHERS_RUNNER_TAGS || `smithers,${location}`)
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean),
+    ...(runnerCiConfig.enabled ? ["ci"] : [])
+  ],
   location
 );
 const intervalMs = Number(process.env.SMITHERS_RUNNER_INTERVAL_MS || 2500);
@@ -300,6 +307,17 @@ const smithersRegistry = createSmithersRunRegistry({
   logError: console.error
 });
 
+const runnerCi = createRunnerCi({
+  workspace,
+  runnerName: name,
+  runnerId: () => runnerId,
+  client,
+  event,
+  failRun,
+  config: runnerCiConfig,
+  baseEnv: runnerBaseEnv
+});
+
 async function observedHubRun(runId) {
   try {
     const detail = await client.get(`/api/runs/${runId}`);
@@ -423,6 +441,11 @@ async function executeAssignment(assignment) {
       failRun
     });
     if (handledSpecialRun) return;
+
+    // CI jobs execute through the deterministic CI executor (native commands
+    // or a Dagger call against a SHA-pinned checkout) — never `smithers up`.
+    const handledCiRun = await runnerCi.handleCiRun({ capability, run, secretEnv });
+    if (handledCiRun) return;
 
     // DB-backed workflows: write the Hub-shipped, hash-verified
     // bundle to a per-run file and point THIS run's entry at it (the stored

@@ -83,6 +83,11 @@ export function publishTrustedSeedWorkflowSource({
   createdBy = "seed"
 } = {}) {
   if (workflowBundleReference(definition)) return { definition, bundle: null, reused: true };
+  // Hub/runner-native capabilities (e.g. the CI pipeline/job pair) declare no
+  // workflow source file — there is nothing to publish as a bundle.
+  if (!definition?.workflow?.entry && !definition?.workflow?.file) {
+    return { definition, bundle: null, skipped: true };
+  }
   const source = loadWorkflowSource(definition, { root });
   if (!source?.code) {
     throw new Error(`seeded workflow ${definition?.slug || "unknown"} has no source file to publish as a DB workflow bundle`);
