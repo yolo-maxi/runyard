@@ -17,7 +17,7 @@ import { collectAuthHealth } from "./runnerAuthHealth.js";
 import { classifyFailureStatus, RUN_FAILURE_CLASSES } from "./runFailureClass.js";
 import { classifyPauseReason, PAUSE_REASONS } from "./runPause.js";
 import { DEFAULT_MAX_INLINE_INPUT_BYTES } from "./runnerPolicy.js";
-import { smithersEventMessage, smithersTokenUsage } from "./runnerSmithersEvents.js";
+import { forwardSmithersEventTail, smithersEventMessage } from "./runnerSmithersEvents.js";
 import { materializeGatewayPin } from "./runnerGateway.js";
 import { createEngineApprovalBridge } from "./runnerEngineApprovals.js";
 import { readClaudeOauthToken } from "./claudeOauthToken.js";
@@ -613,19 +613,16 @@ async function executeAssignment(assignment) {
     let hubTerminalStatus = "";
     while (Date.now() < deadline) {
       const lines = await fetchEvents(sid);
-      for (let i = posted; i < lines.length; i++) {
-        engineApprovals.observeEventLine(lines[i]);
-        await event(run.id, "smithers.event", smithersEventMessage(lines[i]));
-        // Runner-observed usage: the engine's TokenUsageReported telemetry is
-        // reported per call. Gateway-pinned model calls are already metered at
-        // the gateway; report only OTHER models (e.g. a claude fallback) so
-        // nothing double-counts.
-        const usage = smithersTokenUsage(lines[i]);
-        if (usage && (!gateway || usage.model !== gateway.model)) {
-          await postRunUsage(run.id, usage);
-        }
-      }
-      posted = lines.length;
+      posted = await forwardSmithersEventTail({
+        lines,
+        posted,
+        observeEventLine: (line) => engineApprovals.observeEventLine(line),
+        postEventLine: (line) => event(run.id, "smithers.event", smithersEventMessage(line)),
+        postUsage: (usage) => postRunUsage(run.id, usage),
+        // Gateway-pinned model calls are already metered at the gateway;
+        // report only OTHER models (for example a Claude fallback).
+        gatewayModel: gateway?.model || ""
+      });
       try {
         const st = await getState(sid);
         state = st.runState?.state || st.run?.status || "running";
@@ -724,6 +721,18 @@ async function executeAssignment(assignment) {
       outputs,
       eventLines
     } = await collectSmithersRunResult(sid, { getState, nodeOutput, fetchEvents });
+    // The engine can become terminal between the last streaming poll and the
+    // final collect above. Flush that unseen suffix before completing the Hub
+    // run so terminal usage/lifecycle events are never stranded only inside
+    // the artifact.
+    posted = await forwardSmithersEventTail({
+      lines: eventLines,
+      posted,
+      observeEventLine: (line) => engineApprovals.observeEventLine(line),
+      postEventLine: (line) => event(run.id, "smithers.event", smithersEventMessage(line)),
+      postUsage: (usage) => postRunUsage(run.id, usage),
+      gatewayModel: gateway?.model || ""
+    });
     for (const artifact of smithersArtifactPayloads({ sid, state, outputs, eventLines })) {
       await client.post(`/api/runs/${run.id}/artifacts`, artifact);
     }
