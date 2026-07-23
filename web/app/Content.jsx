@@ -16,6 +16,7 @@ import { WorkflowDetail } from "../views/WorkflowDetail.jsx";
 import { WorkBoard } from "../views/WorkBoard.jsx";
 import { WorkItemDetail } from "../views/WorkItemDetail.jsx";
 import { Brand } from "../views/Brand.jsx";
+import { Repositories, RepositoryDetail } from "../views/Repositories.jsx";
 
 // Views reachable only with an admin-scoped session. Deep links still resolve
 // for non-admins, but to an honest notice instead of forms that would 403.
@@ -76,6 +77,12 @@ export function Content({ me }) {
     return segments[1] ? <ApprovalDetail key={segments[1]} id={segments[1]} /> : <Approvals />;
   }
   if (view === "runners") return <Runners />;
+  if (view === "repositories") {
+    // #repositories → CI overview, #repositories/:id → repository detail.
+    return segments[1]
+      ? <RepositoryDetail key={segments[1]} id={segments[1]} me={me} />
+      : <Repositories me={me} />;
+  }
   if (view === "schedules") {
     return segments[1] ? <ScheduleDetail key={segments[1]} id={segments[1]} /> : <Schedules />;
   }

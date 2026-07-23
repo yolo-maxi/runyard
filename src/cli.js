@@ -10,7 +10,7 @@ import { HubClient } from "./apiClient.js";
 import { readConfig, writeConfig, setRemote, resolveRemote } from "./config.js";
 import { resolveHubUrl, resolveHubToken } from "./hubConnection.js";
 import { parseJsonOption } from "./cliJson.js";
-import { renderData, renderMenu, renderNegotiation, renderRunCreated } from "./cliPresentation.js";
+import { renderCiPipeline, renderCiRepoList, renderData, renderMenu, renderNegotiation, renderRunCreated } from "./cliPresentation.js";
 import { normalizeRunnerTags } from "./runExecution.js";
 import {
   installMcpClients,
@@ -1000,6 +1000,107 @@ program
     if (tag) args.push(tag);
     const result = spawnSync("bash", args, { cwd: root, stdio: "inherit", env: childEnv });
     process.exit(result.status == null ? 1 : result.status);
+  });
+
+// --- CI: connected repositories + pipelines (specs/ci-platform.md) ----------
+const repoCommand = program.command("repo").description("CI repository connections: list, sync, enable/disable, trust policy");
+repoCommand
+  .command("list")
+  .description("List CI-connected repositories with enablement and trust policy")
+  .option("--enabled", "only repositories enabled for CI")
+  .action(async (opts) => {
+    const data = await client(program.opts()).get(`/api/ci/repos${opts.enabled ? "?enabled=1" : ""}`);
+    if (program.opts().json) return print(data, true);
+    for (const line of renderCiRepoList(data)) console.log(line);
+  });
+repoCommand
+  .command("sync")
+  .description("Sync installations + repositories from the GitHub App (admin; never auto-enables CI)")
+  .action(async () => {
+    const data = await client(program.opts()).post("/api/ci/repos/sync", {});
+    if (program.opts().json) return print(data, true);
+    console.log(`Synced ${data.synced.installations} installation(s), ${data.synced.repos} repositorie(s).`);
+    for (const line of renderCiRepoList(data)) console.log(line);
+  });
+repoCommand
+  .command("enable <repo>")
+  .description("Enable CI for a connected repository (admin). <repo> is the row id or owner/name.")
+  .action(async (repo) => {
+    print(await client(program.opts()).post(`/api/ci/repos/-/enable?repo=${encodeURIComponent(repo)}`, {}), program.opts().json);
+  });
+repoCommand
+  .command("disable <repo>")
+  .description("Disable CI for a connected repository (admin)")
+  .action(async (repo) => {
+    print(await client(program.opts()).post(`/api/ci/repos/-/disable?repo=${encodeURIComponent(repo)}`, {}), program.opts().json);
+  });
+repoCommand
+  .command("trust <repo>")
+  .description("Update a repository's trust policy (admin)")
+  .option("--level <level>", "trusted | untrusted")
+  .option("--allow-native", "allow native host execution (requires --level trusted AND runner opt-in)")
+  .option("--no-allow-native", "forbid native host execution")
+  .option("--runner-tags <tags>", "comma-separated runner tag allowlist")
+  .action(async (repo, opts) => {
+    const body = {};
+    if (opts.level !== undefined) body.level = opts.level;
+    if (opts.allowNative !== undefined) body.allowNative = opts.allowNative;
+    if (opts.runnerTags !== undefined) body.runnerTags = opts.runnerTags.split(",").map((t) => t.trim()).filter(Boolean);
+    print(await client(program.opts()).patch(`/api/ci/repos/-/trust?repo=${encodeURIComponent(repo)}`, body), program.opts().json);
+  });
+
+const ciCommand = program.command("ci").description("CI pipelines: dispatch, status, cancel, rerun");
+ciCommand
+  .command("dispatch <repo>")
+  .description("Manually dispatch CI for a connected repository at an exact revision")
+  .option("--ref <ref>", "branch, tag, or sha (default: the repo's default branch)")
+  .action(async (repo, opts) => {
+    const body = { repo, ...(opts.ref ? { ref: opts.ref } : {}) };
+    const data = await client(program.opts()).post("/api/ci/dispatch", body);
+    if (program.opts().json) return print(data, true);
+    for (const line of renderCiPipeline(data)) console.log(line);
+  });
+ciCommand
+  .command("pipelines")
+  .description("List recent CI pipelines")
+  .option("--repo <repo>", "filter by connected repository (id or owner/name)")
+  .option("--limit <n>", "max pipelines", "20")
+  .action(async (opts) => {
+    const suffix = `?limit=${encodeURIComponent(opts.limit)}${opts.repo ? `&repo=${encodeURIComponent(opts.repo)}` : ""}`;
+    const data = await client(program.opts()).get(`/api/ci/pipelines${suffix}`);
+    if (program.opts().json) return print(data, true);
+    const pipelines = data.pipelines || [];
+    if (!pipelines.length) return console.log("No CI pipelines yet.");
+    for (const pipeline of pipelines) {
+      const trigger = pipeline.trigger || {};
+      console.log(
+        `${pipeline.id}\t${pipeline.run?.status || "?"}\t${trigger.event || "?"}${trigger.prNumber ? ` PR#${trigger.prNumber}` : ""}\t${(pipeline.commitSha || "").slice(0, 12)}\t${pipeline.createdAt}`
+      );
+    }
+  });
+ciCommand
+  .command("status <pipeline>")
+  .description("Show one pipeline: provenance, job DAG with live run states, and GitHub check state. Accepts a pipeline id or its parent run id.")
+  .action(async (pipeline) => {
+    const data = await client(program.opts()).get(`/api/ci/pipelines/${encodeURIComponent(pipeline)}`);
+    if (program.opts().json) return print(data, true);
+    for (const line of renderCiPipeline(data)) console.log(line);
+  });
+ciCommand
+  .command("cancel <pipeline>")
+  .description("Cancel a pipeline: parent run + dispatched job runs are cancelled, pending jobs never start")
+  .action(async (pipeline) => {
+    const data = await client(program.opts()).post(`/api/ci/pipelines/${encodeURIComponent(pipeline)}/cancel`, {});
+    if (program.opts().json) return print(data, true);
+    for (const line of renderCiPipeline(data)) console.log(line);
+  });
+ciCommand
+  .command("rerun <pipeline>")
+  .description("Rerun a pipeline as a fresh pipeline against the same SHAs (the original stays as evidence)")
+  .action(async (pipeline) => {
+    const data = await client(program.opts()).post(`/api/ci/pipelines/${encodeURIComponent(pipeline)}/rerun`, {});
+    if (program.opts().json) return print(data, true);
+    for (const line of renderCiPipeline(data)) console.log(line);
   });
 
 program.parseAsync(process.argv).catch((error) => {

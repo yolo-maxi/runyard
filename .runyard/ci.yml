@@ -1,0 +1,35 @@
+# RunYard's own CI configuration (dogfood). Executed by RunYard CI runners
+# when this repository is connected + enabled on a hub with the GitHub App
+# bridge configured — see docs/guides/ci. GitHub remains the canonical repo;
+# these jobs run on RunYard runners and report back as GitHub Checks.
+version: 1
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  manual: true
+
+concurrency:
+  cancelInProgress: true
+
+jobs:
+  test:
+    executor: native
+    commands:
+      - corepack enable pnpm
+      - pnpm install --frozen-lockfile
+      - pnpm test
+    timeoutMinutes: 20
+  build:
+    executor: native
+    needs: [test]
+    commands:
+      - corepack enable pnpm
+      - pnpm install --frozen-lockfile
+      - pnpm build
+      - git diff --exit-code -- public/
+    timeoutMinutes: 15

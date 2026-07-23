@@ -1,0 +1,139 @@
+---
+title: CI setup
+description: Register the GitHub App, connect repositories, write .runyard/ci.yml, and set up CI runners (native + Dagger).
+---
+
+This guide takes you from nothing to green checks: GitHub App registration, hub configuration, repository enablement, the `.runyard/ci.yml` reference, runner setup, and troubleshooting. Read [Concepts → CI](../concepts/ci.mdx) first for the model and trust boundary.
+
+## 1. Register a GitHub App
+
+Create a GitHub App (Settings → Developer settings → GitHub Apps → New) owned by your user or org:
+
+- **Webhook URL**: `https://<your-hub>/api/ci/webhooks/github`
+- **Webhook secret**: generate a long random value; you will hand the same value to the hub.
+- **Permissions** (the exact minimum):
+  - Repository → **Contents: Read-only** (fetch `.runyard/ci.yml` + git checkout)
+  - Repository → **Checks: Read & write** (create/update check runs)
+  - Repository → **Metadata: Read-only** (implicit)
+  - Repository → **Pull requests: Read-only** (PR event payloads)
+- **Subscribe to events**: `Push`, `Pull request`, `Check run`, and the installation events are delivered automatically.
+- Generate a **private key** (`.pem`) and note the **App ID**.
+
+Install the App on the repositories you want CI for. Installation is *connection only* — nothing runs until an operator enables each repository.
+
+## 2. Configure the hub
+
+```bash
+RUNYARD_GITHUB_APP_ID=123456
+RUNYARD_GITHUB_APP_PRIVATE_KEY_PATH=/etc/runyard/github-app.pem   # or RUNYARD_GITHUB_APP_PRIVATE_KEY with inline PEM
+RUNYARD_GITHUB_WEBHOOK_SECRET=<the webhook secret>
+# Optional (GitHub Enterprise / tests): RUNYARD_GITHUB_API_BASE=https://ghe.example.com/api/v3
+```
+
+The key and webhook secret never enter the database; installation tokens are minted just in time and held only in memory. Verify with `GET /api/ci/github-app` (admin) or the **CI** page in the web app — it reports configuration presence without any secret values.
+
+## 3. Connect and enable repositories
+
+```bash
+runyard repo sync                 # pull installations + repositories from the App (admin)
+runyard repo list
+runyard repo enable yolo-maxi/runyard          # nothing runs until this
+runyard repo trust yolo-maxi/runyard --level trusted --allow-native
+```
+
+Trust policy governs secrets and native execution (see the [trust model](../concepts/ci.mdx#trust-model-and-fork-security)). `--runner-tags build,fast` additionally restricts this repository's jobs to runners carrying those tags.
+
+## 4. Write `.runyard/ci.yml`
+
+Committed to the repository (loaded from the **trusted base** revision, pinned by SHA). The schema is deliberately small — it is not GitHub Actions:
+
+```yaml
+version: 1            # required; 1 is the only schema version
+name: ci              # optional pipeline name (lowercase identifier)
+
+on:                   # at least one trigger
+  push:
+    branches: [main, "release/*"]   # glob: *, **, ? (deterministic, no expressions)
+    tags: ["v*"]                    # tag pushes (path filters don't apply to tags)
+    paths: ["src/**", "tests/**"]   # optional: only fire when a changed file matches
+  pull_request:
+    branches: [main]                # target-branch filter
+  manual: true                      # allow `runyard ci dispatch` (default true)
+
+concurrency:
+  # default group: per-PR for pull requests, per-ref for pushes
+  cancelInProgress: true            # newer trigger cancels the older pipeline (default true)
+
+jobs:
+  lint:
+    executor: native                # native | dagger
+    commands:                       # native: one bash script, `set -euo pipefail`
+      - pnpm install
+      - pnpm lint
+    timeoutMinutes: 10              # 1..360, default 30
+  test:
+    needs: [lint]                   # validated DAG (cycles/unknown refs rejected)
+    commands: ["pnpm test"]
+    env: { NODE_ENV: test }         # non-secret literals only
+    secrets: [NPM_TOKEN]            # hub secret NAMES; values never appear in config/logs
+    artifacts: ["coverage/**"]      # repo-relative globs, uploaded as run artifacts
+  package:
+    executor: dagger
+    needs: [test]
+    dagger: { module: ".", function: build }
+    required: false                 # optional job: its failure doesn't fail the pipeline
+```
+
+Validation errors are shown by `GET /api/ci/repos/:id/config`, the repository page in the web app, and — for triggered pipelines — as a failed `runyard/ci` check on the commit.
+
+RunYard's own repository carries a working example at `.runyard/ci.yml`.
+
+## 5. Set up a CI runner
+
+Any RunYard [runner](../concepts/runners.mdx) becomes a CI runner by opting in:
+
+```bash
+RUNYARD_RUNNER_CI=1              # advertise the `ci` tag; claim CI jobs
+RUNYARD_RUNNER_CI_NATIVE=1       # additionally allow native host execution (trusted repos only)
+RUNYARD_RUNNER_CI_DIR=/var/lib/runyard-ci     # job workspaces (default <workspace>/.runyard-ci)
+RUNYARD_RUNNER_CI_RETAIN_MS=86400000          # failed-workspace evidence retention (24h default)
+```
+
+Job workspaces are isolated per run, path-contained, removed on success, and retained (bounded) on failure for debugging.
+
+### Native executor
+
+`commands` join into a single `bash -c` script running under `set -euo pipefail` — the first failing command fails the job. The child environment is a strict allowlist baseline plus the job's `env`, the hub-delivered secrets, and `CI`/`RUNYARD_CI_*` context variables. Cancellation and timeouts kill the whole process group.
+
+### Dagger executor
+
+Install the open-source [Dagger](https://docs.dagger.io/install) engine on the runner host — RunYard never auto-installs it and has no Dagger Cloud dependency. The runner probes `dagger version` at job start; if unavailable, the job fails as `infra_unavailable` with a clear message (checks show `action_required`), and native trusted jobs keep working. A dagger job runs `dagger call -m <module> <function> [--arg value…]` against the checked-out source; secrets ride environment variables through the same non-logging channel as native jobs.
+
+## 6. Dogfood and recovery surfaces
+
+```bash
+runyard ci dispatch yolo-maxi/runyard --ref main    # manual pipeline at an exact resolved sha
+runyard ci pipelines --repo yolo-maxi/runyard
+runyard ci status <pipeline-or-parent-run-id>
+runyard ci cancel <pipeline>
+runyard ci rerun <pipeline>
+```
+
+Equivalent HTTP endpoints live in the `ci` API group (`/api/v1/ci/...`), and MCP tools `list_ci_repositories`, `get_ci_pipeline`, `dispatch_ci_run` cover agent use. Admin diagnostics: `GET /api/ci/deliveries` (webhook ledger) and `GET /api/ci/diagnostics` (signature failures, duplicates, queue latency, check lag). After a GitHub outage, `POST /api/ci/pipelines/:id/sync-checks` resets the bounded check-retry counters and reconciles.
+
+## Troubleshooting
+
+| Symptom | Cause / fix |
+| --- | --- |
+| Webhook answers `401 invalid signature` | `RUNYARD_GITHUB_WEBHOOK_SECRET` doesn't match the App's webhook secret. |
+| Webhook answers `503` | The hub has no GitHub App configuration — see step 2. |
+| Delivery recorded as `ignored: repository … not enabled` | Run `runyard repo enable <repo>` — installation alone never starts CI. |
+| `ignored: no .runyard/ci.yml at trusted revision` | Commit the config to the default branch (PRs read it from the base). |
+| Job blocked: `native CI execution is disabled on this runner` | Set `RUNYARD_RUNNER_CI_NATIVE=1` on the runner *and* mark the repo trusted with `allowNative`. |
+| Job failed `infra_unavailable: Dagger is not available` | Install Dagger on the runner or switch the job to `executor: native`. |
+| Check stuck `queued` on GitHub | See `GET /api/ci/diagnostics` → check lag; after an outage run `sync-checks`. Reporter failures never affect the run itself. |
+| PR check `action_required: merge candidate conflicted` | The PR no longer merges cleanly into its base — rebase/update the PR. |
+
+## Migrating from GitHub Actions
+
+Translate each workflow's `on:` triggers and jobs into the schema above; move repository secrets into the hub's [secrets](../concepts/secrets.mdx) and reference them **by name** in `secrets:`; replace `runs-on` with runner tags + trust policy; keep the GitHub merge-gate by marking the `runyard/*` checks required in branch protection. Explicitly out of scope for now (planned follow-ups, not silently emulated): `act`-style local Actions compatibility, merge queues / speculative gating (Zuul-style), Kubernetes/Tekton executors, and release automation.

@@ -6,6 +6,7 @@
     "mcp",
     "cli",
     "workflows-authoring",
+    "ci",
     "approvals-telegram",
     "security",
     "releases",

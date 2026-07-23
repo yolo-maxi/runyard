@@ -46,6 +46,8 @@ export const deepLinks = {
       : "#runs",
   tokens: () => "#tokens",
   runners: () => "#runners",
+  repositories: () => "#repositories",
+  repository: (id) => `#repositories/${encodeURIComponent(id)}`,
   schedules: () => "#schedules",
   schedule: (id) => `#schedules/${encodeURIComponent(id)}`,
   audit: () => "#audit",
