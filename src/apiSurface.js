@@ -617,7 +617,7 @@ export const API_SURFACE = [
     method: "get", path: "/api/schedules", handler: "scheduleHandlers.listSchedules",
     group: "automation", v1Path: "/api/v1/automation/schedules",
     auth: true, ui: true,
-    summary: "List schedules (cron jobs) with next/last run and a human-readable preview",
+    summary: "List schedules (cron jobs) with enabled/disabled/broken state, next/last run, current last-run status, and a human-readable preview",
     mcp: ["list_schedules"]
   },
   {
@@ -638,21 +638,21 @@ export const API_SURFACE = [
     method: "post", path: "/api/schedules", handler: "scheduleHandlers.createSchedule",
     group: "automation", v1Path: "/api/v1/automation/schedules",
     auth: true, scopes: ["admin"], ui: true,
-    summary: "Create a schedule (admin). Body: {name, workflowSlug, cron|runAt, timezone, input, enabled}. Cron schedules fire recurringly; runAt fires once. Fires honor the workflow's approval policy.",
+    summary: "Create a schedule (admin). Body: {name, workflowSlug, cron|runAt, timezone, input, enabled}. Enabled schedules reject missing or disabled workflows. Cron schedules fire recurringly; runAt fires once. Fires honor the workflow's approval policy.",
     mcp: ["create_schedule"]
   },
   {
     method: "patch", path: "/api/schedules/:id", handler: "scheduleHandlers.updateSchedule",
     group: "automation", v1Path: "/api/v1/automation/schedules/:id",
     auth: true, scopes: ["admin"], ui: true,
-    summary: "Update a schedule (admin)",
+    summary: "Update a schedule (admin). Enabling rejects missing or disabled workflows.",
     mcp: ["update_schedule"]
   },
   {
     method: "post", path: "/api/schedules/:id/enable", handler: "scheduleHandlers.enableSchedule",
     group: "automation", v1Path: "/api/v1/automation/schedules/:id/enable",
     auth: true, scopes: ["admin"], ui: true,
-    summary: "Enable a schedule (admin)",
+    summary: "Enable a schedule (admin). Rejects missing or disabled workflows.",
     mcp: ["enable_schedule"]
   },
   {
@@ -674,7 +674,7 @@ export const API_SURFACE = [
     group: "automation", v1Path: "/api/v1/automation/schedules/:id/run-now",
     auth: true, scopes: ["api", "mcp", "admin"],
     rateLimit: { bucket: "schedule-run-now", max: 60, windowMs: 60_000 }, ui: true,
-    summary: "Fire a schedule immediately without changing its cadence",
+    summary: "Fire a schedule immediately without changing its cadence, creating a run with Scheduled provenance",
     mcp: ["run_schedule_now"]
   },
 

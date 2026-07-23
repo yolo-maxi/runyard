@@ -21,6 +21,7 @@ export function normalizeSchedule(row) {
     lastRunAt: row.last_run_at || null,
     lastRunId: row.last_run_id || null,
     lastStatus: row.last_status || "",
+    disabledReason: row.disabled_reason || "",
     createdBy: row.created_by || "",
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -63,6 +64,7 @@ export function scheduleCreateRecord({ id, input, timestamp }) {
     last_run_at: null,
     last_run_id: null,
     last_status: "",
+    disabled_reason: "",
     created_by: input.createdBy || "",
     created_at: timestamp,
     updated_at: timestamp
@@ -73,9 +75,9 @@ export function scheduleInsertQuery() {
   return {
     sql: `INSERT INTO schedules
      (id, name, description, capability_slug, cron, timezone, input, enabled, run_at, next_run_at,
-      last_run_at, last_run_id, last_status, created_by, created_at, updated_at)
+      last_run_at, last_run_id, last_status, disabled_reason, created_by, created_at, updated_at)
      VALUES ($id, $name, $description, $capability_slug, $cron, $timezone, $input, $enabled, $run_at, $next_run_at,
-      $last_run_at, $last_run_id, $last_status, $created_by, $created_at, $updated_at)`
+      $last_run_at, $last_run_id, $last_status, $disabled_reason, $created_by, $created_at, $updated_at)`
   };
 }
 
@@ -129,7 +131,7 @@ export function scheduleUpdateValues(existing, updates = {}, timestamp = now()) 
 export function scheduleUpdateQuery({ idValue, values }) {
   return {
     sql: `UPDATE schedules SET name=?, description=?, capability_slug=?, cron=?, timezone=?, input=?, enabled=?,
-       run_at=?, next_run_at=?, updated_at=? WHERE id=?`,
+       run_at=?, next_run_at=?, disabled_reason='', updated_at=? WHERE id=?`,
     params: [...values, idValue]
   };
 }
@@ -171,5 +173,19 @@ export function scheduleFireResultUpdateQuery({ idValue, runId, status, firedAtI
   return {
     sql: "UPDATE schedules SET last_run_at = ?, last_run_id = ?, last_status = ?, updated_at = ? WHERE id = ?",
     params: [firedAtIso, runId || null, status, updatedAt, idValue]
+  };
+}
+
+export function scheduleRunTerminalUpdateQuery({ scheduleId, runId, status, updatedAt }) {
+  return {
+    sql: "UPDATE schedules SET last_status = ?, updated_at = ? WHERE id = ? AND last_run_id = ?",
+    params: [status, updatedAt, scheduleId, runId]
+  };
+}
+
+export function scheduleAutoDisableQuery({ idValue, reason, status, updatedAt }) {
+  return {
+    sql: "UPDATE schedules SET enabled = 0, next_run_at = NULL, last_status = ?, disabled_reason = ?, updated_at = ? WHERE id = ? AND (enabled = 1 OR disabled_reason = '')",
+    params: [status, reason, updatedAt, idValue]
   };
 }

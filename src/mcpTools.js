@@ -112,12 +112,12 @@ export const MCP_TOOLS = [
   { name: "promote_run", description: "Promote a successful run's mutation/artifact according to server policy.", inputSchema: { type: "object", required: ["runId"], properties: { runId: { type: "string" }, note: { type: "string" } } } },
   { name: "list_runners", description: "List registered runners, heartbeat state, capacity, active slots, and pool summary.", inputSchema: { type: "object", properties: {} } },
   { name: "whoami", description: "Show the authenticated identity: token name and granted scopes.", inputSchema: { type: "object", properties: {} } },
-  { name: "list_schedules", description: "List scheduled workflow runs (cron or one-shot), including next fire times.", inputSchema: { type: "object", properties: {} } },
-  { name: "get_schedule", description: "Inspect a schedule: workflow, cron/runAt, timezone, input, enabled state, and recent fire result.", inputSchema: { type: "object", required: ["scheduleId"], properties: { scheduleId: { type: "string" } } } },
+  { name: "list_schedules", description: "List scheduled workflow runs (cron or one-shot), including enabled/disabled/broken state, next fire times, and current last-run status.", inputSchema: { type: "object", properties: {} } },
+  { name: "get_schedule", description: "Inspect a schedule: workflow, cron/runAt, timezone, input, enabled/disabled/broken state, broken-reference reason, and recent fire result.", inputSchema: { type: "object", required: ["scheduleId"], properties: { scheduleId: { type: "string" } } } },
   { name: "preview_schedule", description: "Preview a cron expression: human description and next fire times in the given timezone. Nothing is created.", inputSchema: { type: "object", required: ["cron"], properties: { cron: { type: "string" }, timezone: { type: "string" } } } },
   {
     name: "create_schedule",
-    description: "Create a schedule that runs a workflow on a cron cadence or once at runAt. Requires an admin-scoped token.",
+    description: "Create a schedule that runs an enabled workflow on a cron cadence or once at runAt. Enabled schedules reject missing or disabled workflows. Requires an admin-scoped token.",
     inputSchema: {
       type: "object",
       required: ["name", "workflow"],
@@ -135,7 +135,7 @@ export const MCP_TOOLS = [
   },
   {
     name: "update_schedule",
-    description: "Edit a schedule (any subset of name, workflow, cron, runAt, timezone, input, description, enabled). Requires an admin-scoped token.",
+    description: "Edit a schedule (any subset of name, workflow, cron, runAt, timezone, input, description, enabled). Enabling rejects missing or disabled workflows. Requires an admin-scoped token.",
     inputSchema: {
       type: "object",
       required: ["scheduleId"],
@@ -152,10 +152,10 @@ export const MCP_TOOLS = [
       }
     }
   },
-  { name: "enable_schedule", description: "Enable a schedule so it fires on its cadence again. Requires an admin-scoped token.", inputSchema: { type: "object", required: ["scheduleId"], properties: { scheduleId: { type: "string" } } } },
+  { name: "enable_schedule", description: "Enable a schedule so it fires on its cadence again. Rejects schedules whose workflow is missing or disabled. Requires an admin-scoped token.", inputSchema: { type: "object", required: ["scheduleId"], properties: { scheduleId: { type: "string" } } } },
   { name: "disable_schedule", description: "Disable a schedule without deleting it; it keeps its definition but stops firing. Requires an admin-scoped token.", inputSchema: { type: "object", required: ["scheduleId"], properties: { scheduleId: { type: "string" } } } },
   { name: "delete_schedule", description: "Delete a schedule. Requires an admin-scoped token.", inputSchema: { type: "object", required: ["scheduleId"], properties: { scheduleId: { type: "string" } } } },
-  { name: "run_schedule_now", description: "Fire a schedule immediately, creating a run outside its normal cadence. Requires an admin-scoped token.", inputSchema: { type: "object", required: ["scheduleId"], properties: { scheduleId: { type: "string" } } } },
+  { name: "run_schedule_now", description: "Fire a schedule immediately, creating a run with first-class Scheduled provenance outside its normal cadence. Use this for external cron/automation that should appear as Scheduled. Requires an admin-scoped token.", inputSchema: { type: "object", required: ["scheduleId"], properties: { scheduleId: { type: "string" } } } },
   { name: "list_work_items", description: "List work items (tickets) on the company work board, each with a linked-run rollup (total, byStatus, attention count). Filters: status (intake|triaged|ready|running|waiting|blocked|review|shipped|accepted|archived), project, owner, type, query. Archived items are hidden unless includeArchived is true.", inputSchema: { type: "object", properties: { status: { type: "string" }, project: { type: "string" }, owner: { type: "string" }, type: { type: "string" }, query: { type: "string" }, includeArchived: { type: "boolean" }, limit: { type: "number" } } } },
   { name: "get_work_item", description: "Get a work item (ticket) with its linked runs, their approvals and artifacts, and the ticket history (status moves, run links, edits).", inputSchema: { type: "object", required: ["workItemId"], properties: { workItemId: { type: "string" } } } },
   {

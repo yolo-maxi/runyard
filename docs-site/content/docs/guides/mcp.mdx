@@ -108,6 +108,10 @@ the Hub's routes and `/openapi.json` come from. Grouped by resource:
 
 Tools marked † require an admin-scoped token.
 
+Use `run_schedule_now` when an external cron or agent should appear as
+Scheduled automation in RunYard. Direct `run_workflow` calls keep their
+MCP/token provenance and are not relabeled as scheduled runs.
+
 Workflow source is always created and edited **through these tools** —
 `create_workflow` / `update_workflow` take inline source bytes or an existing
 `workflow.bundleId`, and `import_workflow_package` installs a portable package

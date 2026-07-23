@@ -17,7 +17,8 @@ export const deepLinks = {
   approval: (id) => `/app#approvals/${encodeURIComponent(id)}`,
   work: () => "/app#work",
   workItem: (id) => `/app#work/${encodeURIComponent(id)}`,
-  workItemFlow: (id) => `/app#work/${encodeURIComponent(id)}/flow`
+  workItemFlow: (id) => `/app#work/${encodeURIComponent(id)}/flow`,
+  schedule: (id) => `/app#schedules/${encodeURIComponent(id)}`
 };
 
 export function absoluteDeepLink(link, baseUrl) {

@@ -85,6 +85,7 @@ export function createServerComposition({
     createRunDraft,
     createRunResponseEndpoint,
     createSchedule,
+    autoDisableSchedule,
     listSchedules,
     getSchedule,
     updateSchedule,
@@ -421,6 +422,7 @@ export function createServerComposition({
     notifyTelegram,
     recordAudit,
     root: env.root,
+    deleteCapability,
     upsertCapability,
     withCapabilityLinks,
     withRunLinks,
@@ -445,6 +447,7 @@ export function createServerComposition({
 
   const scheduleHandlers = createScheduleHandlers({
     addRunEvent,
+    autoDisableSchedule,
     claimScheduleFire,
     createSchedule,
     deleteSchedule,

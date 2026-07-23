@@ -2309,6 +2309,12 @@ details.advanced[open] summary {
   color: #991b1b;
 }
 
+.chip-automation {
+  background: #ecfdf5;
+  border-color: #99f6e4;
+  color: #115e59;
+}
+
 /* Needs-attention triage strip above the runs list: paused, waiting-approval,
  * and budget-stopped runs, each with its unblocking action inline. Amber
  * frame — parked work, not failure. Renders only when something needs a
@@ -6592,6 +6598,21 @@ button.run-id-mono:focus-visible,
   background: #eef2ff;
   border-color: #c7d2fe;
   color: #3730a3;
+}
+
+.chip-broken {
+  background: #fffbeb;
+  border-color: #fcd34d;
+  color: #92400e;
+}
+
+.schedule-broken {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px solid #fcd34d;
+  border-radius: 8px;
+  background: #fffbeb;
+  color: #92400e;
 }
 
 .cron-presets {

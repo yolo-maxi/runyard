@@ -7,6 +7,7 @@ import {
 } from "../lib/runHelpers.js";
 import { rerunRun, editRerunById } from "../lib/runActions.js";
 import { promoteRun, runPromotionCandidate } from "../lib/runPromotion.js";
+import { runAutomation } from "../lib/provenance.js";
 import { Icon, StatusBadge, ShareButton, OverflowMenu, CodeChurn } from "./ui.jsx";
 import { RunProgressStrip } from "./RunProgressStrip.jsx";
 
@@ -83,6 +84,7 @@ export function RunCard({ run, artifacts = [], now = Date.now(), variant = "card
     ? { label: pauseReasonLabel(run.pause?.reason), title: run.pause?.message || "Paused — resume from the run page" }
     : null;
   const budgetChip = runBudgetChip(run);
+  const automation = runAutomation(run);
   // Hover-tooltip the actual file list on the "N files" chip when the outcome
   // summary carries specifics; otherwise the count still renders so the runs
   // history reflects that files did change.
@@ -119,6 +121,7 @@ export function RunCard({ run, artifacts = [], now = Date.now(), variant = "card
               </a>
             ) : null}
             <span className="run-origin" title="Origin">{origin}</span>
+            {automation ? <AutomationBadge automation={automation} /> : null}
           </p>
           <p className="run-history-signal" title={reasonHint || run.currentStep || ""}>{signal}</p>
         </div>
@@ -168,6 +171,7 @@ export function RunCard({ run, artifacts = [], now = Date.now(), variant = "card
           </a>
         ) : null}
         <span className="run-origin" title="Origin">{origin}</span>
+        {automation ? <AutomationBadge automation={automation} /> : null}
       </p>
       <p className="muted run-desc">{description}</p>
       <RunProgressStrip run={run} now={now} />
@@ -226,5 +230,17 @@ export function RunCard({ run, artifacts = [], now = Date.now(), variant = "card
         <RunActions run={run} />
       </footer>
     </article>
+  );
+}
+
+function AutomationBadge({ automation }) {
+  const title = automation.scheduleName
+    ? `Scheduled automation: ${automation.scheduleName}${automation.trigger ? ` (${automation.trigger})` : ""}`
+    : "Scheduled automation";
+  const label = automation.scheduleName ? `Scheduled: ${automation.scheduleName}` : "Scheduled";
+  return automation.deepLink ? (
+    <a className="chip chip-automation" href={automation.deepLink} title={title}>{label}</a>
+  ) : (
+    <span className="chip chip-automation" title={title}>{label}</span>
   );
 }

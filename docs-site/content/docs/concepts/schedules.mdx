@@ -34,17 +34,21 @@ The RunYard Development Factory example also ships a disabled daily `product-wor
 - **Disable** stops a schedule from firing without deleting it; **enable** resumes the cadence. Both are admin actions.
 - **Run now** fires the schedule immediately without changing its cadence — useful for testing input before the next scheduled fire.
 
-Each schedule tracks `nextRunAt`, `lastRunAt`, the last run id, and the last fire status, all visible on the Schedules page (`#schedules`) and in the API.
+Each schedule tracks `nextRunAt`, `lastRunAt`, the last run id, and the last run's current terminal status, all visible on the Schedules page (`#schedules`) and in the API. Enabled schedules must target an enabled workflow. If a workflow is disabled later, RunYard fails safe: dependent enabled schedules are atomically auto-disabled, keep their history, and expose `state: "broken"`, `brokenReason`, `disabledReason`, and `operatorAction` in API/MCP/Web payloads. Re-enable only after editing the schedule to an enabled workflow.
 
 ## What a fire produces
 
 Every fire dispatches a normal run whose origin identifies the schedule:
 
 ```json
-{ "type": "schedule", "label": "schedule: Nightly digest", "scheduleId": "sch_123", "trigger": "ticker" }
+{ "type": "schedule", "label": "schedule: Nightly digest", "scheduleId": "sch_123", "scheduleName": "Nightly digest", "trigger": "ticker" }
 ```
 
-(`trigger` is `ticker` for cadence fires, `manual` for run-now.) The run also gets a `run.scheduled` event recording the schedule, cron, and timezone. If the workflow's approval policy requires it, the run starts in `waiting_approval` like any other run.
+(`trigger` is `ticker` for cadence fires, `manual` for run-now.) The run also gets a `run.scheduled` event recording the schedule, cron, and timezone. If the workflow's approval policy requires it, the run starts in `waiting_approval` like any other run. External automation that wants first-class Scheduled provenance should call `run_schedule_now`; calling `run_workflow` directly remains a token/API/MCP-origin run.
+
+## Repair and Reconciliation
+
+Startup runs an idempotent reconciliation pass after migrations and catalog seeding. It auto-disables any legacy enabled schedule whose workflow is missing or disabled, writes `lastStatus: "broken_reference"`, records an audit entry, and leaves schedule/run history intact. This is the live-data repair path for stale schedules such as old nightly jobs pointing at disabled workflows; no retargeting or deletion is performed.
 
 ## API & MCP
 

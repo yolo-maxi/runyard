@@ -20,6 +20,7 @@ function harness(overrides = {}) {
   const events = [];
   const dispatched = [];
   const fireResults = [];
+  const autoDisabled = [];
   const notifications = [];
   const claimed = [];
   const schedules = new Map([
@@ -43,6 +44,7 @@ function harness(overrides = {}) {
 
   const handlers = createScheduleHandlers({
     addRunEvent: (runId, type, message, detail) => events.push({ runId, type, message, detail }),
+    autoDisableSchedule: (scheduleId, reason, actor) => autoDisabled.push({ scheduleId, reason, actor }),
     claimScheduleFire: (id, nextRunAt, nowIso) => {
       claimed.push({ id, nextRunAt, nowIso });
       return overrides.claimScheduleFire?.(id, nextRunAt, nowIso) || { ok: true };
@@ -86,7 +88,7 @@ function harness(overrides = {}) {
     withRunLinks: (run) => ({ ...run, deepLink: `/app#runs/${run.id}` })
   });
 
-  return { audits, claimed, dispatched, events, fireResults, handlers, notifications, schedules };
+  return { audits, autoDisabled, claimed, dispatched, events, fireResults, handlers, notifications, schedules };
 }
 
 describe("schedule route helpers", () => {
@@ -135,7 +137,7 @@ describe("schedule route helpers", () => {
   });
 
   it("fires claimed due schedules and records unavailable capability failures", () => {
-    const { audits, claimed, fireResults, handlers, notifications } = harness({
+    const { audits, autoDisabled, claimed, fireResults, handlers, notifications } = harness({
       dueSchedules: [
         {
           id: "sched_1",
@@ -172,7 +174,12 @@ describe("schedule route helpers", () => {
     assert.deepEqual(fired, ["run_1"]);
     assert.deepEqual(claimed.map((claim) => claim.id), ["sched_1", "sched_skip", "sched_bad"]);
     assert.deepEqual(notifications, [{ id: "approval_1", runId: "run_1" }]);
-    assert.ok(fireResults.some((result) => result.scheduleId === "sched_bad" && result.runId === null));
+    assert.equal(fireResults.some((result) => result.scheduleId === "sched_bad" && result.runId === null), false);
+    assert.deepEqual(autoDisabled, [{
+      scheduleId: "sched_bad",
+      reason: "workflow \"disabled\" is disabled",
+      actor: "schedule:sched_bad"
+    }]);
     assert.ok(audits.some((audit) => audit.action === "schedule.fire_failed" && audit.target === "sched_bad"));
   });
 
@@ -305,5 +312,39 @@ describe("schedule route helpers", () => {
     await unavailable.handlers.runScheduleNowRoute(req({ params: { id: "sched_disabled" } }), unavailableRes);
     assert.equal(unavailableRes.statusCode, 409);
     assert.match(unavailableRes.body.error, /unavailable/);
+  });
+
+  it("rejects enabling schedules that point at missing or disabled workflows", () => {
+    const { handlers } = harness({
+      schedules: [{
+        id: "sched_disabled",
+        name: "Disabled",
+        capabilitySlug: "disabled",
+        timezone: "UTC",
+        enabled: false,
+        input: {}
+      }]
+    });
+
+    const enableRes = response();
+    handlers.enableSchedule(req({ params: { id: "sched_disabled" } }), enableRes);
+    assert.equal(enableRes.statusCode, 400);
+    assert.match(enableRes.body.error, /disabled/);
+
+    const updateRes = response();
+    handlers.updateSchedule(req({ params: { id: "sched_disabled" }, body: { enabled: true } }), updateRes);
+    assert.equal(updateRes.statusCode, 400);
+    assert.match(updateRes.body.error, /disabled/);
+
+    const createRes = response();
+    handlers.createSchedule(req({
+      body: {
+        name: "Bad target",
+        capabilitySlug: "disabled",
+        cron: "0 12 * * 1"
+      }
+    }), createRes);
+    assert.equal(createRes.statusCode, 400);
+    assert.match(createRes.body.error, /missing or disabled/);
   });
 });

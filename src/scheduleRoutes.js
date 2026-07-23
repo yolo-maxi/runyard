@@ -6,6 +6,7 @@ import { schedulePreview, validateScheduleBody, withScheduleView } from "./sched
 
 export function createScheduleHandlers({
   addRunEvent,
+  autoDisableSchedule = null,
   claimScheduleFire,
   createSchedule,
   deleteSchedule,
@@ -37,8 +38,20 @@ export function createScheduleHandlers({
     return true;
   };
 
+  const scheduleCapabilityProblem = (schedule) => {
+    const capability = getCapability(schedule.capabilitySlug);
+    if (!capability) return `cannot enable schedule: workflow "${schedule.capabilitySlug}" is missing`;
+    if (!capability.enabled) return `cannot enable schedule: workflow "${schedule.capabilitySlug}" is disabled`;
+    return "";
+  };
+
   const setScheduleEnabledRoute = (req, res, enabled) => {
-    if (!scheduleOr404(req, res)) return;
+    const existing = scheduleOr404(req, res);
+    if (!existing) return;
+    if (enabled) {
+      const problem = scheduleCapabilityProblem(existing);
+      if (problem) return res.status(400).json({ error: problem });
+    }
     const schedule = setScheduleEnabled(req.params.id, enabled);
     recordAudit(actorName(req.token), enabled ? "schedule.enabled" : "schedule.disabled", schedule.id, {});
     res.json({ schedule: withScheduleView(schedule) });
@@ -47,7 +60,10 @@ export function createScheduleHandlers({
   function runScheduleNow(schedule, { trigger = "manual", actor = "" } = {}) {
     const capability = getCapability(schedule.capabilitySlug);
     if (!capability || !capability.enabled) {
-      return { ok: false, error: `capability "${schedule.capabilitySlug}" is unavailable` };
+      const reason = !capability
+        ? `workflow "${schedule.capabilitySlug}" is missing`
+        : `workflow "${schedule.capabilitySlug}" is disabled`;
+      return { ok: false, error: `capability "${schedule.capabilitySlug}" is unavailable`, reason };
     }
     const input = schedule.input && typeof schedule.input === "object" && !Array.isArray(schedule.input)
       ? { ...schedule.input }
@@ -64,6 +80,7 @@ export function createScheduleHandlers({
     const runRecord = dispatched.run;
     addRunEvent(runRecord.id, "run.scheduled", `Created by schedule "${schedule.name}"`, {
       scheduleId: schedule.id,
+      scheduleName: schedule.name,
       cron: schedule.cron || "",
       timezone: schedule.timezone,
       trigger
@@ -88,7 +105,11 @@ export function createScheduleHandlers({
           firedRunIds.push(result.run.id);
           notifyPendingApprovalForRun(result.run.id, { listApprovals, notifyTelegram }).catch(() => {});
         } else {
-          recordScheduleFireResult(schedule.id, null, `error: ${result.error}`.slice(0, 80));
+          if (autoDisableSchedule && result.reason) {
+            autoDisableSchedule(schedule.id, result.reason, `schedule:${schedule.id}`);
+          } else {
+            recordScheduleFireResult(schedule.id, null, `error: ${result.error}`.slice(0, 80));
+          }
           recordAudit(`schedule:${schedule.id}`, "schedule.fire_failed", schedule.id, { error: result.error });
         }
       } catch (error) {
@@ -137,9 +158,15 @@ export function createScheduleHandlers({
     },
 
     updateSchedule(req, res) {
-      if (!scheduleOr404(req, res)) return;
+      const existing = scheduleOr404(req, res);
+      if (!existing) return;
       const validated = validateScheduleBody(req.body || {}, { partial: true, getCapability });
       if (sendValidationError(res, validated)) return;
+      const next = { ...existing, ...validated.value };
+      if (next.enabled) {
+        const problem = scheduleCapabilityProblem(next);
+        if (problem) return res.status(400).json({ error: problem });
+      }
       const schedule = updateSchedule(req.params.id, validated.value);
       recordAudit(actorName(req.token), "schedule.updated", schedule.id, { fields: Object.keys(validated.value) });
       res.json({ schedule: withScheduleView(schedule) });

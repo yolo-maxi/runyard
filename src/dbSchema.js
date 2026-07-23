@@ -298,6 +298,7 @@ export const DB_SCHEMA_SQL = `
     last_run_at TEXT,
     last_run_id TEXT,
     last_status TEXT NOT NULL DEFAULT '',
+    disabled_reason TEXT NOT NULL DEFAULT '',
     created_by TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL

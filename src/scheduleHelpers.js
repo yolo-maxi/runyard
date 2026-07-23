@@ -16,12 +16,18 @@ export function validateScheduleBody(body = {}, { partial = false, getCapability
   }
   if (has("description")) out.description = String(body.description || "").slice(0, 2000);
 
+  const enabledRequested = has("enabled")
+    ? !(body.enabled === false || body.enabled === "false" || body.enabled === 0)
+    : !partial;
+
   if (!partial || has("workflowSlug") || has("workflow") || has("capabilitySlug") || has("capability")) {
     const slug = String(body.workflowSlug || body.workflow || body.capabilitySlug || body.capability || "").trim();
     if (!slug) return { ok: false, error: "workflow is required" };
     const capability = getCapability?.(slug);
-    if (!capability || !capability.enabled) return { ok: false, error: `unknown or disabled workflow "${slug}"` };
-    out.capabilitySlug = capability.slug;
+    if (enabledRequested && (!capability || !capability.enabled)) {
+      return { ok: false, error: `cannot enable schedule: workflow "${slug}" is missing or disabled` };
+    }
+    out.capabilitySlug = capability?.slug || slug;
   }
 
   let timezone = "UTC";
@@ -114,5 +120,14 @@ export function withScheduleView(schedule, { from = new Date() } = {}) {
     };
   }
   // `workflow` is the advertised field name; capabilitySlug stays for legacy readers.
-  return { ...schedule, workflow: schedule.capabilitySlug, preview, deepLink: `/app#schedules/${encodeURIComponent(schedule.id)}` };
+  const state = schedule.state || (schedule.enabled ? "enabled" : schedule.disabledReason ? "broken" : "disabled");
+  return {
+    ...schedule,
+    state,
+    brokenReason: schedule.brokenReason || schedule.disabledReason || "",
+    workflow: schedule.capabilitySlug,
+    preview,
+    operatorAction: state === "broken" ? "Edit the schedule to target an enabled workflow, then enable it again." : "",
+    deepLink: `/app#schedules/${encodeURIComponent(schedule.id)}`
+  };
 }

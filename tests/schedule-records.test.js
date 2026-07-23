@@ -8,10 +8,12 @@ import {
   scheduleClaimUpdateQuery,
   scheduleCreateRecord,
   scheduleDeleteQuery,
+  scheduleAutoDisableQuery,
   scheduleFireResultUpdateQuery,
   scheduleInsertQuery,
   scheduleListQuery,
   scheduleLookupQuery,
+  scheduleRunTerminalUpdateQuery,
   scheduleUpdateQuery,
   scheduleUpdateValues,
   SCHEDULE_TIMEZONE_DEFAULT
@@ -51,6 +53,7 @@ describe("schedule record helpers", () => {
       lastRunAt: null,
       lastRunId: null,
       lastStatus: "",
+      disabledReason: "",
       createdBy: "",
       createdAt: "2026-06-30T00:00:00.000Z",
       updatedAt: "2026-06-30T00:00:00.000Z"
@@ -106,6 +109,7 @@ describe("schedule record helpers", () => {
     assert.equal(record.input, '{"goal":"ship"}');
     assert.equal(record.enabled, 1);
     assert.equal(record.next_run_at, "2030-01-01T00:00:00.000Z");
+    assert.equal(record.disabled_reason, "");
     assert.equal(record.created_by, "admin");
   });
 
@@ -113,9 +117,9 @@ describe("schedule record helpers", () => {
     assert.deepEqual(scheduleInsertQuery(), {
       sql: `INSERT INTO schedules
      (id, name, description, capability_slug, cron, timezone, input, enabled, run_at, next_run_at,
-      last_run_at, last_run_id, last_status, created_by, created_at, updated_at)
+      last_run_at, last_run_id, last_status, disabled_reason, created_by, created_at, updated_at)
      VALUES ($id, $name, $description, $capability_slug, $cron, $timezone, $input, $enabled, $run_at, $next_run_at,
-      $last_run_at, $last_run_id, $last_status, $created_by, $created_at, $updated_at)`
+      $last_run_at, $last_run_id, $last_status, $disabled_reason, $created_by, $created_at, $updated_at)`
     });
     assert.deepEqual(scheduleLookupQuery("sched_1"), {
       sql: "SELECT * FROM schedules WHERE id = ?",
@@ -165,7 +169,7 @@ describe("schedule record helpers", () => {
     const values = ["New", "", "hello", "", "UTC", "{}", 1, null, null, "2026-01-01T00:00:00.000Z"];
     assert.deepEqual(scheduleUpdateQuery({ idValue: "sched_1", values }), {
       sql: `UPDATE schedules SET name=?, description=?, capability_slug=?, cron=?, timezone=?, input=?, enabled=?,
-       run_at=?, next_run_at=?, updated_at=? WHERE id=?`,
+       run_at=?, next_run_at=?, disabled_reason='', updated_at=? WHERE id=?`,
       params: [...values, "sched_1"]
     });
     assert.deepEqual(scheduleDeleteQuery("sched_1"), {
@@ -233,6 +237,30 @@ describe("schedule record helpers", () => {
       {
         sql: "UPDATE schedules SET last_run_at = ?, last_run_id = ?, last_status = ?, updated_at = ? WHERE id = ?",
         params: ["2026-01-01T00:00:00.000Z", null, "failed", "2026-01-01T00:00:01.000Z", "sched_1"]
+      }
+    );
+    assert.deepEqual(
+      scheduleRunTerminalUpdateQuery({
+        scheduleId: "sched_1",
+        runId: "run_1",
+        status: "succeeded",
+        updatedAt: "2026-01-01T00:00:01.000Z"
+      }),
+      {
+        sql: "UPDATE schedules SET last_status = ?, updated_at = ? WHERE id = ? AND last_run_id = ?",
+        params: ["succeeded", "2026-01-01T00:00:01.000Z", "sched_1", "run_1"]
+      }
+    );
+    assert.deepEqual(
+      scheduleAutoDisableQuery({
+        idValue: "sched_1",
+        reason: "workflow disabled",
+        status: "broken_reference",
+        updatedAt: "2026-01-01T00:00:01.000Z"
+      }),
+      {
+        sql: "UPDATE schedules SET enabled = 0, next_run_at = NULL, last_status = ?, disabled_reason = ?, updated_at = ? WHERE id = ? AND (enabled = 1 OR disabled_reason = '')",
+        params: ["broken_reference", "workflow disabled", "2026-01-01T00:00:01.000Z", "sched_1"]
       }
     );
   });

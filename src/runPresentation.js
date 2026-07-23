@@ -12,6 +12,7 @@ import {
   uniqueNonempty
 } from "./presentation.js";
 import { executionIntentFromInput } from "./runExecution.js";
+import { runAutomationProvenance } from "./runProvenance.js";
 import { runBudgetStatus } from "./runBudget.js";
 import { quickFailedStep, quickReasonHint } from "./runDiagnostics.js";
 import { runOutcomeSummary } from "./runOutcomePresentation.js";
@@ -106,6 +107,7 @@ export function withRunLinks(run, queueIndex = null, deps = {}) {
   const visibleInput = presentation.input || {};
   const visibleOutput = presentation.output;
   const origin = runOrigin(run);
+  const automation = runAutomationProvenance(origin);
   const execution = executionIntentFromInput(visibleInput || {});
   const reasonHint = quickReasonHint(visibleRun);
   const failedStep = quickFailedStep(visibleRun);
@@ -134,6 +136,7 @@ export function withRunLinks(run, queueIndex = null, deps = {}) {
     branch: firstContextString(visibleInput, BRANCH_INPUT_KEYS),
     origin,
     originLabel: origin?.label || "",
+    automation,
     outcomeSummary: runOutcomeSummary(visibleRun),
     execution,
     durationMs: runDurationMs(run),

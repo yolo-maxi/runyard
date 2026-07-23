@@ -114,8 +114,10 @@ const runMutationStore = createRunMutationStore({
   now,
   getRun,
   adjustRunnerActiveRuns,
-  onRunStatusChange: (updatedRun, fromStatus) =>
-    workItemRunSync.syncWorkItemForRun(updatedRun, { trigger: "run_status", fromStatus })
+  onRunStatusChange: (updatedRun, fromStatus) => {
+    workItemRunSync.syncWorkItemForRun(updatedRun, { trigger: "run_status", fromStatus });
+    scheduleStore.reconcileRunTerminal(updatedRun);
+  }
 });
 const runClaimStore = createRunClaimStore({
   run,
@@ -172,7 +174,15 @@ const runnerStore = createRunnerStore({
   runnerPruneMs: env.runnerPruneMs
 });
 const operatorStore = createOperatorStore({ all, one, run, id, now, addRunEvent, getRun, updateRun });
-const scheduleStore = createScheduleStore({ all, one, run, id, now });
+const scheduleStore = createScheduleStore({
+  all,
+  one,
+  run,
+  id,
+  now,
+  getCapability,
+  recordAudit
+});
 const workItemStore = createWorkItemStore({ all, one, run, id, now });
 const workItemRunSync = createWorkItemRunSync({ getWorkItem, updateWorkItem, listWorkItemRuns });
 const boardStore = createBoardStore({ all, one, run, id, now });
@@ -218,6 +228,7 @@ export function initDb() {
   migrateRunsUsageBudgetColumns();
   migrateRunsPauseColumn();
   migrateRunsWorkItemColumn();
+  migrateSchedulesDisabledReasonColumn();
   migrateRunnerAuthHealthColumn();
   migrateRunsSupervisorColumns();
   migrateApprovalsTimerColumns();
@@ -229,6 +240,7 @@ export function initDb() {
   dbBootstrap.seedWorkflowEndpoints();
   dbBootstrap.ensureBootstrapToken();
   boardStore.ensureDefaultBoard({ instanceName: env.instanceName });
+  reconcileScheduleReferences("startup");
 }
 
 // Capacity / active_runs were added after the initial schema shipped. Existing
@@ -315,6 +327,12 @@ function migrateRunsWorkItemColumn() {
     { name: "work_item_id", definition: "work_item_id TEXT" }
   ]);
   db.exec("CREATE INDEX IF NOT EXISTS idx_runs_work_item ON runs(work_item_id)");
+}
+
+function migrateSchedulesDisabledReasonColumn() {
+  migrateMissingColumns("schedules", [
+    { name: "disabled_reason", definition: "disabled_reason TEXT NOT NULL DEFAULT ''" }
+  ]);
 }
 
 // Per-runner CLI auth health (Codex/Claude subscription auth) rides along on
@@ -438,11 +456,50 @@ export function getCapability(slugOrId) {
 }
 
 export function upsertCapability(input) {
-  return capabilityStore.upsertCapability(input);
+  const existing = input?.slug ? getCapability(input.slug) : null;
+  const disablesCapability = input?.enabled === false || input?.enabled === 0;
+  if (existing?.enabled && disablesCapability) {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const capability = capabilityStore.upsertCapability(input);
+      if (capability && !capability.enabled) {
+        const reason = `workflow "${capability.slug}" was disabled`;
+        scheduleStore.autoDisableSchedulesForCapability(capability.slug, reason, "system");
+      }
+      db.exec("COMMIT");
+      return capability;
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+  const capability = capabilityStore.upsertCapability(input);
+  if (capability && existing?.enabled && !capability.enabled) {
+    const reason = `workflow "${capability.slug}" was disabled`;
+    scheduleStore.autoDisableSchedulesForCapability(capability.slug, reason, "system");
+  }
+  return capability;
 }
 
 export function deleteCapability(slugOrId) {
-  return capabilityStore.deleteCapability(slugOrId);
+  const existing = getCapability(slugOrId);
+  if (existing?.enabled) {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const deleted = capabilityStore.deleteCapability(slugOrId);
+      if (deleted) {
+        const reason = `workflow "${deleted.slug}" was disabled`;
+        scheduleStore.autoDisableSchedulesForCapability(deleted.slug, reason, "system");
+      }
+      db.exec("COMMIT");
+      return deleted;
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+  const deleted = capabilityStore.deleteCapability(slugOrId);
+  return deleted;
 }
 
 // --- Post-run hook profiles ---------------------------------------------
@@ -1022,6 +1079,14 @@ export function claimScheduleFire(idValue, expectedNextRunAt, nowIso = now()) {
 // without touching next_run_at — that is owned by claimScheduleFire.
 export function recordScheduleFireResult(idValue, runId, status = "queued", firedAtIso = now()) {
   return scheduleStore.recordScheduleFireResult(idValue, runId, status, firedAtIso);
+}
+
+export function autoDisableSchedule(idValue, reason, actor = "system") {
+  return scheduleStore.autoDisableSchedule(idValue, reason, actor);
+}
+
+export function reconcileScheduleReferences(actor = "system") {
+  return scheduleStore.reconcileScheduleReferences(actor);
 }
 
 // --- Work items (tickets) ----------------------------------------------------

@@ -39,7 +39,7 @@ describe("schedule helpers", () => {
     assert.equal(validateScheduleBody({}, { getCapability }).error, "name is required");
     assert.match(
       validateScheduleBody({ name: "x", capabilitySlug: "disabled", cron: "0 0 * * *" }, { getCapability }).error,
-      /unknown or disabled/
+      /cannot enable schedule: workflow "disabled" is missing or disabled/
     );
     assert.match(
       validateScheduleBody({ name: "x", capabilitySlug: "research", cron: "99 * * * *" }, { getCapability }).error,

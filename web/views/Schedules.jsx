@@ -22,6 +22,7 @@ function cadenceLabel(schedule) {
 }
 
 function NextChip({ schedule }) {
+  if (schedule.state === "broken") return <span className="chip chip-broken" title={schedule.brokenReason || "Broken schedule reference"}>broken</span>;
   if (!schedule.enabled) return <span className="chip muted" title="Disabled — will not fire">paused</span>;
   if (!schedule.nextRunAt) return <span className="chip muted" title="Nothing scheduled">no next run</span>;
   return (
@@ -36,9 +37,9 @@ function LastChip({ schedule }) {
     return <span className="chip chip-last-run muted" title="Never fired">never run</span>;
   }
   const link = schedule.lastRunId ? (
-    <a href={deepLinks.run(schedule.lastRunId)}>⏱ {relativeTime(schedule.lastRunAt)}</a>
+    <a href={deepLinks.run(schedule.lastRunId)}>{relativeTime(schedule.lastRunAt)}</a>
   ) : (
-    <>⏱ {relativeTime(schedule.lastRunAt)}</>
+    <>{relativeTime(schedule.lastRunAt)}</>
   );
   return (
     <>
@@ -95,10 +96,11 @@ function useScheduleActions(onDeleted) {
 
 // Reusable action button cluster for a single schedule.
 function ScheduleActions({ schedule, actions, onEdit }) {
+  const broken = schedule.state === "broken";
   return (
     <>
-      <button data-run-schedule={schedule.id} className="primary" title="Run this schedule now" onClick={() => actions.runNow(schedule.id)}>▶ Run now</button>
-      <button data-toggle-schedule={schedule.id} data-enabled={schedule.enabled ? "1" : "0"} onClick={() => actions.toggle(schedule.id, schedule.enabled)}>{schedule.enabled ? "Disable" : "Enable"}</button>
+      <button data-run-schedule={schedule.id} className="primary" disabled={broken} title={broken ? schedule.operatorAction : "Run this schedule now"} onClick={() => actions.runNow(schedule.id)}>▶ Run now</button>
+      <button data-toggle-schedule={schedule.id} data-enabled={schedule.enabled ? "1" : "0"} disabled={broken} title={broken ? schedule.operatorAction : ""} onClick={() => actions.toggle(schedule.id, schedule.enabled)}>{schedule.enabled ? "Disable" : "Enable"}</button>
       <button data-edit-schedule={schedule.id} onClick={() => onEdit(schedule.id)}>Edit</button>
       <button data-delete-schedule={schedule.id} className="danger" onClick={() => actions.remove(schedule.id)}>Delete</button>
     </>
@@ -108,6 +110,7 @@ function ScheduleActions({ schedule, actions, onEdit }) {
 // --- list view --------------------------------------------------------------
 
 function ScheduleCard({ schedule, actions, onEdit }) {
+  const stateLabel = schedule.state === "broken" ? "Broken / auto-disabled" : schedule.enabled ? "Enabled" : "Disabled";
   return (
     <article className="item schedule-card" id={`schedule-${schedule.id}`}>
       <h3>
@@ -117,8 +120,11 @@ function ScheduleCard({ schedule, actions, onEdit }) {
       {schedule.description ? <p className="muted workflow-desc">{schedule.description}</p> : null}
       <p className="workflow-meta">
         {schedule.capabilitySlug} · {cadenceLabel(schedule)}
-        {schedule.timezone && schedule.timezone !== "UTC" ? ` · ${schedule.timezone}` : ""} · {schedule.enabled ? "enabled" : "disabled"}
+        {schedule.timezone && schedule.timezone !== "UTC" ? ` · ${schedule.timezone}` : ""} · {stateLabel}
       </p>
+      {schedule.state === "broken" ? (
+        <p className="schedule-broken"><strong>Auto-disabled.</strong> {schedule.brokenReason} {schedule.operatorAction}</p>
+      ) : null}
       <p className="workflow-run-chips"><NextChip schedule={schedule} /><LastChip schedule={schedule} /></p>
       <div className="toolbar-actions">
         <a className="button" href={deepLinks.schedule(schedule.id)}>Open</a>
@@ -206,6 +212,7 @@ export function ScheduleDetail({ id }) {
 
   const schedule = data.schedule;
   const nextRuns = schedule.preview?.nextRuns || [];
+  const stateLabel = schedule.state === "broken" ? "Broken / auto-disabled" : schedule.enabled ? "Enabled" : "Disabled";
 
   return (
     <>
@@ -227,7 +234,13 @@ export function ScheduleDetail({ id }) {
               </>
             ) : null}
             <dt>Timezone</dt><dd>{schedule.timezone}</dd>
-            <dt>Status</dt><dd>{schedule.enabled ? "Enabled" : "Disabled"}</dd>
+            <dt>Status</dt><dd>{stateLabel}</dd>
+            {schedule.state === "broken" ? (
+              <>
+                <dt>Auto-disabled reason</dt><dd>{schedule.brokenReason}</dd>
+                <dt>Operator action</dt><dd>{schedule.operatorAction}</dd>
+              </>
+            ) : null}
             <dt>Created by</dt><dd>{schedule.createdBy || "—"}</dd>
           </dl>
           <h3>Input</h3>

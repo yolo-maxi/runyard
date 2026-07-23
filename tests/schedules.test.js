@@ -16,7 +16,15 @@ process.env.SMITHERS_OBSTRUCTION_ANALYSIS_ENABLED = "0";
 
 const cron = await import("../src/cron.js");
 const { app, fireDueSchedules } = await import("../src/server.js");
-const { db, getSchedule, listRuns } = await import("../src/db.js");
+const {
+  db,
+  getCapability,
+  getSchedule,
+  listRuns,
+  reconcileScheduleReferences,
+  updateRun,
+  upsertCapability
+} = await import("../src/db.js");
 
 let server;
 let baseUrl;
@@ -262,5 +270,71 @@ describe("schedules: due evaluation", () => {
     assert.equal(getSchedule(id).nextRunAt, before, "run-now leaves the cron cadence untouched");
     assert.equal(getSchedule(id).lastRunId, fired.run.id);
     await api(`/api/schedules/${id}`, { method: "DELETE" });
+  });
+
+  it("reconciles the latest scheduled run to its terminal status without allowing an older run to win", async () => {
+    const created = await api("/api/schedules", {
+      method: "POST",
+      body: { name: "Terminal truth", capabilitySlug: "hello", cron: "0 0 * * *", input: { topic: "truth" } }
+    });
+    const id = created.schedule.id;
+    const first = await api(`/api/schedules/${id}/run-now`, { method: "POST" });
+    const second = await api(`/api/schedules/${id}/run-now`, { method: "POST" });
+
+    updateRun(first.run.id, { status: "succeeded", current_step: "completed" });
+    assert.equal(getSchedule(id).lastRunId, second.run.id);
+    assert.equal(getSchedule(id).lastStatus, second.run.status);
+
+    updateRun(second.run.id, { status: "cancelled", current_step: "cancelled" });
+    assert.equal(getSchedule(id).lastRunId, second.run.id);
+    assert.equal(getSchedule(id).lastStatus, "cancelled");
+    await api(`/api/schedules/${id}`, { method: "DELETE" });
+  });
+
+  it("auto-disables dependent schedules when a workflow is disabled", async () => {
+    const slug = "schedule-disable-fixture";
+    const capability = upsertCapability({
+      slug,
+      name: "Schedule disable fixture",
+      enabled: true,
+      workflow: { engine: "smithers", entry: ".smithers/workflows/hello.tsx" }
+    });
+    const created = await api("/api/schedules", {
+      method: "POST",
+      body: { name: "Dependent", capabilitySlug: slug, cron: "0 4 * * *" }
+    });
+
+    upsertCapability({ ...capability, enabled: false });
+    const schedule = getSchedule(created.schedule.id);
+    assert.equal(schedule.enabled, false);
+    assert.equal(schedule.state, "broken");
+    assert.equal(schedule.lastStatus, "broken_reference");
+    assert.match(schedule.disabledReason, /was disabled/);
+    await api(`/api/schedules/${created.schedule.id}`, { method: "DELETE" });
+  });
+
+  it("idempotently repairs legacy enabled schedules that reference disabled workflows", async () => {
+    const slug = "schedule-reconcile-fixture";
+    upsertCapability({
+      slug,
+      name: "Schedule reconcile fixture",
+      enabled: false,
+      workflow: { engine: "smithers", entry: ".smithers/workflows/hello.tsx" }
+    });
+    const created = await api("/api/schedules", {
+      method: "POST",
+      body: { name: "Legacy broken", capabilitySlug: slug, cron: "0 5 * * *", enabled: false }
+    });
+    db.prepare("UPDATE schedules SET enabled = 1, next_run_at = ?, disabled_reason = '' WHERE id = ?")
+      .run("2030-01-01T05:00:00.000Z", created.schedule.id);
+
+    assert.equal(reconcileScheduleReferences("test").length, 1);
+    assert.equal(reconcileScheduleReferences("test").length, 0);
+    const repaired = getSchedule(created.schedule.id);
+    assert.equal(repaired.enabled, false);
+    assert.equal(repaired.state, "broken");
+    assert.match(repaired.brokenReason, /disabled/);
+    assert.equal(getCapability(slug).enabled, false);
+    await api(`/api/schedules/${created.schedule.id}`, { method: "DELETE" });
   });
 });

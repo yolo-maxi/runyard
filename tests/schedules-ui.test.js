@@ -49,6 +49,8 @@ describe("Schedules: views + form", () => {
     assert.match(schedulesJsx, /data-run-schedule=/);
     assert.match(schedulesJsx, /data-toggle-schedule=/);
     assert.match(schedulesJsx, /data-delete-schedule=/);
+    assert.match(schedulesJsx, /Broken \/ auto-disabled/);
+    assert.match(schedulesJsx, /schedule-broken/);
   });
 
   it("builds a create/edit form with a workflow picker, cron input, and JSON input", () => {

@@ -85,4 +85,32 @@ describe("run presentation helpers", () => {
     assert.equal(decorated.deepLink, "/app#runs/run%201");
     assert.equal(decorated.deepLinkWorkflow, "/app#workflows/research");
   });
+
+  it("promotes schedule origin into first-class automation provenance", () => {
+    const decorated = withRunLinks({
+      id: "run_sched",
+      status: "queued",
+      capabilitySlug: "research",
+      input: {
+        __origin: {
+          type: "schedule",
+          label: "schedule: Nightly",
+          scheduleId: "sched_1",
+          scheduleName: "Nightly",
+          trigger: "ticker"
+        }
+      },
+      createdAt: "2026-01-01T00:00:00.000Z"
+    });
+
+    assert.equal(decorated.origin.type, "schedule");
+    assert.deepEqual(decorated.automation, {
+      type: "schedule",
+      label: "Scheduled",
+      scheduleId: "sched_1",
+      scheduleName: "Nightly",
+      trigger: "ticker",
+      deepLink: "/app#schedules/sched_1"
+    });
+  });
 });

@@ -5,6 +5,7 @@ import {
   artifactDisplayName, formatBytes, truncate, runStatusLabel, runUsage, formatTokens, formatCostMicros,
   pauseReasonLabel
 } from "../lib/runHelpers.js";
+import { runAutomation } from "../lib/provenance.js";
 import { rerunRun, editRerunRun, cancelRun, pauseRun, resumeRun } from "../lib/runActions.js";
 import { promoteRun, runPromotionCandidate } from "../lib/runPromotion.js";
 import { StatusBadge, ShareButton, Icon, JsonBlock, CodeChurn } from "./ui.jsx";
@@ -98,7 +99,15 @@ export function RunMetaStrip({ run }) {
   const attempt = Number(run.attempt || 0);
   if (attempt > 0) items.push(<li key="a"><span className="muted">Attempt</span> {attempt}</li>);
   const trigger = run.originLabel || run.origin?.label || "";
-  if (trigger) items.push(<li key="t"><span className="muted">Trigger</span> {trigger}</li>);
+  const automation = runAutomation(run);
+  if (automation) {
+    const schedule = automation.deepLink
+      ? <a href={automation.deepLink}>{automation.scheduleName}</a>
+      : automation.scheduleName;
+    items.push(<li key="auto" className="chip chip-automation"><span className="muted">Automation</span> Scheduled: {schedule}</li>);
+  } else if (trigger) {
+    items.push(<li key="t"><span className="muted">Trigger</span> {trigger}</li>);
+  }
   const usage = runUsage(run);
   if (usage) {
     const byModel = Object.entries(usage.byModel)
