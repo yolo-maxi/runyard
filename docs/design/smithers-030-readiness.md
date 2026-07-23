@@ -115,6 +115,33 @@ note; runs.mdx structured quota-pause wording; the three companion documents.
      (attribution flags proven in the real flow).
   Teardown verified: scratch hub/runner killed, port closed, no orphaned
   engine processes or daemons; the live Hub on :43117 untouched throughout.
+- **waiting-quota structured pause round-trip, same isolated rig,
+  2026-07-23:** the scheduler parks any task failure whose error carries
+  `code: "AGENT_QUOTA_EXCEEDED"` (or `details.failureQuota`) as
+  `waiting-quota` without consuming retries
+  (`@smithers-orchestrator/scheduler` `makeWorkflowSession.js`), so a
+  compute-only workflow triggered it deterministically: first attempt writes
+  a marker file and throws the quota-coded error; the post-resume attempt
+  sees the marker and succeeds. Published as capability `quota-probe`
+  (bundle `wfb_b43de35de0c501f5ef29`), run `run_9ae099bf7eeb68706518` /
+  engine `run-1784774858520`:
+  1. 02:47:40 dispatched → 02:47:42 `runner.pause_detected`
+     (`engineState: waiting-quota`, `reason: quota_exhausted`) — the new
+     structured path, ~2 s after the engine parked, no error-text scraping;
+  2. 02:47:43 Hub `run.paused` with `reason: quota_exhausted`,
+     `pausedBy: runner`, checkpoint
+     `resume: {smithersRunId: run-1784774858520, strategy: smithers_resume}`,
+     `requiredAction` attached; runner slot released (`activeRuns: 0`);
+  3. `POST /api/runs/…/resume` → `strategy: smithers_resume` on the pinned
+     runner → checkpoint pre-verified → 02:48:00 relaunched
+     `--resume … --force`;
+  4. terminal: `succeeded` with
+     `outputs: {result: {ok: true, attempt_after_resume: true}}` — proving
+     the quota park consumed no retry budget and the checkpoint resume
+     completed the same run.
+  Teardown verified again (rig killed — including a leftover runner process
+  from the gate-4 session whose wrapper PID had masked it — port closed, no
+  orphans, live Hub untouched).
 - Runner image built on this host with `SMITHERS_VERSION=0.30.0`: container
   smoke shows `smithers --version` = 0.30.0 via `SMITHERS_BIN`, PATH, and
   `resolveSmithersBin()`, and a real workflow ran to `finished` inside the
@@ -178,9 +205,15 @@ note; runs.mdx structured quota-pause wording; the three companion documents.
 4. **Zod input defaults now apply** (0.28): templates were swept and RunYard
    always passes explicit input, but third-party/authored workflows relying
    on null-arrival semantics would change behavior.
-5. **`waiting-quota` pause path is code-reviewed + status-probed, not
-   provider-reproduced** (needs a real quota exhaustion to fire end-to-end);
-   the text-classifier fallback still covers the failure-shaped variant.
+5. ~~waiting-quota pause path not reproduced end-to-end~~ — **resolved**:
+   proven on the isolated rig with a deterministic quota-classified failure
+   (see evidence above): park → structured `quota_exhausted` pause with
+   checkpoint → slot release → checkpointed resume → terminal success. The
+   remaining (small) gap is only that a *real provider's* quota response was
+   not involved — the engine's own classification boundary
+   (`AGENT_QUOTA_EXCEEDED`) was exercised instead, which is the same code
+   path a provider rejection feeds. The text-classifier fallback still
+   covers failure-shaped variants.
 
 ## Ocean's remaining cutover checklist
 
