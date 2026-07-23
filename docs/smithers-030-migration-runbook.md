@@ -35,9 +35,11 @@ Do not proceed while runs are executing; pause or let them finish.
 ## 1. Drain the runner
 
 ```bash
-# Hub-side drain flag: runner stops claiming, finishes in-flight work
-touch "$(runyard config data-dir 2>/dev/null || echo /home/xiko/runyard-data)/.drain"
-# wait until:
+# Drain flag under the shared Hub dataDir (src/drain.js precedence:
+# SMITHERS_DRAIN_DIR > RUNYARD_HUB_DATA_DIR > <hub root>/data). On the
+# standard single-box install that is <repo>/data:
+touch /home/xiko/runyard/data/.drain
+# runner stops claiming, finishes in-flight work; wait until:
 runyard runners   # active runs 0
 ```
 
@@ -101,7 +103,7 @@ but the branch may carry unrelated template updates; keep them in sync.)
 ## 6. Restart the runner and verify the canary gates
 
 ```bash
-rm "$(dirname <drain-flag-path>)/.drain"    # undrain
+rm /home/xiko/runyard/data/.drain    # undrain
 # restart runner service(s) per DEPLOY.md
 ```
 
