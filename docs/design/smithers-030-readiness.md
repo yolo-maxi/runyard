@@ -220,7 +220,7 @@ note; runs.mdx structured quota-pause wording; the three companion documents.
 1. Review branch diff; merge/deploy the RunYard application per normal
    release process (pin test forces coherence).
 2. Execute `docs/smithers-030-migration-runbook.md` §0–§6 on the live
-   host(s): drain → backup → workspace pack upgrade → global binary → 
+   host(s): drain → backup → workspace pack upgrade → global binary →
    template re-sync → restart → canary gates 1–5.
 3. Insert/dedupe `docs/design/smithers-030-opportunities.md` into the Work
    board Ideas lane.
