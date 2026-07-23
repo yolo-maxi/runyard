@@ -94,7 +94,7 @@ describe("CLI runner setup helpers", () => {
         mkdirSyncFn: (...args) => mkdirs.push(args),
         spawnSyncFn: (...args) => {
           spawns.push(args);
-          return { status: 0 };
+          return { status: 0, stdout: "0.30.0\n" };
         },
         existsSyncFn: (file) => file === templateRoot || WORKFLOW_TEMPLATE_INCLUDE_PATHS.some((relative) => file === path.join("/repo", relative)),
         cpSyncFn: (...args) => copies.push(args),
@@ -105,7 +105,12 @@ describe("CLI runner setup helpers", () => {
 
     assert.deepEqual(result, { ok: true, workspace });
     assert.deepEqual(mkdirs[0], [workspace, { recursive: true }]);
-    assert.deepEqual(spawns, [["smithers", ["init"], { cwd: workspace, stdio: "inherit" }]]);
+    // 0.27+ init is interactive by default — the setup flow must run it
+    // non-interactively, then report the version the workspace pack pins
+    // (project-local delegation makes that the engine that actually runs).
+    assert.deepEqual(spawns[0], ["smithers", ["init", "--yes", "--non-interactive"], { cwd: workspace, stdio: "inherit" }]);
+    assert.deepEqual(spawns[1], ["smithers", ["--version"], { cwd: workspace, encoding: "utf8" }]);
+    assert.ok(logs.lines.some((line) => line.includes("Effective smithers engine in this workspace: 0.30.0")));
     assert.deepEqual(copies, WORKFLOW_TEMPLATE_INCLUDE_PATHS.map((relative) => [
       path.join("/repo", relative),
       path.join(workspace, relative.replace(/^workflow-templates\//, ".smithers/"))

@@ -30,9 +30,10 @@ describe("Smithers runner deadline containment", () => {
     assert.match(source, /launchSmithers/);
     assert.match(smithersRuntimeSource, /hubEnv\.RUNYARD_HUB_TOKEN = token/);
     assert.match(smithersRuntimeSource, /hubEnv\.RUNYARD_HUB_URL = baseUrl/);
-    // The child env is the allowlisted OS/toolchain baseline plus the explicit
-    // hub/secret/run channels — never a raw spread of the runner's env.
-    assert.match(smithersRuntimeSource, /\.\.\.allowlistedBaseEnv\(baseEnv\), \.\.\.hubEnv, \.\.\.secretEnv/);
+    // The child env is the allowlisted OS/toolchain baseline plus the pinned
+    // engine-behavior guards plus the explicit hub/secret/run channels —
+    // never a raw spread of the runner's env.
+    assert.match(smithersRuntimeSource, /\.\.\.allowlistedBaseEnv\(baseEnv\), \.\.\.ENGINE_BEHAVIOR_ENV, \.\.\.hubEnv, \.\.\.secretEnv/);
     assert.doesNotMatch(smithersRuntimeSource, /\{ \.\.\.baseEnv,/);
   });
 

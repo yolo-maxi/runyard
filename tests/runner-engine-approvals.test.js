@@ -70,6 +70,19 @@ describe("engineApprovalWaits", () => {
       []
     );
   });
+
+  it("accepts the 0.30 'requested' status alongside 0.22's 'pending'", () => {
+    // Verified against a live 0.30 gate: inspect reports approvals[] rows with
+    // status "requested" — the 0.22 filter for "pending" alone would see zero
+    // pending gates and leave the run unbridged.
+    const waits = engineApprovalWaits({
+      run: { id: "run_sm1", status: "waiting-approval" },
+      runState: { state: "waiting-approval" },
+      approvals: [{ nodeId: "confirm", status: "requested", requestedAt: "2026-07-23T01:29:18.017Z" }]
+    });
+    assert.equal(waits.length, 1);
+    assert.equal(waits[0].nodeId, "confirm");
+  });
 });
 
 describe("engineApprovalCardRequest", () => {
@@ -199,10 +212,11 @@ describe("engineDecisionFromEventLine", () => {
   });
 });
 
-function bridgeHarness({ hubPostImpl, hubGetImpl, runSmithersImpl } = {}) {
+function bridgeHarness({ hubPostImpl, hubGetImpl, runSmithersImpl, resumeEngineRunImpl } = {}) {
   const events = [];
   const hubPosts = [];
   const cliCalls = [];
+  const resumeCalls = [];
   const bridge = createEngineApprovalBridge({
     hubRunId: "run_hub1",
     smithersRunId: "run_sm1",
@@ -222,10 +236,22 @@ function bridgeHarness({ hubPostImpl, hubGetImpl, runSmithersImpl } = {}) {
         cliCalls.push(args);
         return { stdout: "" };
       }),
+    resumeEngineRun:
+      resumeEngineRunImpl === null
+        ? null
+        : resumeEngineRunImpl ||
+          (async () => {
+            resumeCalls.push(Date.now());
+            return "run_sm1";
+          }),
     logError: () => {}
   });
-  return { bridge, events, hubPosts, cliCalls };
+  return { bridge, events, hubPosts, cliCalls, resumeCalls };
 }
+
+// 0.30 detached semantics: once the last gate is decided the run parks as
+// `waiting-event` with no pending approvals and an exited owner process.
+const WAITING_EVENT_INSPECT = { run: { id: "run_sm1", status: "waiting-event" }, runState: { state: "waiting-event" } };
 
 describe("createEngineApprovalBridge", () => {
   it("surfaces a new engine wait as a run event plus a hub approval card, once", async () => {
@@ -302,6 +328,86 @@ describe("createEngineApprovalBridge", () => {
     assert.equal(resumed.length, 1);
     assert.equal(resumed[0].data.nodeId, "ship-gate");
     assert.equal(resumed[0].data.engineDecision, "approved");
+  });
+
+  it("relaunches the parked run after a Hub-applied decision (0.30 waiting-event)", async () => {
+    let resolved = false;
+    const { bridge, events, cliCalls, resumeCalls } = bridgeHarness({
+      hubGetImpl: async () => ({
+        approval: resolved
+          ? { id: "appr_1", status: "approved", decision: "approved", resolvedBy: "ocean" }
+          : { id: "appr_1", status: "pending" }
+      })
+    });
+    await bridge.tick(WAITING_INSPECT);
+    resolved = true;
+    await bridge.tick(WAITING_INSPECT);
+    assert.equal(cliCalls.length, 1, "decision applied via smithers approve");
+    assert.equal(resumeCalls.length, 0, "no resume while the gate is still pending engine-side");
+
+    // Engine processed the decision: gate gone, run parked waiting-event with
+    // its owner process exited — the bridge must relaunch from the checkpoint.
+    await bridge.tick(WAITING_EVENT_INSPECT);
+    assert.equal(resumeCalls.length, 1);
+    const resumedLaunch = events.filter((event) => event.type === ENGINE_APPROVAL_RESUMED_EVENT && event.data.resumeLaunch);
+    assert.equal(resumedLaunch.length, 1);
+
+    // The resume fires once per decided round, not on every later tick.
+    await bridge.tick(WAITING_EVENT_INSPECT);
+    assert.equal(resumeCalls.length, 1);
+  });
+
+  it("relaunches after an engine-side decision observed in the event stream", async () => {
+    const { bridge, resumeCalls } = bridgeHarness();
+    await bridge.tick(WAITING_INSPECT);
+    bridge.observeEventLine(JSON.stringify({ type: "ApprovalGranted", payload: { nodeId: "ship-gate" } }));
+    await bridge.tick(WAITING_EVENT_INSPECT);
+    assert.equal(resumeCalls.length, 1);
+  });
+
+  it("never relaunches a waiting-event run without a decided gate (Signal/WaitForEvent waits)", async () => {
+    const { bridge, resumeCalls } = bridgeHarness();
+    await bridge.tick(WAITING_EVENT_INSPECT);
+    await bridge.tick(WAITING_EVENT_INSPECT);
+    assert.equal(resumeCalls.length, 0);
+  });
+
+  it("retries the resume launch on the next tick when it fails", async () => {
+    let attempts = 0;
+    const { bridge, events } = bridgeHarness({
+      resumeEngineRunImpl: async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error("launch race");
+        return "run_sm1";
+      }
+    });
+    await bridge.tick(WAITING_INSPECT);
+    bridge.observeEventLine(JSON.stringify({ type: "ApprovalGranted", payload: { nodeId: "ship-gate" } }));
+    await bridge.tick(WAITING_EVENT_INSPECT);
+    assert.equal(attempts, 1);
+    assert.ok(events.some((event) => event.type === ENGINE_APPROVAL_APPLY_FAILED_EVENT && event.data.resumeLaunch));
+    await bridge.tick(WAITING_EVENT_INSPECT);
+    assert.equal(attempts, 2, "failed resume retried on the next tick");
+  });
+
+  it("quotes the authored request from ApprovalRequested events on the Hub card (0.30)", async () => {
+    // inspect never carries the authored <Approval request>; on 0.30 it
+    // arrives via ApprovalRequested/NodeWaitingApproval events instead.
+    const { bridge, hubPosts } = bridgeHarness();
+    bridge.observeEventLine(
+      JSON.stringify({
+        type: "ApprovalRequested",
+        payload: {
+          nodeId: "ship-gate",
+          request: { mode: "decision", title: "Ship the release?", summary: "All gates green.", metadata: {} }
+        }
+      })
+    );
+    await bridge.tick(WAITING_INSPECT);
+    assert.equal(hubPosts.length, 1);
+    assert.equal(hubPosts[0].body.title, "Ship the release?");
+    assert.equal(hubPosts[0].body.description, "All gates green.");
+    assert.equal(hubPosts[0].body.payload.request.title, "Ship the release?");
   });
 
   it("tracks multiple concurrent gates independently", async () => {

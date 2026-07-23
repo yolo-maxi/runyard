@@ -47,12 +47,26 @@ export function setupRunnerWorkspace(
 
   mkdirSyncFn(ws, { recursive: true });
   log(`\nScaffolding Smithers workspace in ${ws} ...`);
-  const init = spawnSyncFn("smithers", ["init"], { cwd: ws, stdio: "inherit" });
+  // ≥0.27 init is interactive by default and REWRITES .smithers/agents.ts on
+  // every invocation (verified on 0.30) — warn before touching an existing
+  // workspace so a customized agents.ts is not silently clobbered.
+  if (existsSyncFn(path.join(ws, ".smithers", "agents.ts"))) {
+    warn("Existing .smithers/agents.ts found — `smithers init` regenerates it. Back it up first if you customized providers.");
+  }
+  const init = spawnSyncFn("smithers", ["init", "--yes", "--non-interactive"], { cwd: ws, stdio: "inherit" });
   if (init.status !== 0) {
     error("`smithers init` failed.");
     exit(1);
     return { ok: false, reason: "smithers-init-failed", workspace: ws };
   }
+
+  // Since 0.27 the smithers binary delegates to the nearest project-local
+  // install — after init that is the workspace pack (.smithers/node_modules),
+  // which pins the engine every run in this workspace will actually execute.
+  // Report it so version drift is visible at setup time, not mid-run.
+  const versionProbe = spawnSyncFn("smithers", ["--version"], { cwd: ws, encoding: "utf8" });
+  const effectiveVersion = String(versionProbe?.stdout || "").trim();
+  if (effectiveVersion) log(`Effective smithers engine in this workspace: ${effectiveVersion}`);
 
   if (existsSyncFn(templateRoot)) {
     const appRoot = path.dirname(templateRoot);

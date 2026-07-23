@@ -23,16 +23,18 @@ import { createEngineApprovalBridge } from "./runnerEngineApprovals.js";
 import { readClaudeOauthToken } from "./claudeOauthToken.js";
 import { isDraining, resolveDataDir } from "./drain.js";
 import { resolveHubUrl, resolveHubToken } from "./hubConnection.js";
-import { packageVersion } from "./packageInfo.js";
+import { packageVersion, pinnedSmithersVersion } from "./packageInfo.js";
 import { resolveSmithersBin } from "./resolveSmithersBin.js";
 import { resolveRunnerExecWrapper, isBubblewrapWrapper, usernsRemediation } from "./runnerSandbox.js";
 import {
   createSmithersRunRegistry,
+  ENGINE_BEHAVIOR_ENV,
   isHubTerminalStatus,
   launchSmithers,
   resumeCheckpointMissingMessage,
   resumeCheckpointStatus,
-  smithersCommand
+  smithersCommand,
+  smithersEventsArgs
 } from "./runnerSmithersRuntime.js";
 import {
   collectSmithersRunResult,
@@ -86,6 +88,37 @@ if (isBubblewrapWrapper(execWrapper)) {
   } catch {
     console.warn(`[sandbox] ${usernsRemediation()}`);
   }
+}
+
+// The engine version that will ACTUALLY execute runs. Since 0.27 the smithers
+// binary delegates to the nearest project-local install walking up from cwd —
+// a workspace `.smithers/node_modules` pack outranks the global binary — so
+// this must be measured with cwd=workspace, exactly how every run is spawned.
+// Drift against the pinned version is loud but non-fatal: an operator may be
+// mid-upgrade, and the Hub-visible marker keeps the state honest.
+function effectiveSmithersVersion() {
+  try {
+    return execFileSync(smithersBin, ["--version"], {
+      cwd: workspace,
+      timeout: 15_000,
+      encoding: "utf8",
+      env: { ...process.env, SMITHERS_NO_DAEMON: "1", SMITHERS_NO_UPDATE_CHECK: "1" }
+    }).trim();
+  } catch (error) {
+    console.warn(`could not determine effective smithers version (${error.message}); launches may fail.`);
+    return "";
+  }
+}
+const engineVersion = effectiveSmithersVersion();
+const engineDrift = Boolean(engineVersion && pinnedSmithersVersion && engineVersion !== pinnedSmithersVersion);
+if (engineDrift) {
+  console.warn(
+    `[engine] VERSION DRIFT: effective smithers in ${workspace} is ${engineVersion}, but this runner expects ${pinnedSmithersVersion}. ` +
+      `A workspace-local install (.smithers/node_modules) outranks the global binary — update the workspace pack ` +
+      `(edit ${workspace}/.smithers/package.json to smithers-orchestrator ${pinnedSmithersVersion} and run 'bun install' there) or remove it.`
+  );
+} else if (engineVersion) {
+  console.log(`[engine] effective smithers ${engineVersion} (pinned ${pinnedSmithersVersion || "unpinned"}) in ${workspace}`);
 }
 
 const location = process.env.SMITHERS_RUNNER_LOCATION || "vps"; // "vps" | "local"
@@ -235,18 +268,23 @@ async function smithers(args, opts = {}) {
   //   otherwise            -> `<smithersBin> <args>` (bare host)
   // See WRAPPED_SUBCOMMANDS in runnerSmithersRuntime.js.
   const command = smithersCommand({ smithersBin, execWrapper }, args);
+  // Control-plane invocations (events/inspect/output/cancel/approve) inherit
+  // the runner env plus the engine-behavior guards (no daemon autostart, no
+  // update checks — see ENGINE_BEHAVIOR_ENV). Launches pass their own fully
+  // assembled child env, which already includes the guards.
+  const env = opts.env || { ...process.env, ...ENGINE_BEHAVIOR_ENV };
   if (!opts.stdin) {
     return execFileAsync(command.cmd, command.args, {
       cwd: workspace,
       timeout: opts.timeout || 60_000,
       maxBuffer: 1024 * 1024 * 32,
-      ...(opts.env ? { env: opts.env } : {})
+      env
     });
   }
   return new Promise((resolve, reject) => {
     const child = spawn(command.cmd, command.args, {
       cwd: workspace,
-      env: opts.env || process.env,
+      env,
       stdio: ["pipe", "pipe", "pipe"]
     });
     let stdout = "";
@@ -333,11 +371,17 @@ async function postRunUsage(runId, usage) {
 }
 
 async function register() {
+  // The effective engine version rides in the platform string so it is
+  // visible on every existing runner surface (API, MCP, web runners table)
+  // without a schema change; drift shows up as an explicit marker.
+  const enginePlatformSuffix = engineVersion
+    ? ` · smithers ${engineVersion}${engineDrift ? ` (DRIFT: expected ${pinnedSmithersVersion})` : ""}`
+    : "";
   const res = await client.post("/api/runners/register", {
     id: runnerId || undefined,
     name,
     hostname: os.hostname(),
-    platform: `${os.platform()} ${os.release()}`,
+    platform: `${os.platform()} ${os.release()}${enginePlatformSuffix}`,
     version: packageVersion,
     tags,
     capacity: concurrency
@@ -374,13 +418,14 @@ async function launch(entry, input, secretEnv = {}, resume = null, hubRunId = ""
     baseUrl,
     maxInlineInputBytes: MAX_INLINE_INPUT_BYTES,
     claudeOauthToken,
-    runEnv
+    runEnv,
+    hubRunId
   });
 }
 
 async function fetchEvents(sid) {
   try {
-    const { stdout } = await smithers(["events", sid, "--json", "--limit", "100000"]);
+    const { stdout } = await smithers(smithersEventsArgs(sid));
     return stdout.split("\n").filter(Boolean);
   } catch {
     return [];
@@ -552,6 +597,11 @@ async function executeAssignment(assignment) {
       hubGet: (pathname) => client.get(pathname),
       hubPost: (pathname, body) => client.post(pathname, body),
       runSmithers: smithers,
+      // Smithers ≥0.24 detached owners exit at an approval gate; once the
+      // decision is applied the bridge relaunches the run from its checkpoint
+      // with the exact same env/entry the original launch used.
+      resumeEngineRun: () =>
+        launch(entry, run.input, effectiveSecretEnv, { smithersRunId: sid }, run.id, { ...harnessEnv, ...gatewayEnv }),
       logError: console.error
     });
 
@@ -612,6 +662,26 @@ async function executeAssignment(assignment) {
         await pauseRunOnHub(run.id, { smithersRunId: sid });
         console.log(`Run ${run.id} paused by hub; detached from smithers ${sid}`);
         return;
+      }
+      // The engine parked the run on a provider quota window (`waiting-quota`,
+      // structured since 0.27). Without a gateway daemon nothing auto-wakes
+      // it, so mirror it as a structured Hub pause carrying the checkpoint —
+      // the same recoverable-interruption contract the text classifier
+      // provides for credit errors, but from a real engine state instead of
+      // error-text scraping. On any pause refusal keep polling; the run can
+      // still settle terminally or time out under the normal rules.
+      if (state === "waiting-quota") {
+        await event(
+          run.id,
+          "runner.pause_detected",
+          `Engine parked the run as waiting-quota; reporting a structured pause with checkpoint ${sid}.`,
+          { smithersRunId: sid, reason: PAUSE_REASONS.QUOTA_EXHAUSTED, engineState: state }
+        );
+        await cancelSmithersRun(sid, "engine waiting-quota; parking as Hub pause");
+        if (await pauseRunOnHub(run.id, { reason: PAUSE_REASONS.QUOTA_EXHAUSTED, message: `Smithers parked run ${sid} as waiting-quota.`, smithersRunId: sid })) {
+          console.log(`Run ${run.id} paused (quota) with checkpoint smithers ${sid}`);
+          return;
+        }
       }
       if (TERMINAL.has(state)) break;
       // An approval-held run is blocked on a pending human decision. Approvals
@@ -693,7 +763,21 @@ async function executeAssignment(assignment) {
       console.log(`Run ${run.id} ended '${state}' (smithers ${sid})`);
     }
   } catch (error) {
-    await failRun(run.id, error.stack || error.message).catch(() => {});
+    // ≥0.30 validates detached launches before spawning: a broken workflow
+    // exits with a structured envelope and no run id. Surface the engine's own
+    // file:line:col diagnostic and class it as a preflight block so operators
+    // see WHY the launch died, not just that no run id appeared.
+    const launchFailure = error?.smithersLaunchFailure;
+    if (launchFailure) {
+      await event(run.id, "runner.launch_failed", error.message, {
+        runnerId,
+        code: launchFailure.code,
+        ...(launchFailure.preflight ? { failureClass: RUN_FAILURE_CLASSES.BLOCKED_BY_PREFLIGHT } : {})
+      }).catch(() => {});
+      await failRun(run.id, error.message, launchFailure.preflight ? RUN_FAILURE_CLASSES.BLOCKED_BY_PREFLIGHT : "").catch(() => {});
+    } else {
+      await failRun(run.id, error.stack || error.message).catch(() => {});
+    }
     console.error(`Run ${run.id} failed:`, error.message);
   } finally {
     smithersRegistry.unregister(run.id);
