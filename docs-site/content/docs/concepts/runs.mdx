@@ -82,7 +82,7 @@ curl -X POST -H "Authorization: Bearer $RUNYARD_TOKEN" -H "Content-Type: applica
 
 ## Events, timeline, logs, artifacts
 
-Runners append structured **events** as the run progresses; `GET /api/runs/{id}/events/stream` serves them live over SSE and `GET /api/runs/{id}/timeline` merges status transitions, events, and artifacts into one ascending feed (with `since`/`limit` paging). Log lines are at `/logs`, a condensed log summary and diagnostics at `/diagnostics`, and uploaded **artifacts** (outputs, traces, files) at `/artifacts`, downloadable by artifact id.
+Runners append structured **events** as the run progresses. Every event carries a monotonic per-run cursor (`seq`); `GET /api/runs/{id}/events/stream` serves them live over SSE — replaying persisted history after `?afterSeq=` (or a standard `Last-Event-ID` reconnect header), tagging frames with `id:<seq>`, sending keepalive comments, and closing with a final `run-terminal` frame once a terminal run is fully drained. Run payloads expose the transport as `eventsStreamUrl`, and `runyard run --follow` / `runyard logs --follow` are the CLI front ends. `GET /api/runs/{id}/timeline` merges status transitions, events, and artifacts into one ascending feed (with `since`/`limit` paging). Log lines are at `/logs`, a condensed log summary and diagnostics at `/diagnostics`, and uploaded **artifacts** (outputs, traces, files) at `/artifacts`, downloadable by artifact id.
 
 ## Reruns and promotion
 
