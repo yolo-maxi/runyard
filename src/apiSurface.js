@@ -784,8 +784,8 @@ export const API_SURFACE = [
     method: "get", path: "/api/runs/:id/events/stream", handler: "runReadHandlers.streamRunEvents",
     group: "runs", v1Path: "/api/v1/runs/:id/events/stream",
     auth: true, ui: true,
-    summary: "Live run events over Server-Sent Events (the web console's live feed; poll /runs/{id}/events for the same data)",
-    mcpExempt: "SSE stream; MCP tools poll get_run_events / get_run_timeline for the same data."
+    summary: "Live run events over Server-Sent Events: replays persisted events after ?afterSeq= (or the Last-Event-ID header), then tails live with id:<seq> frames, keepalive comments, and a final run-terminal frame before closing on a terminal run. Backs `runyard run --follow` / `runyard logs --follow`; poll /runs/{id}/events for the same data",
+    mcpExempt: "SSE stream; MCP tools poll get_run_events / get_run_timeline for the same data (run payloads expose eventsStreamUrl for HTTP consumers)."
   },
   {
     method: "get", path: "/api/runs/:id/log-summary", handler: "runReadHandlers.getRunLogSummary",

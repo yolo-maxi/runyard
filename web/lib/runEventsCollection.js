@@ -9,7 +9,10 @@ import { decorateEvent } from "./runEvents.js";
 // UI reactively — the "screen moving" feel — without any manual setInterval in
 // the component.
 //
-// onStatus(status) reports: "connecting" | "live" | "reconnecting" | "polling".
+// onStatus(status) reports:
+// "connecting" | "live" | "reconnecting" | "polling" | "ended".
+// "ended" fires on the stream's run-terminal frame — the run is terminal and
+// fully drained, so the collection closes the stream and stops syncing.
 export function createRunEventsCollection(runId, { onStatus } = {}) {
   const seen = new Set();
   let handle = null;
@@ -77,6 +80,17 @@ export function createRunEventsCollection(runId, { onStatus } = {}) {
       } catch {
         /* malformed frame — ignore */
       }
+    });
+    es.addEventListener("run-terminal", () => {
+      // The run is terminal and fully drained: the server is about to close
+      // the stream. Close our side first so EventSource does not auto-
+      // reconnect, reconcile once, and stay in the final state (no polling).
+      onStatus?.("ended");
+      if (es) {
+        es.close();
+        es = null;
+      }
+      backfill();
     });
     es.onerror = () => {
       if (stopped) return;

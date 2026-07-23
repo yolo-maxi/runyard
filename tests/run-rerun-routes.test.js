@@ -74,6 +74,8 @@ describe("run rerun route helpers", () => {
       run: { id: "run_new", deepLink: "/app#runs/run_new" },
       previousRun: { id: "run_prev", deepLink: "/app#runs/run_prev" },
       statusUrl: "/api/runs/run_new",
+      eventsUrl: "/api/runs/run_new/events",
+      eventsStreamUrl: "/api/runs/run_new/events/stream",
       webUrl: "/app#runs/run_new",
       deepLink: "/app#runs/run_new"
     });
@@ -88,6 +90,8 @@ describe("run rerun route helpers", () => {
       run: { id: "run_new", deepLink: "/app#runs/run_new" },
       previousRun: { id: "run_prev", deepLink: "/app#runs/run_prev" },
       statusUrl: "/api/runs/run_new",
+      eventsUrl: "/api/runs/run_new/events",
+      eventsStreamUrl: "/api/runs/run_new/events/stream",
       webUrl: "/app#runs/run_new",
       deepLink: "/app#runs/run_new"
     });

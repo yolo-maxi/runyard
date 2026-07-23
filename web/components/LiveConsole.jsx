@@ -7,7 +7,8 @@ const STATUS_LABEL = {
   connecting: "Connecting…",
   live: "Live",
   reconnecting: "Reconnecting…",
-  polling: "Polling (stream unavailable)"
+  polling: "Polling (stream unavailable)",
+  ended: "Complete"
 };
 
 // Live event console for a run. Tails the SSE-backed TanStack events collection
