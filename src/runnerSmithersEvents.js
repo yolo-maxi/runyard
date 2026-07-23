@@ -15,6 +15,26 @@ export function smithersEventsArtifactContent(lines = []) {
   return lines.map(smithersEventMessage).join("\n");
 }
 
+// Per-line handler for the incremental event follower: engine-approval
+// observation, the Hub event post, and runner-observed usage (skipping the
+// gateway-metered model so nothing double-counts). Extracted from runner.js
+// so the composition is testable without spawning anything.
+export function createFollowerLineHandler({
+  observeEventLine = () => {},
+  postEvent,
+  postUsage,
+  gatewayModel = ""
+}) {
+  return async (line) => {
+    observeEventLine(line);
+    await postEvent(smithersEventMessage(line));
+    const usage = smithersTokenUsage(line);
+    if (usage && (!gatewayModel || usage.model !== gatewayModel)) {
+      await postUsage(usage);
+    }
+  };
+}
+
 // Extract a Hub usage record from one engine event line. The Smithers engine
 // emits a structured TokenUsageReported event for every agent result (model,
 // node, token counts taken from the agent CLI's own reported usage) — this is

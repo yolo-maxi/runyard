@@ -17,7 +17,7 @@ import { collectAuthHealth } from "./runnerAuthHealth.js";
 import { classifyFailureStatus, RUN_FAILURE_CLASSES } from "./runFailureClass.js";
 import { classifyPauseReason, PAUSE_REASONS } from "./runPause.js";
 import { DEFAULT_MAX_INLINE_INPUT_BYTES } from "./runnerPolicy.js";
-import { smithersEventMessage, smithersTokenUsage } from "./runnerSmithersEvents.js";
+import { createFollowerLineHandler } from "./runnerSmithersEvents.js";
 import { materializeGatewayPin } from "./runnerGateway.js";
 import { createEngineApprovalBridge } from "./runnerEngineApprovals.js";
 import { readClaudeOauthToken } from "./claudeOauthToken.js";
@@ -38,6 +38,10 @@ import {
   collectSmithersRunResult,
   smithersArtifactPayloads
 } from "./runnerSmithersArtifacts.js";
+import {
+  createSmithersEventFollower,
+  smithersFollowerArgs
+} from "./runnerSmithersFollower.js";
 import { smithersRunOutcome } from "./runnerSmithersOutcome.js";
 import {
   createClaimAuthTracker,
@@ -314,11 +318,25 @@ async function observedHubRun(runId) {
   }
 }
 
+// Event posts are the run's mirrored history on the Hub — and now feed live
+// `--follow` streams — so a transient Hub blip gets a couple of bounded
+// retries before the event is dropped (the follower's seq dedupe means a
+// dropped post can never be replayed later). Still best-effort by design:
+// event delivery must never fail the run itself.
+const EVENT_POST_RETRY_DELAYS_MS = [500, 1500];
 async function event(runId, type, message, data = {}) {
-  try {
-    await client.post(`/api/runs/${runId}/events`, { type, message: String(message).slice(0, 4000), data });
-  } catch (error) {
-    console.error("event post failed:", error.message);
+  const body = { type, message: String(message).slice(0, 4000), data };
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await client.post(`/api/runs/${runId}/events`, body);
+      return;
+    } catch (error) {
+      if (attempt >= EVENT_POST_RETRY_DELAYS_MS.length) {
+        console.error("event post failed:", error.message);
+        return;
+      }
+      await sleep(EVENT_POST_RETRY_DELAYS_MS[attempt]);
+    }
   }
 }
 
@@ -378,6 +396,10 @@ async function launch(entry, input, secretEnv = {}, resume = null, hubRunId = ""
   });
 }
 
+// Full-history fetch — terminal artifact collection ONLY, called exactly once
+// per run after the engine is terminal. The streaming path is one incremental
+// `events --json --watch` follower per run (src/runnerSmithersFollower.js);
+// nothing re-reads the whole history while the run executes.
 async function fetchEvents(sid) {
   try {
     const { stdout } = await smithers(["events", sid, "--json", "--limit", "100000"]);
@@ -385,6 +407,18 @@ async function fetchEvents(sid) {
   } catch {
     return [];
   }
+}
+
+// Live followers by hub run id, so shutdown can kill every follower child
+// before exiting (executeAssignment's finally never runs past process.exit).
+const activeFollowers = new Set();
+
+function spawnSmithersFollower(sid) {
+  // Control-plane read (local .smithers state, no untrusted code): runs the
+  // smithers binary directly, never through the exec wrapper, and inherits
+  // the runner env untouched — no run secrets enter the child or its argv.
+  const command = smithersCommand({ smithersBin, execWrapper }, smithersFollowerArgs(sid));
+  return spawn(command.cmd, command.args, { cwd: workspace, stdio: ["ignore", "pipe", "pipe"] });
 }
 
 async function getState(sid) {
@@ -409,6 +443,7 @@ async function executeAssignment(assignment) {
   const secretEnv = assignment.secretEnv && typeof assignment.secretEnv === "object" ? assignment.secretEnv : {};
   let entry = capability.workflow?.entry || capability.workflow?.file;
   activeRuns.add(run.id);
+  let follower = null;
   try {
     await client.post(`/api/runs/${run.id}/start`, {});
 
@@ -555,27 +590,42 @@ async function executeAssignment(assignment) {
       logError: console.error
     });
 
-    // Stream Smithers events to the Hub until the run reaches a terminal state.
-    let posted = 0;
+    // Stream Smithers events to the Hub as they happen: ONE incremental
+    // `events --json --watch` follower per run (initial backlog, then pages,
+    // then a terminal drain — see runnerSmithersFollower.js) instead of
+    // re-reading the whole history every poll. Delivery is serialized, so
+    // approvals/usage/event posts keep their engine order; a follower restart
+    // replays the backlog but the per-run seq dedupe drops what was already
+    // posted.
+    follower = createSmithersEventFollower({
+      spawnFollower: () => spawnSmithersFollower(sid),
+      // Approval observation + event post + runner-observed usage (the
+      // gateway-metered model is excluded so nothing double-counts).
+      onLine: createFollowerLineHandler({
+        observeEventLine: (line) => engineApprovals.observeEventLine(line),
+        postEvent: (message) => event(run.id, "smithers.event", message),
+        postUsage: (usage) => postRunUsage(run.id, usage),
+        gatewayModel: gateway?.model || ""
+      }),
+      logError: (message) => console.error(`[follower ${run.id}] ${message}`),
+      // A zero exit is only trusted as "terminal drain complete" when the
+      // engine run really is terminal; an externally signalled watch child
+      // restarts instead of silently truncating the stream.
+      isEngineTerminal: async () => {
+        const st = await getState(sid);
+        return TERMINAL.has(st.runState?.state || st.run?.status || "running");
+      }
+    });
+    activeFollowers.add(follower);
+    follower.start();
+
+    // Poll loop is control-plane only now: engine state, hub status
+    // (pause/cancel/terminal), approval holds, and the execution deadline.
     let state = "running";
     let deadline = Date.now() + maxRunMs;
     let deadlineExceeded = false;
     let hubTerminalStatus = "";
     while (Date.now() < deadline) {
-      const lines = await fetchEvents(sid);
-      for (let i = posted; i < lines.length; i++) {
-        engineApprovals.observeEventLine(lines[i]);
-        await event(run.id, "smithers.event", smithersEventMessage(lines[i]));
-        // Runner-observed usage: the engine's TokenUsageReported telemetry is
-        // reported per call. Gateway-pinned model calls are already metered at
-        // the gateway; report only OTHER models (e.g. a claude fallback) so
-        // nothing double-counts.
-        const usage = smithersTokenUsage(lines[i]);
-        if (usage && (!gateway || usage.model !== gateway.model)) {
-          await postRunUsage(run.id, usage);
-        }
-      }
-      posted = lines.length;
       try {
         const st = await getState(sid);
         state = st.runState?.state || st.run?.status || "running";
@@ -649,11 +699,30 @@ async function executeAssignment(assignment) {
       return;
     }
 
+    // Let the follower finish its own terminal drain (the watch loop exits 0
+    // once the engine run is terminal and remaining pages are flushed), then
+    // stop it — stop() also waits for in-flight Hub posts, so every streamed
+    // event lands before the terminal artifacts/completion report.
+    await follower.waitForExit(15_000);
+    await follower.stop();
+
     const {
       inspect: st,
       outputs,
       eventLines
-    } = await collectSmithersRunResult(sid, { getState, nodeOutput, fetchEvents });
+    } = await collectSmithersRunResult(sid, {
+      getState,
+      nodeOutput,
+      // Terminal artifact collection does exactly ONE bounded full fetch (the
+      // pre-follower behavior): the smithers-events.ndjson artifact is the
+      // durable record, and a freak follower truncation (externally signalled
+      // watch child racing the terminal transition) must not corrupt it. The
+      // follower's accumulated lines are the fallback if that fetch fails.
+      fetchEvents: async () => {
+        const lines = await fetchEvents(sid);
+        return lines.length ? lines : follower.lines;
+      }
+    });
     for (const artifact of smithersArtifactPayloads({ sid, state, outputs, eventLines })) {
       await client.post(`/api/runs/${run.id}/artifacts`, artifact);
     }
@@ -696,6 +765,10 @@ async function executeAssignment(assignment) {
     await failRun(run.id, error.stack || error.message).catch(() => {});
     console.error(`Run ${run.id} failed:`, error.message);
   } finally {
+    if (follower) {
+      await follower.stop().catch(() => {});
+      activeFollowers.delete(follower);
+    }
     smithersRegistry.unregister(run.id);
     activeRuns.delete(run.id);
     completedRuns += 1;
@@ -800,6 +873,10 @@ async function shutdown(signal) {
   if (intervalHandle) clearInterval(intervalHandle);
   console.log(`${signal} received; cancelling ${smithersRegistry.active.size} owned Smithers run(s) before exit.`);
   try {
+    // Kill every live event follower FIRST — executeAssignment's finally
+    // never runs past process.exit, and even if cancelAll throws below, a
+    // leaked watch child would otherwise poll its engine run forever.
+    await Promise.all([...activeFollowers].map((f) => f.stop().catch(() => {})));
     await smithersRegistry.cancelAll(`runner received ${signal}`);
   } finally {
     process.exit(0);
