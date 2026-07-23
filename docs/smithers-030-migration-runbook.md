@@ -134,11 +134,16 @@ Canary sequence (in order, each gate must pass before the next):
 3. **resume a PRE-UPGRADE paused run** (if any exists): proves cross-version
    checkpoint resume on the migrated store. Expect the first write to
    migrate the db (fast); watch the runner log once.
-4. **approval flow** — run a gated workflow (`implement-change-gated`),
-   approve from the Hub card, confirm the run continues to terminal. On 0.30
-   the engine parks `waiting-event` after the decision and the runner
-   relaunches it from the checkpoint automatically (`engine.approval.resumed`
-   event with `resumeLaunch: true`).
+4. **approval flow** — run a non-mutating canary workflow that contains a real
+   Smithers `<Approval>` node, approve from the Hub card, and confirm the run
+   continues to terminal. On 0.30 the engine parks `waiting-event` after the
+   decision and the runner relaunches it from the checkpoint automatically
+   (`engine.approval.resumed` event with `resumeLaunch: true`). Do not use
+   `implement-change-gated` solely as this proof: despite its name, its current
+   graph has deterministic build/test/push gates but no engine `<Approval>`
+   node. If no non-mutating approval canary is enabled in the live catalog,
+   record this live gate as not applicable and retain the isolated Hub/runner
+   approval round-trip evidence from the readiness report.
 5. **no daemon** — `pgrep -af "smithers.*gateway"` on the runner host: no
    workspace gateway daemon may exist (runner pins `SMITHERS_NO_DAEMON=1`).
 
