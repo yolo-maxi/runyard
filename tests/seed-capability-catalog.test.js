@@ -27,6 +27,7 @@ describe("seed capability catalog", () => {
       "implement-change-gated",
       "idea-to-product",
       "improve",
+      "product-scout",
       "product-workflow",
       "ci-pipeline",
       "ci-job",

@@ -307,6 +307,101 @@ export const seedProductCapabilities = [
     }
   },
   {
+    "slug": "product-scout",
+    "name": "Product Scout",
+    "description": "Read-only product scout that inspects a project against a standing objective and returns concrete action/feature proposals with evidence, approval level, suggested workflow, and evaluation gates. It never edits code, reads secrets, reads raw private databases, deploys, books, purchases, or mutates production.",
+    "category": "Product",
+    "keywords": [
+      "product",
+      "scout",
+      "proposal",
+      "roadmap",
+      "features",
+      "planning",
+      "nomad",
+      "smithers"
+    ],
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "objective"
+      ],
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "Short human-readable run title."
+        },
+        "projectName": {
+          "type": "string",
+          "description": "Product/project name shown in the proposal report."
+        },
+        "objective": {
+          "type": "string",
+          "description": "Standing product objective the scout should optimize for."
+        },
+        "context": {
+          "type": "string",
+          "description": "Trusted operator context, constraints, taste notes, and links to briefs."
+        },
+        "repoDir": {
+          "type": "string",
+          "description": "Absolute runner-local git repo path to inspect. Must be inside configured allowed improve repo roots."
+        },
+        "repo": {
+          "type": "string",
+          "description": "Optional friendly repo key resolved from the runner repo policy config."
+        },
+        "project": {
+          "type": "string",
+          "description": "Optional friendly project key resolved from the runner repo policy config."
+        },
+        "maxProposals": {
+          "type": "number",
+          "description": "Maximum number of proposals to return (1-8, default 5)."
+        },
+        "cadence": {
+          "type": "string",
+          "enum": ["manual", "daily", "weekly"],
+          "description": "How this run was triggered."
+        },
+        "includeImplementationPrompts": {
+          "type": "boolean",
+          "description": "Whether proposals should include self-contained implementation prompts."
+        }
+      }
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "baseline": { "type": "object" },
+        "sense": { "type": "object" },
+        "proposals": {
+          "type": "object",
+          "description": "{summary,proposals:[{title,priority,horizon,approvalLevel,rationale,userBenefit,evidence,risk,suggestedWorkflow,suggestedRunInputJson,evalGates,nextAction,implementationPrompt}],rejectedIdeas,notes}"
+        },
+        "report": { "type": "object" }
+      }
+    },
+    "requiredRunnerTags": [
+      "smithers"
+    ],
+    "requiredSkills": [
+      "product-review",
+      "research-method"
+    ],
+    "requiredAgents": [
+      "product-manager",
+      "researcher"
+    ],
+    "approvalPolicy": {
+      "required": false
+    },
+    "workflow": {
+      "engine": "smithers",
+      "entry": ".smithers/workflows/product-scout.tsx"
+    }
+  },
+  {
     "slug": "product-workflow",
     "name": "Product Workflow (sequential)",
     "description": "Researches RunYard's competitive/product gaps, prioritizes compact feature proposals, and reports the gated implementation runs it would create. With execute=false it is plan-only; with execute=true it queues isolated review-branch implementation runs sequentially.",

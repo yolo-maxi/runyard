@@ -1,0 +1,150 @@
+{
+  "kind": "runyard.board",
+  "version": 1,
+  "slug": "nomad-life-factory",
+  "title": "Nomad Life Factory",
+  "description": "Product factory for Fran's nomad-life tools: collect travel information first, then propose fixes, then gradually move toward bookings and proactive help. Scouts are read-only by default; anything involving private data, production deploys, bookings, purchases, or external communication needs human approval.",
+  "project": "nomad-calendar",
+  "defaultWorkflows": [
+    "product-scout",
+    "improve-no-deploy",
+    "improve",
+    "implement-change-gated"
+  ],
+  "isDefault": false,
+  "lanes": [
+    {
+      "id": "intake",
+      "label": "Signals",
+      "hint": "Travel pain, missing context, import false positives, workflow friction, and ideas worth shaping.",
+      "empty": "No fresh travel-life signals.",
+      "statuses": ["intake"]
+    },
+    {
+      "id": "triaged",
+      "label": "Shape",
+      "hint": "Action/feature proposals that need product judgment before implementation.",
+      "empty": "No Nomad proposals waiting for shaping.",
+      "statuses": ["triaged"],
+      "trigger": {
+        "mode": "suggest",
+        "label": "Scout Nomad",
+        "workflow": "product-scout",
+        "description": "Run the read-only Nomad product scout and return concrete proposals with approval levels and eval gates.",
+        "input": {
+          "title": "Nomad Life Scout",
+          "projectName": "Nomad Life",
+          "objective": "Build an integrated set of tools to make Fran's nomad life easier. Include calendar, flights, hotels/Airbnb. Start by collecting all information in one place, eventually branch out into bookings and more proactive help. Start fixing Fran's life, eventually productize.",
+          "context": "Nomad Calendar is the current seed app at /home/xiko/nomad-calendar, deployed privately at nomad-calendar.repo.box. It already imports Gmail travel confirmations into a private monthly calendar with flight/stay layers. Do not inspect raw Gmail tokens, secrets, or raw SQLite/imported travel content; use code, docs, tests, project briefs, and aggregate behavior only.",
+          "repo": "nomad-calendar",
+          "maxProposals": 5,
+          "cadence": "manual",
+          "includeImplementationPrompts": true
+        }
+      }
+    },
+    {
+      "id": "ready",
+      "label": "Ready",
+      "hint": "Approved fixes or features with clear implementation prompts and gates.",
+      "empty": "Nothing ready to launch.",
+      "statuses": ["ready"],
+      "trigger": {
+        "mode": "confirm",
+        "label": "Implement gated",
+        "workflow": "implement-change-gated",
+        "description": "Confirm before launching an isolated implementation branch against Nomad Calendar."
+      },
+      "transitions": [
+        {
+          "to": "running",
+          "allow": {
+            "manual": true,
+            "workflows": ["implement-change-gated", "improve"],
+            "runOrigins": ["schedule"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "running",
+      "label": "In motion",
+      "hint": "Nomad work with an active run or ongoing operator action.",
+      "empty": "No Nomad work currently moving.",
+      "statuses": ["running"],
+      "transitions": [
+        {
+          "to": "review",
+          "allow": {
+            "manual": true,
+            "runOrigins": ["workflow", "schedule"]
+          }
+        },
+        {
+          "to": "attention",
+          "allow": {
+            "manual": true,
+            "runOrigins": ["workflow"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "attention",
+      "label": "Needs Fran",
+      "hint": "Private-data, booking, production, payment, or product-direction decisions.",
+      "empty": "No Nomad blockers or decisions.",
+      "statuses": ["waiting", "blocked"]
+    },
+    {
+      "id": "review",
+      "label": "Review",
+      "hint": "Built or researched enough for Fran/Ocean to inspect.",
+      "empty": "Nothing awaiting review.",
+      "statuses": ["review"],
+      "transitions": [
+        {
+          "to": "shipped",
+          "allow": {
+            "manual": true,
+            "actorRoles": ["human"]
+          },
+          "message": "Only humans mark Nomad work shipped from Review."
+        }
+      ]
+    },
+    {
+      "id": "shipped",
+      "label": "Done",
+      "hint": "Accepted or shipped Nomad improvements.",
+      "empty": "No completed Nomad work on this board.",
+      "statuses": ["shipped", "accepted"],
+      "guard": {
+        "allowFromStatuses": ["review"],
+        "message": "Move Nomad work through Review before marking it done."
+      }
+    }
+  ],
+  "schedules": [
+    {
+      "slug": "nomad-weekly-life-scout",
+      "name": "Nomad weekly life scout",
+      "workflow": "product-scout",
+      "cron": "0 10 * * 1",
+      "timezone": "America/New_York",
+      "description": "Weekly read-only scout for Nomad Life proposals. Disabled by default until Ocean/Fran explicitly enable the cadence.",
+      "input": {
+        "title": "Weekly Nomad Life Scout",
+        "projectName": "Nomad Life",
+        "objective": "Build an integrated set of tools to make Fran's nomad life easier. Include calendar, flights, hotels/Airbnb. Start by collecting all information in one place, eventually branch out into bookings and more proactive help. Start fixing Fran's life, eventually productize.",
+        "context": "Nomad Calendar is the seed app at /home/xiko/nomad-calendar, privately deployed at nomad-calendar.repo.box. Propose concrete actions/features only. Do not inspect raw Gmail tokens, secrets, raw SQLite databases, or raw imported travel content. Use code, docs, tests, project briefs, and aggregate behavior only. Anything involving private data, production mutation, booking, purchasing, or external communication requires human approval.",
+        "repo": "nomad-calendar",
+        "maxProposals": 5,
+        "cadence": "weekly",
+        "includeImplementationPrompts": true
+      },
+      "enabled": false,
+      "laneId": "triaged"
+    }
+  ]
+}

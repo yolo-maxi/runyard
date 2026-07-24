@@ -153,6 +153,25 @@ describe("board definition validator", () => {
     assert.equal(validated.ok, true, validated.error);
     assert.equal(validated.value.slug, "runyard-development-factory");
   });
+
+  it("validates the Nomad Life factory definition and keeps scout cadence opt-in", () => {
+    const path = new URL("../workflow-templates/board-definitions/nomad-life-factory.json", import.meta.url);
+    const disk = JSON.parse(readFileSync(path, "utf8"));
+    const validated = validateBoardDefinition(disk);
+    assert.equal(validated.ok, true, validated.error);
+    assert.equal(validated.value.slug, "nomad-life-factory");
+    assert.equal(validated.value.project, "nomad-calendar");
+    assert.equal(validated.value.defaultWorkflows[0], "product-scout");
+    const scoutLane = validated.value.lanes.find((lane) => lane.id === "triaged");
+    assert.equal(scoutLane.trigger.workflow, "product-scout");
+    assert.equal(scoutLane.trigger.input.repo, "nomad-calendar");
+    assert.match(scoutLane.trigger.input.objective, /nomad life easier/);
+    const schedule = validated.value.schedules.find((entry) => entry.slug === "nomad-weekly-life-scout");
+    assert.equal(schedule.workflow, "product-scout");
+    assert.equal(schedule.enabled, false);
+    assert.equal(schedule.timezone, "America/New_York");
+    assert.equal(schedule.input.repo, "nomad-calendar");
+  });
 });
 
 describe("board definition handlers", () => {
