@@ -3,6 +3,10 @@ import { deepLinks } from "./deepLinks.js";
 export function runStatusLinks(runId) {
   return {
     statusUrl: `/api/runs/${runId}`,
+    // Live SSE transport (afterSeq / Last-Event-ID resume; see
+    // specs/cli-stream-follow.md). Poll eventsUrl for the same data.
+    eventsUrl: `/api/runs/${runId}/events`,
+    eventsStreamUrl: `/api/runs/${runId}/events/stream`,
     webUrl: `/app#runs/${runId}`,
     deepLink: deepLinks.run(runId)
   };

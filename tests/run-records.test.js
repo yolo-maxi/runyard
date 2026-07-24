@@ -222,15 +222,15 @@ describe("run record helpers", () => {
       type: "workflow.step",
       message: "Build started",
       data: { step: "build" },
+      seq: null,
       createdAt: "2026-01-01T00:00:00.000Z"
     });
+    assert.equal(normalizeRunEvent({ ...record, seq: 4 }).seq, 4);
 
-    assert.deepEqual(runEventInsertQuery(), {
-      sql: "INSERT INTO run_events (id, run_id, type, message, data, created_at) VALUES ($id, $run_id, $type, $message, $data, $created_at)"
-    });
-    assert.deepEqual(runEventListQuery("run_1"), {
-      sql: "SELECT * FROM run_events WHERE run_id = ? ORDER BY created_at ASC",
-      params: ["run_1"]
-    });
+    // seq is assigned inside the INSERT (COALESCE(MAX(seq),-1)+1 — the
+    // Smithers next-seq rule) so concurrent inserts can never share a cursor.
+    assert.match(runEventInsertQuery().sql, /COALESCE\(MAX\(seq\), -1\) \+ 1/);
+    assert.match(runEventListQuery("run_1").sql, /ORDER BY \(seq IS NULL\) ASC, seq ASC, created_at ASC, rowid ASC/);
+    assert.deepEqual(runEventListQuery("run_1").params, ["run_1"]);
   });
 });

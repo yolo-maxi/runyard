@@ -15,6 +15,26 @@ export function smithersEventsArtifactContent(lines = []) {
   return lines.map(smithersEventMessage).join("\n");
 }
 
+// Per-line handler for the incremental event follower: engine-approval
+// observation, the Hub event post, and runner-observed usage (skipping the
+// gateway-metered model so nothing double-counts). Extracted from runner.js
+// so the composition is testable without spawning anything.
+export function createFollowerLineHandler({
+  observeEventLine = () => {},
+  postEvent,
+  postUsage,
+  gatewayModel = ""
+}) {
+  return async (line) => {
+    observeEventLine(line);
+    await postEvent(smithersEventMessage(line));
+    const usage = smithersTokenUsage(line);
+    if (usage && (!gatewayModel || usage.model !== gatewayModel)) {
+      await postUsage(usage);
+    }
+  };
+}
+
 // Extract a Hub usage record from one engine event line. The Smithers engine
 // emits a structured TokenUsageReported event for every agent result (model,
 // node, token counts taken from the agent CLI's own reported usage) — this is
@@ -52,4 +72,29 @@ export function smithersTokenUsage(line) {
       ...(payload.reasoningTokens ? { reasoningTokens: Number(payload.reasoningTokens) } : {})
     }
   };
+}
+
+// Forward only the unseen suffix of Smithers' replayed event history. The
+// engine `events` command returns the full stream on every poll, so callers
+// carry `posted` across polls and run this once more against the final
+// collected stream after the engine becomes terminal. That final flush is
+// load-bearing: terminal events (especially TokenUsageReported) can land
+// between the last poll and `inspect` observing completion.
+export async function forwardSmithersEventTail({
+  lines = [],
+  posted = 0,
+  observeEventLine = () => {},
+  postEventLine,
+  postUsage,
+  gatewayModel = ""
+} = {}) {
+  for (let i = Math.max(0, Number(posted) || 0); i < lines.length; i++) {
+    observeEventLine(lines[i]);
+    await postEventLine(lines[i]);
+    const usage = smithersTokenUsage(lines[i]);
+    if (usage && (!gatewayModel || usage.model !== gatewayModel)) {
+      await postUsage(usage);
+    }
+  }
+  return lines.length;
 }

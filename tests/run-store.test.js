@@ -90,7 +90,7 @@ describe("run store", () => {
   });
 
   it("records and lists run events", () => {
-    const { calls, store } = createHarness({ allRows: [eventRow] });
+    const { calls, store } = createHarness({ oneRows: [{ seq: 3 }], allRows: [eventRow] });
 
     const event = store.addRunEvent("run_1", "workflow.step", "Build", { step: "build" });
 
@@ -100,9 +100,18 @@ describe("run store", () => {
       type: "workflow.step",
       message: "Build",
       data: { step: "build" },
+      seq: 3,
       createdAt: "2026-07-01T00:00:00.000Z"
     });
     assert.ok(calls.some((call) => call.fn === "run" && call.params.id === "evt_1"));
     assert.equal(store.listRunEvents("run_1")[0].type, "workflow.step");
+  });
+
+  it("pages run events after a seq cursor with a bounded limit", () => {
+    const { calls, store } = createHarness({ allRows: [{ ...eventRow, seq: 5 }] });
+    const page = store.listRunEventsAfter("run_1", 4, 200);
+    assert.equal(page[0].seq, 5);
+    const call = calls.find((c) => c.fn === "all" && c.sql.includes("seq > ?"));
+    assert.deepEqual(call.params, ["run_1", 4, 200]);
   });
 });

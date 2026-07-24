@@ -3,7 +3,9 @@ import {
   normalizeRunEvent,
   runEventInsertQuery,
   runEventListQuery,
+  runEventPageQuery,
   runEventRecord,
+  runEventSeqLookupQuery,
   runLookupQuery,
   runOwnerTokenQuery
 } from "./runRecords.js";
@@ -73,11 +75,22 @@ export function createRunStore({ all, one, run, id, now, visibleRunWhere = "" })
   function addRunEvent(runId, type, message = "", data = {}) {
     const event = runEventRecord({ id: id("evt"), runId, type, message, data, createdAt: now() });
     run(runEventInsertQuery().sql, event);
-    return normalizeRunEvent(event);
+    // The INSERT assigned the per-run seq atomically; read it back so the
+    // returned event (and the SSE bus publish) carries its cursor.
+    const seqQuery = runEventSeqLookupQuery(event.id);
+    const seqRow = one(seqQuery.sql, seqQuery.params);
+    return normalizeRunEvent({ ...event, seq: seqRow?.seq ?? null });
   }
 
   function listRunEvents(runId) {
     const query = runEventListQuery(runId);
+    return all(query.sql, query.params).map(normalizeRunEvent);
+  }
+
+  // Bounded cursor page for SSE replay/resume: events with seq > afterSeq in
+  // seq order. Mirrors Smithers' adapter.listEvents(runId, afterSeq, limit).
+  function listRunEventsAfter(runId, afterSeq = -1, limit = 200) {
+    const query = runEventPageQuery({ runId, afterSeq, limit });
     return all(query.sql, query.params).map(normalizeRunEvent);
   }
 
@@ -87,6 +100,7 @@ export function createRunStore({ all, one, run, id, now, visibleRunWhere = "" })
     getRun,
     listCapabilityVersionsFromRuns,
     listRunEvents,
+    listRunEventsAfter,
     listRuns,
     runOwnerTokenId
   };

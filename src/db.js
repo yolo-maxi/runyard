@@ -19,6 +19,7 @@ import { createCatalogStore } from "./catalogStore.js";
 import { createDbBootstrap } from "./dbBootstrap.js";
 import { DB_SCHEMA_SQL } from "./dbSchema.js";
 import { runReapReason } from "./runQueryRecords.js";
+import { runEventSeqBackfillQueries } from "./runRecords.js";
 import {
   missingColumnAlterQueries,
   tableColumnsQuery
@@ -255,6 +256,7 @@ export function initDb() {
   migrateApprovalsTelegramMessageColumn();
   migrateApprovalsKindResolutionColumns();
   migrateApprovalsAskColumn();
+  migrateRunEventsSeqColumn();
   dbBootstrap.setSettingDefault("instance_name", env.instanceName);
   dbBootstrap.seedCatalog();
   dbBootstrap.seedWorkflowEndpoints();
@@ -400,6 +402,37 @@ function migrateApprovalsTelegramMessageColumn() {
 // not invent asks after the fact.
 function migrateApprovalsAskColumn() {
   migrateMissingColumns("approvals", [{ name: "ask", definition: "ask TEXT" }]);
+}
+
+// Per-run monotonic event cursor (mirrors the Smithers engine's per-run event
+// seq). The ALTER is the usual idempotent missing-column add; the backfill
+// assigns every seq-less row a deterministic cursor in its existing order
+// (created_at, then rowid — insertion order) continuing from the run's current
+// MAX(seq). It runs on every boot, not just first migration, so rows written
+// during a downgrade window (an old binary inserts seq=NULL) are swept up on
+// the next start; already-assigned seqs are never renumbered. The unique
+// (run_id, seq) index makes duplicate cursors impossible (SQLite treats NULLs
+// as distinct, so legacy NULL rows never violate it).
+function migrateRunEventsSeqColumn() {
+  migrateMissingColumns("run_events", [{ name: "seq", definition: "seq INTEGER" }]);
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_run_events_run_seq ON run_events(run_id, seq)");
+
+  const queries = runEventSeqBackfillQueries();
+  if (!one(queries.hasNullSeq.sql, queries.hasNullSeq.params)) return;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    for (const { run_id: runId } of all(queries.runsWithNullSeq.sql, queries.runsWithNullSeq.params)) {
+      let nextSeq = Number(one(queries.maxSeqForRun.sql, [runId]).max_seq) + 1;
+      for (const row of all(queries.nullSeqRowsForRun.sql, [runId])) {
+        run(queries.assignSeq.sql, [nextSeq, row.id]);
+        nextSeq += 1;
+      }
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 // The honest approval lifecycle (kind + resolution + resolved_via). Runs the
@@ -853,6 +886,12 @@ export function addRunEvent(runId, type, message = "", data = {}) {
 
 export function listRunEvents(runId) {
   return runStore.listRunEvents(runId);
+}
+
+// Bounded seq-cursor page (events with seq > afterSeq, seq order). The SSE
+// stream's replay/poll source; mirrors Smithers adapter.listEvents.
+export function listRunEventsAfter(runId, afterSeq = -1, limit = 200) {
+  return runStore.listRunEventsAfter(runId, afterSeq, limit);
 }
 
 export function recordRunUsage(runId, body) {

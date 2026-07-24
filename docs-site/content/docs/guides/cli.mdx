@@ -73,6 +73,8 @@ runyard run my-workflow \
 | `--pin <sha>` | Pin the run to a specific workflow git SHA (requires workflow versioning) |
 | `--max-tokens <n>` | Hard budget: stop the run once its metered usage reaches this many tokens |
 | `--max-cost <usd>` | Hard budget: stop the run once its metered cost reaches this many US dollars |
+| `--follow` | Attach to the run's live event stream and exit with its terminal status |
+| `--stream-logs` | Alias for `--follow` |
 
 Related: `runyard workflow versions <workflow>` lists SHAs seen across runs and
 `runyard workflow rollback <workflow> <sha>` re-runs pinned to a prior SHA
@@ -86,7 +88,8 @@ runyard attention                # triage queue: paused / waiting approval / sto
 runyard usage                    # fleet usage rollup per workflow (--days 7 to narrow)
 runyard usage <runId>            # one run's metered usage, budget, and per-call records
 runyard run-status <id>          # run detail (alias: run-detail)
-runyard logs <id>                # print run logs
+runyard logs <id>                # print run logs (snapshot)
+runyard logs <id> --follow       # attach to the live event stream through terminal state
 runyard tail <runId>             # follow the unified timeline as NDJSON
 runyard tail <runId> --once      # one snapshot, then exit (--since <iso> to resume)
 runyard artifacts <runId>        # list a run's artifacts (omit runId to search across runs)
@@ -97,8 +100,42 @@ runyard resume <runId> --from-scratch        # discard the checkpoint + runner p
 ```
 
 `tail` emits `{ts, kind, source, payload}` lines built from status transitions,
-events, and artifacts, polling every 2 seconds with a `since` cursor — pipe it
-into `jq` or downstream tooling.
+events, and artifacts — pipe it into `jq` or downstream tooling. It rides the
+run's live event stream (falling back to 2-second polling if the stream is
+unavailable) and exits once the run is terminal and drained.
+
+### Follow mode (`run --follow`, `logs --follow`)
+
+`--follow` streams a run's events to stdout until the run reaches a terminal
+state, then exits — external tools can treat RunYard as an ordinary
+subprocess without knowing anything about runners or the Hub's event
+transport (an authenticated SSE stream with cursor resume under the hood):
+
+```bash
+runyard run my-workflow -i '{...}' --follow        # create + attach + stream
+runyard logs <run-id> --follow                     # attach to an existing run
+runyard logs <run-id> --follow --after-seq 41      # resume from a saved cursor
+runyard --json run my-workflow --follow | jq .     # NDJSON envelopes
+```
+
+- Text mode prints one `[timestamp] type: message` line per event, then a
+  terminal summary. With the global `--json` flag, stdout carries exactly one
+  NDJSON envelope per line and nothing else: `{"kind":"run-created",…}` (from
+  `run --follow`), `{"kind":"event", runId, seq, id, type, message,
+  createdAt, data?}`, and a final `{"kind":"terminal", runId, status,
+  exitCode, error?, output?, links}`.
+- All diagnostics (attach, reconnect/backoff, detach notices) go to stderr —
+  stdout stays machine-parseable.
+- The stream reconnects transparently with exponential backoff and resumes
+  from the last seen event cursor; no event is lost or duplicated.
+- `Ctrl-C` detaches and exits `130` **without cancelling the remote run** —
+  reattach later with `runyard logs <id> --follow`.
+
+Exit codes are stable: `0` run succeeded; `1` run reached any other terminal
+status (failed, cancelled, timed_out, budget_exceeded, …); `2` usage/input
+error (unknown run, invalid cursor); `3` transport failure (could not reach
+or keep a stream to the Hub); `4` authentication failure; `130` detached via
+Ctrl-C.
 
 ## Approvals
 

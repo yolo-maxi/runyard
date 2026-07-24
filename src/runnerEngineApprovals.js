@@ -35,21 +35,26 @@ export const ENGINE_APPROVAL_MAX_APPLY_ATTEMPTS = 3;
 
 // Extract pending engine-level approval waits from `smithers inspect` JSON.
 // 0.22.0 shape: { run: {status}, runState?: {state}, approvals?: [{nodeId,
-// status, requestedAt}] } — `approvals` lists pending gates only. When the
-// engine reports `waiting-approval` but the approvals array is missing (older
-// engine, transient lag), a synthetic empty-node wait keeps the run held.
+// status, requestedAt}] } — `approvals` lists pending gates only, with
+// status "pending"; 0.30 reports the same rows with status "requested"
+// (verified against a live 0.30 gate). When the engine reports
+// `waiting-approval` but the approvals array is missing (older engine,
+// transient lag), a synthetic empty-node wait keeps the run held.
 //
 // The workflow author's <Approval request={{title, summary, metadata}}> is
-// stored by the engine but NOT exposed by 0.22 inspect. We read those fields
-// defensively (request.title / title, request.summary / summary, metadata) so
-// an engine upgrade that exposes them (≥0.25) makes the Hub card carry the
-// authored question with no runner change.
+// stored by the engine but not exposed by inspect on either 0.22 or 0.30.
+// We read those fields defensively (request.title / title, request.summary /
+// summary, metadata) in case a future engine exposes them; on 0.30 the
+// authored copy arrives via ApprovalRequested/NodeWaitingApproval events and
+// the bridge merges it in (see observeEventLine).
+const PENDING_APPROVAL_STATUSES = new Set(["pending", "requested"]);
+
 export function engineApprovalWaits(inspect = null) {
   if (!inspect || typeof inspect !== "object") return [];
   const status = String(inspect.runState?.state || inspect.run?.status || "");
   const approvals = Array.isArray(inspect.approvals) ? inspect.approvals : [];
   const waits = approvals
-    .filter((approval) => String(approval?.status || "pending") === "pending")
+    .filter((approval) => PENDING_APPROVAL_STATUSES.has(String(approval?.status || "pending")))
     .map((approval) => {
       const request = approval?.request && typeof approval.request === "object" ? approval.request : {};
       const metadata = request.metadata ?? approval?.metadata;
@@ -176,6 +181,30 @@ export function engineDecisionFromEventLine(line) {
   }
 }
 
+// Observe the authored <Approval request={{title, summary, metadata}}> in the
+// event stream. Inspect never exposes it (0.22 nor 0.30), but 0.30's
+// ApprovalRequested / NodeWaitingApproval events carry the full request, so
+// the Hub card can quote the workflow author's own question.
+export function engineApprovalRequestFromEventLine(line) {
+  try {
+    const parsed = JSON.parse(line);
+    const type = String(parsed?.type || "");
+    if (type !== "ApprovalRequested" && type !== "NodeWaitingApproval") return null;
+    const payload = parsed?.payload && typeof parsed.payload === "object" ? parsed.payload : {};
+    const request = payload.request && typeof payload.request === "object" ? payload.request : {};
+    const nodeId = String(payload.nodeId ?? parsed?.nodeId ?? "");
+    if (!nodeId) return null;
+    return {
+      nodeId,
+      title: String(request.title || ""),
+      summary: String(request.summary || ""),
+      metadata: request.metadata && typeof request.metadata === "object" && Object.keys(request.metadata).length ? request.metadata : null
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function createEngineApprovalBridge({
   hubRunId,
   smithersRunId,
@@ -189,16 +218,46 @@ export function createEngineApprovalBridge({
   hubGet,
   hubPost,
   runSmithers,
+  // Relaunch the detached engine run from its checkpoint. Smithers ≥0.24
+  // detached owners EXIT at an approval gate (verified on 0.30): after a
+  // decision is applied the run parks as `waiting-event` and nothing resumes
+  // it unless someone relaunches `up --resume <sid> --force`. On 0.22 the
+  // owner stayed alive through gates, the run never shows `waiting-event`,
+  // and this callback is simply never invoked.
+  resumeEngineRun = null,
   logError = () => {}
 } = {}) {
   // nodeId -> { approvalId, applied, appliedDecision, applyAttempts, applyGaveUp }
   const waits = new Map();
   // nodeId -> engine-side decision observed in the event stream
   const engineDecisions = new Map();
+  // nodeId -> authored request copy observed in the event stream (0.30)
+  const authoredRequests = new Map();
+  // A decision landed (Hub-applied or engine-side) and the parked run still
+  // needs a resume launch. Cleared when the resume fires; re-armed by the
+  // next decided gate (loop iterations can gate repeatedly).
+  let resumePending = false;
+  let resumeInFlight = false;
 
   function observeEventLine(line) {
     const observed = engineDecisionFromEventLine(line);
     if (observed) engineDecisions.set(observed.nodeId, observed.decision);
+    const request = engineApprovalRequestFromEventLine(line);
+    if (request) authoredRequests.set(request.nodeId, request);
+  }
+
+  // The inspect row carries no authored request copy (0.22 nor 0.30); merge
+  // in what the event stream reported for this gate so the Hub card can carry
+  // the author's words.
+  function enrichWait(wait) {
+    const authored = authoredRequests.get(wait.nodeId);
+    if (!authored) return wait;
+    return {
+      ...wait,
+      title: wait.title || authored.title,
+      summary: wait.summary || authored.summary,
+      metadata: wait.metadata || authored.metadata
+    };
   }
 
   async function surfaceWait(wait) {
@@ -262,6 +321,7 @@ export function createEngineApprovalBridge({
       await runSmithers(args);
       state.applied = true;
       state.appliedDecision = String(approval.decision || "");
+      resumePending = true;
       await postEvent(
         ENGINE_APPROVAL_APPLIED_EVENT,
         `Applied human decision '${approval.decision}' to engine approval node '${nodeId || "approval"}' via smithers ${args[0]}.`,
@@ -284,7 +344,7 @@ export function createEngineApprovalBridge({
       const current = engineApprovalWaits(inspect);
       const currentIds = new Set(current.map((wait) => wait.nodeId));
       for (const wait of current) {
-        if (!waits.has(wait.nodeId)) await surfaceWait(wait);
+        if (!waits.has(wait.nodeId)) await surfaceWait(enrichWait(wait));
       }
       for (const [nodeId, state] of waits) {
         if (!currentIds.has(nodeId)) continue;
@@ -294,11 +354,39 @@ export function createEngineApprovalBridge({
         if (currentIds.has(nodeId)) continue;
         waits.delete(nodeId);
         const engineDecision = engineDecisions.get(nodeId) || state.appliedDecision || "";
+        // A gate decided engine-side (direct smithers CLI) parks the run the
+        // same way a Hub-applied decision does; both need the resume launch.
+        if (engineDecision) resumePending = true;
         await postEvent(
           ENGINE_APPROVAL_RESUMED_EVENT,
           `Engine approval node '${nodeId || "approval"}' resolved${engineDecision ? ` (${engineDecision})` : ""}; workflow resumed.`,
           { smithersRunId, nodeId, approvalId: state.approvalId, engineDecision }
         );
+      }
+      // ≥0.24/0.30 detached semantics: after the last pending gate is decided
+      // the parked run reports `waiting-event` and its (exited) owner never
+      // continues. Relaunch from the checkpoint exactly once per decided
+      // round; new gates (later loop iterations) re-arm the trigger.
+      const runState = String(inspect?.runState?.state || inspect?.run?.status || "");
+      if (resumePending && !resumeInFlight && currentIds.size === 0 && runState === "waiting-event" && typeof resumeEngineRun === "function") {
+        resumeInFlight = true;
+        try {
+          await resumeEngineRun();
+          resumePending = false;
+          await postEvent(
+            ENGINE_APPROVAL_RESUMED_EVENT,
+            `Relaunched Smithers run ${smithersRunId} from its checkpoint to continue past the decided approval gate.`,
+            { smithersRunId, resumeLaunch: true }
+          );
+        } catch (error) {
+          await postEvent(
+            ENGINE_APPROVAL_APPLY_FAILED_EVENT,
+            `Resume launch after approval decision failed for Smithers run ${smithersRunId}: ${String(error.message || error).slice(0, 500)} — will retry on the next poll.`,
+            { smithersRunId, resumeLaunch: true }
+          );
+        } finally {
+          resumeInFlight = false;
+        }
       }
     } catch (error) {
       // Never let bridge bookkeeping break the streaming loop.

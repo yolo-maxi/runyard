@@ -132,6 +132,11 @@ export const DB_SCHEMA_SQL = `
     type TEXT NOT NULL,
     message TEXT NOT NULL DEFAULT '',
     data TEXT NOT NULL DEFAULT '{}',
+    -- Monotonic per-run cursor (0-based), mirroring the Smithers engine's
+    -- per-run event seq. Assigned atomically at insert; the SSE stream and
+    -- CLI --follow replay/resume from it. NULL only on pre-migration rows
+    -- until migrateRunEventsSeqColumn backfills them (src/db.js).
+    seq INTEGER,
     created_at TEXT NOT NULL
   );
 

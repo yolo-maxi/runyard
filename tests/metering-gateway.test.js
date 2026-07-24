@@ -20,7 +20,7 @@ import {
   materializeGatewayPin,
   piGatewayModelsConfig
 } from "../src/runnerGateway.js";
-import { smithersTokenUsage } from "../src/runnerSmithersEvents.js";
+import { forwardSmithersEventTail, smithersTokenUsage } from "../src/runnerSmithersEvents.js";
 
 const SECRET = "test-session-secret";
 
@@ -431,5 +431,59 @@ describe("smithersTokenUsage", () => {
       type: "TokenUsageReported",
       payload: { type: "TokenUsageReported", inputTokens: 0, outputTokens: 0 }
     })), null);
+  });
+});
+
+describe("forwardSmithersEventTail", () => {
+  const lifecycle = JSON.stringify({ runId: "engine-1", seq: 1, type: "NodeFinished" });
+  const usage = JSON.stringify({
+    runId: "engine-1",
+    seq: 2,
+    type: "TokenUsageReported",
+    payload: {
+      type: "TokenUsageReported",
+      runId: "engine-1",
+      nodeId: "hello",
+      model: "claude-opus-4-7",
+      inputTokens: 6,
+      outputTokens: 66
+    }
+  });
+
+  it("forwards only the unseen final suffix and meters terminal usage", async () => {
+    const observed = [];
+    const events = [];
+    const usages = [];
+    const lines = [JSON.stringify({ seq: 0, type: "NodeStarted" }), lifecycle, usage];
+
+    const posted = await forwardSmithersEventTail({
+      lines,
+      posted: 1,
+      observeEventLine: (line) => observed.push(line),
+      postEventLine: async (line) => events.push(line),
+      postUsage: async (record) => usages.push(record)
+    });
+
+    assert.equal(posted, 3);
+    assert.deepEqual(observed, [lifecycle, usage]);
+    assert.deepEqual(events, [lifecycle, usage]);
+    assert.equal(usages.length, 1);
+    assert.equal(usages[0].requestId, "engine-1:2");
+    assert.equal(usages[0].completionTokens, 66);
+  });
+
+  it("still forwards gateway events while suppressing duplicate gateway usage", async () => {
+    const events = [];
+    const usages = [];
+    const posted = await forwardSmithersEventTail({
+      lines: [usage],
+      postEventLine: async (line) => events.push(line),
+      postUsage: async (record) => usages.push(record),
+      gatewayModel: "claude-opus-4-7"
+    });
+
+    assert.equal(posted, 1);
+    assert.deepEqual(events, [usage]);
+    assert.deepEqual(usages, []);
   });
 });

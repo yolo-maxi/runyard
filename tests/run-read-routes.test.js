@@ -157,54 +157,163 @@ describe("run read route helpers", () => {
     assert.equal(notFound.statusCode, 404);
   });
 
-  it("streams run events and unsubscribes when the connection closes", () => {
+  it("streams run events with seq ids, replays after the cursor, and drains to close at terminal", async () => {
+    const events = [
+      { id: "evt_0", runId: "run_1", type: "run.created", message: "queued", data: {}, seq: 0, createdAt: "2026-01-01T00:00:00.000Z" },
+      { id: "evt_1", runId: "run_1", type: "log", message: "hello", data: {}, seq: 1, createdAt: "2026-01-01T00:00:01.000Z" }
+    ];
+    let status = "running";
     const writes = [];
     const callbacks = {};
-    let subscribed = null;
     let unsubscribed = false;
-    const req = {
-      on(event, callback) {
-        callbacks[`req:${event}`] = callback;
-      }
-    };
+    const req = { query: { afterSeq: "0" }, headers: {}, on(event, callback) { callbacks[`req:${event}`] = callback; } };
     const res = {
       headers: null,
       flushed: false,
-      set(headers) {
-        this.headers = headers;
-      },
-      flushHeaders() {
-        this.flushed = true;
-      },
-      write(chunk) {
-        writes.push(chunk);
-      },
-      on(event, callback) {
-        callbacks[`res:${event}`] = callback;
-      }
+      writableEnded: false,
+      set(headers) { this.headers = headers; },
+      flushHeaders() { this.flushed = true; },
+      write(chunk) { writes.push(chunk); return true; },
+      end() { this.writableEnded = true; },
+      on(event, callback) { callbacks[`res:${event}`] = callback; },
+      once(event, callback) { callbacks[`res:once:${event}`] = callback; }
     };
 
     streamRunEventsResponse({
       req,
       res,
       run: { id: "run_1" },
-      listRunEvents: () => [{ id: "evt_1", createdAt: "2026-01-01T00:00:00.000Z" }],
-      subscribeRunEvents: (runId, send) => {
-        subscribed = { runId, send };
-        return () => { unsubscribed = true; };
-      }
+      getRun: () => ({ id: "run_1", status }),
+      listRunEventsAfter: (runId, afterSeq, limit) =>
+        events.filter((event) => event.seq > afterSeq).slice(0, limit),
+      subscribeRunEvents: () => () => { unsubscribed = true; },
+      limits: { batchLimit: 200, pollMs: 5, heartbeatMs: 10_000, retryMs: 1000, drainTimeoutMs: 1000, maxTails: 10, maxTailsPerRun: 10 }
     });
 
     assert.equal(res.headers["Content-Type"], "text/event-stream; charset=utf-8");
     assert.equal(res.flushed, true);
-    assert.match(writes.join(""), /event: ready/);
-    assert.equal(subscribed.runId, "run_1");
 
-    subscribed.send({ id: "evt_2", message: "hello" });
-    assert.match(writes.join(""), /event: run-event/);
+    // Replay is cursor-driven: afterSeq=0 must deliver evt_1 only.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    let output = writes.join("");
+    assert.match(output, /retry: 1000/);
+    assert.match(output, /event: ready/);
+    assert.match(output, /id: 1\nevent: run-event/);
+    assert.ok(!output.includes('"seq":0'), "cursor replay must skip seq 0");
 
-    callbacks["req:close"]();
-    callbacks["res:close"]();
+    // A late event is picked up, then terminal status drains and closes.
+    events.push({ id: "evt_2", runId: "run_1", type: "log", message: "late", data: {}, seq: 2, createdAt: "2026-01-01T00:00:02.000Z" });
+    status = "succeeded";
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    output = writes.join("");
+    assert.match(output, /id: 2\nevent: run-event/);
+    assert.match(output, /event: run-terminal/);
+    assert.match(output, /"status":"succeeded"/);
+    assert.equal(res.writableEnded, true);
     assert.equal(unsubscribed, true);
+  });
+
+  it("sends keepalive comments while live and stops cleanly on client disconnect", async () => {
+    const writes = [];
+    const callbacks = {};
+    let unsubscribed = false;
+    const req = { query: {}, headers: {}, on(event, callback) { callbacks[`req:${event}`] = callback; } };
+    const res = {
+      writableEnded: false,
+      set() {},
+      flushHeaders() {},
+      write(chunk) { writes.push(chunk); return true; },
+      end() { this.writableEnded = true; },
+      on(event, callback) { callbacks[`res:${event}`] = callback; },
+      once() {}
+    };
+    streamRunEventsResponse({
+      req,
+      res,
+      run: { id: "run_hb" },
+      getRun: () => ({ id: "run_hb", status: "running" }),
+      listRunEventsAfter: () => [],
+      subscribeRunEvents: () => () => { unsubscribed = true; },
+      limits: { batchLimit: 200, pollMs: 5, heartbeatMs: 15, retryMs: 1000, drainTimeoutMs: 1000, maxTails: 10, maxTailsPerRun: 10 }
+    });
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    assert.ok(writes.filter((chunk) => chunk.includes(": ping")).length >= 1, "keepalive comments while idle");
+    assert.equal(res.writableEnded, false, "live run stays open");
+    callbacks["req:close"]();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(unsubscribed, true, "disconnect cleanup unsubscribes the wake listener");
+  });
+
+  it("pauses reads on backpressure and disconnects a consumer that never drains", async () => {
+    const events = Array.from({ length: 3 }, (_, seq) => ({
+      id: `evt_${seq}`, runId: "run_bp", type: "log", message: "x", data: {}, seq, createdAt: "2026-01-01T00:00:00.000Z"
+    }));
+    const writes = [];
+    let destroyed = false;
+    const drains = [];
+    const req = { query: {}, headers: {}, on() {} };
+    const res = {
+      writableEnded: false,
+      set() {},
+      flushHeaders() {},
+      // Signal a clogged socket as soon as the first event frame is written.
+      write(chunk) { writes.push(chunk); return !chunk.includes("run-event"); },
+      end() { this.writableEnded = true; },
+      destroy() { destroyed = true; this.writableEnded = true; },
+      on() {},
+      off() {},
+      once(event, callback) { if (event === "drain") drains.push(callback); }
+    };
+    streamRunEventsResponse({
+      req,
+      res,
+      run: { id: "run_bp" },
+      getRun: () => ({ id: "run_bp", status: "running" }),
+      listRunEventsAfter: (runId, afterSeq, limit) => events.filter((event) => event.seq > afterSeq).slice(0, limit),
+      subscribeRunEvents: () => () => {},
+      limits: { batchLimit: 200, pollMs: 5, heartbeatMs: 10_000, retryMs: 1000, drainTimeoutMs: 30, maxTails: 10, maxTailsPerRun: 10 }
+    });
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    const sentEvents = writes.filter((chunk) => chunk.includes("run-event")).length;
+    assert.equal(sentEvents, 1, "no further reads/writes while waiting for drain");
+    assert.equal(drains.length, 1, "waiting on the drain event");
+    // Never drains -> the slow consumer is disconnected at drainTimeoutMs.
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    assert.equal(destroyed, true, "clogged consumer disconnected; memory stays bounded");
+  });
+
+  it("rejects invalid cursors and enforces subscriber caps before opening the stream", () => {
+    const base = {
+      run: { id: "run_1" },
+      getRun: () => ({ id: "run_1", status: "running" }),
+      listRunEventsAfter: () => [],
+      subscribeRunEvents: () => () => {}
+    };
+    const invalid = response();
+    streamRunEventsResponse({
+      ...base,
+      req: { query: { afterSeq: "banana" }, headers: {} },
+      res: invalid
+    });
+    assert.equal(invalid.statusCode, 400);
+    assert.match(invalid.body.error, /invalid event cursor/);
+
+    const capped = response();
+    streamRunEventsResponse({
+      ...base,
+      req: { query: {}, headers: {} },
+      res: capped,
+      totalSubscriberCount: () => 10_000
+    });
+    assert.equal(capped.statusCode, 429);
+
+    const runCapped = response();
+    streamRunEventsResponse({
+      ...base,
+      req: { query: {}, headers: {} },
+      res: runCapped,
+      subscriberCount: () => 10_000
+    });
+    assert.equal(runCapped.statusCode, 429);
   });
 });

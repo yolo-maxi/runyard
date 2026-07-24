@@ -1,5 +1,5 @@
 import { withAgentLinks, withArtifactLinks, withCapabilityLinks } from "./deepLinks.js";
-import { subscribeRunEvents } from "./runEventBus.js";
+import { subscribeRunEvents, subscriberCount, totalSubscriberCount } from "./runEventBus.js";
 import { presentRunResponseEndpoint } from "./runResponseEndpoint.js";
 import { scheduleRunResponseEndpointDelivery } from "./runResponseEndpointDelivery.js";
 import { createRunTerminalArtifactService } from "./runTerminalArtifacts.js";
@@ -125,6 +125,7 @@ export function createServerComposition({
     listCapabilityVersionsFromRuns,
     listKnowledge,
     listRunEvents,
+    listRunEventsAfter,
     listRuns,
     listSkills,
     listWorkflowBundles,
@@ -411,6 +412,7 @@ export function createServerComposition({
     hiddenRunSlugs: DEFAULT_HIDDEN_RUN_SLUGS,
     listArtifacts,
     listRunEvents,
+    listRunEventsAfter,
     listRunResponseEndpointsForRun,
     listRuns,
     pendingApprovalsForRun,
@@ -422,6 +424,8 @@ export function createServerComposition({
     runnerPoolStats,
     runTimelineEnabled: () => env.runTimelineEnabled,
     runWorkflowGraph,
+    sseSubscriberCount: subscriberCount,
+    sseTotalSubscriberCount: totalSubscriberCount,
     subscribeRunEvents,
     usageSummary,
     withArtifactLinks,
