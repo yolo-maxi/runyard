@@ -33,7 +33,7 @@
 #   RUNYARD_CODEX_VERSION   pinned @openai/codex version          (default 0.142.2)
 #   RUNYARD_CLAUDE_VERSION  pinned @anthropic-ai/claude-code ver  (default 2.1.195)
 #   RUNYARD_PI_VERSION      pinned @earendil-works/pi-coding-agent (default 0.80.3)
-#   RUNYARD_SMITHERS_VERSION pinned smithers-orchestrator version (default 0.22.0)
+#   RUNYARD_SMITHERS_VERSION pinned smithers-orchestrator version (default 0.30.0)
 #   REAUTH_ENABLED       set to 1 on a dedicated reauth runner host (default empty)
 #   UPDATE_CHECK_ENABLED passive update check        (default 1)
 set -euo pipefail
@@ -53,7 +53,7 @@ INSTALL_AGENTS="${RUNYARD_INSTALL_AGENTS:-0}"
 CODEX_PKG="@openai/codex@${RUNYARD_CODEX_VERSION:-0.142.2}"
 CLAUDE_PKG="@anthropic-ai/claude-code@${RUNYARD_CLAUDE_VERSION:-2.1.195}"
 PI_PKG="@earendil-works/pi-coding-agent@${RUNYARD_PI_VERSION:-0.80.3}"
-SMITHERS_PKG="smithers-orchestrator@${RUNYARD_SMITHERS_VERSION:-0.22.0}"
+SMITHERS_PKG="smithers-orchestrator@${RUNYARD_SMITHERS_VERSION:-0.30.0}"
 
 log()  { printf '\033[1;36m[runyard-install]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[runyard-install] WARN:\033[0m %s\n' "$*"; }

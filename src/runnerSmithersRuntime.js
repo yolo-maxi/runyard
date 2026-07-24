@@ -32,6 +32,20 @@ export function smithersCommand({ smithersBin, execWrapper = [] } = {}, args = [
   return { cmd, args: fullArgs };
 }
 
+// Engine-behavior guards for every smithers invocation the runner makes.
+// Smithers ≥0.27 may autostart a per-workspace gateway daemon from CLI
+// commands and nudges about updates; ≥0.27 also auto-launches a post-failure
+// "autopsy" workflow by default. A RunYard runner must never sprout
+// unmanaged daemons, background update checks, or engine-initiated runs —
+// the Hub is the only lifecycle authority — so these are pinned off for the
+// launch child and for control-plane calls alike. Explicit secretEnv/runEnv
+// values still win (they merge later).
+export const ENGINE_BEHAVIOR_ENV = Object.freeze({
+  SMITHERS_NO_DAEMON: "1",
+  SMITHERS_NO_UPDATE_CHECK: "1",
+  SMITHERS_POST_FAILURE: "0"
+});
+
 export function runyardChildEnv({ baseEnv = process.env, token = "", baseUrl = "", secretEnv = {}, claudeOauthToken = "", runEnv = {} } = {}) {
   const hubEnv = {};
   if (token) hubEnv.RUNYARD_HUB_TOKEN = token;
@@ -42,10 +56,15 @@ export function runyardChildEnv({ baseEnv = process.env, token = "", baseUrl = "
   // Only the OS/toolchain baseline from baseEnv reaches the child; the runner's
   // own secrets stay behind. Everything the workflow needs comes through the
   // explicit hub / secretEnv / runEnv channels below (highest precedence).
-  return { ...allowlistedBaseEnv(baseEnv), ...hubEnv, ...secretEnv, ...runEnv };
+  return { ...allowlistedBaseEnv(baseEnv), ...ENGINE_BEHAVIOR_ENV, ...hubEnv, ...secretEnv, ...runEnv };
 }
 
-export function smithersLaunchRequest({ entry, input, workspace, resume = null, maxInlineInputBytes }) {
+// Harness name stamped into the engine's persisted launch attribution
+// (smithers ≥0.30 `--started-by-*`). Without it the engine guesses from the
+// runner's ambient environment and records the wrong harness.
+export const ENGINE_LAUNCH_HARNESS = "runyard-runner";
+
+export function smithersLaunchRequest({ entry, input, workspace, resume = null, maxInlineInputBytes, hubRunId = "" }) {
   const workflowPath = path.isAbsolute(entry) ? entry : path.join(workspace, entry);
   const cleanInput = { ...(input || {}) };
   delete cleanInput.__resume;
@@ -54,6 +73,11 @@ export function smithersLaunchRequest({ entry, input, workspace, resume = null, 
   if (inputPayload.stdin) args.push("--input", "-");
   else args.push("--input", inputPayload.inline);
   args.push("-d", "--format", "json");
+  // Belt to ENGINE_BEHAVIOR_ENV's braces: the launch verb itself declares that
+  // RunYard owns failure handling (no engine-spawned autopsy runs).
+  args.push("--no-post-failure");
+  args.push("--started-by-harness", ENGINE_LAUNCH_HARNESS);
+  if (hubRunId) args.push("--started-by-session", String(hubRunId));
   if (resume?.smithersRunId) {
     args.push("--resume", String(resume.smithersRunId), "--force");
   }
@@ -96,6 +120,42 @@ export function parseSmithersRunId(stdout = "") {
   const match = String(stdout).match(/run-\d+/);
   if (match) return match[0];
   throw new Error(`could not determine smithers runId from: ${String(stdout).slice(0, 200)}`);
+}
+
+// Smithers ≥0.30 validates a workflow BEFORE spawning the detached child: a
+// bad file exits non-zero with a JSON envelope {code, message} (message
+// carries file:line:col) and no run is created. Surface that as a structured
+// launch failure so the Hub records why the launch died instead of a generic
+// "could not determine smithers runId".
+export function smithersLaunchFailure(error) {
+  for (const channel of [error?.stdout, error?.stderr, error?.message]) {
+    const text = String(channel || "").trim();
+    if (!text) continue;
+    const jsonStart = text.indexOf("{");
+    if (jsonStart === -1) continue;
+    try {
+      const parsed = JSON.parse(text.slice(jsonStart));
+      if (parsed && typeof parsed === "object" && parsed.code && parsed.message) {
+        return {
+          code: String(parsed.code),
+          message: String(parsed.message).slice(0, 2000),
+          preflight: String(parsed.code) === "DETACHED_PREFLIGHT_FAILED"
+        };
+      }
+    } catch {
+      /* not an envelope; try the next channel */
+    }
+  }
+  return null;
+}
+
+// Poll argv for the engine event stream. `--raw` is load-bearing on ≥0.28:
+// the default `events` view filters to lifecycle types and silently drops
+// TokenUsageReported (usage metering), agent/tool history, and scorer events.
+// 0.22 had no filter, so --raw is exact parity with what the runner has
+// always consumed.
+export function smithersEventsArgs(smithersRunId) {
+  return ["events", String(smithersRunId), "--json", "--raw", "--limit", "100000"];
 }
 
 export function isHubTerminalStatus(status) {
@@ -159,12 +219,27 @@ export async function launchSmithers({
   baseUrl,
   maxInlineInputBytes,
   claudeOauthToken = "",
-  runEnv = {}
+  runEnv = {},
+  hubRunId = ""
 }) {
-  const request = smithersLaunchRequest({ entry, input, workspace, resume, maxInlineInputBytes });
-  const { stdout } = await runSmithers(request.args, {
-    env: runyardChildEnv({ baseEnv, token, baseUrl, secretEnv, claudeOauthToken, runEnv }),
-    ...(request.stdin ? { stdin: request.stdin } : {})
-  });
+  const request = smithersLaunchRequest({ entry, input, workspace, resume, maxInlineInputBytes, hubRunId });
+  let stdout;
+  try {
+    ({ stdout } = await runSmithers(request.args, {
+      env: runyardChildEnv({ baseEnv, token, baseUrl, secretEnv, claudeOauthToken, runEnv }),
+      ...(request.stdin ? { stdin: request.stdin } : {})
+    }));
+  } catch (error) {
+    // ≥0.30 fail-fast: no run exists yet, so report the engine's own
+    // diagnostic (file:line:col for a broken workflow) instead of a bare
+    // non-zero exit.
+    const failure = smithersLaunchFailure(error);
+    if (failure) {
+      const launchError = new Error(`smithers launch failed before a run id existed (${failure.code}): ${failure.message}`);
+      launchError.smithersLaunchFailure = failure;
+      throw launchError;
+    }
+    throw error;
+  }
   return parseSmithersRunId(stdout);
 }

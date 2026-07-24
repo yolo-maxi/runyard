@@ -8,6 +8,8 @@ import {
   resumeCheckpointMissingMessage,
   resumeCheckpointStatus,
   smithersCommand,
+  smithersEventsArgs,
+  smithersLaunchFailure,
   smithersLaunchRequest,
   runyardChildEnv
 } from "../src/runnerSmithersRuntime.js";
@@ -73,7 +75,8 @@ describe("runner Smithers runtime helpers", () => {
       input: { prompt: "x".repeat(80), __resume: { smithersRunId: "old" } },
       workspace: "/tmp/ws",
       resume: { smithersRunId: "run-1" },
-      maxInlineInputBytes: 10
+      maxInlineInputBytes: 10,
+      hubRunId: "run_hub_1"
     });
 
     assert.deepEqual(request.args, [
@@ -84,12 +87,35 @@ describe("runner Smithers runtime helpers", () => {
       "-d",
       "--format",
       "json",
+      "--no-post-failure",
+      "--started-by-harness",
+      "runyard-runner",
+      "--started-by-session",
+      "run_hub_1",
       "--resume",
       "run-1",
       "--force"
     ]);
     assert.match(request.stdin, /"prompt"/);
     assert.doesNotMatch(request.stdin, /__resume/);
+  });
+
+  it("declares engine attribution and disables the post-failure autopsy on every launch", () => {
+    // Without --started-by-* the 0.30 engine records whatever harness it
+    // sniffs from the runner's environment (observed: "codex"); without
+    // --no-post-failure a failed run spawns an unmanaged autopsy run.
+    const request = smithersLaunchRequest({
+      entry: "workflow.tsx",
+      input: {},
+      workspace: "/tmp/ws",
+      maxInlineInputBytes: 1000
+    });
+    assert.ok(request.args.includes("--no-post-failure"));
+    const harnessAt = request.args.indexOf("--started-by-harness");
+    assert.notEqual(harnessAt, -1);
+    assert.equal(request.args[harnessAt + 1], "runyard-runner");
+    // No hub run id -> no session attribution rather than an empty value.
+    assert.equal(request.args.includes("--started-by-session"), false);
   });
 
   it("treats every Hub terminal status as a stop signal", () => {
@@ -247,5 +273,60 @@ describe("runner Smithers runtime helpers", () => {
     assert.equal(calls[0].opts.env.RUNYARD_HUB_TOKEN, "hub-token");
     assert.equal(calls[0].opts.env.RUNYARD_RUN_ID, "run_hub_1");
     assert.equal(calls[0].opts.env.IMPROVE_ALLOWED_REPO_ROOTS, "/srv/runyard,/srv/skillmarket");
+  });
+
+  it("pins engine behavior off in the launch child env (daemon, update checks, autopsy)", () => {
+    const env = runyardChildEnv({ baseEnv: { PATH: "/usr/bin" } });
+    assert.equal(env.SMITHERS_NO_DAEMON, "1");
+    assert.equal(env.SMITHERS_NO_UPDATE_CHECK, "1");
+    assert.equal(env.SMITHERS_POST_FAILURE, "0");
+    // Explicit run-level overrides still win over the defaults.
+    const overridden = runyardChildEnv({ baseEnv: { PATH: "/usr/bin" }, runEnv: { SMITHERS_NO_DAEMON: "0" } });
+    assert.equal(overridden.SMITHERS_NO_DAEMON, "0");
+  });
+
+  it("polls events with --raw so TokenUsageReported survives the ≥0.28 lifecycle filter", () => {
+    // Without --raw, `smithers events` filters to lifecycle types and the
+    // runner would silently stop seeing TokenUsageReported — usage metering
+    // and budget enforcement would die without an error anywhere.
+    assert.deepEqual(smithersEventsArgs("run-9"), ["events", "run-9", "--json", "--raw", "--limit", "100000"]);
+  });
+
+  it("extracts the 0.30 fail-fast launch envelope from stdout/stderr", () => {
+    const envelope = JSON.stringify({
+      code: "DETACHED_PREFLIGHT_FAILED",
+      message: "/ws/broken.tsx:15:7: Syntax Error\n    </Task>\n      ^"
+    });
+    const fromStdout = smithersLaunchFailure({ stdout: envelope, stderr: "" });
+    assert.equal(fromStdout.code, "DETACHED_PREFLIGHT_FAILED");
+    assert.equal(fromStdout.preflight, true);
+    assert.match(fromStdout.message, /broken\.tsx:15:7/);
+
+    // Non-envelope failures stay untouched so unknown errors keep their shape.
+    assert.equal(smithersLaunchFailure({ stdout: "boom", stderr: "no json here" }), null);
+    assert.equal(smithersLaunchFailure(new Error("plain failure")), null);
+  });
+
+  it("launchSmithers surfaces the fail-fast envelope as a structured launch error", async () => {
+    const error = new Error("smithers exited 1");
+    error.stdout = '{"code":"DETACHED_PREFLIGHT_FAILED","message":"/ws/wf.tsx:3:1: Syntax Error"}';
+    await assert.rejects(
+      launchSmithers({
+        runSmithers: async () => {
+          throw error;
+        },
+        entry: "/ws/wf.tsx",
+        input: {},
+        workspace: "/ws",
+        maxInlineInputBytes: 1000,
+        baseEnv: { PATH: "/usr/bin" }
+      }),
+      (thrown) => {
+        assert.match(thrown.message, /before a run id existed/);
+        assert.match(thrown.message, /wf\.tsx:3:1/);
+        assert.equal(thrown.smithersLaunchFailure.preflight, true);
+        return true;
+      }
+    );
   });
 });

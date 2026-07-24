@@ -73,3 +73,28 @@ export function smithersTokenUsage(line) {
     }
   };
 }
+
+// Forward only the unseen suffix of Smithers' replayed event history. The
+// engine `events` command returns the full stream on every poll, so callers
+// carry `posted` across polls and run this once more against the final
+// collected stream after the engine becomes terminal. That final flush is
+// load-bearing: terminal events (especially TokenUsageReported) can land
+// between the last poll and `inspect` observing completion.
+export async function forwardSmithersEventTail({
+  lines = [],
+  posted = 0,
+  observeEventLine = () => {},
+  postEventLine,
+  postUsage,
+  gatewayModel = ""
+} = {}) {
+  for (let i = Math.max(0, Number(posted) || 0); i < lines.length; i++) {
+    observeEventLine(lines[i]);
+    await postEventLine(lines[i]);
+    const usage = smithersTokenUsage(lines[i]);
+    if (usage && (!gatewayModel || usage.model !== gatewayModel)) {
+      await postUsage(usage);
+    }
+  }
+  return lines.length;
+}

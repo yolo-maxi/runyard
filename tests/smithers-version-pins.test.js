@@ -44,4 +44,13 @@ describe("Smithers engine version pins agree", () => {
       assert.equal(get(), CANON, `${label} must pin smithers-orchestrator ${CANON}`);
     });
   }
+
+  it("packageInfo.pinnedSmithersVersion exposes the canonical pin to the runner", async () => {
+    // The runner compares this against the EFFECTIVE engine version at
+    // startup (project-local delegation means the workspace pack, not the
+    // global binary, decides what actually executes). If this export drifts
+    // from the dependency pin, the drift warning itself lies.
+    const { pinnedSmithersVersion } = await import("../src/packageInfo.js");
+    assert.equal(pinnedSmithersVersion, CANON);
+  });
 });
