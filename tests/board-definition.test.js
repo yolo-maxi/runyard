@@ -154,7 +154,7 @@ describe("board definition validator", () => {
     assert.equal(validated.value.slug, "runyard-development-factory");
   });
 
-  it("validates the Nomad Life factory definition and keeps scout cadence opt-in", () => {
+  it("validates the Nomad Life factory definition and enables the scout cadence after operator approval", () => {
     const path = new URL("../workflow-templates/board-definitions/nomad-life-factory.json", import.meta.url);
     const disk = JSON.parse(readFileSync(path, "utf8"));
     const validated = validateBoardDefinition(disk);
@@ -166,11 +166,14 @@ describe("board definition validator", () => {
     assert.equal(scoutLane.trigger.workflow, "product-scout");
     assert.equal(scoutLane.trigger.input.repo, "nomad-calendar");
     assert.match(scoutLane.trigger.input.objective, /nomad life easier/);
+    assert.match(scoutLane.trigger.input.context, /New Features modal/);
     const schedule = validated.value.schedules.find((entry) => entry.slug === "nomad-weekly-life-scout");
     assert.equal(schedule.workflow, "product-scout");
-    assert.equal(schedule.enabled, false);
+    assert.equal(schedule.enabled, true);
+    assert.equal(schedule.cron, "0 10 * * *");
     assert.equal(schedule.timezone, "America/New_York");
     assert.equal(schedule.input.repo, "nomad-calendar");
+    assert.equal(schedule.input.cadence, "daily");
   });
 });
 

@@ -3,7 +3,7 @@
   "version": 1,
   "slug": "nomad-life-factory",
   "title": "Nomad Life Factory",
-  "description": "Product factory for Fran's nomad-life tools: collect travel information first, then propose fixes, then gradually move toward bookings and proactive help. Scouts are read-only by default; anything involving private data, production deploys, bookings, purchases, or external communication needs human approval.",
+  "description": "Product factory for Fran's nomad-life tools: collect travel information first, then propose fixes, then gradually move toward bookings and proactive help. Scouts run on a daily cadence and are read-only by default; anything involving private data, production deploys, bookings, purchases, or external communication needs human approval. Every meaningful user-facing change must update a New Features modal so Fran can see what changed since his last open.",
   "project": "nomad-calendar",
   "defaultWorkflows": [
     "product-scout",
@@ -35,7 +35,7 @@
           "title": "Nomad Life Scout",
           "projectName": "Nomad Life",
           "objective": "Build an integrated set of tools to make Fran's nomad life easier. Include calendar, flights, hotels/Airbnb. Start by collecting all information in one place, eventually branch out into bookings and more proactive help. Start fixing Fran's life, eventually productize.",
-          "context": "Nomad Calendar is the current seed app at /home/xiko/nomad-calendar, deployed privately at nomad-calendar.repo.box. It already imports Gmail travel confirmations into a private monthly calendar with flight/stay layers. Do not inspect raw Gmail tokens, secrets, or raw SQLite/imported travel content; use code, docs, tests, project briefs, and aggregate behavior only.",
+          "context": "Nomad Calendar is the current seed app at /home/xiko/nomad-calendar, deployed privately at nomad-calendar.repo.box. It already imports Gmail travel confirmations into a private monthly calendar with flight/stay layers. Do not inspect raw Gmail tokens, secrets, or raw SQLite/imported travel content; use code, docs, tests, project briefs, and aggregate behavior only. Standing delivery rule: every meaningful user-facing change must add/update a New Features modal or equivalent in-app delta surface that shows what changed since Fran last opened the app.",
           "repo": "nomad-calendar",
           "maxProposals": 5,
           "cadence": "manual",
@@ -128,22 +128,22 @@
   "schedules": [
     {
       "slug": "nomad-weekly-life-scout",
-      "name": "Nomad weekly life scout",
+      "name": "Nomad daily life scout",
       "workflow": "product-scout",
-      "cron": "0 10 * * 1",
+      "cron": "0 10 * * *",
       "timezone": "America/New_York",
-      "description": "Weekly read-only scout for Nomad Life proposals. Disabled by default until Ocean/Fran explicitly enable the cadence.",
+      "description": "Daily read-only scout for Nomad Life proposals. Enabled because Fran explicitly asked the factory to move on its own; implementation, private-data, booking, purchase, external-communication, and production actions remain gated.",
       "input": {
-        "title": "Weekly Nomad Life Scout",
+        "title": "Daily Nomad Life Scout",
         "projectName": "Nomad Life",
         "objective": "Build an integrated set of tools to make Fran's nomad life easier. Include calendar, flights, hotels/Airbnb. Start by collecting all information in one place, eventually branch out into bookings and more proactive help. Start fixing Fran's life, eventually productize.",
-        "context": "Nomad Calendar is the seed app at /home/xiko/nomad-calendar, privately deployed at nomad-calendar.repo.box. Propose concrete actions/features only. Do not inspect raw Gmail tokens, secrets, raw SQLite databases, or raw imported travel content. Use code, docs, tests, project briefs, and aggregate behavior only. Anything involving private data, production mutation, booking, purchasing, or external communication requires human approval.",
+        "context": "Nomad Calendar is the seed app at /home/xiko/nomad-calendar, privately deployed at nomad-calendar.repo.box. Propose concrete actions/features only. Do not inspect raw Gmail tokens, secrets, raw SQLite databases, or raw imported travel content. Use code, docs, tests, project briefs, and aggregate behavior only. Anything involving private data, production mutation, booking, purchasing, or external communication requires human approval. Standing delivery rule: every meaningful user-facing change must add/update a New Features modal or equivalent in-app delta surface that shows what changed since Fran last opened the app.",
         "repo": "nomad-calendar",
         "maxProposals": 5,
-        "cadence": "weekly",
+        "cadence": "daily",
         "includeImplementationPrompts": true
       },
-      "enabled": false,
+      "enabled": true,
       "laneId": "triaged"
     }
   ]
