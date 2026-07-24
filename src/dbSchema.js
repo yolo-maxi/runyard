@@ -118,6 +118,7 @@ export const DB_SCHEMA_SQL = `
     usage TEXT,
     budget TEXT,
     pause TEXT,
+    runner_state TEXT,
     work_item_id TEXT,
     created_at TEXT NOT NULL,
     assigned_at TEXT,

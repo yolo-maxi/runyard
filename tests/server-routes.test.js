@@ -19,6 +19,12 @@ describe("server route registration", () => {
       deps.requireRunOwnerOrAdmin,
       deps.runLifecycleHandlers.completeRun
     ]);
+    assertRoute(app, "post", "/api/runs/:id/runner-state", [
+      deps.requireAuth,
+      deps.scopes.runner,
+      deps.requireRunOwnerOrAdmin,
+      deps.runLifecycleHandlers.recordRunnerState
+    ]);
     assertRoute(app, "post", "/api/runs/:id/promote", [
       deps.requireAuth,
       deps.scopes["api,mcp"]
@@ -134,7 +140,7 @@ function routeDeps() {
     },
     runDraftHandlers: handlers(["listRunDrafts", "createRunDraft", "getRunDraft", "patchRunDraft", "submitRunDraft", "discardRunDraft"]),
     gatewayHandlers: handlers(["openAiChatCompletions", "anthropicMessages"]),
-    runLifecycleHandlers: handlers(["recordRunEvent", "recordRunUsage", "startRun", "completeRun", "failRun", "cancelRun", "pauseRun", "resumeRun"]),
+    runLifecycleHandlers: handlers(["recordRunEvent", "recordRunUsage", "startRun", "recordRunnerState", "completeRun", "failRun", "cancelRun", "pauseRun", "resumeRun"]),
     runPromotionHandlers: handlers(["promoteRun"]),
     runReadHandlers: handlers(["listRuns", "listAttentionRuns", "getUsageSummary", "getRun", "listRunEvents", "streamRunEvents", "getRunLogSummary", "getRunDiagnostics", "getRunLogs", "getRunTimeline", "getRunFlow", "getRunUsage"]),
     runRerunHandlers: handlers(["rerunRun"]),

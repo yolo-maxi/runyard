@@ -1,3 +1,5 @@
+import { parseMaybeJson } from "./dbNormalization.js";
+
 export function buildRunFilterClause({
   status = "",
   q = "",
@@ -106,6 +108,68 @@ export function runBackstopExceeded(row, maxMs, nowMs) {
   return ageMs(started, nowMs) > maxMs;
 }
 
+const SMITHERS_TERMINAL_STATES = new Set(["succeeded", "failed", "cancelled", "errored"]);
+const SMITHERS_TERMINAL_TO_HUB_STATUS = {
+  succeeded: "succeeded",
+  failed: "failed",
+  errored: "failed",
+  cancelled: "cancelled"
+};
+
+export function runnerLifecycleState(row) {
+  const state = parseMaybeJson(row?.runner_state, null);
+  if (!state || typeof state !== "object") return null;
+  return {
+    smithersRunId: String(state.smithersRunId || ""),
+    phase: String(state.phase || ""),
+    engineState: String(state.engineState || ""),
+    observedAt: state.observedAt || "",
+    terminalObservedAt: state.terminalObservedAt || "",
+    branch: String(state.branch || ""),
+    commit: String(state.commit || "")
+  };
+}
+
+export function runnerLifecycleFresh(state, { stallMs = 0, runnerOfflineMs = 0, nowMs = Date.now() } = {}) {
+  if (!state) return false;
+  const windows = [stallMs, runnerOfflineMs].filter((value) => Number(value) > 0);
+  const freshnessWindow = windows.length ? Math.max(...windows) : 0;
+  if (freshnessWindow <= 0) return false;
+  return ageMs(state.observedAt, nowMs) <= freshnessWindow;
+}
+
+export function runnerLifecycleProtectsFromStall(row, options = {}) {
+  const state = runnerLifecycleState(row);
+  if (!state) return false;
+  if (SMITHERS_TERMINAL_STATES.has(state.engineState) || state.phase === "terminal") return true;
+  return runnerLifecycleFresh(state, options) && (state.phase === "active" || state.phase === "collecting");
+}
+
+export function runnerLifecycleTerminalReconciliation(row, { stallMs = 0, nowMs = Date.now() } = {}) {
+  const state = runnerLifecycleState(row);
+  if (!state) return null;
+  const status = SMITHERS_TERMINAL_TO_HUB_STATUS[state.engineState] || (state.phase === "terminal" ? "failed" : "");
+  if (!status) return null;
+  const terminalAt = state.terminalObservedAt || state.observedAt;
+  if (stallMs > 0 && ageMs(terminalAt, nowMs) <= stallMs) return null;
+  const output = status === "succeeded"
+    ? {
+        smithersRunId: state.smithersRunId,
+        reconciledFromRunnerState: true,
+        runnerState: state,
+        ...(state.branch || state.commit ? { branch: state.branch, commit: state.commit } : {})
+      }
+    : null;
+  return {
+    status,
+    currentStep: status === "succeeded" ? "completed" : status,
+    error: status === "succeeded" ? "" : `smithers run ${state.smithersRunId || "unknown"} ended in state '${state.engineState || state.phase}'`,
+    message: `Reconciled terminal Smithers state '${state.engineState || state.phase}' from runner lifecycle state`,
+    reason: "runner_terminal_reconciled",
+    output
+  };
+}
+
 export function runReapReason(row, {
   maxMs = 0,
   stallMs = 0,
@@ -119,6 +183,9 @@ export function runReapReason(row, {
   // exhausted) with no runner attached to heartbeat for them. Liveness, stall,
   // and deadline backstops all stand down until an explicit resume or cancel.
   if (row.status === "paused") return null;
+  const terminalReconciliation = runnerLifecycleTerminalReconciliation(row, { stallMs, nowMs });
+  if (terminalReconciliation) return terminalReconciliation;
+  if (runnerLifecycleProtectsFromStall(row, { stallMs, runnerOfflineMs, nowMs })) return null;
   if (row.runner_id && ageMs(row.last_heartbeat_at, nowMs) > runnerOfflineMs) {
     return {
       currentStep: "runner offline",

@@ -22,6 +22,7 @@ export function normalizeRun(row) {
     // the first usage record / when no budget was requested (src/runUsage.js).
     usage: parseMaybeJson(row.usage, null),
     budget: parseMaybeJson(row.budget, null),
+    runnerState: parseMaybeJson(row.runner_state, null),
     // Pause metadata for first-class paused runs (src/runPause.js). Null until
     // the run first pauses; kept (with resumedAt) after a resume as history.
     pause: parseMaybeJson(row.pause, null),

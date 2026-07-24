@@ -248,6 +248,7 @@ export function initDb() {
   migrateRunsCapabilityVersioningColumns();
   migrateRunsUsageBudgetColumns();
   migrateRunsPauseColumn();
+  migrateRunsRunnerStateColumn();
   migrateRunsWorkItemColumn();
   migrateSchedulesDisabledReasonColumn();
   migrateRunnerAuthHealthColumn();
@@ -325,6 +326,12 @@ function migrateRunsUsageBudgetColumns() {
   migrateMissingColumns("runs", [
     { name: "usage", definition: "usage TEXT" },
     { name: "budget", definition: "budget TEXT" }
+  ]);
+}
+
+function migrateRunsRunnerStateColumn() {
+  migrateMissingColumns("runs", [
+    { name: "runner_state", definition: "runner_state TEXT" }
   ]);
 }
 
@@ -798,6 +805,7 @@ export function reapStuckRunIds(maxMs) {
             runs.status,
             runs.capability_slug,
             runs.input,
+            runs.runner_state,
             runs.created_at,
             runs.assigned_at,
             runs.started_at,
@@ -818,13 +826,15 @@ export function reapStuckRunIds(maxMs) {
       hasEngineApprovalWait
     });
     if (!reason) continue;
-    const result = transitionRun(row.id, "failed", {
+    const toStatus = reason.status || "failed";
+    const result = transitionRun(row.id, toStatus, {
       current_step: reason.currentStep,
-      error: reason.error,
+      ...(reason.error ? { error: reason.error } : {}),
+      ...(reason.output ? { output: reason.output } : {}),
       completed_at: now()
     });
     if (!result.ok || result.idempotent) continue;
-    addRunEvent(row.id, "run.failed", reason.message, { reason: reason.reason });
+    addRunEvent(row.id, toStatus === "succeeded" ? "run.succeeded" : toStatus === "cancelled" ? "run.cancelled" : "run.failed", reason.message, { reason: reason.reason });
     reaped.push(row.id);
   }
   return reaped;

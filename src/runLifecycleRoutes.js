@@ -104,6 +104,25 @@ export function createRunLifecycleHandlers({
       res.json({ run: result.run });
     },
 
+    recordRunnerState(req, res) {
+      const body = scrubStoredSecrets(req.body || {});
+      const state = {
+        smithersRunId: String(body.smithersRunId || "").slice(0, 200),
+        phase: String(body.phase || "").slice(0, 80),
+        engineState: String(body.engineState || "").slice(0, 80),
+        observedAt: body.observedAt || now(),
+        terminalObservedAt: body.terminalObservedAt || "",
+        branch: String(body.branch || "").slice(0, 500),
+        commit: String(body.commit || "").slice(0, 200)
+      };
+      const run = updateRun(req.params.id, { runner_state: state });
+      if (!run) {
+        res.status(404).json({ error: "run not found" });
+        return;
+      }
+      res.json({ run });
+    },
+
     completeRun(req, res) {
       const output = scrubStoredSecrets(req.body.output || {});
       const result = transitionRun(req.params.id, "succeeded", { current_step: "completed", output, completed_at: now() });

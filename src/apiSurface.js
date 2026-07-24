@@ -855,6 +855,13 @@ export const API_SURFACE = [
     mcpExempt: "Runner-to-Hub machine protocol (runner scope + run ownership)."
   },
   {
+    method: "post", path: "/api/runs/:id/runner-state", handler: "runLifecycleHandlers.recordRunnerState",
+    group: "runs",
+    auth: true, scopes: ["runner"], runnerOwner: true,
+    summary: "Record runner-observed Smithers process lifecycle state without appending a user-facing run event (runner protocol)",
+    mcpExempt: "Runner-to-Hub machine protocol (runner scope + run ownership)."
+  },
+  {
     method: "post", path: "/api/runs/:id/complete", handler: "runLifecycleHandlers.completeRun",
     group: "runs",
     auth: true, scopes: ["runner"], runnerOwner: true,

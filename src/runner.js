@@ -406,6 +406,41 @@ async function postRunUsage(runId, usage) {
   }
 }
 
+async function postRunnerState(runId, state) {
+  try {
+    await client.post(`/api/runs/${runId}/runner-state`, {
+      observedAt: new Date().toISOString(),
+      ...state
+    });
+  } catch (error) {
+    // Older Hubs do not have this additive runner protocol endpoint. State
+    // writes improve reconciliation but must never disturb the executing run.
+    console.error("runner state post failed:", error.message);
+  }
+}
+
+function firstStringValue(obj, keys) {
+  if (!obj || typeof obj !== "object") return "";
+  for (const key of keys) {
+    const value = obj[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  for (const value of Object.values(obj)) {
+    if (value && typeof value === "object") {
+      const nested = firstStringValue(value, keys);
+      if (nested) return nested;
+    }
+  }
+  return "";
+}
+
+function outputBranchMetadata(outputs = {}) {
+  return {
+    branch: firstStringValue(outputs, ["branch", "pushBranch", "targetBranch", "remoteBranch"]),
+    commit: firstStringValue(outputs, ["commit", "commitSha", "sha", "pushedCommit"])
+  };
+}
+
 async function register() {
   // The effective engine version rides in the platform string so it is
   // visible on every existing runner surface (API, MCP, web runners table)
@@ -638,6 +673,7 @@ async function executeAssignment(assignment) {
       });
     }
     await event(run.id, "smithers.dispatched", `Smithers run ${sid} started`, { smithersRunId: sid });
+    await postRunnerState(run.id, { smithersRunId: sid, phase: "active", engineState: "running" });
 
     // Bridge engine-level <Approval> pauses to the Hub: without it those waits
     // emit no run events and create no approval card, so the stall reaper would
@@ -702,6 +738,12 @@ async function executeAssignment(assignment) {
       try {
         const st = await getState(sid);
         state = st.runState?.state || st.run?.status || "running";
+        await postRunnerState(run.id, {
+          smithersRunId: sid,
+          phase: TERMINAL.has(state) ? "terminal" : "active",
+          engineState: state,
+          ...(TERMINAL.has(state) ? { terminalObservedAt: new Date().toISOString() } : {})
+        });
         await engineApprovals.tick(st);
       } catch {
         /* keep polling */
@@ -787,6 +829,15 @@ async function executeAssignment(assignment) {
       state = "cancelled";
     }
 
+    if (TERMINAL.has(state)) {
+      await postRunnerState(run.id, {
+        smithersRunId: sid,
+        phase: "terminal",
+        engineState: state,
+        terminalObservedAt: new Date().toISOString()
+      });
+    }
+
     if (isHubTerminalStatus(hubTerminalStatus)) {
       console.log(`Run ${run.id} stopped locally because Hub is already '${hubTerminalStatus}' (smithers ${sid})`);
       return;
@@ -815,6 +866,13 @@ async function executeAssignment(assignment) {
         const lines = await fetchEvents(sid);
         return lines.length ? lines : follower.lines;
       }
+    });
+    await postRunnerState(run.id, {
+      smithersRunId: sid,
+      phase: "collecting",
+      engineState: state,
+      terminalObservedAt: new Date().toISOString(),
+      ...outputBranchMetadata(outputs)
     });
     for (const artifact of smithersArtifactPayloads({ sid, state, outputs, eventLines })) {
       await client.post(`/api/runs/${run.id}/artifacts`, artifact);

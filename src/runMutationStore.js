@@ -11,7 +11,7 @@ import { runStatusCountQuery } from "./runnerPoolRecords.js";
 // `input` is mutable only for the resume path, which re-queues a paused run
 // with the recorded Smithers checkpoint injected as input.__resume; `pause`
 // carries the pause metadata record (src/runPauseStore.js).
-const RUN_UPDATE_FIELDS = ["runner_id", "status", "current_step", "input", "output", "error", "usage", "pause", "assigned_at", "started_at", "completed_at"];
+const RUN_UPDATE_FIELDS = ["runner_id", "status", "current_step", "input", "output", "error", "usage", "pause", "runner_state", "assigned_at", "started_at", "completed_at"];
 
 export function createRunMutationStore({ one, run, now, getRun, adjustRunnerActiveRuns, onRunStatusChange }) {
   // updateRun is the single choke point where a run's status column is

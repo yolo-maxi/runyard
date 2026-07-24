@@ -109,6 +109,56 @@ describe("heartbeat-based run liveness", () => {
     }
   });
 
+  it("does not stall-fail a quiet run when runner state proves the Smithers process is active or terminal", () => {
+    const previousOffline = env.runnerOfflineMs;
+    const previousStall = env.runStallMs;
+    env.runnerOfflineMs = 30_000;
+    env.runStallMs = 1_000;
+    try {
+      const active = startRun({ heartbeatMsAgo: 100, startedMsAgo: 60_000 });
+      updateRun(active.runId, {
+        assigned_at: oldIso(60_000),
+        started_at: oldIso(60_000),
+        runner_state: {
+          smithersRunId: "run-1784909133764",
+          phase: "active",
+          engineState: "running",
+          observedAt: new Date().toISOString()
+        }
+      });
+      db.prepare("UPDATE run_events SET created_at = ? WHERE run_id = ?").run(oldIso(60_000), active.runId);
+
+      assert.deepEqual(reapStuckRunIds(0), []);
+      assert.equal(getRun(active.runId).status, "running");
+
+      const terminal = startRun({ heartbeatMsAgo: 60_000, startedMsAgo: 60_000 });
+      updateRun(terminal.runId, {
+        assigned_at: oldIso(60_000),
+        started_at: oldIso(60_000),
+        runner_state: {
+          smithersRunId: "run-1784909133764",
+          phase: "terminal",
+          engineState: "succeeded",
+          observedAt: oldIso(45_000),
+          terminalObservedAt: oldIso(45_000),
+          branch: "runyard/implement-change-gated/master/run_0dc99254d15bf40159ed",
+          commit: "bda518d554d762a7217a3ca988916cab64dc3f1f"
+        }
+      });
+      db.prepare("UPDATE run_events SET created_at = ? WHERE run_id = ?").run(oldIso(60_000), terminal.runId);
+
+      assert.deepEqual(reapStuckRunIds(0), [terminal.runId]);
+      const run = getRun(terminal.runId);
+      assert.equal(run.status, "succeeded");
+      assert.equal(run.output.branch, "runyard/implement-change-gated/master/run_0dc99254d15bf40159ed");
+      assert.equal(run.output.commit, "bda518d554d762a7217a3ca988916cab64dc3f1f");
+      assert.equal(run.runnerState.branch, "runyard/implement-change-gated/master/run_0dc99254d15bf40159ed");
+    } finally {
+      env.runnerOfflineMs = previousOffline;
+      env.runStallMs = previousStall;
+    }
+  });
+
   it("does not reap a run that is waiting for approval", () => {
     const previousOffline = env.runnerOfflineMs;
     const previousStall = env.runStallMs;

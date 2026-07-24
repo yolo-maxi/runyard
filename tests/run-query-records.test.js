@@ -8,7 +8,10 @@ import {
   runBackstopExceeded,
   runCountQuery,
   runListQuery,
-  runReapReason
+  runReapReason,
+  runnerLifecycleProtectsFromStall,
+  runnerLifecycleState,
+  runnerLifecycleTerminalReconciliation
 } from "../src/runQueryRecords.js";
 
 describe("run query record helpers", () => {
@@ -192,5 +195,118 @@ describe("run query record helpers", () => {
       nowMs,
       ...holds
     }).reason, "runner_offline");
+  });
+
+  it("does not reap an event-quiet run while the runner reports a fresh active Smithers process", () => {
+    const nowMs = Date.parse("2026-01-01T00:10:00.000Z");
+    const quietActive = {
+      id: "run_quiet",
+      status: "running",
+      runner_id: "runner_1",
+      created_at: "2026-01-01T00:00:00.000Z",
+      started_at: "2026-01-01T00:00:00.000Z",
+      last_event_at: "2026-01-01T00:00:00.000Z",
+      last_heartbeat_at: "2026-01-01T00:00:00.000Z",
+      runner_state: JSON.stringify({
+        smithersRunId: "run-1784909133764",
+        phase: "active",
+        engineState: "running",
+        observedAt: "2026-01-01T00:09:30.000Z"
+      })
+    };
+
+    assert.equal(runnerLifecycleProtectsFromStall(quietActive, {
+      stallMs: 5 * 60_000,
+      runnerOfflineMs: 5 * 60_000,
+      nowMs
+    }), true);
+    assert.equal(runReapReason(quietActive, {
+      stallMs: 5 * 60_000,
+      runnerOfflineMs: 5 * 60_000,
+      nowMs
+    }), null);
+  });
+
+  it("reconciles an old terminal Smithers success observation instead of emitting a stale failure", () => {
+    const nowMs = Date.parse("2026-01-01T00:30:00.000Z");
+    const terminal = {
+      id: "run_terminal",
+      status: "running",
+      runner_id: "runner_1",
+      created_at: "2026-01-01T00:00:00.000Z",
+      started_at: "2026-01-01T00:00:00.000Z",
+      last_event_at: "2026-01-01T00:10:00.000Z",
+      last_heartbeat_at: "2026-01-01T00:10:00.000Z",
+      runner_state: JSON.stringify({
+        smithersRunId: "run-1784909133764",
+        phase: "terminal",
+        engineState: "succeeded",
+        observedAt: "2026-01-01T00:11:16.000Z",
+        terminalObservedAt: "2026-01-01T00:11:16.000Z",
+        branch: "runyard/implement-change-gated/master/run_0dc99254d15bf40159ed",
+        commit: "bda518d554d762a7217a3ca988916cab64dc3f1f"
+      })
+    };
+
+    assert.deepEqual(runnerLifecycleState(terminal), {
+      smithersRunId: "run-1784909133764",
+      phase: "terminal",
+      engineState: "succeeded",
+      observedAt: "2026-01-01T00:11:16.000Z",
+      terminalObservedAt: "2026-01-01T00:11:16.000Z",
+      branch: "runyard/implement-change-gated/master/run_0dc99254d15bf40159ed",
+      commit: "bda518d554d762a7217a3ca988916cab64dc3f1f"
+    });
+    const reconciliation = runnerLifecycleTerminalReconciliation(terminal, {
+      stallMs: 5 * 60_000,
+      nowMs
+    });
+    assert.equal(reconciliation.status, "succeeded");
+    assert.equal(reconciliation.reason, "runner_terminal_reconciled");
+    assert.equal(reconciliation.output.branch, "runyard/implement-change-gated/master/run_0dc99254d15bf40159ed");
+    assert.equal(reconciliation.output.commit, "bda518d554d762a7217a3ca988916cab64dc3f1f");
+    assert.equal(runReapReason(terminal, {
+      stallMs: 5 * 60_000,
+      runnerOfflineMs: 5 * 60_000,
+      maxMs: 5 * 60_000,
+      nowMs
+    }).status, "succeeded");
+
+    assert.equal(runReapReason({
+      ...terminal,
+      runner_state: JSON.stringify({
+        ...JSON.parse(terminal.runner_state),
+        observedAt: "2026-01-01T00:29:30.000Z",
+        terminalObservedAt: "2026-01-01T00:29:30.000Z"
+      })
+    }, {
+      stallMs: 5 * 60_000,
+      runnerOfflineMs: 5 * 60_000,
+      maxMs: 5 * 60_000,
+      nowMs
+    }), null);
+  });
+
+  it("still reaps a genuinely stalled process when runner lifecycle evidence is stale", () => {
+    const nowMs = Date.parse("2026-01-01T00:30:00.000Z");
+    assert.equal(runReapReason({
+      id: "run_stalled",
+      status: "running",
+      runner_id: "runner_1",
+      created_at: "2026-01-01T00:00:00.000Z",
+      started_at: "2026-01-01T00:00:00.000Z",
+      last_event_at: "2026-01-01T00:00:00.000Z",
+      last_heartbeat_at: "2026-01-01T00:29:50.000Z",
+      runner_state: JSON.stringify({
+        smithersRunId: "run-stale",
+        phase: "active",
+        engineState: "running",
+        observedAt: "2026-01-01T00:00:30.000Z"
+      })
+    }, {
+      stallMs: 5 * 60_000,
+      runnerOfflineMs: 5 * 60_000,
+      nowMs
+    }).reason, "run_stalled");
   });
 });

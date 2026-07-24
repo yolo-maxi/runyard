@@ -48,7 +48,10 @@ function harness(overrides = {}) {
       transitions.push({ runId, status, patch });
       return { ok: true, run: { id: runId, status, capabilitySlug: "parent", input: {} }, idempotent: false };
     }),
-    updateRun: (runId, patch) => updates.push({ runId, patch }),
+    updateRun: (runId, patch) => {
+      updates.push({ runId, patch });
+      return { id: runId, status: "running", ...patch };
+    },
     withRunLinks: (run) => ({ ...run, deepLink: `#/runs/${run.id}` })
   });
   return { budgetChecks, createdRuns, engineResumes, events, failureAlerts, handlers, terminalArtifacts, transitions, updates, usageRecords };
@@ -103,6 +106,38 @@ describe("run lifecycle route handlers", () => {
     handlers.recordRunEvent(req({ type: "engine.approval.waiting", message: "paused", data: {} }), response());
     handlers.recordRunEvent(req({ type: "log", message: "hello", data: {} }), response());
     assert.equal(engineResumes.length, 1);
+  });
+
+  it("records runner process state without appending a user-facing event", () => {
+    const { events, handlers, updates } = harness();
+    const res = response();
+
+    handlers.recordRunnerState(req({
+      smithersRunId: "run-1784909133764",
+      phase: "terminal",
+      engineState: "succeeded",
+      observedAt: "2026-07-24T16:11:16.000Z",
+      terminalObservedAt: "2026-07-24T16:11:16.000Z",
+      branch: "runyard/implement-change-gated/master/run_0dc99254d15bf40159ed",
+      commit: "bda518d554d762a7217a3ca988916cab64dc3f1f"
+    }), res);
+
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(events, []);
+    assert.deepEqual(updates[0], {
+      runId: "run_1",
+      patch: {
+        runner_state: {
+          smithersRunId: "run-1784909133764",
+          phase: "terminal",
+          engineState: "succeeded",
+          observedAt: "2026-07-24T16:11:16.000Z",
+          terminalObservedAt: "2026-07-24T16:11:16.000Z",
+          branch: "runyard/implement-change-gated/master/run_0dc99254d15bf40159ed",
+          commit: "bda518d554d762a7217a3ca988916cab64dc3f1f"
+        }
+      }
+    });
   });
 
   it("starts runs idempotently without duplicate started events", () => {
