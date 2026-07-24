@@ -10,6 +10,8 @@ import { HubClient } from "./apiClient.js";
 import { readConfig, writeConfig, setRemote, resolveRemote } from "./config.js";
 import { resolveHubUrl, resolveHubToken } from "./hubConnection.js";
 import { parseJsonOption } from "./cliJson.js";
+import { FOLLOW_EXIT, followRun, followRunLinks } from "./cliFollow.js";
+import { followRunEvents } from "./sseClient.js";
 import { renderData, renderMenu, renderNegotiation, renderRunCreated } from "./cliPresentation.js";
 import { normalizeRunnerTags } from "./runExecution.js";
 import {
@@ -67,6 +69,53 @@ function budgetFromFlags(opts = {}) {
     budget.maxCostMicros = Math.floor(usd * 1_000_000);
   }
   return Object.keys(budget).length ? budget : null;
+}
+
+// Shared follow-mode plumbing: an abort controller wired to Ctrl-C so the CLI
+// detaches (exit 130) WITHOUT cancelling the remote run, plus the followRun
+// invocation with hub credentials. Diagnostics go to stderr only.
+async function runFollowSession({ hub, runId, json, afterSeq = -1 }) {
+  const controller = new AbortController();
+  const onSigint = () => {
+    controller.abort();
+    process.stderr.write(`\n[runyard] detached from run ${runId} — it continues on the hub (resume: runyard logs ${runId} --follow)\n`);
+  };
+  process.once("SIGINT", onSigint);
+  try {
+    const result = await followRun({
+      baseUrl: hub.baseUrl,
+      token: hub.token,
+      runId,
+      afterSeq,
+      json,
+      signal: controller.signal,
+      getRunDetail: (id) => hub.get(`/api/runs/${encodeURIComponent(id)}`)
+    });
+    return result.exitCode;
+  } finally {
+    process.off("SIGINT", onSigint);
+  }
+}
+
+// Exit only after stdout/stderr pipes have flushed: process.exit discards
+// pending async pipe writes, which can eat the final terminal NDJSON envelope
+// under `... --follow | jq`.
+function exitFlushed(code) {
+  let pending = 2;
+  const done = () => {
+    pending -= 1;
+    if (pending === 0) process.exit(code);
+  };
+  process.stdout.write("", done);
+  process.stderr.write("", done);
+}
+
+// Exit-code mapping for pre-attach failures (run creation / lookup) on follow
+// paths, so scripts can distinguish auth faults from workflow failures.
+function followRequestExitCode(error) {
+  if (error?.status === 401 || error?.status === 403) return FOLLOW_EXIT.AUTH;
+  if ([400, 404, 409, 422].includes(error?.status)) return FOLLOW_EXIT.USAGE;
+  return FOLLOW_EXIT.TRANSPORT;
 }
 
 function ask(query, { hidden = false } = {}) {
@@ -288,6 +337,8 @@ program
   .option("--max-cost <usd>", "hard budget: stop the run once its metered cost reaches this many US dollars")
   .option("--work-item <id>", "attach the run to a work item (ticket) on the Work board")
   .option("--negotiate", "preflight first: enqueue only when ready; otherwise print the negotiation state (and saved draft) without creating a run")
+  .option("--follow", "attach to the run's live event stream and exit with its terminal status (0 succeeded, 1 failed terminal, 2 usage, 3 transport, 4 auth, 130 Ctrl-C detach)")
+  .option("--stream-logs", "alias for --follow")
   .action(async (workflow, opts) => {
     const input = parseJsonOption(opts.input, "--input");
     const remote = resolveRemote(program.opts().remote);
@@ -311,18 +362,54 @@ program
     if (budget) body.budget = budget;
     if (opts.workItem) body.workItemId = opts.workItem;
     if (opts.negotiate) body.negotiate = true;
+    const follow = Boolean(opts.follow || opts.streamLogs);
+    const json = Boolean(program.opts().json);
+    const hub = client(program.opts());
+    let created;
     try {
-      printRunCreated(await client(program.opts()).post(`/api/workflows/${workflow}/run`, body), program.opts().json);
+      created = await hub.post(`/api/workflows/${workflow}/run`, body);
     } catch (error) {
       // In negotiate mode a non-ready preflight is a structured negotiation
       // response (422 needs_input / 409 blocked), not a CLI crash.
       if (opts.negotiate && error.response?.negotiation) {
         printNegotiation(error.response, program.opts().json);
-        process.exitCode = 1;
+        // A non-ready preflight is an input condition, not a failed run:
+        // follow mode uses the documented usage code so scripts can tell
+        // them apart; plain negotiate keeps its historical exit 1.
+        process.exitCode = follow ? FOLLOW_EXIT.USAGE : 1;
         return;
+      }
+      if (follow) {
+        console.error(`run creation failed: ${error.message}`);
+        exitFlushed(followRequestExitCode(error));
       }
       throw error;
     }
+    if (!follow) return printRunCreated(created, json);
+    const runId = created?.run?.id;
+    if (!runId) {
+      // No run to attach to (e.g. a negotiate 202 without a created run). In
+      // json mode the NDJSON contract still holds: one single-line envelope.
+      if (json) console.log(JSON.stringify({ kind: "run-created", runId: null, response: created }));
+      else printRunCreated(created, false);
+      return;
+    }
+    if (created?.run?.status === "waiting_approval") {
+      console.error(`Run ${runId} is parked on a start approval — following blocks until a decision (runyard approvals).`);
+    }
+    if (json) {
+      // NDJSON contract: one envelope per line, no pretty-printed prose.
+      console.log(JSON.stringify({
+        kind: "run-created",
+        runId,
+        run: created.run,
+        links: { ...followRunLinks(runId), ...(created.eventsStreamUrl ? { eventsStreamUrl: created.eventsStreamUrl } : {}) }
+      }));
+    } else {
+      for (const line of renderRunCreated(created)) console.log(line);
+      console.error(`Following run ${runId} — Ctrl-C detaches without cancelling.`);
+    }
+    exitFlushed(await runFollowSession({ hub, runId, json }));
   });
 
 program
@@ -736,11 +823,28 @@ program
     }
   });
 
-program.command("logs <id>").description("Print run logs").action(async (id) => {
-  const hub = client(program.opts());
-  const response = await fetch(`${hub.baseUrl}/api/runs/${id}/logs`, { headers: { authorization: `Bearer ${hub.token}` } });
-  console.log(await response.text());
-});
+program
+  .command("logs <id>")
+  .description("Print run logs; --follow attaches to the live event stream through terminal state")
+  .option("-f, --follow", "stream events live until the run reaches a terminal state (exit 0 succeeded, 1 failed terminal, 2 usage, 3 transport, 4 auth, 130 Ctrl-C detach)")
+  .option("--after-seq <n>", "resume the live stream after this event cursor (with --follow)")
+  .action(async (id, opts) => {
+    const hub = client(program.opts());
+    if (!opts.follow) {
+      const response = await fetch(`${hub.baseUrl}/api/runs/${id}/logs`, { headers: { authorization: `Bearer ${hub.token}` } });
+      console.log(await response.text());
+      return;
+    }
+    let afterSeq = -1;
+    if (opts.afterSeq !== undefined) {
+      afterSeq = Number(opts.afterSeq);
+      if (!Number.isInteger(afterSeq) || afterSeq < -1) {
+        console.error(`--after-seq must be an integer >= -1, got: ${opts.afterSeq}`);
+        exitFlushed(FOLLOW_EXIT.USAGE);
+      }
+    }
+    exitFlushed(await runFollowSession({ hub, runId: id, json: Boolean(program.opts().json), afterSeq }));
+  });
 
 // Unified run timeline tail. Streams normalized {ts, kind, source, payload}
 // entries as NDJSON so operators (and downstream pipes) can watch a run's
@@ -775,23 +879,82 @@ program
     if (once) {
       process.exit(0);
     }
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-      try {
-        await fetchAll();
-      } catch (error) {
-        // Surface transient errors as NDJSON so the tail stream stays
-        // machine-parseable; the loop keeps polling.
-        console.log(
-          JSON.stringify({
-            ts: new Date().toISOString(),
-            kind: "error",
-            source: "cli",
-            payload: { message: String(error.message || error) }
-          })
-        );
+    // Preferred substrate: ride the run's SSE event stream and refresh the
+    // timeline whenever an event lands (coalesced), instead of a blind 2s
+    // poll. The timeline contract is unchanged — entries still come from
+    // /timeline with the same shape and `since` cursor; the stream only
+    // decides WHEN to fetch. A safety refresh covers timeline entries with no
+    // event (artifact uploads), and the terminal frame ends the tail after a
+    // final drain. If the stream is unavailable, fall back to 2s polling.
+    const timelineError = (error) => console.log(JSON.stringify({
+      ts: new Date().toISOString(),
+      kind: "error",
+      source: "cli",
+      payload: { message: String(error.message || error) }
+    }));
+    const pollForever = async () => {
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        try {
+          await fetchAll();
+        } catch (error) {
+          timelineError(error);
+        }
       }
+    };
+    let refreshing = false;
+    let refreshQueued = false;
+    const refresh = async () => {
+      if (refreshing) {
+        refreshQueued = true;
+        return;
+      }
+      refreshing = true;
+      try {
+        do {
+          refreshQueued = false;
+          await fetchAll();
+        } while (refreshQueued);
+      } catch (error) {
+        timelineError(error);
+      } finally {
+        refreshing = false;
+      }
+    };
+    let reachedTerminal = false;
+    try {
+      const safety = setInterval(refresh, 10_000);
+      try {
+        for await (const frame of followRunEvents({ baseUrl: hub.baseUrl, token: hub.token, runId })) {
+          if (frame.event === "run-event") refresh(); // coalesced — bursts trigger one fetch
+          if (frame.event === "run-terminal") {
+            reachedTerminal = true;
+            break;
+          }
+        }
+      } finally {
+        clearInterval(safety);
+      }
+    } catch (error) {
+      timelineError(error);
+      await pollForever();
+    }
+    // Terminal: drain whatever the last events produced (retrying a transient
+    // blip — a failed final drain must not demote a finished tail into an
+    // endless poll), then exit clean.
+    if (reachedTerminal) {
+      while (refreshing) await new Promise((resolve) => setTimeout(resolve, 50));
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          await fetchAll();
+          break;
+        } catch (error) {
+          timelineError(error);
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+      }
+      exitFlushed(0);
     }
   });
 

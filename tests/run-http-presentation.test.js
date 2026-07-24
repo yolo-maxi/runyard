@@ -6,6 +6,8 @@ describe("run HTTP presentation helpers", () => {
   it("builds common run status links", () => {
     assert.deepEqual(runStatusLinks("run 1"), {
       statusUrl: "/api/runs/run 1",
+      eventsUrl: "/api/runs/run 1/events",
+      eventsStreamUrl: "/api/runs/run 1/events/stream",
       webUrl: "/app#runs/run 1",
       deepLink: "/app#runs/run%201"
     });
@@ -14,6 +16,8 @@ describe("run HTTP presentation helpers", () => {
   it("adds output and artifact locations for queued run responses", () => {
     assert.deepEqual(runOutputLinks("run/1"), {
       statusUrl: "/api/runs/run/1",
+      eventsUrl: "/api/runs/run/1/events",
+      eventsStreamUrl: "/api/runs/run/1/events/stream",
       webUrl: "/app#runs/run/1",
       deepLink: "/app#runs/run%2F1",
       logsUrl: "/api/runs/run/1/logs",

@@ -171,16 +171,57 @@ export function runEventRecord({ id, runId, type, message = "", data = {}, creat
   };
 }
 
+// Assigns the per-run seq inside the INSERT itself (COALESCE(MAX(seq),-1)+1,
+// the same next-seq rule as Smithers' insertEventWithNextSeq). A single
+// statement is atomic in SQLite, so two inserts for the same run can never
+// draw the same seq — the unique (run_id, seq) index is the backstop.
 export function runEventInsertQuery() {
   return {
-    sql: "INSERT INTO run_events (id, run_id, type, message, data, created_at) VALUES ($id, $run_id, $type, $message, $data, $created_at)"
+    sql: `INSERT INTO run_events (id, run_id, type, message, data, seq, created_at)
+     VALUES ($id, $run_id, $type, $message, $data,
+       (SELECT COALESCE(MAX(seq), -1) + 1 FROM run_events WHERE run_id = $run_id),
+       $created_at)`
   };
 }
 
+export function runEventSeqLookupQuery(eventId) {
+  return {
+    sql: "SELECT seq FROM run_events WHERE id = ?",
+    params: [eventId]
+  };
+}
+
+// seq is the canonical replay order. The (seq IS NULL) guard keeps any row an
+// older binary inserted without a seq (downgrade window) at the tail in
+// created-at order instead of SQLite's NULLs-first default.
+const RUN_EVENT_ORDER = "(seq IS NULL) ASC, seq ASC, created_at ASC, rowid ASC";
+
 export function runEventListQuery(runId) {
   return {
-    sql: "SELECT * FROM run_events WHERE run_id = ? ORDER BY created_at ASC",
+    sql: `SELECT * FROM run_events WHERE run_id = ? ORDER BY ${RUN_EVENT_ORDER}`,
     params: [runId]
+  };
+}
+
+// Cursor page for SSE replay / resume: strictly after `afterSeq`, bounded.
+export function runEventPageQuery({ runId, afterSeq = -1, limit = 200 }) {
+  return {
+    sql: "SELECT * FROM run_events WHERE run_id = ? AND seq > ? ORDER BY seq ASC LIMIT ?",
+    params: [runId, Math.floor(afterSeq), Math.max(1, Math.min(1000, Math.floor(limit) || 200))]
+  };
+}
+
+// Backfill helpers for migrateRunEventsSeqColumn (src/db.js). Deterministic
+// order for historical rows: insertion order (created_at, then rowid).
+export function runEventSeqBackfillQueries() {
+  return {
+    hasNullSeq: { sql: "SELECT 1 AS present FROM run_events WHERE seq IS NULL LIMIT 1", params: [] },
+    runsWithNullSeq: { sql: "SELECT DISTINCT run_id FROM run_events WHERE seq IS NULL", params: [] },
+    maxSeqForRun: { sql: "SELECT COALESCE(MAX(seq), -1) AS max_seq FROM run_events WHERE run_id = ?" },
+    nullSeqRowsForRun: {
+      sql: "SELECT id FROM run_events WHERE run_id = ? AND seq IS NULL ORDER BY created_at ASC, rowid ASC"
+    },
+    assignSeq: { sql: "UPDATE run_events SET seq = ? WHERE id = ?" }
   };
 }
 
@@ -192,6 +233,9 @@ export function normalizeRunEvent(row) {
     type: row.type,
     message: row.message,
     data: parseMaybeJson(row.data, {}),
+    // Monotonic per-run cursor; null only for rows written by a pre-seq
+    // binary that have not been backfilled yet.
+    seq: row.seq === null || row.seq === undefined ? null : Number(row.seq),
     createdAt: row.created_at
   };
 }

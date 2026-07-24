@@ -144,6 +144,8 @@ export function withRunLinks(run, queueIndex = null, deps = {}) {
     failedStep,
     ...(queue ? { queue } : {}),
     ...(budgetStatus ? { budgetStatus } : {}),
+    // Live SSE transport discovery for HTTP/MCP consumers (additive).
+    eventsStreamUrl: `/api/runs/${run.id}/events/stream`,
     deepLink: deepLinks.run(run.id),
     deepLinkLogs: deepLinks.runLogs(run.id),
     deepLinkArtifacts: deepLinks.runArtifacts(run.id),
