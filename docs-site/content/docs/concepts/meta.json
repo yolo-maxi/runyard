@@ -8,6 +8,7 @@
     "boards",
     "approvals",
     "runners",
+    "ci",
     "schedules",
     "agents-skills-knowledge",
     "tokens-and-scopes",

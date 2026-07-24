@@ -36,6 +36,7 @@
     "commander": "^14.0.2",
     "express": "^4.22.2",
     "smithers-orchestrator": "0.30.0",
+    "yaml": "^2.9.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

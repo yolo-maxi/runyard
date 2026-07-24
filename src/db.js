@@ -56,6 +56,8 @@ import { createScheduleStore } from "./scheduleStore.js";
 import { createWorkItemStore } from "./workItemStore.js";
 import { createWorkItemRunSync } from "./workItemRunSync.js";
 import { createBoardStore } from "./boardStore.js";
+import { createScmStore } from "./scmStore.js";
+import { createCiStore } from "./ciStore.js";
 import { createRunStore } from "./runStore.js";
 import { createRunnerStore } from "./runnerStore.js";
 import { createRunCreateStore } from "./runCreateStore.js";
@@ -118,8 +120,24 @@ const runMutationStore = createRunMutationStore({
   onRunStatusChange: (updatedRun, fromStatus) => {
     workItemRunSync.syncWorkItemForRun(updatedRun, { trigger: "run_status", fromStatus });
     scheduleStore.reconcileRunTerminal(updatedRun);
+    // CI fast path: a ci-job/ci-pipeline status change advances its pipeline
+    // DAG immediately (the orchestrator's 60s sweep is the restart backstop).
+    // Registered by serverComposition AFTER the orchestrator exists; a hub
+    // without the CI composition (unit tests, CLI-only use) simply has none.
+    if (ciRunStatusObserver) {
+      try {
+        ciRunStatusObserver(updatedRun, fromStatus);
+      } catch (error) {
+        console.error("CI run-status observer failed:", error.message);
+      }
+    }
   }
 });
+
+let ciRunStatusObserver = null;
+export function setCiRunStatusObserver(fn) {
+  ciRunStatusObserver = typeof fn === "function" ? fn : null;
+}
 const runClaimStore = createRunClaimStore({
   run,
   now,
@@ -187,6 +205,8 @@ const scheduleStore = createScheduleStore({
 const workItemStore = createWorkItemStore({ all, one, run, id, now });
 const workItemRunSync = createWorkItemRunSync({ getWorkItem, updateWorkItem, listWorkItemRuns });
 const boardStore = createBoardStore({ all, one, run, id, now });
+const scmStore = createScmStore({ all, one, run, id, now });
+const ciStore = createCiStore({ all, one, run, id, now });
 const workflowEndpointStore = createWorkflowEndpointStore({ all, one, run, id, now, hashToken });
 const hookProfileStore = createHookProfileStore({ all, one, run, id, now });
 const workflowBundleStore = createWorkflowBundleStore({ all, one, run, id, now });
@@ -1208,6 +1228,144 @@ export function usageSummary({ since }) {
     byWorkflow: all(usageSummaryByWorkflowQuery(VISIBLE_RUN_WHERE).sql, [sinceIso]).map(normalizeUsageSummaryWorkflowRow),
     budgetStopped: Number(one(usageSummaryBudgetStopsQuery(VISIBLE_RUN_WHERE).sql, [sinceIso]).count) || 0
   };
+}
+
+// --- SCM connections + CI pipelines (see specs/ci-platform.md) --------------
+
+export function getScmInstallation(installationId, options = {}) {
+  return scmStore.getScmInstallation(installationId, options);
+}
+
+export function listScmInstallations() {
+  return scmStore.listScmInstallations();
+}
+
+export function upsertScmInstallation(input) {
+  return scmStore.upsertScmInstallation(input);
+}
+
+export function getScmRepo(idOrFullName, options = {}) {
+  return scmStore.getScmRepo(idOrFullName, options);
+}
+
+export function listScmRepos(options = {}) {
+  return scmStore.listScmRepos(options);
+}
+
+export function upsertScmRepo(input) {
+  return scmStore.upsertScmRepo(input);
+}
+
+export function setScmRepoEnabled(repoId, enabled) {
+  return scmStore.setScmRepoEnabled(repoId, enabled);
+}
+
+export function setScmRepoTrustPolicy(repoId, trustPolicy) {
+  return scmStore.setScmRepoTrustPolicy(repoId, trustPolicy);
+}
+
+export function findScmWebhookDelivery(deliveryId, options = {}) {
+  return scmStore.findScmWebhookDelivery(deliveryId, options);
+}
+
+export function recordScmWebhookDelivery(input) {
+  return scmStore.recordScmWebhookDelivery(input);
+}
+
+export function updateScmWebhookDelivery(deliveryId, updates = {}, options = {}) {
+  return scmStore.updateScmWebhookDelivery(deliveryId, updates, options);
+}
+
+export function deleteScmWebhookDelivery(deliveryId, options = {}) {
+  return scmStore.deleteScmWebhookDelivery(deliveryId, options);
+}
+
+export function listScmWebhookDeliveries(options = {}) {
+  return scmStore.listScmWebhookDeliveries(options);
+}
+
+export function countScmWebhookDeliveries(options = {}) {
+  return scmStore.countScmWebhookDeliveries(options);
+}
+
+export function pruneScmWebhookDeliveries(cutoffIso) {
+  return scmStore.pruneScmWebhookDeliveries(cutoffIso);
+}
+
+export function createCiPipeline(input) {
+  return ciStore.createCiPipeline(input);
+}
+
+export function getCiPipeline(pipelineId) {
+  return ciStore.getCiPipeline(pipelineId);
+}
+
+export function getCiPipelineByRunId(runId) {
+  return ciStore.getCiPipelineByRunId(runId);
+}
+
+export function listCiPipelines(options = {}) {
+  return ciStore.listCiPipelines(options);
+}
+
+export function listActiveCiPipelines(options = {}) {
+  return ciStore.listActiveCiPipelines(options);
+}
+
+export function setCiPipelineRun(pipelineId, runId) {
+  return ciStore.setCiPipelineRun(pipelineId, runId);
+}
+
+export function markCiPipelineSuperseded(pipelineId, supersededBy) {
+  return ciStore.markCiPipelineSuperseded(pipelineId, supersededBy);
+}
+
+export function listOrphanCiPipelines(options = {}) {
+  return ciStore.listOrphanCiPipelines(options);
+}
+
+export function touchCiPipeline(pipelineId) {
+  return ciStore.touchCiPipeline(pipelineId);
+}
+
+export function listRecentCiPipelines(options = {}) {
+  return ciStore.listRecentCiPipelines(options);
+}
+
+export function findCiJobRunCandidate(parentRunId, jobId) {
+  return ciStore.findCiJobRunCandidate(parentRunId, jobId);
+}
+
+export function lastCiRunEventAt(runId) {
+  return ciStore.lastCiRunEventAt(runId);
+}
+
+export function updateCiPipelineCheck(pipelineId, updates = {}) {
+  return ciStore.updateCiPipelineCheck(pipelineId, updates);
+}
+
+export function getCiJob(jobId) {
+  return ciStore.getCiJob(jobId);
+}
+
+export function getCiJobByRunId(runId) {
+  return ciStore.getCiJobByRunId(runId);
+}
+
+export function listCiJobs(pipelineId) {
+  return ciStore.listCiJobs(pipelineId);
+}
+
+export function markCiJobDispatched(jobId, runId) {
+  return ciStore.markCiJobDispatched(jobId, runId);
+}
+
+export function markCiJobPhase(jobId, phase, reason = "") {
+  return ciStore.markCiJobPhase(jobId, phase, reason);
+}
+
+export function updateCiJobCheck(jobId, updates = {}) {
+  return ciStore.updateCiJobCheck(jobId, updates);
 }
 
 export function countPendingApprovals() {

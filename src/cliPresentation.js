@@ -62,3 +62,44 @@ export function renderRunCreated(data) {
   }
   return lines;
 }
+
+// --- CI (repositories + pipelines; specs/ci-platform.md) --------------------
+
+export function renderCiRepoList(data) {
+  const repos = data.repos || [];
+  const installations = data.installations || [];
+  if (!repos.length) {
+    return [
+      "No CI-connected repositories.",
+      installations.length
+        ? `Installations present (${installations.length}) — run \`runyard repo sync\` to pull their repositories.`
+        : "Install the GitHub App on a repository, then run `runyard repo sync`."
+    ];
+  }
+  const lines = [];
+  for (const repo of repos) {
+    const trust = repo.trustPolicy || {};
+    lines.push(
+      `${repo.fullName}\t${repo.enabled ? "enabled" : "disabled"}\t${trust.level || "untrusted"}${trust.allowNative ? "+native" : ""}\tdefault: ${repo.defaultBranch}\tid: ${repo.id}`
+    );
+  }
+  return lines;
+}
+
+export function renderCiPipeline(data) {
+  const pipeline = data.pipeline || data;
+  const trigger = pipeline.trigger || {};
+  const runStatus = pipeline.run?.status || "(no run)";
+  const lines = [
+    `Pipeline ${pipeline.id} — ${runStatus}${pipeline.supersededBy ? ` (superseded by ${pipeline.supersededBy})` : ""}`,
+    `Trigger: ${trigger.event || "?"}${trigger.prNumber ? ` PR #${trigger.prNumber}` : ""}${trigger.ref ? ` ${trigger.ref}` : ""} @ ${(trigger.headSha || "").slice(0, 12)}`,
+    `Config: ${pipeline.configSource?.path || ".runyard/ci.yml"} @ ${(pipeline.configSource?.sha || "").slice(0, 12)}  tested: ${pipeline.tested?.strategy || "?"}`
+  ];
+  for (const job of pipeline.jobs || []) {
+    const state = job.run ? job.run.status : job.phase;
+    const check = job.checkState ? `  check: ${job.checkState}` : "";
+    lines.push(`  ${job.jobName}\t${state}${job.phaseReason ? ` (${job.phaseReason})` : ""}${job.run ? `  run: ${job.run.id}` : ""}${check}`);
+  }
+  if (pipeline.run?.deepLink) lines.push(`Run detail: ${pipeline.run.deepLink}`);
+  return lines;
+}

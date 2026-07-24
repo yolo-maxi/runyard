@@ -4,16 +4,27 @@ const ARTIFACT_UPLOAD_PATH = /^\/api\/runs\/[^/]+\/artifacts\/?$/;
 // Metering-gateway inference calls carry full model contexts, which routinely
 // exceed the standard API body limit.
 const GATEWAY_PATH = /^\/api\/gateway\//;
+// SCM webhook ingress needs the RAW bytes: the HMAC signature is computed
+// over the exact body, so it must be verified before any JSON parsing. The
+// webhook deliberately has ONE stable path (no /api/v1 alias — it is pasted
+// into the GitHub App config). Path-scoped so global JSON limits stay put.
+const SCM_WEBHOOK_PATH = /^\/api\/ci\/webhooks\/github\/?$/;
 
 export function jsonBodyMiddleware({
   json = express.json,
+  raw = express.raw,
   standardLimit = "1mb",
-  artifactLimit = "25mb"
+  artifactLimit = "25mb",
+  webhookLimit = "2mb"
 } = {}) {
   const standardJson = json({ limit: standardLimit });
   const artifactJson = json({ limit: artifactLimit });
+  const webhookRaw = raw({ limit: webhookLimit, type: () => true });
 
   return (req, res, next) => {
+    if (req.method === "POST" && SCM_WEBHOOK_PATH.test(req.path)) {
+      return webhookRaw(req, res, next);
+    }
     const parser = req.method === "POST" && (ARTIFACT_UPLOAD_PATH.test(req.path) || GATEWAY_PATH.test(req.path))
       ? artifactJson
       : standardJson;

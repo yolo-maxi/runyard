@@ -27,13 +27,15 @@ Runyard is a private, self-hosted company workflow platform. Agents discover wor
 - Agent: reusable role/profile.
 - Knowledge Resource: shared company context.
 - Access Token: auth primitive for Web/API/CLI/MCP/Runner.
+- CI Repository: a GitHub-hosted repository connected for CI, with enablement and trust policy.
+- CI Pipeline: one trigger's SHA-pinned verification — a parent run plus a DAG of job runs, reported back as GitHub Checks.
 
 ## Required Interfaces
 
-- Web Hub: landing page, docs, catalog, editors, runs, artifacts, approvals, runners, tokens, in-app support agent chat.
-- HTTP API: auth, workflows, runs, logs, artifacts, approvals, schedules, agents, skills, knowledge, runners.
-- CLI: login, workflows, run, runs, logs, artifacts, approvals, tokens, runners.
-- MCP: workflow discovery, run creation/status/logs/artifacts, schedules, approvals, agents, skills, knowledge.
+- Web Hub: landing page, docs, catalog, editors, runs, artifacts, approvals, runners, tokens, CI repositories/pipelines, in-app support agent chat.
+- HTTP API: auth, workflows, runs, logs, artifacts, approvals, schedules, agents, skills, knowledge, runners, CI (repos, webhook ingress, pipelines, diagnostics).
+- CLI: login, workflows, run, runs, logs, artifacts, approvals, tokens, runners, repo/ci.
+- MCP: workflow discovery, run creation/status/logs/artifacts, schedules, approvals, agents, skills, knowledge, CI repositories/pipelines/dispatch.
 - Telegram: optional approval notifications and callback resolution.
 
 ## Execution Model

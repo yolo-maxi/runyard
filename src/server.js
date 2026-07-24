@@ -59,9 +59,12 @@ const telegramApprovalTarget = composition.telegramApprovalTarget;
 
 app.use(expressErrorHandler());
 
+const ciMaintenanceTick = composition.ciMaintenanceTick;
+
 if (process.argv[1]?.endsWith("server.js")) {
   startServerRuntime({
     app,
+    ciMaintenanceTick,
     env,
     fireDueSchedules,
     pruneDeadRunners: composition.pruneDeadRunners,
@@ -75,6 +78,7 @@ if (process.argv[1]?.endsWith("server.js")) {
 
 export {
   app,
+  ciMaintenanceTick,
   fireDueSchedules,
   notifyTelegram,
   parseTelegramApprovalCallback,

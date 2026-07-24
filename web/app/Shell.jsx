@@ -29,6 +29,7 @@ const PRIMARY_VIEWS = new Map([
   ["workflows", "workflows"],
   ["workflows", "workflows"],
   ["schedules", "schedules"],
+  ["repositories", "repositories"],
   ["approvals", "approvals"],
   ["agents", "agents"],
   ["skills", "agents"],
@@ -123,6 +124,9 @@ export function Shell({ me }) {
           <a href="#schedules" data-primary-view="schedules" className={current === "schedules" ? "active" : undefined}>
             Schedules
           </a>
+          <a href="#repositories" data-primary-view="repositories" className={current === "repositories" ? "active" : undefined}>
+            CI
+          </a>
           <a href="#agents/agents" data-primary-view="agents" className={current === "agents" ? "active" : undefined}>
             Agents
           </a>
@@ -177,6 +181,7 @@ export function Shell({ me }) {
           <SidebarButton view="work" primary="work" label="Work" current={current} />
           <SidebarButton view="workflows" primary="workflows" label="Workflows" current={current} />
           <SidebarButton view="schedules" primary="schedules" label="Schedules" current={current} />
+          <SidebarButton view="repositories" primary="repositories" label="CI" current={current} />
           <SidebarButton view="agents" primary="agents" label="Agents" current={current} />
         </nav>
         <section id="content" className="content">

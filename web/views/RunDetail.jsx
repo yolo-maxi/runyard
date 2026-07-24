@@ -10,12 +10,15 @@ import { Breadcrumbs, Icon, ShareButton } from "../components/ui.jsx";
 import { RunBanner, RunBudgetNotice, RunPauseNotice, RunMetaStrip, RunOutcomeSummary, RunDiagnostics, RunIO, RunArtifacts, payloadBytes } from "../components/RunDetailParts.jsx";
 import { RunLog } from "../components/RunLog.jsx";
 import { LiveConsole } from "../components/LiveConsole.jsx";
+import { RunCiSection } from "./Repositories.jsx";
 
 const SUCCESS = new Set(["succeeded", "recovered", "approved"]);
 const FAILURE = new Set(["failed", "error", "cancelled", "rejected"]);
 
 function sectionDefaultOpen(name, status) {
   if (name === "io") return true;
+  // CI runs lead with the pipeline/job picture — it IS the run's meaning.
+  if (name === "ci") return true;
   if (FAILURE.has(status)) return name === "log" || name === "diagnostics";
   if (SUCCESS.has(status)) return name === "artifacts";
   // Active / queued / unknown: lead with the live console so the operator sees
@@ -131,6 +134,16 @@ export function RunDetail({ runId, focus = "" }) {
           meta="streaming"
         >
           <LiveConsole runId={run.id} live />
+        </RunSection>
+      ) : null}
+
+      {run.input?.__ci ? (
+        <RunSection
+          runId={run.id} name="ci" status={statusKey}
+          title={run.input.__ci.role === "pipeline" ? "CI pipeline" : "CI job"}
+          meta={run.input.__ci.repoFullName || run.input.__ci.repo?.fullName || run.input.__ci.jobName || ""}
+        >
+          <RunCiSection run={run} />
         </RunSection>
       ) : null}
 

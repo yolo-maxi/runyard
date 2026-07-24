@@ -73,6 +73,10 @@ export const API_GROUPS = {
     title: "Automation",
     description: "Unattended triggers: schedules (cron and one-shot) and fixed authenticated workflow endpoints."
   },
+  ci: {
+    title: "CI",
+    description: "Continuous integration on RunYard runners: connected repositories, GitHub webhook ingress, pipelines/jobs compiled onto canonical runs, and GitHub Checks reporting."
+  },
   library: {
     title: "Library",
     description: "Reusable building blocks: agent roles, skills, knowledge resources, and post-run hook profiles."
@@ -1037,6 +1041,134 @@ export const API_SURFACE = [
     auth: true, scopes: ["api", "mcp", "admin"],
     summary: "Import a board definition — create the board when new, update lanes/triggers/policy when a board with the same slug exists, and reconcile any embedded schedule hookups by slug so re-imports never duplicate cron jobs.",
     mcp: ["import_board_definition"]
+  },
+
+  // --- CI platform (GitHub bridge + pipelines; specs/ci-platform.md) ---
+  {
+    method: "post", path: "/api/ci/webhooks/github", handler: "ciWebhookHandlers.githubWebhook", wrap: "async",
+    group: "ci",
+    rateLimit: { bucket: "ci-webhook", max: 120, windowMs: 60_000 },
+    summary: "GitHub App webhook ingress: HMAC signature verified over the raw body BEFORE parsing, delivery-id dedupe with payload-hash conflict detection, and explicit event routing (push, pull_request, check_run rerequested, installation sync). Unauthenticated by design — the signature is the authentication.",
+    mcpExempt: "Provider-to-Hub machine protocol authenticated by the webhook HMAC signature; not an operator-facing tool."
+  },
+  {
+    method: "get", path: "/api/ci/github-app", handler: "ciHandlers.githubAppHealth",
+    group: "ci", v1Path: "/api/v1/ci/github-app",
+    auth: true, scopes: ["admin"], ui: true,
+    summary: "GitHub App configuration health: app id, API base, key/secret presence — never secret values.",
+    mcpExempt: "Admin configuration diagnostics; agents act through repos/pipelines tools instead."
+  },
+  {
+    method: "get", path: "/api/ci/repos", handler: "ciHandlers.listRepos",
+    group: "ci", v1Path: "/api/v1/ci/repos",
+    auth: true, ui: true,
+    summary: "List CI-connected repositories (with installation identity) and their enablement + trust policy. enabled=1 filters to CI-enabled repos.",
+    mcp: ["list_ci_repositories"]
+  },
+  {
+    method: "post", path: "/api/ci/repos/sync", handler: "ciHandlers.syncRepos", wrap: "async",
+    group: "ci", v1Path: "/api/v1/ci/repos/sync",
+    auth: true, scopes: ["admin"], ui: true,
+    summary: "Sync installations and repositories from the GitHub App (admin). Recovery path for missed installation webhooks and first-time setup; never auto-enables CI on a repo.",
+    mcpExempt: "Admin connection maintenance; repository state is readable via list_ci_repositories."
+  },
+  {
+    method: "get", path: "/api/ci/repos/:id", handler: "ciHandlers.getRepo",
+    group: "ci", v1Path: "/api/v1/ci/repos/:id",
+    auth: true, ui: true,
+    summary: "Get one connected repository (row id, or full name via ?repo=owner/name) with its recent pipelines.",
+    mcpExempt: "Covered by list_ci_repositories + get_ci_pipeline for agent use."
+  },
+  {
+    method: "post", path: "/api/ci/repos/:id/enable", handler: "ciHandlers.enableRepo",
+    group: "ci", v1Path: "/api/v1/ci/repos/:id/enable",
+    auth: true, scopes: ["admin"], ui: true,
+    summary: "Enable CI for a connected repository (admin). Repositories are connected disabled by default; nothing runs until an operator opts in.",
+    mcpExempt: "Admin trust decision; deliberately human-only."
+  },
+  {
+    method: "post", path: "/api/ci/repos/:id/disable", handler: "ciHandlers.disableRepo",
+    group: "ci", v1Path: "/api/v1/ci/repos/:id/disable",
+    auth: true, scopes: ["admin"], ui: true,
+    summary: "Disable CI for a connected repository (admin). In-flight pipelines finish; new events are ignored.",
+    mcpExempt: "Admin trust decision; deliberately human-only."
+  },
+  {
+    method: "patch", path: "/api/ci/repos/:id/trust", handler: "ciHandlers.setRepoTrustPolicy",
+    group: "ci", v1Path: "/api/v1/ci/repos/:id/trust",
+    auth: true, scopes: ["admin"], ui: true,
+    summary: "Update a repository's trust policy (admin). Body: {level: trusted|untrusted, allowNative?, runnerTags?}. allowNative requires level=trusted AND the runner's own RUNYARD_RUNNER_CI_NATIVE opt-in; fork PRs are always untrusted regardless.",
+    mcpExempt: "Admin trust decision; deliberately human-only."
+  },
+  {
+    method: "get", path: "/api/ci/repos/:id/config", handler: "ciHandlers.inspectRepoConfig", wrap: "async",
+    group: "ci", v1Path: "/api/v1/ci/repos/:id/config",
+    auth: true, scopes: ["api", "mcp", "admin"], ui: true,
+    summary: "Inspect the validated .runyard/ci.yml at the trusted default branch (or ?ref=). Unlike other CI reads this pulls file content from the (possibly private) repository with the App credential, so it requires a write-capable scope — read-only tokens see hub state only.",
+    mcpExempt: "Diagnostic read; pipeline provenance already pins the exact config sha."
+  },
+  {
+    method: "post", path: "/api/ci/dispatch", handler: "ciHandlers.dispatch", wrap: "async",
+    group: "ci", v1Path: "/api/v1/ci/dispatch",
+    auth: true, scopes: ["api", "mcp", "admin"], ui: true,
+    summary: "Manually dispatch CI for a connected repository. Body: {repo, ref?} — ref defaults to the default branch and is resolved to an exact sha; the run tests that pinned revision with config loaded from the same trusted revision.",
+    mcp: ["dispatch_ci_run"]
+  },
+  {
+    method: "get", path: "/api/ci/pipelines", handler: "ciHandlers.listPipelines",
+    group: "ci", v1Path: "/api/v1/ci/pipelines",
+    auth: true, ui: true,
+    summary: "List recent CI pipelines (?repo= filters by connected repository; limit up to 200) with parent-run status links.",
+    mcpExempt: "Covered by get_ci_pipeline once an id is known; list is a UI surface."
+  },
+  {
+    method: "get", path: "/api/ci/pipelines/:id", handler: "ciHandlers.getPipeline",
+    group: "ci", v1Path: "/api/v1/ci/pipelines/:id",
+    auth: true, ui: true,
+    summary: "Get one CI pipeline (by pipeline id or parent run id): trigger provenance, trusted config source sha, tested-checkout semantics, job DAG with live run states, and GitHub check reporting state.",
+    mcp: ["get_ci_pipeline"]
+  },
+  {
+    method: "post", path: "/api/ci/pipelines/:id/cancel", handler: "ciHandlers.cancelPipeline",
+    group: "ci", v1Path: "/api/v1/ci/pipelines/:id/cancel",
+    auth: true, scopes: ["api", "mcp", "admin"], ui: true,
+    summary: "Cancel a CI pipeline: the parent run is cancelled, dispatched job runs are cancelled (runners observe and kill their process groups), and pending jobs never start.",
+    mcpExempt: "Cancellation rides the generic run-cancel tool via the pipeline's parent run id."
+  },
+  {
+    method: "post", path: "/api/ci/pipelines/:id/rerun", handler: "ciHandlers.rerunPipeline", wrap: "async",
+    group: "ci", v1Path: "/api/v1/ci/pipelines/:id/rerun",
+    auth: true, scopes: ["api", "mcp", "admin"], ui: true,
+    summary: "Rerun a pipeline: a fresh pipeline with the original trigger provenance (rerunOfPipelineId) against the same SHAs. The original stays intact as evidence; the rerun supersedes it on the shared concurrency key.",
+    mcpExempt: "Recovery action available through dispatch_ci_run for agents; UI/CLI carry the explicit rerun."
+  },
+  {
+    method: "post", path: "/api/ci/pipelines/:id/sync-checks", handler: "ciHandlers.syncPipelineChecks", wrap: "async",
+    group: "ci", v1Path: "/api/v1/ci/pipelines/:id/sync-checks",
+    auth: true, scopes: ["admin"], ui: true,
+    summary: "Operator reconciliation after a GitHub Checks reporter outage: reset the bounded retry counters for this pipeline's checks and resync them (admin).",
+    mcpExempt: "Admin recovery action; check state is visible via get_ci_pipeline."
+  },
+  {
+    method: "get", path: "/api/ci/deliveries", handler: "ciHandlers.listDeliveries",
+    group: "ci", v1Path: "/api/v1/ci/deliveries",
+    auth: true, scopes: ["admin"], ui: true,
+    summary: "Webhook delivery ledger diagnostics (admin): per-delivery status (accepted/ignored/duplicate/conflict/invalid), bounded detail, and pipeline linkage. Retention is bounded (RUNYARD_CI_DELIVERY_RETENTION_MS).",
+    mcpExempt: "Operator diagnostics over provider deliveries; not an agent action surface."
+  },
+  {
+    method: "get", path: "/api/ci/diagnostics", handler: "ciHandlers.diagnostics",
+    group: "ci", v1Path: "/api/v1/ci/diagnostics",
+    auth: true, scopes: ["admin"], ui: true,
+    summary: "CI operator counters (admin): webhook signature failures/duplicates since boot, 24h delivery totals, active pipelines, queued jobs + max queue latency, and pipelines with retrying check syncs. Low-cardinality by design.",
+    mcpExempt: "Operator diagnostics; not an agent action surface."
+  },
+  {
+    method: "post", path: "/api/ci/runs/:id/git-credential", handler: "ciHandlers.mintGitCredential", wrap: "async",
+    group: "ci",
+    auth: true, scopes: ["runner"], runnerOwner: true,
+    summary: "Mint a short-lived, repository-scoped, read-only git credential for a claimed CI job's checkout (runner protocol). Never stored; run events carry metadata only.",
+    mcpExempt: "Runner-to-Hub machine protocol (runner scope + run ownership)."
   },
 
   // --- Metering gateway (inference boundary) ---

@@ -41,7 +41,7 @@ describe("docs site", () => {
   });
 
   it("serves nested docs routes (quickstart, concepts, guides)", async () => {
-    for (const route of ["/docs/quickstart/", "/docs/concepts/deep-links/", "/docs/guides/api/", "/docs/guides/mcp/"]) {
+    for (const route of ["/docs/quickstart/", "/docs/concepts/deep-links/", "/docs/concepts/ci/", "/docs/guides/api/", "/docs/guides/ci/", "/docs/guides/mcp/"]) {
       const response = await fetch(`${baseUrl}${route}`);
       assert.equal(response.status, 200, `${route} should be 200`);
       assert.match(await response.text(), /<html/i, `${route} should be a page`);

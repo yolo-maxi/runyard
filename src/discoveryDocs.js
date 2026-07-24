@@ -46,7 +46,10 @@ const HUB_TOOL_NAMES = [
   "download_artifact",
   "get_dashboard",
   "list_workflow_bundles",
-  "get_workflow_bundle"
+  "get_workflow_bundle",
+  "list_ci_repositories",
+  "get_ci_pipeline",
+  "dispatch_ci_run"
 ];
 
 const RUN_TITLE_RECOMMENDATION = "For agent-created runs, include input.title: a short human-readable title that explains the specific job.";

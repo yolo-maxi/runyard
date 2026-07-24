@@ -1,4 +1,56 @@
+import {
+  CI_HUB_TAG,
+  CI_JOB_CAPABILITY_SLUG,
+  CI_PIPELINE_CAPABILITY_SLUG,
+  CI_RUNNER_TAG
+} from "./ciCapabilities.js";
+
 export const seedInternalCapabilities = [
+  {
+    // Parent run for one CI trigger (see specs/ci-platform.md). Hub-owned:
+    // the runyard-hub tag is never advertised by a runner and the hub moves
+    // the run queued->running at creation, so the claim path can never take it.
+    slug: CI_PIPELINE_CAPABILITY_SLUG,
+    name: "CI Pipeline",
+    description:
+      "Parent run of one CI trigger: holds provenance, job roll-up, and the GitHub Checks evidence trail. Created by the CI webhook/dispatch path, driven by the hub orchestrator — never launched manually.",
+    category: "Internal",
+    keywords: ["ci", "pipeline", "github", "checks", "internal"],
+    inputSchema: { type: "object", properties: {} },
+    outputSchema: {
+      type: "object",
+      properties: {
+        conclusion: { type: "string" },
+        jobs: { type: "array" }
+      }
+    },
+    requiredRunnerTags: [CI_HUB_TAG],
+    approvalPolicy: { required: false },
+    supervision: { default: false, internal: true },
+    workflow: { engine: "runyard-ci" }
+  },
+  {
+    // One executable CI job. Deterministic: the runner's CI executor runs the
+    // validated commands / Dagger call — no LLM, no smithers engine.
+    slug: CI_JOB_CAPABILITY_SLUG,
+    name: "CI Job",
+    description:
+      "One CI job of a pipeline, executed deterministically on a CI-enabled runner (native commands or a Dagger call) against an exact SHA-pinned checkout. Created by the CI orchestrator — never launched manually.",
+    category: "Internal",
+    keywords: ["ci", "job", "build", "test", "internal"],
+    inputSchema: { type: "object", properties: {} },
+    outputSchema: {
+      type: "object",
+      properties: {
+        exitCode: { type: "number" },
+        conclusion: { type: "string" }
+      }
+    },
+    requiredRunnerTags: [CI_RUNNER_TAG],
+    approvalPolicy: { required: false },
+    supervision: { default: false, internal: true },
+    workflow: { engine: "runyard-ci" }
+  },
   {
     slug: "reauth-cli",
     name: "Re-auth CLI (Codex/Claude)",

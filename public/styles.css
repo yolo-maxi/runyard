@@ -3194,11 +3194,12 @@ button.run-id-mono:focus-visible,
     padding-bottom: 2px;
   }
 
-  /* Shrink-to-fit equal columns so the primary tabs stay readable without
+  /* Equal columns that never shrink below their label: with six primary
+     tabs the row scrolls within itself (overflow-x above) instead of
      clipping labels or forcing a horizontal page scrollbar. */
   .mobile-primary-nav a {
-    flex: 1 1 0;
-    min-width: 0;
+    flex: 1 0 auto;
+    min-width: max-content;
     padding: 8px 6px;
     font-size: var(--fs-sm);
     justify-content: center;
@@ -7933,4 +7934,44 @@ button.cron-preset:hover {
   .work-editor-grid { grid-template-columns: 1fr; }
   .work-editor-grid .span-2 { grid-column: auto; }
   .work-filter { width: 100%; max-width: none; flex: 1; }
+}
+
+/* --- CI platform (repositories + pipelines; specs/ci-platform.md) --------- */
+.ci-app-health,
+.ci-repo-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  margin: 0 0 var(--space-3);
+}
+.ci-repo-actions { margin: 0 0 var(--space-3); }
+.ci-config-status { margin: var(--space-2) 0 0; }
+.ci-config-errors ul { margin: var(--space-2) 0 0; padding-left: 1.2rem; }
+.ci-config-errors li { margin-bottom: var(--space-1); overflow-wrap: anywhere; }
+.ci-provenance {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-1) var(--space-3);
+  margin: 0 0 var(--space-3);
+}
+.ci-provenance dt { color: var(--muted); font-size: 0.85rem; }
+.ci-provenance dd { margin: 0; overflow-wrap: anywhere; }
+.ci-job-list { list-style: none; margin: 0; padding: 0; }
+.ci-job-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--border);
+}
+.ci-job-row:first-child { border-top: 0; }
+.ci-job-name { font-weight: 600; min-width: 8rem; overflow-wrap: anywhere; }
+.ci-job-meta { flex: 1 1 12rem; min-width: 0; overflow-wrap: anywhere; }
+.ci-check-chip.ci-check-lagging { border-color: var(--danger, #b3261e); color: var(--danger, #b3261e); }
+@media (max-width: 700px) {
+  .ci-provenance { grid-template-columns: 1fr; gap: 0 var(--space-2); }
+  .ci-provenance dt { margin-top: var(--space-2); }
+  .ci-job-name { min-width: 0; flex: 1 1 100%; }
 }

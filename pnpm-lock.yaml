@@ -17,6 +17,9 @@ importers:
       smithers-orchestrator:
         specifier: 0.30.0
         version: 0.30.0(01bf105140633a0f57ded82d9ba3b58f)
+      yaml:
+        specifier: ^2.9.0
+        version: 2.9.0
       zod:
         specifier: ^4.4.3
         version: 4.4.3

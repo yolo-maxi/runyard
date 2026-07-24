@@ -13,6 +13,7 @@ export function installProcessSafetyHandlers({ processObj = process, logError = 
 }
 
 export function startRunMaintenance({
+  ciMaintenanceTick,
   env,
   logError = console.error,
   logInfo = console.log,
@@ -78,6 +79,14 @@ export function startRunMaintenance({
     } catch (error) {
       logError("Runner pruner failed:", error.message);
     }
+    try {
+      // CI platform: advance active pipeline DAGs (restart/recovery backstop
+      // for the event-driven fast path), prune the webhook delivery ledger,
+      // and reconcile GitHub check state.
+      if (ciMaintenanceTick) ciMaintenanceTick();
+    } catch (error) {
+      logError("CI maintenance failed:", error.message);
+    }
   }, 60_000);
   reaper.unref?.();
   return reaper;
@@ -125,6 +134,7 @@ export function startUpdatePolling({
 
 export function startServerRuntime({
   app,
+  ciMaintenanceTick,
   env,
   fireDueSchedules,
   logError = console.error,
@@ -144,6 +154,7 @@ export function startServerRuntime({
     logInfo(`${env.instanceName} listening on http://${env.host}:${env.port}`);
   });
   const reaper = startRunMaintenance({
+    ciMaintenanceTick,
     env,
     logError,
     logInfo,
